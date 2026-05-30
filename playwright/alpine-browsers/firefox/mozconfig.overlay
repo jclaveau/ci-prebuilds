@@ -1,0 +1,12 @@
+# Overlay applied on top of aports' community/firefox/mozconfig.
+#
+# aports' mozconfig is already tuned for an Alpine distro build (system libs,
+# release channel, hardening on, updater off). aports' build() function
+# CONDITIONALLY adds PGO (--enable-profile-generate / --enable-profile-use) at
+# build time on x86_64/aarch64/ppc64le, but we don't run that function — we
+# invoke ./mach build directly, so PGO never enters the picture.
+#
+# Result: minimal overrides. We do enable sccache here so mach wraps every CC
+# / rustc invocation, which combined with the Dockerfile cache mount makes
+# incremental rebuilds across CI runs fast (3h cold → ~5min hot).
+ac_add_options --with-ccache=sccache

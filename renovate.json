@@ -78,6 +78,16 @@
     },
     {
       "customType": "regex",
+      "fileMatch": ["^playwright/alpine-browsers/versions\\.env$"],
+      "matchStrings": [
+        "PW_VERSION=(?<currentValue>.*?)\\n"
+      ],
+      "datasourceTemplate": "npm",
+      "depNameTemplate": "playwright",
+      "versioningTemplate": "npm"
+    },
+    {
+      "customType": "regex",
       "fileMatch": ["^pnpm/Dockerfile$", "^pnpm-gyp/Dockerfile$", "^pnpm-gyp/Dockerfile.alpine$"],
       "matchStrings": [
         "ARG PNPM_VERSION=(?<currentValue>.*?)\\n"
