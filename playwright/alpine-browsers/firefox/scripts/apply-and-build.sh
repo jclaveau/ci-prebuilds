@@ -45,13 +45,27 @@ if [[ "$aports_majmin" != "$pw_majmin" ]]; then
   exit 2
 fi
 
-# 2. Download Mozilla source tarball + unpack.
+# 2. Fetch the Mozilla source via git at PW's pinned SHA (NOT the released
+#    tarball at aports' pkgver). Reason: Mozilla's release tarball is
+#    regenerated for distribution and diverges slightly from the git checkout
+#    at the tag — enough that PW's bootstrap.diff fails several hunks in core
+#    engine files (nsDocShell.cpp, nsGlobalWindowOuter.cpp, ...). Using PW's
+#    exact reference SHA guarantees the bootstrap.diff applies cleanly.
+#
+#    Aports' musl patches target stable libc-layer files (xpcom/io,
+#    config/system-headers.mozbuild, security/sandbox/linux, ...) that don't
+#    drift between tarball and git, so they still apply.
+PW_SHA=$(awk -F= '$1=="BASE_REVISION"{gsub(/[" ]/,"",$2); print $2; exit}' "$PW/UPSTREAM_CONFIG.sh")
+echo "Cloning mozilla-firefox/firefox at $PW_SHA (PW v${PW_VERSION:-?} reference commit)"
+
 mkdir -p "$SRC"
-TARBALL="$WORK/firefox-${PKGVER}.source.tar.xz"
-if [[ ! -f "$TARBALL" ]]; then
-  curl -fsSL "https://ftp.mozilla.org/pub/firefox/releases/${PKGVER}/source/firefox-${PKGVER}.source.tar.xz" -o "$TARBALL"
-fi
-tar -xf "$TARBALL" -C "$SRC" --strip-components=1
+git init -q "$SRC"
+git -C "$SRC" remote add origin https://github.com/mozilla-firefox/firefox
+# Single-commit fetch — depth=1 + explicit SHA. ~500 MB-ish for Firefox; same
+# rough size as the tarball, just delivered over git protocol.
+git -C "$SRC" fetch --depth=1 origin "$PW_SHA"
+git -C "$SRC" reset --hard FETCH_HEAD --quiet
+git -C "$SRC" log -1 --format='%h %s' || true
 
 cd "$SRC"
 

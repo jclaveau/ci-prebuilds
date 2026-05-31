@@ -3,14 +3,17 @@ name: Test and Publish
 on:
   push:
     # branches: [ main ]
-    # paths:
-    #   - 'base/**'
-    #   - 'pnpm/**'
-    #   - 'playwright/**'
-    #   - 'dind/**'
-    #   - '.github/workflows/test-and-publish.yml'
+    paths-ignore:
+      # The musl-Firefox producer is independent of this chain — it has its own
+      # workflow (playwright-alpine-browsers.yml). Skip TP on PRs that only
+      # touch the producer sub-project to avoid wasting runner minutes.
+      - 'playwright/alpine-browsers/**'
+      - '.github/workflows/playwright-alpine-browsers.yml'
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - 'playwright/alpine-browsers/**'
+      - '.github/workflows/playwright-alpine-browsers.yml'
   # schedule:
   #   # Run weekly to get security updates
   #   - cron: '0 0 * * 0'
