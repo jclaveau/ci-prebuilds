@@ -1,12 +1,14 @@
 {
   "private": true,
   "scripts": {
-    "ci:watch": "bash scripts/ci-watch-one.sh test-and-publish.yml TP & bash scripts/ci-watch-one.sh benchmark-playwright.yml BENCH & wait",
+    "ci:watch": "bash scripts/ci-watch-one.sh test-and-publish.yml TP & bash scripts/ci-watch-one.sh benchmark-playwright.yml BENCH & bash scripts/ci-watch-one.sh playwright-alpine-browsers.yml PAB & wait",
     "ci:watch:tp": "bash scripts/ci-watch-one.sh test-and-publish.yml TP",
     "ci:watch:bench": "bash scripts/ci-watch-one.sh benchmark-playwright.yml BENCH",
-    "ci:logs": "BM=$(gh run list -L1 --json databaseId --jq '.[0].databaseId'); J=$(gh api \"repos/jclaveau/docker-images/actions/runs/$BM/jobs\" --jq '[.jobs[]|select(.conclusion==\"failure\")][0] // empty'); test -n \"$J\" || { echo 'no failed job in latest run'; exit 0; }; JID=$(echo \"$J\" | jq -r .id); JN=$(echo \"$J\" | jq -r .name); echo \"=== $JN (id $JID) ===\"; gh api \"repos/jclaveau/docker-images/actions/jobs/$JID/logs\" | sed -E 's/^[0-9T:.-]+Z //; s/\\x1b\\[[0-9;]*m//g' | tail -150",
+    "ci:watch:pab": "bash scripts/ci-watch-one.sh playwright-alpine-browsers.yml PAB",
+    "ci:logs": "BM=$(gh run list -L1 --json databaseId --jq '.[0].databaseId'); J=$(gh api \"repos/jclaveau/github-action-container-images/actions/runs/$BM/jobs\" --jq '[.jobs[]|select(.conclusion==\"failure\")][0] // empty'); test -n \"$J\" || { echo 'no failed job in latest run'; exit 0; }; JID=$(echo \"$J\" | jq -r .id); JN=$(echo \"$J\" | jq -r .name); echo \"=== $JN (id $JID) ===\"; gh api \"repos/jclaveau/github-action-container-images/actions/jobs/$JID/logs\" | sed -E 's/^[0-9T:.-]+Z //; s/\\x1b\\[[0-9;]*m//g' | tail -250",
     "ci:logs:tp": "bash scripts/ci-logs-one.sh test-and-publish.yml",
     "ci:logs:bench": "bash scripts/ci-logs-one.sh benchmark-playwright.yml",
+    "ci:logs:pab": "bash scripts/ci-logs-one.sh playwright-alpine-browsers.yml",
     "act:smoke": "act push -W tests/act/smoke-dood-bind.yml --bind -P ubuntu-latest=jclaveau/ubuntu-dood:latest --container-options \"--user $(id -u):$(id -g) --group-add 1001 -e HOME=/home/runner\""
   }
 }

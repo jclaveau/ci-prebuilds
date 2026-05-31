@@ -6,7 +6,7 @@
 set -euo pipefail
 
 wf=$1
-repo=jclaveau/docker-images
+repo=jclaveau/github-action-container-images
 
 run=$(gh run list --workflow="$wf" -L1 --json databaseId --jq '.[0].databaseId')
 job=$(gh api "repos/$repo/actions/runs/$run/jobs" \
@@ -23,4 +23,4 @@ echo "=== $jname (id $jid) ==="
 
 gh api "repos/$repo/actions/jobs/$jid/logs" \
   | sed -E 's/^[0-9T:.-]+Z //; s/\x1b\[[0-9;]*m//g' \
-  | tail -150
+  | tail -250
