@@ -201,6 +201,10 @@ jobs:
 
   build-gha-tools:
     runs-on: ubuntu-latest
+    # On the push/PR path inputs.* is empty → no filter, both OSes build as today.
+    # On workflow_call with only_os set, the not-requested OS's cell skips at the
+    # matrix evaluation, and every downstream needs:-linked cell skips with it.
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, changes]
     permissions:
       contents: read
@@ -218,11 +222,14 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.os_version && format('OS_VERSION={0}', inputs.os_version) || '' }}
 
   # Unpublished shared base: ubuntu-gha-tools + docker/compose. Only ever pushed under the
   # throwaway build tag (never promoted); dood and dind are built from it in parallel.
   build-docker:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, changes, build-gha-tools]
     permissions:
       contents: read
@@ -246,6 +253,7 @@ jobs:
 
   build-dood:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, changes, build-docker]
     permissions:
       contents: read
@@ -267,6 +275,7 @@ jobs:
 
   build-dind:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, changes, build-docker]
     permissions:
       contents: read
@@ -290,6 +299,7 @@ jobs:
 
   build-node-dood:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, changes, build-dood]
     permissions:
       contents: read
@@ -309,9 +319,12 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.node_version && format('NODE_VERSION={0}', inputs.node_version) || '' }}
 
   build-node-dind:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, changes, build-dind]
     permissions:
       contents: read
@@ -331,10 +344,13 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.node_version && format('NODE_VERSION={0}', inputs.node_version) || '' }}
 
 
   build-pnpm-dood:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, changes, build-node-dood]
     permissions:
       contents: read
@@ -353,9 +369,12 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.pnpm_version && format('PNPM_VERSION={0}', inputs.pnpm_version) || '' }}
 
   build-pnpm-dind:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, changes, build-node-dind]
     permissions:
       contents: read
@@ -374,12 +393,15 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.pnpm_version && format('PNPM_VERSION={0}', inputs.pnpm_version) || '' }}
 
 
   # node-gyp variant: pnpm + the C/C++ toolchain the base gha-tools drops. Built from ./pnpm-gyp as a
   # SIBLING of build-pnpm-* (both FROM the node layer) so the slim and -gyp chains build in parallel.
   build-pnpm-gyp-dood:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, changes, build-node-dood]
     permissions:
       contents: read
@@ -399,9 +421,12 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.pnpm_version && format('PNPM_VERSION={0}', inputs.pnpm_version) || '' }}
 
   build-pnpm-gyp-dind:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, changes, build-node-dind]
     permissions:
       contents: read
@@ -421,10 +446,13 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.pnpm_version && format('PNPM_VERSION={0}', inputs.pnpm_version) || '' }}
 
 
   build-playwright-dood:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, changes, build-pnpm-dood]
     permissions:
       contents: read
@@ -444,9 +472,12 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.pw_version && format('PLAYWRIGHT_VERSION={0}', inputs.pw_version) || '' }}
 
   build-playwright-dind:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, changes, build-pnpm-dind]
     permissions:
       contents: read
@@ -466,12 +497,15 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.pw_version && format('PLAYWRIGHT_VERSION={0}', inputs.pw_version) || '' }}
 
 
   # Playwright on the node-gyp base: the SAME ./playwright layer, only the base differs (pnpm-gyp), for
   # consumers needing Playwright + native builds and for the slim-vs-gyp benchmark comparison.
   build-playwright-gyp-dood:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, changes, build-pnpm-gyp-dood]
     permissions:
       contents: read
@@ -491,9 +525,12 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.pw_version && format('PLAYWRIGHT_VERSION={0}', inputs.pw_version) || '' }}
 
   build-playwright-gyp-dind:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, changes, build-pnpm-gyp-dind]
     permissions:
       contents: read
@@ -513,6 +550,8 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.pw_version && format('PLAYWRIGHT_VERSION={0}', inputs.pw_version) || '' }}
 
 
   # ----------------------------------------------------------------------------
@@ -529,6 +568,7 @@ jobs:
   # ----------------------------------------------------------------------------
   build-hardened-variants:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs:
       - github-context
       - changes
@@ -589,6 +629,7 @@ jobs:
 
   test-gha-tools-usage:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, build-gha-tools]
     timeout-minutes: 5
     strategy:
@@ -635,6 +676,7 @@ jobs:
     # strip-at-end overlay output which gets published as `<image>:latest`. Both share
     # the WORKDIR/USER/env defaults; they diverge only on whether sudo works.
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, build-gha-tools, build-hardened-variants]
     timeout-minutes: 5
     strategy:
@@ -694,6 +736,7 @@ jobs:
     # the file presence + content + that broad sudo is denied. The full
     # start-dockerd flow is implicit (any breakage would surface elsewhere).
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, build-hardened-variants]
     timeout-minutes: 5
     strategy:
@@ -737,6 +780,7 @@ jobs:
 
   test-dood-dind-usage:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, build-dood, build-dind]
     timeout-minutes: 5
     env:
@@ -787,6 +831,7 @@ jobs:
 
   test-dood-dind-effects:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, build-dood, build-dind]
     timeout-minutes: 5
     env:
@@ -849,6 +894,7 @@ jobs:
 
   test-node-usage:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, build-node-dood, build-node-dind]
     timeout-minutes: 5
     strategy:
@@ -873,6 +919,7 @@ jobs:
 
   test-pnpm-usage:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, build-pnpm-dood, build-pnpm-dind]
     timeout-minutes: 5
     strategy:
@@ -896,6 +943,7 @@ jobs:
   # and that a real native addon compiles (the test moved here from test-node-usage when node went slim).
   test-pnpm-gyp-usage:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, build-pnpm-gyp-dood, build-pnpm-gyp-dind]
     timeout-minutes: 5
     strategy:
@@ -938,6 +986,7 @@ jobs:
 
   test-playwright-usage:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, build-playwright-dood, build-playwright-dind, build-playwright-gyp-dood, build-playwright-gyp-dind]
     timeout-minutes: 5
     strategy:
@@ -1019,6 +1068,7 @@ jobs:
 
   test-dood-dind-act:
     runs-on: ubuntu-latest
+    if: inputs.only_os == '' || matrix.os == inputs.only_os
     needs: [github-context, build-dood, build-dind]
     timeout-minutes: 10
     strategy:
@@ -1138,6 +1188,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: v
+        # Skip the ubuntu read when only alpine was requested — the ubuntu image
+        # wasn't built, so `docker run` would fail. The matching ubuntu cells of
+        # `promote` skip via the only_os filter, so their `${{ ... outputs.os }}`
+        # references never resolve.
+        if: inputs.only_os != 'alpine'
         env:
           IMG: ghcr.io/jclaveau/ubuntu-dood-playwright:${{ needs.github-context.outputs.build_tag }}
         run: |
@@ -1153,6 +1208,7 @@ jobs:
           ' >> "$GITHUB_OUTPUT"
       # Alpine minors, read from alpine-dood-playwright (transitively OS + node + pnpm + playwright).
       - id: va
+        if: inputs.only_os != 'ubuntu'
         env:
           IMG: ghcr.io/jclaveau/alpine-dood-playwright:${{ needs.github-context.outputs.build_tag }}
         run: |
@@ -1173,11 +1229,21 @@ jobs:
   # ----------------------------------------------------------------------------
 
   promote:
-    # Publish consumer tags to Docker Hub ONLY on main, ONLY after all tests pass.
-    # The test-gate is satisfied by `needs:` enumerating every `test-*` job below;
-    # the branch-gate (this `if:`) blocks topic-branch / PR / Renovate pushes from
-    # publishing tags. Matches the idiom in playwright-alpine-browsers.yml.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Publish consumer tags to Docker Hub ONLY on main pushes OR via workflow_call
+    # (the on-demand path), ONLY after all tests pass. The test-gate is satisfied by
+    # `needs:` enumerating every `test-*` job below; this `if:` blocks topic-branch /
+    # PR / Renovate pushes from publishing tags.
+    # On workflow_call, the only_os / only_image / only_flavor filters further
+    # narrow which matrix cells actually publish (push/PR path → all empty → no
+    # narrowing, full matrix as today).
+    if: >-
+      (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        || github.event_name == 'workflow_call'
+      )
+      && (inputs.only_os == '' || matrix.os == inputs.only_os)
+      && (inputs.only_image == '' || matrix.image == inputs.only_image)
+      && (inputs.only_flavor == 'all' || matrix.flavor == inputs.only_flavor)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1236,6 +1302,13 @@ jobs:
             dood-playwright|dind-playwright)         TAG="${OS}-${NODE}-${PNPM}-${PW}";;
             dood-playwright-gyp|dind-playwright-gyp) TAG="${OS}-${NODE}-${PNPM}-${PW}-gyp";;
           esac
+          # The hardened flavor (= consumer default) keeps the original tag.
+          # The sudoer flavor gains a `-sudoer` tag suffix so an on-demand request
+          # for it produces a self-describing pin (image namespace `-sudoer` alone
+          # is easy to miss in pipelines that pin by `:tag`).
+          if [ "${{ matrix.flavor }}" = "-sudoer" ]; then
+            TAG="${TAG}-sudoer"
+          fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
       - id: meta
         uses: docker/metadata-action@v5
@@ -1246,7 +1319,12 @@ jobs:
           images: jclaveau/${{ matrix.os }}-${{ matrix.image }}${{ matrix.flavor }}
           tags: |
             type=ref,event=pr
-            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
+            # `:latest` is the consumer-default for the primary stack. The on-demand
+            # path explicitly passes publish_latest=false (it builds an off-primary
+            # version pin and must not advance `:latest`). On push/main, inputs.* is
+            # null, so we gate via event_name first and fall through to inputs only
+            # for the workflow_call path.
+            type=raw,value=latest,enable=${{ github.event_name == 'push' || (github.event_name == 'workflow_call' && inputs.publish_latest) }}
             type=raw,value=${{ steps.pin.outputs.tag }},enable=${{ github.event_name != 'pull_request' }}
             type=sha,prefix={{branch}}-
             type=ref,event=branch
