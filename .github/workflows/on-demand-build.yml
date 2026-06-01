@@ -1,0 +1,251 @@
+name: On-demand build (issue-triggered)
+
+# Issue-form-driven entry point for off-primary version pins.
+# - Listens on `issues: [opened]`. The form template auto-applies the
+#   `build-request` label so the workflow's filter fires on submit. We
+#   intentionally do NOT listen on `labeled` — that would re-trigger
+#   every time we add our own `quota-exceeded` / `build-failed` labels.
+#   To retry a failed/quota-exceeded request, open a new issue.
+# - Parses the form body, enforces the 3-builds/24h quota, optionally
+#   skips when the predicted tag is already on Docker Hub, then calls
+#   `test-and-publish.yml` via `workflow_call` with the version inputs.
+# - Comments status back to the issue and closes on success.
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read    # test-and-publish needs checkout
+  issues: write     # comment + label
+  packages: write   # GHCR push (build-layer)
+
+concurrency:
+  # One in-flight build per issue. Re-labelling cancels the prior attempt.
+  group: on-demand-build-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    if: contains(github.event.issue.labels.*.name, 'build-request')
+    runs-on: ubuntu-latest
+    outputs:
+      os:             ${{ steps.parse.outputs.os }}
+      os_version:     ${{ steps.parse.outputs.os_version }}
+      image:          ${{ steps.parse.outputs.image }}
+      flavor:         ${{ steps.parse.outputs.flavor }}        # '' (hardened) or '-sudoer'
+      node_version:   ${{ steps.parse.outputs.node_version }}
+      pnpm_version:   ${{ steps.parse.outputs.pnpm_version }}
+      pw_version:     ${{ steps.parse.outputs.pw_version }}
+      predicted_tag:  ${{ steps.predict.outputs.tag }}
+      docker_repo:    ${{ steps.predict.outputs.repo }}
+      quota_ok:       ${{ steps.quota.outputs.ok }}
+      already_exists: ${{ steps.existing.outputs.exists }}
+    steps:
+      - id: ensure-labels
+        # `gh issue edit --add-label` errors if the label doesn't exist in the
+        # repo. `--force` makes `gh label create` idempotent (creates if absent,
+        # no-op overwrite if present). `build-request` is created automatically
+        # when the issue template first applies it, but the maintainer should
+        # also pre-create it if the very first attempt fails.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create quota-exceeded --force \
+            --description "On-demand build request blocked: requester hit the 3/24h quota" \
+            --color FBCA04
+          gh label create build-failed --force \
+            --description "On-demand build request failed: see linked workflow run" \
+            --color B60205
+
+      - id: parse
+        # Issue-form bodies render as `### <label>\n\n<value>\n\n### <next>...`.
+        # Optional fields with no value render as `_No response_` which we treat
+        # as empty. The awk extractor finds the matching `### <label>` line and
+        # returns the first non-empty content line under it.
+        env:
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$BODY" > /tmp/body.md
+          extract() {
+            awk -v field="$1" '
+              BEGIN { found = 0 }
+              /^### / {
+                if (found) exit
+                if (substr($0, 5) == field) found = 1
+                next
+              }
+              found && NF { print; exit }
+            ' /tmp/body.md
+          }
+          opt() {
+            v=$(extract "$1")
+            [ "$v" = "_No response_" ] && v=""
+            printf '%s' "$v"
+          }
+          OS=$(extract "OS family")
+          OS_VERSION=$(extract "OS version")
+          IMAGE=$(extract "Image variant")
+          FLAVOR_LABEL=$(extract "Flavor")
+          NODE=$(opt   "Node version (optional)")
+          PNPM=$(opt   "pnpm version (optional)")
+          PW=$(opt     "Playwright version (optional)")
+          case "$FLAVOR_LABEL" in
+            hardened) FLAVOR="" ;;
+            sudoer)   FLAVOR="-sudoer" ;;
+            *) echo "::error::Unknown flavor: $FLAVOR_LABEL"; exit 1 ;;
+          esac
+          {
+            echo "os=$OS"
+            echo "os_version=$OS_VERSION"
+            echo "image=$IMAGE"
+            echo "flavor=$FLAVOR"
+            echo "node_version=$NODE"
+            echo "pnpm_version=$PNPM"
+            echo "pw_version=$PW"
+          } >> "$GITHUB_OUTPUT"
+          echo "Parsed: os=$OS os_version=$OS_VERSION image=$IMAGE flavor='$FLAVOR' node='$NODE' pnpm='$PNPM' pw='$PW'"
+
+      - id: predict
+        # Compose the would-be pinned tag from the requested inputs (the actual
+        # tag is composed by `promote` from `docker run` against the built image,
+        # so for unusual minor pinnings this prediction may differ — used only
+        # for the `existing` precheck and the success comment, not for the
+        # publish itself).
+        env:
+          OS:           ${{ steps.parse.outputs.os }}
+          OS_VERSION:   ${{ steps.parse.outputs.os_version }}
+          IMAGE:        ${{ steps.parse.outputs.image }}
+          FLAVOR:       ${{ steps.parse.outputs.flavor }}
+          NODE_VERSION: ${{ steps.parse.outputs.node_version }}
+          PNPM_VERSION: ${{ steps.parse.outputs.pnpm_version }}
+          PW_VERSION:   ${{ steps.parse.outputs.pw_version }}
+        run: |
+          set -euo pipefail
+          # Match the truncation `versions` does: node major.minor from `node -v`,
+          # pnpm major.minor from `pnpm -v`, playwright major.minor from `--version`.
+          # Strip third+ segments from user input so the prediction matches.
+          majmin() { echo "$1" | cut -d. -f1,2; }
+          OS_TAG="${OS}${OS_VERSION}"
+          case "$IMAGE" in
+            gha-tools|dood|dind)
+              TAG="${OS_TAG}" ;;
+            dood-node|dind-node)
+              TAG="${OS_TAG}-node$(majmin "$NODE_VERSION")" ;;
+            dood-pnpm|dind-pnpm)
+              TAG="${OS_TAG}-node$(majmin "$NODE_VERSION")-pnpm$(majmin "$PNPM_VERSION")" ;;
+            dood-pnpm-gyp|dind-pnpm-gyp)
+              TAG="${OS_TAG}-node$(majmin "$NODE_VERSION")-pnpm$(majmin "$PNPM_VERSION")-gyp" ;;
+            dood-playwright|dind-playwright)
+              TAG="${OS_TAG}-node$(majmin "$NODE_VERSION")-pnpm$(majmin "$PNPM_VERSION")-pw$(majmin "$PW_VERSION")" ;;
+            dood-playwright-gyp|dind-playwright-gyp)
+              TAG="${OS_TAG}-node$(majmin "$NODE_VERSION")-pnpm$(majmin "$PNPM_VERSION")-pw$(majmin "$PW_VERSION")-gyp" ;;
+          esac
+          [ "$FLAVOR" = "-sudoer" ] && TAG="${TAG}-sudoer"
+          REPO="jclaveau/${OS}-${IMAGE}${FLAVOR}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
+          echo "Predicted: ${REPO}:${TAG}"
+
+      - id: quota
+        # 3 builds / 24h / requester. Counts any build-request-labelled issue
+        # opened by this author in the window (including this one — so the
+        # 4th request hits the cap).
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+        run: |
+          set -euo pipefail
+          since=$(date -u -d '24 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          count=$(gh issue list --repo "$GITHUB_REPOSITORY" \
+            --author "$AUTHOR" \
+            --label build-request \
+            --state all \
+            --search "created:>=$since" \
+            --limit 100 \
+            --json number | jq 'length')
+          echo "build-request issues by $AUTHOR since $since: $count"
+          if [ "$count" -gt 3 ]; then
+            gh issue comment "${{ github.event.issue.number }}" --body \
+              ":octagonal_sign: Quota exceeded: $count build-request issues from @$AUTHOR in the last 24h (cap = 3). Try again later."
+            gh issue edit "${{ github.event.issue.number }}" --add-label quota-exceeded
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: existing
+        # Best-effort precheck — if the predicted tag is already on Docker Hub,
+        # skip the build (push would be a no-op anyway). Anonymous manifest
+        # inspect; rate limited at 100/6h, well above the 3/24h quota.
+        if: steps.quota.outputs.ok == 'true'
+        env:
+          REPO: ${{ steps.predict.outputs.repo }}
+          TAG: ${{ steps.predict.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if docker manifest inspect "${REPO}:${TAG}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Predicted tag already on Docker Hub — skipping build"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: notify-start
+        if: steps.quota.outputs.ok == 'true' && steps.existing.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" --body \
+            ":hammer_and_wrench: Build started: ${{ steps.predict.outputs.repo }}:${{ steps.predict.outputs.tag }}. Wall-clock ~5-30 min depending on variant. Progress: $RUN_URL"
+
+      - id: skip-existing-notify
+        if: steps.quota.outputs.ok == 'true' && steps.existing.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" --body \
+            ":white_check_mark: That combination is already published as \`${{ steps.predict.outputs.repo }}:${{ steps.predict.outputs.tag }}\`. Pull it directly — no rebuild needed."
+          gh issue close "${{ github.event.issue.number }}"
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.quota_ok == 'true' && needs.prepare.outputs.already_exists != 'true'
+    uses: ./.github/workflows/test-and-publish.yml
+    secrets: inherit
+    with:
+      os_version:     ${{ needs.prepare.outputs.os_version }}
+      node_version:   ${{ needs.prepare.outputs.node_version }}
+      pnpm_version:   ${{ needs.prepare.outputs.pnpm_version }}
+      pw_version:     ${{ needs.prepare.outputs.pw_version }}
+      only_os:        ${{ needs.prepare.outputs.os }}
+      only_image:     ${{ needs.prepare.outputs.image }}
+      only_flavor:    ${{ needs.prepare.outputs.flavor }}
+      publish_latest: false
+
+  comment-close:
+    needs: [prepare, build]
+    # Run only after the build attempt, ONLY if quota passed (skip-existing
+    # closes the issue itself). `always()` so failures still get a comment.
+    if: always() && needs.prepare.outputs.quota_ok == 'true' && needs.prepare.outputs.already_exists != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment success + close
+        if: needs.build.result == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" --body \
+            ":white_check_mark: Build complete. Published: \`${{ needs.prepare.outputs.docker_repo }}:${{ needs.prepare.outputs.predicted_tag }}\`. (If you pinned other minors, the actual tag may differ — check https://hub.docker.com/r/${{ needs.prepare.outputs.docker_repo }}/tags.)"
+          gh issue close "${{ github.event.issue.number }}"
+      - name: Comment failure + label
+        if: needs.build.result != 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" --body \
+            ":x: Build failed (status: \`${{ needs.build.result }}\`). Logs: $RUN_URL"
+          gh issue edit "${{ github.event.issue.number }}" --add-label build-failed
