@@ -18,7 +18,10 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel topic-branch runs freely (fast feedback on iterated pushes) but
+  # NEVER cancel a main run mid-`promote` — half-published Docker Hub tags
+  # are worse than the cost of letting two main runs finish serially.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -147,6 +150,8 @@ jobs:
   # re-installed per chain on purpose — the symmetric, easy-to-follow graph matters more than dedup
   # (CI is free on open source).
   # Matrix `os` is currently [ubuntu]; adding alpine = extend the list (+ os-specific dirs).
+  # Every build-* job sets `fail-fast: false` so an alpine failure does not cancel an in-flight
+  # ubuntu push (or vice versa), which would leave the downstream chain with a missing parent.
   # ----------------------------------------------------------------------------
 
   build-gha-tools:
@@ -156,6 +161,7 @@ jobs:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu, alpine]
     steps:
@@ -177,6 +183,7 @@ jobs:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu, alpine]
     steps:
@@ -199,6 +206,7 @@ jobs:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu, alpine]
     steps:
@@ -219,6 +227,7 @@ jobs:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu, alpine]
     steps:
@@ -241,6 +250,7 @@ jobs:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu, alpine]
     steps:
@@ -262,6 +272,7 @@ jobs:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu, alpine]
     steps:
@@ -284,6 +295,7 @@ jobs:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu, alpine]
     steps:
@@ -304,6 +316,7 @@ jobs:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu, alpine]
     steps:
@@ -327,6 +340,7 @@ jobs:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu, alpine]
     steps:
@@ -348,6 +362,7 @@ jobs:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu, alpine]
     steps:
@@ -370,6 +385,7 @@ jobs:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu, alpine]
     steps:
@@ -391,6 +407,7 @@ jobs:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu, alpine]
     steps:
@@ -415,6 +432,7 @@ jobs:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu, alpine]
     steps:
@@ -436,6 +454,7 @@ jobs:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu, alpine]
     steps:
@@ -625,7 +644,6 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
       options: >-
-        --privileged
         --env "HOME=/home/runner"
     steps:
       - run: node --version
@@ -650,7 +668,6 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
       options: >-
-        --privileged
         --env "HOME=/home/runner"
     steps:
       - run: node --version   # inherited from the node layer
@@ -674,7 +691,6 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
       options: >-
-        --privileged
         --env "HOME=/home/runner"
     steps:
       - run: pnpm --version
@@ -718,7 +734,6 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
       options: >-
-        --privileged
         --env "HOME=/home/runner"
     steps:
       - uses: actions/checkout@v4
@@ -900,12 +915,20 @@ jobs:
   # ----------------------------------------------------------------------------
 
   promote:
+    # Publish consumer tags to Docker Hub ONLY on main, ONLY after all tests pass.
+    # The test-gate is satisfied by `needs:` enumerating every `test-*` job below;
+    # the branch-gate (this `if:`) blocks topic-branch / PR / Renovate pushes from
+    # publishing tags. Matches the idiom in playwright-alpine-browsers.yml.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     needs: [github-context, versions, test-gha-tools-usage, test-dood-dind-usage, test-dood-dind-effects, test-dood-dind-act, test-node-usage, test-pnpm-usage, test-pnpm-gyp-usage, test-playwright-usage]
     permissions:
       contents: read
       packages: write
     strategy:
+      # One transient Docker Hub 502 should not cancel the other 25 cells mid-
+      # `imagetools create` — that leaves consumer tags partially advanced.
+      fail-fast: false
       matrix:
         os: [ubuntu, alpine]
         image: [gha-tools, dood, dind, dood-node, dind-node, dood-pnpm, dind-pnpm, dood-pnpm-gyp, dind-pnpm-gyp, dood-playwright, dind-playwright, dood-playwright-gyp, dind-playwright-gyp]
