@@ -1,4 +1,4 @@
-# Multi-version build matrix — design doc
+# On-demand version builds via issue template — design doc
 
 **Status:** draft for review (not yet implemented)
 **Target audience:** anyone reviewing the proposed direction before
@@ -6,172 +6,87 @@ implementation starts.
 
 ## Problem
 
-Today the producer images bake **one** version of each tool — one
-`ARG NODE_VERSION`, one `FROM …/ubuntu:24.04`, etc. Renovate's
-customManagers move all of them in lockstep, so on every Renovate PR
-the entire fleet shifts to the latest of everything. Consumers who
-can't upgrade as fast as we do lose their image as soon as the major
-bumps. There's no way for a consumer to say "I need ubuntu 22.04
-+ pw 1.50" without forking.
+Every Renovate PR moves the whole fleet to the latest of everything —
+there's no way for a consumer to ask the fleet for `ubuntu 22.04 +
+pw 1.50` (or any other older combination) without forking. I want
+to make those combinations buildable on demand, without ballooning
+the always-built matrix.
 
-We want two changes, with different cadences.
+## Proposed shape
 
-### 1. Default matrix per push: 2 latest majors per axis
+**Default per-push behavior stays exactly as today.** Single primary
+stack, same images, same `:latest`, same Renovate cadence.
 
-Per-axis vary — **one `primary` stack** with latest of everything,
-plus **three sibling stacks** where exactly one axis drops to N-1:
+**Anything else is a GitHub issue.** Template captures a specific
+version tuple, a workflow auto-builds it on issue open (hard quota of
+3 builds/24h per requester), pushes to Docker Hub with the pinned
+tag, comments the tag, closes.
 
-| Stack          | OS major   | Node    | pnpm    | Playwright |
-|----------------|------------|---------|---------|------------|
-| `primary`      | latest     | latest  | latest  | latest     |
-| `node-legacy`  | latest     | **N-1** | latest  | latest     |
-| `pnpm-legacy`  | latest     | latest  | **N-1** | latest     |
-| `os-legacy`    | **N-1**    | latest  | latest  | latest     |
+To make this work, `test-and-publish.yml` becomes callable as a
+**reusable workflow** (`workflow_call`) so the on-demand workflow can
+spawn it with specific version inputs. Its existing `push` /
+`pull_request` triggers stay, and the inputs default to empty so the
+existing path's behavior is unchanged.
 
-4 stacks per OS family (`ubuntu`, `alpine`) = 8 spawns per push.
+### Earlier iterations of this design (now dropped)
 
-We're explicitly **not** building the N-1 combinations
-(`(N-1 OS, N-1 Node, N-1 pnpm)` etc.) by default. Per-axis vary
-catches single-axis regressions without the full Cartesian blowup.
-N-2 versions and triple-axis-old combinations are handled by the
-on-demand path (next section).
+- A **per-axis-vary** default matrix building the 2 latest majors of
+  Node/pnpm/OS as 4 stacks per OS family — dropped because the cost
+  is high (8 spawns per push) and on-demand covers the same need
+  reactively.
+- A **`versions.json` source-of-truth file** + Renovate
+  customManagers per channel — dropped along with the multi-stack
+  matrix.
+- A thin **orchestrator workflow** that read `versions.json` and
+  fanned out spawns — no longer needed without the multi-stack
+  matrix.
 
-### 2. On-demand builds via GitHub issue
-
-A consumer who needs `ubuntu 22.04 + node 20 + pnpm 8 + pw 1.50` (or
-any other tuple outside the 4 default stacks) opens an issue from a
-template. A workflow auto-triggers on the issue, validates the
-request, builds the image, pushes it to Docker Hub with the pinned
-tag only (no `:latest`), comments on the issue with the resulting
-tag, closes the issue. Hard per-requester quota: **≤3 builds per
-24h**, enforced by counting `build-request`-labelled issues that user
-opened.
-
-## Tag policy
-
-**Pinned tags only.** No channel-style moving tags (`:node22`,
-`:pnpm9`, `:ubuntu25.04`, `:alpine3.20` etc.) get published — only
-the exact-version tag for each stack. Consumers pin to that exact tag
-and update via Renovate; nothing moves under them.
-
-Tag format: `<os><os_ver>-node<x.y>-pnpm<x.y>-pw<x.y><variant_suffix>`
-where `<variant_suffix>` mirrors the suffix already on the image name
-(`-gyp`, `-sudoer`, `-gyp-sudoer` when both apply).
-
-Examples:
-- `jclaveau/ubuntu-dood-playwright:ubuntu26.04-node24.5-pnpm10.2-pw1.55` (primary)
-- `jclaveau/ubuntu-dood-playwright:ubuntu26.04-node22.18-pnpm10.2-pw1.55` (node-legacy)
-- `jclaveau/ubuntu-dood-playwright-gyp:ubuntu26.04-node24.5-pnpm10.2-pw1.55-gyp`
-- `jclaveau/alpine-dood-playwright-gyp:alpine3.21-node22.22-pnpm9.15-pw1.50-gyp` (on-demand example)
-
-`:latest` continues to point at the **primary stack on main only**
-(existing behavior from the prior-merged promote-gate fix). No other
-moving tag exists.
-
-## Architecture: spawn the workflow per stack
-
-Instead of rewriting the matrix inside `test-and-publish.yml` to fan
-out over N stacks, convert it to a **reusable workflow**
-(`workflow_call`) and **spawn it once per stack** from a thin
-orchestrator. Same builder serves both the default matrix and the
-on-demand path. The internal pipeline stays single-stack and just
-gains parameters.
+## Architecture
 
 ### `test-and-publish.yml` → reusable workflow
 
-Add `workflow_call:` to its `on:` block with inputs:
+Add a `workflow_call:` block alongside the existing triggers. **Every
+input defaults to empty / `true`**, so the existing `push` /
+`pull_request` triggers behave exactly as they do today (the
+Dockerfile's `ARG <X>=<default>` values win):
 
 ```yaml
 on:
-  push: { branches: [main] }  # kept as a fallback (see "Self-trigger" below)
-  pull_request: {}
+  push: { branches: [main] }    # unchanged
+  pull_request: {}              # unchanged
   workflow_call:
     inputs:
-      os:             { type: string,  required: true }   # ubuntu | alpine
-      os_version:     { type: string,  required: true }   # 26.04 | 3.21 | …
-      node_version:   { type: string,  required: true }
-      pnpm_version:   { type: string,  required: true }
-      pw_version:     { type: string,  required: true }
-      stack:          { type: string,  required: true }   # primary | node-legacy | pnpm-legacy | os-legacy | on-demand
-      publish_latest: { type: boolean, default: false }
+      os_version:     { type: string,  default: '' }
+      node_version:   { type: string,  default: '' }
+      pnpm_version:   { type: string,  default: '' }
+      pw_version:     { type: string,  default: '' }
+      stack:          { type: string,  default: 'default' }   # 'default' | 'on-demand'
+      publish_latest: { type: boolean, default: true }
 ```
 
-Internal changes:
+Internal changes (small, mostly mechanical):
 
-- The existing `matrix: os: [ubuntu, alpine]` collapses to
-  `os: [${{ inputs.os }}]`. Same code path, one cell per spawn.
-- `inputs.node_version` / `pnpm_version` / `pw_version` /
-  `os_version` flow through `build-layer` as `--build-arg`s. Requires
-  adding a `build_args:` input to the composite (small change).
-- `ubuntu-gha-tools/Dockerfile` + `alpine-gha-tools/Dockerfile` switch
-  to `ARG OS_VERSION; FROM …/ubuntu:${OS_VERSION}`.
-- The `versions` job (post-build `docker run … node -v` extractor)
-  goes away. The pinned tag is composed from `inputs.*` plus the
-  variant suffix:
+- `build-layer` composite gains a `build_args:` input. The
+  test-and-publish jobs forward each non-empty `inputs.*` as
+  `--build-arg KEY=VAL`. Empty → the Dockerfile `ARG` default wins.
+- `ubuntu-gha-tools/Dockerfile` + `alpine-gha-tools/Dockerfile`
+  switch to `ARG OS_VERSION=<current>` + `FROM …:${OS_VERSION}`.
+  Default preserved → no per-push behavior change.
+- The pinned tag composition stays where it is (the `versions` job
+  in test-and-publish, which `docker run`s the built image to read
+  versions) — works for both the default and on-demand paths, since
+  the built image's actual versions are what get tagged either way.
+- Pinned tag format gains the **variant suffix** (`-gyp`, `-sudoer`,
+  `-gyp-sudoer`) extracted from the image variant name. Applies to
+  both default and on-demand paths for consistency. Example:
+  `jclaveau/alpine-dood-playwright-gyp:alpine3.21-node22.22-pnpm9.15-pw1.50-gyp`.
+  Light retrocompat impact on anyone pinned to the old gyp/sudoer
+  tag without the suffix (both flavors are recent).
+- `promote` emits `:latest` iff `inputs.publish_latest == true`. On
+  the push/PR path that's the default → unchanged. On-demand passes
+  `false` → only the pinned tag is published, never `:latest`.
 
-  ```bash
-  case "${IMAGE_NAME}" in
-    *-gyp-sudoer) SUFFIX=-gyp-sudoer ;;
-    *-gyp)        SUFFIX=-gyp ;;
-    *-sudoer)     SUFFIX=-sudoer ;;
-    *)            SUFFIX= ;;
-  esac
-  TAG="${OS}${OS_VERSION}-node${NODE_MAJ_MIN}-pnpm${PNPM_MAJ_MIN}-pw${PW_MAJ_MIN}${SUFFIX}"
-  ```
-
-- `promote` publishes only the pinned tag. `:latest` is emitted iff
-  `inputs.publish_latest == true` (so non-primary spawns don't fight
-  over it).
-
-### `build-default-matrix.yml` — orchestrator (new)
-
-```yaml
-on:
-  push: { branches: [main] }
-  pull_request: {}
-
-jobs:
-  read-versions:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: matrix
-        run: |
-          M=$(jq -c '{include: [
-            {os:"ubuntu", os_version:.ubuntu.current,  node:.node.current,  pnpm:.pnpm.current,  pw:.playwright, stack:"primary",     publish_latest:true},
-            {os:"ubuntu", os_version:.ubuntu.current,  node:.node.previous, pnpm:.pnpm.current,  pw:.playwright, stack:"node-legacy", publish_latest:false},
-            {os:"ubuntu", os_version:.ubuntu.current,  node:.node.current,  pnpm:.pnpm.previous, pw:.playwright, stack:"pnpm-legacy", publish_latest:false},
-            {os:"ubuntu", os_version:.ubuntu.previous, node:.node.current,  pnpm:.pnpm.current,  pw:.playwright, stack:"os-legacy",   publish_latest:false}
-            # 4 alpine cells mirror the above
-          ]}' versions.json)
-          echo "matrix=$M" >> "$GITHUB_OUTPUT"
-
-  call-test-and-publish:
-    needs: read-versions
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.read-versions.outputs.matrix) }}
-    uses: ./.github/workflows/test-and-publish.yml
-    secrets: inherit
-    with:
-      os:             ${{ matrix.os }}
-      os_version:     ${{ matrix.os_version }}
-      node_version:   ${{ matrix.node }}
-      pnpm_version:   ${{ matrix.pnpm }}
-      pw_version:     ${{ matrix.pw }}
-      stack:          ${{ matrix.stack }}
-      publish_latest: ${{ matrix.publish_latest }}
-```
-
-Matrix-driven reusable workflow calls have been GA in GHA since 2022.
-The 8 spawns run as separate workflow runs — each visible in the
-Actions tab, retryable independently without rerunning siblings.
-
-### `on-demand-build.yml` — issue-triggered (new)
-
-Same reusable workflow, single spawn per issue:
+### `on-demand-build.yml` (new)
 
 ```yaml
 on:
@@ -205,11 +120,10 @@ jobs:
     uses: ./.github/workflows/test-and-publish.yml
     secrets: inherit
     with:
-      os:             ${{ needs.prepare.outputs.os }}
       os_version:     ${{ needs.prepare.outputs.os_version }}
-      node_version:   ${{ needs.prepare.outputs.node }}
-      pnpm_version:   ${{ needs.prepare.outputs.pnpm }}
-      pw_version:     ${{ needs.prepare.outputs.pw }}
+      node_version:   ${{ needs.prepare.outputs.node_version }}
+      pnpm_version:   ${{ needs.prepare.outputs.pnpm_version }}
+      pw_version:     ${{ needs.prepare.outputs.pw_version }}
       stack:          on-demand
       publish_latest: false
 
@@ -221,27 +135,13 @@ jobs:
       - …  # success: comment pinned tag + close; failure: comment logs + label build-failed
 ```
 
-### Self-trigger compatibility
-
-`test-and-publish.yml` keeps its `push`/`pull_request` triggers as a
-fallback (e.g. ad-hoc debugging, `act` runs). When the trigger is not
-`workflow_call`, a leading `defaults` job populates the inputs from
-`versions.json`'s `current` fields + `stack: 'primary'`. A no-arg
-manual run still works.
-
-Alternative considered: drop the triggers from `test-and-publish.yml`
-entirely, so only the orchestrator and on-demand workflows ever call
-it. Cleaner separation but loses the ad-hoc-trigger affordance. The
-plan keeps the fallback for now and removes later if it turns out
-unused.
-
-## Issue template
+### Issue template
 
 `.github/ISSUE_TEMPLATE/build-request.yml`:
 
 ```yaml
 name: Build request (specific version combo)
-description: Request a build of a specific version tuple outside the default matrix
+description: Request a build of a specific version tuple
 title: "[build] <os> <os_ver> + <variant> + ..."
 labels: ["build-request"]
 body:
@@ -292,136 +192,68 @@ body:
 ```
 
 `labels: [build-request]` auto-applies the label so the workflow's
-`if:` filter matches without manual triage.
+`if:` filter fires.
 
-## versions.json
+## Tag policy
 
-```json
-{
-  "ubuntu":     { "current": "26.04",  "previous": "25.04" },
-  "alpine":     { "current": "3.21",   "previous": "3.20" },
-  "node":       { "current": "24.5.0", "previous": "22.18.0" },
-  "pnpm":       { "current": "10.2.0", "previous": "9.15.3" },
-  "playwright": "1.55.0"
-}
-```
+**Pinned tags only.** No channel-style moving tags (`:node22`,
+`:pnpm9`, `:ubuntu25.04`, `:alpine3.20`). Consumers pin to the exact
+tag they want; nothing moves under them.
 
-Each field is its own Renovate customManager target. `previous`
-fields are locked to their major via packageRule `allowedVersions`
-(`>=22 <23`, `>=9 <10`, etc.). When a `current` major bumps, the
-`previous` value AND its `allowedVersions` range shift up one notch
-manually — a one-shot move documented in `renovate.json` as a comment.
-
-OS semantics: "latest 2 tags of each", incl. interim Ubuntu releases
-(25.04, 26.04). The choice is to track tag movement rather than LTS
-status, so a Renovate PR opens within ~hours of an interim Ubuntu
-release.
-
-## Renovate changes
-
-Drop the 4 existing single-ARG customManagers (the Dockerfile `ARG`
-lines stop being authoritative — only `versions.json` is). Add new
-customManagers — one per `versions.json` channel field — each
-regex-matching its own line with named-group `currentValue`
-extraction. Per-channel packageRule `allowedVersions` constraints
-lock each `previous` field to its major.
-
-Keep `extends`, `pinDigests`, `schedule`, `automerge`,
-`prHourlyLimit`, `prConcurrentLimit` unchanged. Keep the existing
-`nektos/act` customManager.
+`:latest` continues to point at the primary stack on main, same as
+today (default-path push with `publish_latest: true`).
 
 ## Phasing
 
-Smaller PRs, orchestrator-first:
+1. **Phase 1 — `test-and-publish.yml` reusable + Dockerfile ARGs.**
+   Add `workflow_call:` with inputs (defaults preserve today's
+   behavior). Add `build_args:` to `build-layer`. Switch the two
+   gha-tools Dockerfiles to `ARG OS_VERSION`. Add variant suffix to
+   the pinned tag. Direct push/PR runs produce the same images as
+   today (verified via manifest digest match for non-gyp variants).
 
-1. **Phase 1 — make `test-and-publish.yml` reusable (no behavior change).**
-   Add `workflow_call:` with inputs (defaulting to current
-   single-stack values via a `defaults` job for the existing
-   `push`/`pull_request` triggers). Add `build_args:` to `build-layer`.
-   Switch the two gha-tools Dockerfiles to `ARG OS_VERSION`. Collapse
-   the inner `os` matrix. Everything still builds the same single
-   stack. Reviewable in isolation.
-
-2. **Phase 2 — orchestrator + versions.json.** Add `versions.json`
-   (current versions only, no `previous` yet). Add
-   `build-default-matrix.yml` reading it and calling test-and-publish
-   once with `stack: 'primary'`. Move the `push`/`pull_request`
-   triggers off `test-and-publish.yml` to the orchestrator. Still one
-   spawn per push. Input-gate `:latest` (only on
-   `publish_latest: true`). Pinned tag includes the variant suffix.
-
-3. **Phase 3 — populate legacy stacks.** Add `previous` channels to
-   `versions.json` (Node 22.18, pnpm 9.15, ubuntu 25.04, alpine 3.20).
-   Update orchestrator matrix to spawn all 4 stacks per OS family.
-   Update `renovate.json` customManagers + packageRule
-   `allowedVersions` for `versions.json`. First push with the full
-   8-spawn fleet. Big-impact PR — observe the first run.
-
-4. **Phase 4 — on-demand workflow.** Add
+2. **Phase 2 — issue template + on-demand workflow.** Add
    `.github/ISSUE_TEMPLATE/build-request.yml` and
    `.github/workflows/on-demand-build.yml`. README section
-   documenting the workflow + quota. Reuses Phases 1+2 as-is; only
-   new code is the issue parser + quota check + close/comment logic.
-
-5. **Phase 5 (deferred) — per-stack test coverage policy + sudoer
-   policy.** Decide whether legacy stacks run the full test suite vs
-   smoke-only. Decide whether `-sudoer` builds for non-primary
-   stacks.
+   documenting the on-demand flow + quota.
 
 ## Out of scope
 
-- Per-stack test coverage policy (Phase 5).
-- `-sudoer` flavor coverage for non-primary stacks (Phase 5).
-- "On-demand request matches the default matrix → point at the
-  existing tag" detection in `on-demand-build` (`manifest inspect`
-  precheck already short-circuits exact matches; the missing piece is
-  matching a request to a stack rather than to a specific tag).
-- Channel-style moving tags (`:node22`, `:pnpm9`, `:ubuntu25.04`,
-  `:alpine3.20`) are **out of scope by design**, not deferred — only
-  pinned tags get published. Re-adding them later is a one-step
-  `metadata-action` addition if the call ever comes.
-- Automatic promotion of frequently-requested combos into the default
-  matrix.
-- Concurrency cap on the orchestrator: 8 parallel spawns × today's
-  wall-clock × GHA per-account concurrency limits might queue.
-  Observe in Phase 3.
+- The per-axis-vary multi-stack default matrix (earlier iteration,
+  dropped).
+- A `versions.json` central registry (dropped).
+- An orchestrator workflow (dropped).
+- Channel-style moving tags (`:node22`, `:pnpm9`, etc.) — design
+  decision, not a deferral.
+- Automatic promotion of frequently-requested on-demand combos into
+  the default per-push build.
 
 ## Risks
 
 - **Reusable workflow secrets:** calls don't inherit secrets unless
-  `secrets: inherit` is set. Confirmed used in both orchestrator and
-  on-demand. Without it, the `DOCKERHUB_TOKEN` push fails.
-- **Actions tab clutter:** 8 parallel runs per push. The "Test and
-  Publish" badge in README must repoint to the orchestrator workflow.
-- **`:latest` race:** if two pushes land within the same primary-spawn
-  wall-clock, both try to push `:latest`. Orchestrator concurrency
-  group `build-default-matrix-${{ github.ref }}` with
-  `cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}` (same
-  pattern as the prior-merged Finding #2) serializes main runs.
-- **On-demand wall-clock:** chain build to playwright is 15–30 min;
-  the user might give up. Mitigation: comment on the issue when the
-  `build` job starts.
-- **Docker Hub rate limit:** manifest-inspect precheck has a 100/6h
-  anon limit. Auth with `DOCKERHUB_TOKEN` if needed.
-- **Issue-form parsing:** depends on the form's body layout. Plan uses
-  a small `jq`/`awk` parser rather than a 3rd-party action — avoids
-  the supply-chain risk a pinned `digests` policy can't fully cover.
+  `secrets: inherit` is set. Without it the `DOCKERHUB_TOKEN` push
+  fails.
+- **Variant-suffix retrocompat:** consumers pinned to
+  `…-pw1.50` for a `-gyp` / `-sudoer` variant need to repoint to the
+  new `…-pw1.50-gyp` (resp. `-sudoer`). Both flavors are recent so
+  blast radius is small; call out in release notes.
+- **On-demand wall-clock:** chain-build to playwright takes 15-30
+  min; the user might give up. Mitigation: comment on the issue when
+  the `build` job starts.
+- **Docker Hub manifest-inspect rate limit:** 100/6h anon on the
+  `already_exists` precheck. Auth with `DOCKERHUB_TOKEN` if needed.
+- **Issue-form parsing:** depends on the form's body layout. Plan
+  uses a small `jq`/`awk` parser rather than a 3rd-party action.
 
 ## Open questions for reviewers
 
-1. Is "per-axis vary" (1 + 3 stacks) the right shape, or do we want to
-   start narrower (primary-only) and grow into legacy stacks only when
-   a consumer asks via the on-demand path? I chose per-axis to catch
-   regressions early; the cost is ~4× the build cells.
-2. Should `:latest` move with the primary stack, or should we drop
-   `:latest` entirely to push consumers toward explicit pinning? The
-   plan keeps `:latest` for backwards compatibility but it does create
-   a "what does latest actually mean now" question.
-3. The on-demand quota is "3 builds / 24h per author, counted from
-   `build-request`-labelled issues". Does this feel right, or do we
-   want a different surface (e.g. allowlist of GitHub usernames, or
-   only authenticated consumers via OIDC)?
-4. The Renovate `allowedVersions` ranges are per-major. When a
-   `current` major bumps (e.g. Node 24 → 26), `previous` and the
-   range need a manual shift. Acceptable as a quarterly chore, or do
-   we want a script that does the shift automatically?
+1. Pinned-tag variant suffix — keep (consistent across default +
+   on-demand) or skip on the default path to avoid the retrocompat
+   nibble? Current plan: keep.
+2. On-demand quota — 3 builds/24h per author, counted from
+   `build-request`-labelled issues opened by that author. Sensible,
+   or do we want a different gate (allowlist, OIDC, larger quota)?
+3. If `test-and-publish.yml` keeps its `push` / `pull_request`
+   triggers AND becomes a reusable workflow, does anyone want to
+   drop the direct triggers once the on-demand path lands? Current
+   plan: keep, both paths coexist; drop later if unused.
