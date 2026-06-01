@@ -2,13 +2,10 @@ name: Test and Publish
 
 on:
   push:
-    # branches: [ main ]
-    # paths:
-    #   - 'base/**'
-    #   - 'pnpm/**'
-    #   - 'playwright/**'
-    #   - 'dind/**'
-    #   - '.github/workflows/test-and-publish.yml'
+    # Limit push to main: PRs target main and fire `pull_request` already, so
+    # leaving this unfiltered ran the whole workflow twice per PR commit (once
+    # for push, once for pull_request) — pure CI waste, no extra signal.
+    branches: [ main ]
   pull_request:
     branches: [ main ]
   # schedule:
