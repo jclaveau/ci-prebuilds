@@ -21,7 +21,7 @@ RUN echo "Create the docker group with GitHub's host GID *before* installing doc
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
        | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null \
     && sudo apt-get update \
-    && VERSION_STRING="$(apt-cache madison docker-ce | awk '{print $3}' | grep -m1 "${DOCKER_VERSION}")" \
+    && VERSION_STRING="$(apt-cache madison docker-ce | awk '{print $3}' | grep -m1 -E "[:=~-]${DOCKER_VERSION}([-~]|$)")" \
     && sudo apt-get install -y \
          docker-ce="$VERSION_STRING" \
          docker-ce-cli="$VERSION_STRING" \
