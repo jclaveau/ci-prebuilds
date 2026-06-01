@@ -10,8 +10,11 @@ jobs:
     steps:
       - run: id
       # Without the wrapper, `whoami` errors with `cannot find name for user ID 5000`.
-      - name: whoami before wrapper (expect failure)
-        run: whoami || echo "whoami failed before wrapper (expected)"
+      - name: whoami before wrapper (must fail — getpwuid lookup for synthesised UID)
+        # Negation guards against a future libc making whoami fall back to $USER —
+        # that would silently turn this baseline green even when nss_wrapper is broken.
+        run: |
+          whoami && { echo "FAIL: expected getpwuid lookup to fail before nss-wrapper-setup runs"; exit 1; } || true
       - name: nss_wrapper passwd synthesis
         run: |
           . /usr/local/bin/nss-wrapper-setup
