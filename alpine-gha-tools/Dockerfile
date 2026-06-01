@@ -117,7 +117,12 @@ SCRIPT
 chmod 0755 /usr/local/bin/nss-wrapper-setup
 EOF
 
-USER runner
+ENV RUNNER_TOOL_CACHE=/opt/hostedtoolcache
 
-# Github overrides workdir and entrypoint during `docker create`; this CMD is the only way to set PWD.
-CMD ["cd", "$PWD"]
+# Match the hosted runner's default cwd. GHA's `container:` overrides via
+# `docker exec -w $GITHUB_WORKSPACE`, and act --bind sets its own workdir
+# — both ignore this. Only affects `docker run` use (interactive sanity
+# checks, dood bind-mode when the consumer hasn't passed `-w` explicitly).
+WORKDIR /home/runner
+USER runner
+# Default CMD inherits from the base image (sh on alpine).
