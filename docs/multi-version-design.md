@@ -28,19 +28,6 @@ spawn it with specific version inputs. Its existing `push` /
 `pull_request` triggers stay, and the inputs default to empty so the
 existing path's behavior is unchanged.
 
-### Earlier iterations of this design (now dropped)
-
-- A **per-axis-vary** default matrix building the 2 latest majors of
-  Node/pnpm/OS as 4 stacks per OS family — dropped because the cost
-  is high (8 spawns per push) and on-demand covers the same need
-  reactively.
-- A **`versions.json` source-of-truth file** + Renovate
-  customManagers per channel — dropped along with the multi-stack
-  matrix.
-- A thin **orchestrator workflow** that read `versions.json` and
-  fanned out spawns — no longer needed without the multi-stack
-  matrix.
-
 ## Architecture
 
 ### `test-and-publish.yml` → reusable workflow
@@ -219,10 +206,6 @@ today (default-path push with `publish_latest: true`).
 
 ## Out of scope
 
-- The per-axis-vary multi-stack default matrix (earlier iteration,
-  dropped).
-- A `versions.json` central registry (dropped).
-- An orchestrator workflow (dropped).
 - Channel-style moving tags (`:node22`, `:pnpm9`, etc.) — design
   decision, not a deferral.
 - Automatic promotion of frequently-requested on-demand combos into
