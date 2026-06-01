@@ -139,9 +139,12 @@ jobs:
               "dind-playwright-gyp": ("playwright", "dind-pnpm-gyp"),
           }
           # `-hardened` overlays: rebuild when harden/ changes OR when their non-hardened
-          # parent rebuilds. Only the dood family + gha-tools get hardened; dind needs
-          # start-dockerd's sudo and is excluded (tracked as a follow-up).
-          HARDENABLE = [s for s in GRAPH if s == "gha-tools" or s.startswith("dood")]
+          # parent rebuilds. Every promoted image (gha-tools + dood-family + dind-family)
+          # gets hardened. The dind family's start-dockerd uses a narrow per-binary
+          # sudoers entry (installed by dind/Dockerfile, survives harden/) so the init
+          # dance still works without granting broad NOPASSWD. The unpublished `docker`
+          # intermediate is the only image not hardened.
+          HARDENABLE = [s for s in GRAPH if s != "docker"]
           for suffix in HARDENABLE:
               GRAPH[f"{suffix}-hardened"] = ("harden", suffix)
           cache = {}
@@ -496,14 +499,16 @@ jobs:
 
 
   # ----------------------------------------------------------------------------
-  # `-hardened` flavor: thin overlay on every promoted dood-family layer (and
-  # gha-tools) that strips runner's NOPASSWD sudoers. Runs LAST in the build
-  # pipeline, after every downstream layer is built with sudoers still present
-  # (so each layer's `sudo apt-get install` / `sudo apk add` at build time works).
-  # Published as `<image>:latest` (default); the unmodified build-chain image
-  # is published as `<image>-sudoer:latest`.
-  # dind family is NOT hardened: start-dockerd needs sudo at runtime; a narrow
-  # per-binary sudoers entry in dind/Dockerfile is a separate follow-up.
+  # `-hardened` flavor: thin overlay on every promoted layer that strips runner's
+  # NOPASSWD sudoers. Runs LAST in the build pipeline, after every downstream layer
+  # is built with sudoers still present (so each layer's `sudo apt-get install` /
+  # `sudo apk add` at build time works).
+  # Published as `<image>:latest` (default); the unmodified build-chain image is
+  # published as `<image>-sudoer:latest`.
+  # The dind family's start-dockerd uses a NARROW per-binary sudoers entry
+  # (installed by dind/Dockerfile, survives this overlay because it's at
+  # /etc/sudoers.d/dind not /etc/sudoers.d/runner) so the init dance still works
+  # without granting broad NOPASSWD.
   # ----------------------------------------------------------------------------
   build-hardened-variants:
     runs-on: ubuntu-latest
@@ -512,11 +517,17 @@ jobs:
       - changes
       - build-gha-tools
       - build-dood
+      - build-dind
       - build-node-dood
+      - build-node-dind
       - build-pnpm-dood
+      - build-pnpm-dind
       - build-pnpm-gyp-dood
+      - build-pnpm-gyp-dind
       - build-playwright-dood
+      - build-playwright-dind
       - build-playwright-gyp-dood
+      - build-playwright-gyp-dind
     permissions:
       contents: read
       packages: write
@@ -527,11 +538,17 @@ jobs:
         image:
           - gha-tools
           - dood
+          - dind
           - dood-node
+          - dind-node
           - dood-pnpm
+          - dind-pnpm
           - dood-pnpm-gyp
+          - dind-pnpm-gyp
           - dood-playwright
+          - dind-playwright
           - dood-playwright-gyp
+          - dind-playwright-gyp
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -652,6 +669,51 @@ jobs:
           docker run --rm "$IMG" sh -c '! sudo -n true 2>/dev/null' \
             || { echo "FAIL: sudo unexpectedly succeeded on the -hardened image"; exit 1; }
           echo "OK: sudo correctly fails on -hardened (becomes <image>:latest)"
+
+  test-dind-hardened-effects:
+    # Sanity-check the hardened-dind contract: the runner sudoers is stripped
+    # (so broad NOPASSWD is gone) but the narrow /etc/sudoers.d/dind survives
+    # the overlay, so start-dockerd's specific commands still work. We assert
+    # the file presence + content + that broad sudo is denied. The full
+    # start-dockerd flow is implicit (any breakage would surface elsewhere).
+    runs-on: ubuntu-latest
+    needs: [github-context, build-hardened-variants]
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu, alpine]
+    env:
+      IMG: ghcr.io/jclaveau/${{ matrix.os }}-dind-hardened:${{ needs.github-context.outputs.build_tag }}
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: runner sudoers IS stripped (broad NOPASSWD gone)
+        run: |
+          docker run --rm --entrypoint sh "$IMG" -c '! test -f /etc/sudoers.d/runner' \
+            && echo "OK: /etc/sudoers.d/runner is absent" \
+            || { echo "FAIL: /etc/sudoers.d/runner still present"; exit 1; }
+      - name: dind sudoers IS present (narrow per-binary grant survives the overlay)
+        run: |
+          docker run --rm --entrypoint sh "$IMG" -c 'test -f /etc/sudoers.d/dind && cat /etc/sudoers.d/dind' \
+            | grep -F 'dockerd' && echo "OK"
+      - name: runner can NOT sudo apt-get / apk (broad install denied)
+        run: |
+          docker run --rm --entrypoint sh "$IMG" -c '
+            ! sudo -n apt-get install -y curl 2>/dev/null \
+            && ! sudo -n apk add curl 2>/dev/null \
+            && echo OK
+          '
+      - name: runner CAN invoke the narrow dind commands
+        # `sudo -n -l` lists allowed NOPASSWD commands. The narrow entry should appear.
+        run: |
+          docker run --rm --entrypoint sh "$IMG" -c 'sudo -n -l' \
+            | tee /tmp/sudo-l.txt
+          grep -F '/usr/sbin/dockerd' /tmp/sudo-l.txt && echo "OK: dockerd allowed"
+          grep -F '/var/run/dind.sock' /tmp/sudo-l.txt && echo "OK: dind.sock chown/chmod allowed"
 
   test-dood-dind-usage:
     runs-on: ubuntu-latest
@@ -1107,21 +1169,12 @@ jobs:
       matrix:
         os: [ubuntu, alpine]
         image: [gha-tools, dood, dind, dood-node, dind-node, dood-pnpm, dind-pnpm, dood-pnpm-gyp, dind-pnpm-gyp, dood-playwright, dind-playwright, dood-playwright-gyp, dind-playwright-gyp]
-        # '' = default (hardened where available) → publishes to `<image>:latest`.
-        # '-sudoer' = build-chain image (runner sudoers intact) → `<image>-sudoer:latest`.
+        # '' = default (hardened — runner has no broad NOPASSWD sudo)
+        #   → publishes to `<image>:latest`.
+        # '-sudoer' = build-chain image (runner NOPASSWD: ALL intact)
+        #   → publishes to `<image>-sudoer:latest`.
         flavor: ['', '-sudoer']
-        exclude:
-          # dind family has no -hardened source (start-dockerd needs runtime sudo),
-          # so it ships only `:latest` from the build-chain image. Skip the
-          # -sudoer flavor to avoid duplicating the same digest under two tags.
-          # Hardening dind = follow-up (needs a narrow per-binary sudoers entry).
-          - {image: dind, flavor: '-sudoer'}
-          - {image: dind-node, flavor: '-sudoer'}
-          - {image: dind-pnpm, flavor: '-sudoer'}
-          - {image: dind-pnpm-gyp, flavor: '-sudoer'}
-          - {image: dind-playwright, flavor: '-sudoer'}
-          - {image: dind-playwright-gyp, flavor: '-sudoer'}
-    needs: [github-context, versions, build-hardened-variants, test-gha-tools-usage, test-gha-tools-effects, test-dood-dind-usage, test-dood-dind-effects, test-dood-dind-act, test-node-usage, test-pnpm-usage, test-pnpm-gyp-usage, test-playwright-usage]
+    needs: [github-context, versions, build-hardened-variants, test-gha-tools-usage, test-gha-tools-effects, test-dind-hardened-effects, test-dood-dind-usage, test-dood-dind-effects, test-dood-dind-act, test-node-usage, test-pnpm-usage, test-pnpm-gyp-usage, test-playwright-usage]
     steps:
       - uses: docker/setup-buildx-action@v3
       # GHCR login to READ the tested source image.
@@ -1136,23 +1189,16 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      # Resolve the GHCR source image: for the default (hardened) flavor on
-      # hardenable images, source from `<image>-hardened`; otherwise (sudoer
-      # flavor, OR dind), source from the build-chain `<image>`.
+      # Resolve the GHCR source image: default flavor sources from the
+      # `<image>-hardened` overlay output; sudoer flavor sources from the
+      # unmodified build-chain `<image>`.
       - id: src
         run: |
-          case "${{ matrix.image }}" in
-            dind*)
-              SRC="${{ matrix.image }}"
-              ;;
-            *)
-              if [ "${{ matrix.flavor }}" = "" ]; then
-                SRC="${{ matrix.image }}-hardened"
-              else
-                SRC="${{ matrix.image }}"
-              fi
-              ;;
-          esac
+          if [ "${{ matrix.flavor }}" = "" ]; then
+            SRC="${{ matrix.image }}-hardened"
+          else
+            SRC="${{ matrix.image }}"
+          fi
           echo "src=$SRC" >> "$GITHUB_OUTPUT"
       # Compose the version-pinned tag for this image from the minors read by `versions`.
       - id: pin

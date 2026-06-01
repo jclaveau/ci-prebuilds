@@ -88,9 +88,11 @@ hosted `ubuntu-latest`" muscle memory.
 For local `act --bind` use on untrusted code, prefer **rootless docker** (the host-filesystem
 threat isn't solved by the in-container sudo strip; rootless adds the kernel-level guard).
 
-**Exception**: `dind` family images ship **only** `:latest` (no `-sudoer` variant) because
-`start-dockerd` needs runtime sudo to boot the inner daemon. A narrow per-binary sudoers entry
-that allows just `dockerd`/`chown`/`chmod` is tracked as a follow-up.
+**`dind` exception (narrow sudoers, not broad NOPASSWD)**: the dind family's `start-dockerd`
+needs to invoke `sudo dockerd` + `sudo chown root:docker /var/run/dind.sock` + `sudo chmod 660
+/var/run/dind.sock` at runtime. The hardened dind images keep a **narrow sudoers entry**
+(`/etc/sudoers.d/dind`) allowing **only** those three commands. Everything else (`sudo apt-get
+install …`, `sudo -i`, etc.) is denied as on the dood family.
 
 > **Breaking change vs prior `:latest`**: pre-overlay-era `:latest` granted `NOPASSWD: ALL` to
 > `runner`. If your workflow runs `sudo apt-get install …` mid-job, switch to
