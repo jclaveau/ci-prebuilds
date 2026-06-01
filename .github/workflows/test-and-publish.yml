@@ -54,6 +54,24 @@ jobs:
       - id: extract_docker_group_id
         run: 'echo "docker_group_id=$(getent group docker | cut -d: -f3)" >> "$GITHUB_OUTPUT"'
 
+      # Structural lint: any smoke YAML that issues a `docker` command must bind the
+      # host socket. Without it, act-on-GHA's inherited bridge gives a false-positive
+      # pass while a real GHA `container:` consumer would fail. Catches the regression
+      # at YAML-edit time rather than at smoke-run time.
+      - name: Lint — smokes that use docker must bind /var/run/docker.sock
+        run: |
+          fail=0
+          for f in tests/act/smoke-dood*.yml; do
+            uses_docker=$(grep -cE '^\s*-?\s*(name:.*|run:.*)?docker (info|run|build|compose|ps|inspect)' "$f" || true)
+            has_sock=$(grep -c '/var/run/docker.sock' "$f" || true)
+            if [ "$uses_docker" -gt 0 ] && [ "$has_sock" -eq 0 ]; then
+              echo "FAIL: $f issues a docker command but does not bind /var/run/docker.sock"
+              echo "      Without the bind, act-on-GHA's inherited bridge gives a false-positive pass."
+              fail=1
+            fi
+          done
+          [ "$fail" = 0 ] || exit 1
+
 
   # ----------------------------------------------------------------------------
   # Change detection: a layer is (re)built iff its own context dir OR any ancestor changed, or the shared

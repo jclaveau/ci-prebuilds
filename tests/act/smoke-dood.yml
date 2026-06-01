@@ -9,7 +9,24 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ${{ vars.RUNNER_IMAGE }}
-      options: --privileged
+      # /var/run/docker.sock bind is the dood contract — without it act-on-GHA's
+      # inherited bridge would give a false-positive pass while the published image
+      # silently failed on a real GHA `container:` job. The static lint in
+      # test-and-publish.yml (github-context job) enforces that every smoke-dood*.yml
+      # references this path so the regression class can't sneak back in.
+      options: --privileged --volume /var/run/docker.sock:/var/run/docker.sock
     steps:
-      - run: docker info
+      - name: docker daemon reachable via the bind-mounted host socket
+        run: docker info
+      - name: docker daemon is the host daemon (not act's internal bridge)
+        # If the bind regresses (or someone copies this smoke without it), `docker info`
+        # might still succeed against act's inherited bridge. Asserting a host-side
+        # field — the storage driver — proves we're talking to the bind-mounted daemon.
+        run: |
+          driver=$(docker info --format '{{ .Driver }}')
+          echo "storage driver=$driver"
+          case "$driver" in
+            overlay2|fuse-overlayfs|btrfs|zfs) echo "OK: looks like a real host daemon";;
+            *) echo "FAIL: storage driver $driver not expected from a host docker"; exit 1;;
+          esac
       - run: docker run --rm hello-world
