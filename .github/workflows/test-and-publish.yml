@@ -536,6 +536,51 @@ jobs:
           check la 'ls -A'
           check l  'ls -CF'
 
+  test-gha-tools-effects:
+    # Asserts the image's RUNTIME defaults (WORKDIR, USER, env, dir perms) that GHA's
+    # `container:` overrides hide from `test-gha-tools-usage` — i.e. what consumers see
+    # under act, local `docker run`, dood --bind, etc. Mirrors the usage/effects split
+    # already used for dood/dind.
+    runs-on: ubuntu-latest
+    needs: [github-context, build-gha-tools]
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu, alpine]
+    env:
+      IMG: ghcr.io/jclaveau/${{ matrix.os }}-gha-tools:${{ needs.github-context.outputs.build_tag }}
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Default WORKDIR mimics hosted-runner home
+        run: |
+          cwd=$(docker run --rm "$IMG" pwd)
+          echo "pwd=$cwd"
+          test "$cwd" = "/home/runner"
+      - name: Default USER is runner (uid 1001)
+        run: |
+          uid=$(docker run --rm "$IMG" id -u)
+          echo "uid=$uid"
+          test "$uid" = "1001"
+      - name: RUNNER_TOOL_CACHE env baked in
+        run: |
+          v=$(docker run --rm "$IMG" sh -c 'echo "$RUNNER_TOOL_CACHE"')
+          echo "RUNNER_TOOL_CACHE=$v"
+          test "$v" = "/opt/hostedtoolcache"
+      - name: $RUNNER_TOOL_CACHE writable as default user
+        run: docker run --rm "$IMG" sh -c 'touch "$RUNNER_TOOL_CACHE/probe" && echo OK'
+      - name: $RUNNER_TOOL_CACHE writable under host-UID override (dood bind recipe)
+        # An arbitrary host UID writes via the runner supplementary group + sgid 2775.
+        run: docker run --rm --user 5000:5000 --group-add 1001 "$IMG" sh -c 'touch "$RUNNER_TOOL_CACHE/probe-5000" && echo OK'
+      - name: /home/runner writable under host-UID override
+        # WORKDIR is /home/runner; chmod 0775 + runner group must keep it writable for UID 5000.
+        # Load-bearing for the dood `--bind --user $HOST_UID --group-add 1001` recipe.
+        run: docker run --rm --user 5000:5000 --group-add 1001 "$IMG" sh -c 'touch ./probe && echo OK'
+
   test-dood-dind-usage:
     runs-on: ubuntu-latest
     needs: [github-context, build-dood, build-dind]
@@ -980,7 +1025,7 @@ jobs:
     # publishing tags. Matches the idiom in playwright-alpine-browsers.yml.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    needs: [github-context, versions, test-gha-tools-usage, test-dood-dind-usage, test-dood-dind-effects, test-dood-dind-act, test-node-usage, test-pnpm-usage, test-pnpm-gyp-usage, test-playwright-usage]
+    needs: [github-context, versions, test-gha-tools-usage, test-gha-tools-effects, test-dood-dind-usage, test-dood-dind-effects, test-dood-dind-act, test-node-usage, test-pnpm-usage, test-pnpm-gyp-usage, test-playwright-usage]
     permissions:
       contents: read
       packages: write
