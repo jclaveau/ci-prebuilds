@@ -69,6 +69,33 @@ plus a **version-pinned** tag capturing the OS + tool minors, e.g.
 See [dood/README.md](dood/README.md) and [dind/README.md](dind/README.md) for the runtime details and
 `docker compose` usage examples.
 
+## Hardened (default) and `-sudoer` flavors
+
+Most published images ship in two flavors. The contract is: **pre-installed deps are the value
+prop; runtime sudo isn't part of that contract.** Consumers who need ad-hoc system installs at
+runtime pull the `-sudoer` variant explicitly.
+
+| Tag | Contract | When to pull |
+| --- | --- | --- |
+| `<image>:latest` | **Default — hardened.** Runner has **no NOPASSWD sudo** at runtime; build-time sudoers are stripped via a final overlay. | Production CI on a frozen toolkit. |
+| `<image>-sudoer:latest` | Same image with `%runner ALL=(ALL) NOPASSWD:ALL` retained. | Dev / experimentation that needs ad-hoc `sudo apt-get install …`. |
+
+The hardened default narrows the blast radius of a compromised transitive dep (a malicious
+`pnpm install` postinstall can no longer `sudo -i` to root inside the container). The `-sudoer`
+flavor exists so consumers don't have to build a downstream image just to keep the "works like
+hosted `ubuntu-latest`" muscle memory.
+
+For local `act --bind` use on untrusted code, prefer **rootless docker** (the host-filesystem
+threat isn't solved by the in-container sudo strip; rootless adds the kernel-level guard).
+
+**Exception**: `dind` family images ship **only** `:latest` (no `-sudoer` variant) because
+`start-dockerd` needs runtime sudo to boot the inner daemon. A narrow per-binary sudoers entry
+that allows just `dockerd`/`chown`/`chmod` is tracked as a follow-up.
+
+> **Breaking change vs prior `:latest`**: pre-overlay-era `:latest` granted `NOPASSWD: ALL` to
+> `runner`. If your workflow runs `sudo apt-get install …` mid-job, switch to
+> `<image>-sudoer:latest` (one-line change) or move the install into a downstream Dockerfile.
+
 ## Todo
 - Check [the issues](https://github.com/jclaveau/github-action-container-images/issues)
 
