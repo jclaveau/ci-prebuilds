@@ -697,8 +697,11 @@ jobs:
             && echo "OK: /etc/sudoers.d/runner is absent" \
             || { echo "FAIL: /etc/sudoers.d/runner still present"; exit 1; }
       - name: dind sudoers IS present (narrow per-binary grant survives the overlay)
+        # Read as uid 0: /etc/sudoers.d/dind is mode 0440 root:root (standard sudoers
+        # mode) so the default `runner` can't cat it. We're verifying the file's
+        # build-time content survived the harden overlay, not runtime read access.
         run: |
-          docker run --rm --entrypoint sh "$IMG" -c 'test -f /etc/sudoers.d/dind && cat /etc/sudoers.d/dind' \
+          docker run --rm --user 0 --entrypoint sh "$IMG" -c 'test -f /etc/sudoers.d/dind && cat /etc/sudoers.d/dind' \
             | grep -F 'dockerd' && echo "OK"
       - name: runner can NOT sudo apt-get / apk (broad install denied)
         run: |
