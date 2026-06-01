@@ -1,0 +1,77 @@
+name: Playwright Alpine Browsers — Prebuilt Base (one-shot ~3h FF compile)
+
+# Producer workflow for the prebuilt-base image: a heavy, ONCE-per-upstream-FF-
+# revision build that ships the full /work/firefox-src tree + populated obj/
+# dir. The iteration workflow (playwright-alpine-browsers.yml with
+# use_prebuilt=true) consumes it as FROM, turning ~3h cold builds into ~5 min
+# incremental rebuilds.
+#
+# Manual dispatch only — at ~3h per run this is too expensive to fire on push.
+
+on:
+  workflow_dispatch:
+
+# Own concurrency group so a prebuilt-base run never collides with the regular
+# iteration workflow. Never cancel an in-flight 3h build.
+concurrency:
+  group: playwright-alpine-browsers-prebuilt-base-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300   # 5h ceiling — one-shot cold compile is ~3h.
+    outputs:
+      pw_version: ${{ steps.pins.outputs.pw_version }}
+      firefox_revision: ${{ steps.pins.outputs.firefox_revision }}
+      firefox_version: ${{ steps.pins.outputs.firefox_version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Read versions.env into both step env (for shell expansions) and job
+      # outputs (for downstream jobs / publish tags).
+      - id: pins
+        run: |
+          set -a; . playwright/alpine-browsers/versions.env; set +a
+          echo "pw_version=$PW_VERSION" >> "$GITHUB_OUTPUT"
+          # Resolve PW's pinned firefox revision + version from the matching
+          # playwright-core npm package's browsers.json. Single source of truth.
+          BROWSERS_JSON=$(curl -fsSL "https://unpkg.com/playwright-core@${PW_VERSION}/browsers.json")
+          REV=$(jq -r '.browsers[] | select(.name=="firefox") | .revision' <<<"$BROWSERS_JSON")
+          VER=$(jq -r '.browsers[] | select(.name=="firefox") | .browserVersion' <<<"$BROWSERS_JSON")
+          echo "firefox_revision=$REV" >> "$GITHUB_OUTPUT"
+          echo "firefox_version=$VER" >> "$GITHUB_OUTPUT"
+          echo "PW v${PW_VERSION} → firefox revision=${REV} browserVersion=${VER}"
+
+      - name: Free up runner disk (FF source + obj dir is ~15 GB)
+        run: |
+          # Standard GHA hosted-runner cleanup recipe. Frees ~30 GB.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push prebuilt-base image
+        uses: docker/build-push-action@v5
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/Dockerfile.prebuilt-base
+          push: true
+          tags: |
+            ghcr.io/jclaveau/playwright-alpine-browsers:prebuilt-base-ff-${{ steps.pins.outputs.firefox_revision }}
+            ghcr.io/jclaveau/playwright-alpine-browsers:prebuilt-base-ff-latest
+          # Dedicated registry cache for the prebuilt-base lineage — separate
+          # from the iteration workflow's :buildcache to avoid cross-contamination.
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-prebuilt
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-prebuilt,mode=max

@@ -43,6 +43,12 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
+      use_prebuilt:
+        description: 'Use prebuilt-base image (fast iteration; requires prebuilt-base-ff-<rev> to exist on GHCR)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 # Never abort an in-flight 2h build — the cost of restarting outweighs the cost
 # of finishing a stale one.
@@ -105,10 +111,26 @@ jobs:
             type=raw,value=sha-${{ github.sha }}
             type=raw,value=edge,enable=${{ github.event_name != 'pull_request' }}
 
+      # Pick between full cold build (Dockerfile, ~2h) and incremental
+      # iteration FROM the prebuilt-base image (Dockerfile.iter, ~5 min). The
+      # prebuilt-base tag must already exist on GHCR for the FF revision PW
+      # resolved above — it's published by the
+      # playwright-alpine-browsers-prebuilt-base.yml workflow.
+      - id: dockerfile-choice
+        run: |
+          if [ "${{ inputs.use_prebuilt }}" = "true" ]; then
+            echo "file=playwright/alpine-browsers/Dockerfile.iter" >> "$GITHUB_OUTPUT"
+            echo "base=ghcr.io/jclaveau/playwright-alpine-browsers:prebuilt-base-ff-${{ steps.pins.outputs.firefox_revision }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "file=playwright/alpine-browsers/Dockerfile" >> "$GITHUB_OUTPUT"
+            echo "base=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build artifact image
         uses: docker/build-push-action@v5
         with:
           context: playwright/alpine-browsers
+          file: ${{ steps.dockerfile-choice.outputs.file }}
           target: artifact
           # Always push to GHCR so the smoke + promote jobs can pull it. PR
           # builds push under the throwaway sha tag only (no `edge`).
@@ -123,10 +145,14 @@ jobs:
           # Diagnostic experiment flags piped from workflow_dispatch inputs (or
           # repository_dispatch). They become build-args that the Dockerfile's
           # heavy RUN forwards into apply-and-build.sh via env. Default off.
+          # BASE_PREBUILT is empty in the cold-build path (Dockerfile ignores
+          # it); set to the prebuilt-base tag when use_prebuilt=true so
+          # Dockerfile.iter's `FROM ${BASE_PREBUILT}` resolves.
           build-args: |
             PW_JUGGLER_ORDER_FIRST=${{ inputs.juggler_order_first || 'false' }}
             PW_JUGGLER_CATEGORY_RENAME=${{ inputs.juggler_category_rename || 'false' }}
             PW_JUGGLER_INSTRUMENT=${{ inputs.juggler_instrument || 'false' }}
+            BASE_PREBUILT=${{ steps.dockerfile-choice.outputs.base }}
 
       # Tier-1 smoke: the binary self-identifies. Catches build-succeeded-but-
       # binary-broken. We pull just the artifact image and run firefox --version
