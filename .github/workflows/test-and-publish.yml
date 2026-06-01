@@ -753,6 +753,46 @@ jobs:
       - run: pnpm playwright test
         working-directory: playwright
 
+      # Alpine-only: validate the documented `playwright.config.ts` contract from
+      # playwright/README.md. The image installs system Chromium at
+      # /usr/bin/chromium-browser but Playwright doesn't probe for it — vanilla
+      # consumers without the documented launchOptions snippet see "Executable
+      # doesn't exist". This step pins that behavior so we'll know the day
+      # Playwright upstream changes its resolution semantics (e.g. starts
+      # discovering /usr/bin/chromium-browser).
+      - name: Alpine — vanilla config FAILS; documented snippet PASSES
+        if: matrix.os == 'alpine'
+        run: |
+          mkdir -p /tmp/pw-vanilla && cd /tmp/pw-vanilla
+          echo '{"name":"v","version":"1.0.0"}' > package.json
+          pnpm add -D @playwright/test
+
+          # Step 1 — vanilla config: must fail with "Executable doesn't exist"
+          cat > playwright.config.ts <<'TS'
+          import { defineConfig } from '@playwright/test';
+          export default defineConfig({ projects: [{ name: 'chromium' }] });
+          TS
+          cat > example.spec.ts <<'TS'
+          import { test } from '@playwright/test';
+          test('hello', async ({ page }) => { await page.goto('about:blank'); });
+          TS
+          if pnpm playwright test 2>&1 | tee /tmp/pw-out.log | grep -qE "Executable doesn'?t exist"; then
+            echo "OK: vanilla config fails as documented"
+          else
+            cat /tmp/pw-out.log
+            echo "FAIL: expected 'Executable doesn't exist' error with vanilla config"
+            exit 1
+          fi
+
+          # Step 2 — documented snippet (executablePath = /usr/bin/chromium-browser): must pass
+          cat > playwright.config.ts <<'TS'
+          import { defineConfig, devices } from '@playwright/test';
+          export default defineConfig({
+            projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], launchOptions: { executablePath: '/usr/bin/chromium-browser' } } }],
+          });
+          TS
+          pnpm playwright test
+
 
   # ----------------------------------------------------------------------------
   # act: run a tiny workflow through nektos/act using each base image AS the
