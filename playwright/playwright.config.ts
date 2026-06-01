@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { existsSync } from 'node:fs';
 
 /**
  * Read environment variables from file.
@@ -12,10 +13,11 @@ import { defineConfig, devices } from '@playwright/test';
  * See https://playwright.dev/docs/test-configuration.
  */
 
-// On Alpine/musl, Playwright's bundled browsers don't run, so the image sets
-// PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH to the system Chromium and we run Chromium only (there are no
-// official Firefox/WebKit musl builds). Other OSes get the full bundled browser matrix below.
-const systemChromium = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+// On Alpine/musl, Playwright's bundled browsers don't run, so we use the system Chromium installed
+// at /usr/bin/chromium-browser by the alpine-…-playwright Dockerfile (`apk add chromium`). Chromium
+// is the only option (no official Firefox/WebKit musl builds). Other OSes get the full bundled
+// browser matrix below.
+const systemChromium = existsSync('/usr/bin/chromium-browser') ? '/usr/bin/chromium-browser' : undefined;
 
 const projects = systemChromium
   ? [
