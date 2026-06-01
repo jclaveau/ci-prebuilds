@@ -9,6 +9,11 @@ name: Playwright Alpine Browsers — Prebuilt Base (one-shot ~3h FF compile)
 # Manual dispatch only — at ~3h per run this is too expensive to fire on push.
 
 on:
+  # Label-based pull_request trigger registers the workflow with GHA so
+  # workflow_dispatch becomes usable. Add label `build-prebuilt-base` to the
+  # PR to trigger; the if: on the first job ignores any other label.
+  pull_request:
+    types: [labeled]
   workflow_dispatch:
 
 # Own concurrency group so a prebuilt-base run never collides with the regular
@@ -23,6 +28,11 @@ permissions:
 
 jobs:
   build:
+    # Only fire on workflow_dispatch OR when the PR gets labeled
+    # `build-prebuilt-base`. Any other event/label is ignored.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'build-prebuilt-base')
     runs-on: ubuntu-latest
     timeout-minutes: 300   # 5h ceiling — one-shot cold compile is ~3h.
     outputs:
