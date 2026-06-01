@@ -3,9 +3,8 @@ ARG BASE_IMAGE=jclaveau/ubuntu-gha-tools:latest
 FROM ${BASE_IMAGE}
 
 ARG DOCKER_GROUP_ID=${DOCKER_GROUP_ID}
-# Renovate will update these
+# Renovate will update this
 ARG DOCKER_VERSION=28.5.1
-ARG DOCKER_COMPOSE_VERSION=2.39.4
 
 # Shared base for the dood/dind variants: ubuntu-gha-tools + Docker Engine & Compose.
 # Unpublished intermediate (CI pushes it under the throwaway build tag only).
@@ -23,12 +22,13 @@ RUN echo "Create the docker group with GitHub's host GID *before* installing doc
        | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null \
     && sudo apt-get update \
     && VERSION_STRING="$(apt-cache madison docker-ce | awk '{print $3}' | grep -m1 "${DOCKER_VERSION}")" \
-    && sudo apt-get install -y docker-ce="$VERSION_STRING" docker-ce-cli="$VERSION_STRING" containerd.io iptables \
+    && sudo apt-get install -y \
+         docker-ce="$VERSION_STRING" \
+         docker-ce-cli="$VERSION_STRING" \
+         docker-compose-plugin \
+         containerd.io \
+         iptables \
     && sudo rm -rf /var/lib/apt/lists/* \
-    \
-    && sudo curl -L "https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" \
-       -o /usr/local/bin/docker-compose \
-    && sudo chmod +x /usr/local/bin/docker-compose \
     \
     && sudo usermod -aG docker runner \
     && sudo usermod -aG docker packer

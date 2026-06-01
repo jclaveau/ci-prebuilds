@@ -31,6 +31,10 @@ permissions:
   contents: read
   # DEV MODE: bench pulls Docker Hub :latest (public). For GHCR sha-* mode, add `packages: read`.
 
+env:
+  # Renovate-managed (see renovate.json customManager for `ACT_VERSION:`).
+  ACT_VERSION: 0.2.89
+
 jobs:
   # Emits the container matrix as JSON so the official image tag can embed the chosen Playwright version
   # (a static matrix.include can't reference inputs). Each scenario runs in both browser modes; alpine is
@@ -226,7 +230,7 @@ jobs:
       # DEV MODE: Docker Hub public images — no registry login needed.
       - name: Install act
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/nektos/act/master/install.sh \
+          curl --proto '=https' --tlsv1.2 -sSf "https://raw.githubusercontent.com/nektos/act/v${ACT_VERSION}/install.sh" \
             | sudo bash -s -- -b /usr/local/bin
           act --version
       - name: Resolve runner image
