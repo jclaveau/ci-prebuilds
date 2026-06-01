@@ -69,11 +69,25 @@ RUN set -a && . /work/versions.env && set +a \
 # `id=` is stable so the cache survives the layer-hash invalidations that we
 # trigger on every script tweak. `sharing=locked` prevents concurrent CI runs
 # from corrupting each other.
+# Diagnostic flags forwarded to apply-and-build.sh. Default off; the
+# workflow's workflow_dispatch inputs flip them. ARG values land in the heavy
+# RUN's env via the bash invocation below.
+ARG PW_JUGGLER_ORDER_FIRST=false
+ARG PW_JUGGLER_CATEGORY_RENAME=false
+ARG PW_SKIP_APORTS=false
+ARG PW_ENABLE_TESTS=false
+ARG PW_JUGGLER_INSTRUMENT=false
+
 RUN --mount=type=cache,target=/work/firefox-src/obj,id=ffx-obj,sharing=locked \
     --mount=type=cache,target=/root/.mozbuild,id=ffx-mozbuild,sharing=locked \
     --mount=type=cache,target=/root/.cache/sccache,id=ffx-sccache,sharing=locked \
     set -a && . /work/versions.env && set +a \
-    && bash /work/firefox/scripts/apply-and-build.sh /work
+    && PW_JUGGLER_ORDER_FIRST="$PW_JUGGLER_ORDER_FIRST" \
+       PW_JUGGLER_CATEGORY_RENAME="$PW_JUGGLER_CATEGORY_RENAME" \
+       PW_SKIP_APORTS="$PW_SKIP_APORTS" \
+       PW_ENABLE_TESTS="$PW_ENABLE_TESTS" \
+       PW_JUGGLER_INSTRUMENT="$PW_JUGGLER_INSTRUMENT" \
+       bash /work/firefox/scripts/apply-and-build.sh /work
 
 # ---- Artifact ----------------------------------------------------------------
 # Scratch image with just the built firefox/ dist tree under /firefox.

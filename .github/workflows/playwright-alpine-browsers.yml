@@ -10,12 +10,39 @@ on:
     branches: [main]
     paths:
       - 'playwright/alpine-browsers/**'
+      - '!playwright/alpine-browsers/Dockerfile.glibc-debug'
       - '.github/workflows/playwright-alpine-browsers.yml'
   pull_request:
     paths:
       - 'playwright/alpine-browsers/**'
+      - '!playwright/alpine-browsers/Dockerfile.glibc-debug'
       - '.github/workflows/playwright-alpine-browsers.yml'
   workflow_dispatch:
+    inputs:
+      diagnostic:
+        description: 'Run Tier-3 diagnostic (symbol dump, JS Juggler load trace)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      juggler_order_first:
+        description: 'PW_JUGGLER_ORDER_FIRST: move /juggler before /remote in DIRS'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      juggler_category_rename:
+        description: 'PW_JUGGLER_CATEGORY_RENAME: rename m-remote → m-juggler'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      juggler_instrument:
+        description: 'PW_JUGGLER_INSTRUMENT: inject dump() trace points into Juggler.js'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 # Never abort an in-flight 2h build — the cost of restarting outweighs the cost
 # of finishing a stale one.
@@ -93,6 +120,13 @@ jobs:
           # cache lives at the producer image's :buildcache tag.
           cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache
           cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache,mode=max
+          # Diagnostic experiment flags piped from workflow_dispatch inputs (or
+          # repository_dispatch). They become build-args that the Dockerfile's
+          # heavy RUN forwards into apply-and-build.sh via env. Default off.
+          build-args: |
+            PW_JUGGLER_ORDER_FIRST=${{ inputs.juggler_order_first || 'false' }}
+            PW_JUGGLER_CATEGORY_RENAME=${{ inputs.juggler_category_rename || 'false' }}
+            PW_JUGGLER_INSTRUMENT=${{ inputs.juggler_instrument || 'false' }}
 
       # Tier-1 smoke: the binary self-identifies. Catches build-succeeded-but-
       # binary-broken. We pull just the artifact image and run firefox --version
@@ -168,13 +202,102 @@ jobs:
           # clone(CLONE_NEWUSER) which Firefox needs for its renderer sandbox.
           # Without this Juggler can't start its content processes and
           # browser.launch() times out at 180s.
+          # DEBUG=pw:browser surfaces stderr from the Firefox child process,
+          # including any dump() traces injected by PW_JUGGLER_INSTRUMENT.
           docker run --rm \
             --security-opt seccomp=unconfined \
             -v "$PWD/playwright/alpine-browsers/firefox/smoke:/smoke" \
             -w /smoke \
             -e NODE_PATH=/usr/local/lib/node_modules \
+            -e DEBUG=pw:browser \
             candidate-runner:${{ github.sha }} \
-            node launch.cjs
+            node launch.cjs 2>&1 | tail -200
+
+  diagnostic:
+    # Tier-3 diagnostic: dump symbols + manifests + JS Juggler load trace from
+    # the just-built artifact. Gated on workflow_dispatch with diagnostic=true
+    # so normal PRs don't pay the extra ~5 min.
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.diagnostic == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull artifact + build inspect image
+        run: |
+          cat > /tmp/Dockerfile.inspect <<EOF
+          FROM alpine:edge
+          RUN apk add --no-cache \\
+              binutils unzip file \\
+              alsa-lib dbus-libs fontconfig freetype glib gtk+3.0 harfbuzz \\
+              icu-libs libevent libffi libjpeg-turbo libnotify libogg \\
+              libtheora libvorbis libvpx libwebp libwebp-tools libxcomposite \\
+              libxt mesa-gl mesa-dri-gallium nspr nss pipewire-libs libpulse \\
+              ttf-freefont
+          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:sha-${{ github.sha }} /firefox /opt/playwright/firefox
+          ENV LD_LIBRARY_PATH=/opt/playwright/firefox
+          EOF
+          docker build -t inspect:${{ github.sha }} -f /tmp/Dockerfile.inspect /tmp
+
+      - name: Dump libxul symbols (Juggler + RemoteAgent component table)
+        run: |
+          docker run --rm inspect:${{ github.sha }} sh -c '
+            echo "=== Juggler C++ symbols ==="
+            nm --defined-only /opt/playwright/firefox/libxul.so 2>/dev/null \
+              | grep -iE "juggler|remoteDebuggingPipe|screencastService|RemoteAgent" \
+              | head -40
+            echo ""
+            echo "=== Static-component strings near m-remote ==="
+            strings /opt/playwright/firefox/libxul.so 2>/dev/null \
+              | grep -E "command-line-handler|m-remote|m-juggler|@mozilla.org/remote/(agent|juggler)" \
+              | sort -u
+            echo ""
+            echo "=== Where do m-remote occurrences sit in the static table? ==="
+            # Print neighboring strings for ordering insight — Mozilla static_components
+            # is generated as a flat C++ table; strings appear in registration order.
+            strings -t d /opt/playwright/firefox/libxul.so 2>/dev/null \
+              | awk "/m-remote|m-juggler|@mozilla.org\/remote\/(agent|juggler)/" \
+              | sort -n | head -20
+          '
+
+      - name: Dump omni.ja manifests
+        run: |
+          docker run --rm inspect:${{ github.sha }} sh -c '
+            cd /tmp && unzip -q /opt/playwright/firefox/omni.ja -d oj
+            echo "=== chrome.manifest (juggler-related lines) ==="
+            grep -i juggler oj/chrome/chrome.manifest || echo "(no juggler entries)"
+            echo ""
+            echo "=== components/components.manifest (juggler/m-remote/category lines) ==="
+            grep -iE "juggler|m-remote|command-line-handler" oj/components/components.manifest || echo "(no entries)"
+            echo ""
+            echo "=== Juggler.js excerpt (classID + categories) ==="
+            head -40 oj/chrome/juggler/content/components/Juggler.js || echo "(missing Juggler.js)"
+          '
+
+      - name: Run firefox --help (does --juggler-pipe register?)
+        run: |
+          docker run --rm --security-opt seccomp=unconfined inspect:${{ github.sha }} \
+            /opt/playwright/firefox/firefox --help 2>&1 | grep -iE "juggler|remote|marionette|debugger" || echo "(no juggler/remote in --help)"
+
+      - name: Capture firefox startup logs (Juggler load trace)
+        run: |
+          docker run --rm --security-opt seccomp=unconfined \
+            -e MOZ_LOG='CommandLine:5,Module:5,nsComponentManager:5,nsCategoryManager:5' \
+            -e MOZ_LOG_FILE=/tmp/moz.log \
+            inspect:${{ github.sha }} sh -c '
+              timeout 8 /opt/playwright/firefox/firefox -no-remote -headless -profile /tmp/p -juggler-pipe < /dev/null 3<>/dev/null 4<>/dev/null 2>/tmp/stderr.log || true
+              echo "=== stderr ==="
+              tail -100 /tmp/stderr.log
+              echo ""
+              echo "=== moz.log (juggler-related) ==="
+              ls -la /tmp/moz.log* 2>/dev/null
+              cat /tmp/moz.log* 2>/dev/null | grep -iE "juggler|m-remote|command-line" | head -50 || echo "(no moz.log juggler entries)"
+            '
 
   promote:
     # Only on main pushes: copy the GHCR sha tag to Docker Hub under

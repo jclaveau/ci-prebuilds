@@ -29,6 +29,14 @@ permissions:
 
 jobs:
   github-context:
+    # TEMPORARY: skip TP entirely on the alpine-browsers PR while we iterate on
+    # the musl producer / Juggler diagnosis. The PR touches production files
+    # (playwright/Dockerfile.alpine, pnpm/, etc.) that legitimately invoke TP,
+    # but each iteration burns ~15 min of runner. Drop this skip when the PR
+    # is ready to merge. Cascades to all downstream jobs via `needs:`.
+    # head_ref is set for PRs; ref_name for direct pushes. The `||` picks
+    # whichever is non-empty.
+    if: (github.head_ref || github.ref_name) != 'playwright-alpine-browsers'
     runs-on: ubuntu-latest
     outputs:
       docker_group_id: ${{ steps.extract_docker_group_id.outputs.docker_group_id }}
@@ -60,6 +68,9 @@ jobs:
   # build-layer, which retags the previous `edge` image instead of rebuilding when its entry is false.
   # ----------------------------------------------------------------------------
   changes:
+    # head_ref is set for PRs; ref_name for direct pushes. The `||` picks
+    # whichever is non-empty.
+    if: (github.head_ref || github.ref_name) != 'playwright-alpine-browsers'
     runs-on: ubuntu-latest
     outputs:
       map: ${{ steps.compute.outputs.map }}
