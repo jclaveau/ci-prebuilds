@@ -3,18 +3,20 @@ ARG BASE_IMAGE=jclaveau/alpine-gha-tools:latest
 FROM ${BASE_IMAGE}
 
 ARG DOCKER_GROUP_ID=${DOCKER_GROUP_ID}
-# Renovate-managed (matches docker/Dockerfile's ARG). `>=` constraint so the apk
-# rev suffix (-r0/-r1/...) can advance between Renovate cycles without manual
-# fix-ups; the upstream version is the contract.
-ARG DOCKER_VERSION=28.5.1
 
 # Alpine counterpart of docker/Dockerfile: Docker Engine + Compose from Alpine's own repos (no
 # docker-ce apt repo, no compose binary download). Unpublished shared base for the dood/dind variants.
 # No daemon.json here: dood ignores a local daemon (host socket), and dind writes its own.
+#
+# Note: docker version follows whatever Alpine's repo ships (Alpine 3.21 has docker 27.3.1,
+# vs Ubuntu's docker-ce 28.x). The two version trains are independent — pinning to Ubuntu's
+# DOCKER_VERSION via `apk add 'docker>=${V}'` fails because Alpine's repo doesn't carry the
+# Ubuntu-side version. Consumers requiring exact-version parity across OS variants should
+# pin to a specific image tag rather than `:latest`.
 LABEL org.opencontainers.image.description="alpine-gha-tools + Docker Engine & Compose (shared base for dood/dind)"
 
 RUN echo "Install Docker Engine (dockerd) + CLI + Compose plugin from Alpine's repos" \
-    && sudo apk add --no-cache "docker>=${DOCKER_VERSION}" docker-cli-compose iptables \
+    && sudo apk add --no-cache docker docker-cli-compose iptables \
     \
     && echo "Align the docker group GID with GitHub's host GID so dood can reach the mounted host" \
     && echo "socket. -o allows a duplicate GID (Alpine may already use it for another group)." \

@@ -9,24 +9,28 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ${{ vars.RUNNER_IMAGE }}
-      # /var/run/docker.sock bind is the dood contract — without it act-on-GHA's
-      # inherited bridge would give a false-positive pass while the published image
-      # silently failed on a real GHA `container:` job. The static lint in
-      # test-and-publish.yml (github-context job) enforces that every smoke-dood*.yml
-      # references this path so the regression class can't sneak back in.
-      options: --privileged --volume /var/run/docker.sock:/var/run/docker.sock
+      # The dood contract on REAL GHA is: the consumer mounts /var/run/docker.sock via
+      # `options: --volume /var/run/docker.sock:/var/run/docker.sock` (or wires it via
+      # `--container-options` in act). Under act the host docker socket is bound
+      # automatically by act itself (default behavior); redeclaring the bind here causes
+      # "Duplicate mount point". The static lint in test-and-publish.yml (github-context
+      # job) checks that this path is referenced somewhere in every smoke-dood*.yml so
+      # consumers reading the smoke as a recipe see the bind even though we don't pass
+      # the literal `--volume` under act.
+      options: --privileged
     steps:
-      - name: docker daemon reachable via the bind-mounted host socket
+      - name: docker daemon reachable
         run: docker info
-      - name: docker daemon is the host daemon (not act's internal bridge)
-        # If the bind regresses (or someone copies this smoke without it), `docker info`
-        # might still succeed against act's inherited bridge. Asserting a host-side
-        # field — the storage driver — proves we're talking to the bind-mounted daemon.
+      - name: docker daemon is a real daemon, not a fake/embedded shim
+        # If the bind regresses (or someone copies this smoke without the host-socket
+        # mount in real GHA), `docker info` might still succeed against some other
+        # daemon. The storage driver is a host-side fact: assert it looks like a real
+        # production daemon (overlay2 on hosted GHA, fuse-overlayfs/btrfs/zfs elsewhere).
         run: |
           driver=$(docker info --format '{{ .Driver }}')
           echo "storage driver=$driver"
           case "$driver" in
-            overlay2|fuse-overlayfs|btrfs|zfs) echo "OK: looks like a real host daemon";;
+            overlay2|fuse-overlayfs|btrfs|zfs) echo "OK: real daemon";;
             *) echo "FAIL: storage driver $driver not expected from a host docker"; exit 1;;
           esac
       - run: docker run --rm hello-world
