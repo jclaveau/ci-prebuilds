@@ -77,6 +77,20 @@ use_cups = false
 enable_basic_printing = false
 enable_print_preview = false
 
+# Disable check_version.js for Node.js — Chromium pins v24.12.0; Alpine ships
+# v24.16.0. cr138-node-version-check.patch (copium) makes the check gateable
+# via this GN arg.
+node_version_check = false
+
+# More aports-aligned defaults that headless_shell doesn't conflict with:
+chrome_pgo_phase = 0                       # no PGO (build wall-clock); aports same
+enable_vr = false                          # no VR/XR
+disable_fieldtrial_testing_config = true   # skip field-trial test configs
+enable_nocompile_tests = false             # no nocompile testing
+is_cfi = false                             # CFI off (no IFUNC support on alpine clang)
+fatal_linker_warnings = false              # match aports — alpine's lld trips a few warnings
+safe_browsing_use_unrar = false            # no unrar (we don't ship)
+
 # Note: tried enable_extensions=false / enable_pdf=false / enable_remoting=false
 # here. They trigger downstream assert failures (e.g. //chrome/browser/background/
 # extensions/BUILD.gn asserts enable_extensions_core regardless of whether the
