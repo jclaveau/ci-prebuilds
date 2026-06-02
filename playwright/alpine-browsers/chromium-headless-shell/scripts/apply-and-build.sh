@@ -148,8 +148,17 @@ fi
 echo "===== Aports prepare() symlinks ====="
 mkdir -p third_party/node/linux/node-linux-x64/bin
 ln -sfv /usr/bin/node third_party/node/linux/node-linux-x64/bin/node
+# esbuild: replace BOTH the standalone binary AND the node_modules JS host.
+# Chromium pins 0.25.1; alpine apk ships 0.27.1. If only the binary is
+# symlinked, the host JS gets a version-mismatch RuntimeError ("Host version
+# X does not match binary version Y"). Replace the JS module too so they
+# share a version. Aports does the same in its prepare().
 if [[ -d third_party/devtools-frontend/src/third_party/esbuild ]]; then
   ln -sfv /usr/bin/esbuild third_party/devtools-frontend/src/third_party/esbuild/esbuild
+fi
+if [[ -d third_party/devtools-frontend/src/node_modules/esbuild ]]; then
+  rm -rf third_party/devtools-frontend/src/node_modules/esbuild
+  ln -sfv /usr/lib/node_modules/esbuild third_party/devtools-frontend/src/node_modules/esbuild
 fi
 if [[ -d third_party/gperf/cipd/bin ]]; then
   ln -sfv /usr/bin/gperf third_party/gperf/cipd/bin/gperf
