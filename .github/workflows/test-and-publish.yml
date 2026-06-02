@@ -1357,17 +1357,24 @@ jobs:
     # On workflow_call, the only_os / only_image / only_flavor filters further
     # narrow which matrix cells actually publish (push/PR path → all empty → no
     # narrowing, full matrix as today).
-    # Push/PR/Renovate: this job runs only on main pushes. workflow_call (the
-    # on-demand path): always runs but its matrix is already narrowed by
+    # Push/PR/Renovate: this job runs only on main pushes. On-demand path
+    # (issues / issue_comment triggers on `on-demand-build.yml`, which
+    # workflow_call's us): always runs but its matrix is already narrowed by
     # github-context's outputs to the requested cell(s).
     # `!failure() && !cancelled()` lets `promote` tolerate test-* needs that
     # were skipped by `test_filters` on narrowed on-demand runs — without it,
     # default `success()` semantics would skip promote (and aggregate-tags →
     # the on-demand published-tags comment) whenever ANY test was filtered out.
+    # `github.event_name` inside a reusable workflow reflects the CALLER's
+    # event (push/issues/issue_comment/…), never the literal `'workflow_call'`
+    # — so enumerate the on-demand entry-point events explicitly here.
     if: >-
       !failure() && !cancelled()
-      && ((github.event_name == 'push' && github.ref == 'refs/heads/main')
-        || github.event_name == 'workflow_call')
+      && (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        || github.event_name == 'issues'
+        || github.event_name == 'issue_comment'
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: read
