@@ -1127,8 +1127,15 @@ jobs:
       - run: pnpm --version
         working-directory: playwright
 
-      - run: pnpm install
+      # Image bakes browsers for the build-arg Playwright (Dockerfile default ARG, or
+      # the on-demand `pw_version` input). A fixture pinned to a different version
+      # misses the matching browser dirs at $PLAYWRIGHT_BROWSERS_PATH ("Executable
+      # doesn't exist"). Realign the fixture to the image's CLI version, then install.
+      - name: Align fixture to image's Playwright version
         working-directory: playwright
+        run: |
+          PW_VERSION="$(playwright --version | awk '{print $2}')"
+          pnpm add -D "@playwright/test@$PW_VERSION" "playwright@$PW_VERSION"
 
       - run: pnpm playwright test
         working-directory: playwright
