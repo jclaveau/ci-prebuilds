@@ -120,14 +120,31 @@ jobs:
             echo "$json"
           }
 
-          # OS axis (every job with matrix.os).
-          if [ -n "$ONLY_OS" ]; then
-            echo "os_matrix=$(csv_to_json "$ONLY_OS")" >> "$GITHUB_OUTPUT"
-          else
+          # Returns success when any CSV entry (trimmed, case-insensitive) is 'All'.
+          # The issue template's os + flavor multi-selects expose 'All' as a clickable
+          # alternative to the empty-means-all convention — both paths fall through
+          # to the full default array.
+          has_all() {
+            local raw trimmed
+            IFS=',' read -ra parts <<< "$1"
+            for raw in "${parts[@]}"; do
+              trimmed=$(echo "$raw" | xargs)
+              if [ "${trimmed,,}" = "all" ]; then return 0; fi
+            done
+            return 1
+          }
+
+          # OS axis (every job with matrix.os). Empty OR 'All' → full default.
+          if [ -z "$ONLY_OS" ] || has_all "$ONLY_OS"; then
             echo 'os_matrix=["ubuntu", "alpine"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "os_matrix=$(csv_to_json "$ONLY_OS")" >> "$GITHUB_OUTPUT"
           fi
 
-          # Image axis (build-hardened-variants + promote).
+          # Image axis (build-hardened-variants + promote). On the issue path the
+          # form requires ≥1 explicit pick; on push/PR inputs.* is null so we fall
+          # through to the full default. No 'All' sentinel on this axis (would be
+          # unreachable from the form).
           if [ -n "$ONLY_IMAGE" ]; then
             echo "image_matrix=$(csv_to_json "$ONLY_IMAGE")" >> "$GITHUB_OUTPUT"
           else
@@ -136,10 +153,11 @@ jobs:
 
           # Flavor axis (promote). Friendly names in / matrix values out:
           # 'hardened' → '' (consumer default) | 'sudoer' → '-sudoer' (build-chain).
-          if [ -n "$ONLY_FLAVOR" ]; then
-            echo "flavor_matrix=$(csv_to_json "$ONLY_FLAVOR" "hardened= sudoer=-sudoer")" >> "$GITHUB_OUTPUT"
-          else
+          # Empty OR 'All' → both flavors.
+          if [ -z "$ONLY_FLAVOR" ] || has_all "$ONLY_FLAVOR"; then
             echo 'flavor_matrix=["", "-sudoer"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "flavor_matrix=$(csv_to_json "$ONLY_FLAVOR" "hardened= sudoer=-sudoer")" >> "$GITHUB_OUTPUT"
           fi
 
       # Structural lint: any smoke YAML that issues a `docker` command must bind the

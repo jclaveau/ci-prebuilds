@@ -19,9 +19,10 @@ body:
     id: os
     attributes:
       label: OS family
-      description: 'Pick one or more. **Leave empty to build both** (~2x wall-clock).'
+      description: 'Pick one or more. Picking `All` (or leaving empty) builds both — ~2x wall-clock.'
       multiple: true
       options:
+        - All
         - ubuntu
         - alpine
   - type: input
@@ -34,7 +35,7 @@ body:
     id: image
     attributes:
       label: Image variant(s)
-      description: 'Pick one or more. **Leave empty to build all 13.** `gha-tools` is the OS-only base; the full list mirrors the matrix in `test-and-publish.yml`. Each picked variant becomes one cell in the build matrix.'
+      description: 'Pick one or more. `gha-tools` is the OS-only base; the full list mirrors the matrix in `test-and-publish.yml`. Each picked variant becomes one cell in the build matrix.'
       multiple: true
       options:
         - gha-tools
@@ -50,13 +51,15 @@ body:
         - dind-playwright
         - dood-playwright-gyp
         - dind-playwright-gyp
+    validations: { required: true }
   - type: dropdown
     id: flavor
     attributes:
       label: Flavor
-      description: 'Pick one or more. **Leave empty to build both.** `hardened` is the consumer default (no broad sudo); `sudoer` is the build-chain image (runner NOPASSWD intact).'
+      description: 'Pick one or more. Picking `All` (or leaving empty) builds both. `hardened` is the consumer default (no broad sudo); `sudoer` is the build-chain image (runner NOPASSWD intact).'
       multiple: true
       options:
+        - All
         - hardened
         - sudoer
   - type: input
