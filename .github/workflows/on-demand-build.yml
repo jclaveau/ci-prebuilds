@@ -45,15 +45,23 @@ jobs:
       - id: ensure-labels
         # `gh issue edit --add-label` errors if the label doesn't exist in the
         # repo. `--force` makes `gh label create` idempotent (creates if absent,
-        # no-op overwrite if present). `build-request` is created automatically
-        # when the issue template first applies it, but the maintainer should
-        # also pre-create it if the very first attempt fails.
+        # no-op overwrite if present). `build-request` is created out-of-band
+        # by the maintainer (it gates this workflow's prepare-job `if:`).
+        # The other four are state markers swapped on transitions:
+        #   building (in-flight) → published (done) or build-failed (error).
+        #   quota-exceeded is a terminal state set when the requester is over.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          gh label create building --force \
+            --description "On-demand build is in flight" \
+            --color FBCA04
+          gh label create published --force \
+            --description "On-demand build complete; pinned tag(s) pushed to Docker Hub" \
+            --color 0E8A16
           gh label create quota-exceeded --force \
             --description "On-demand build request blocked: requester hit the 3/24h quota" \
-            --color FBCA04
+            --color B60205
           gh label create build-failed --force \
             --description "On-demand build request failed: see linked workflow run" \
             --color B60205
@@ -149,6 +157,7 @@ jobs:
         run: |
           gh issue comment "${{ github.event.issue.number }}" --body \
             ":hammer_and_wrench: Build started. Wall-clock ~5-30 min depending on variant + matrix size. Progress: $RUN_URL"
+          gh issue edit "${{ github.event.issue.number }}" --add-label building
 
   build:
     needs: prepare
@@ -178,6 +187,7 @@ jobs:
         run: |
           gh issue comment "${{ github.event.issue.number }}" --body \
             ":white_check_mark: Build complete. New pinned tag(s) live under https://hub.docker.com/u/jclaveau — search by image variant + version components matching what you requested."
+          gh issue edit "${{ github.event.issue.number }}" --remove-label building --add-label published
           gh issue close "${{ github.event.issue.number }}"
       - name: Comment failure + label
         if: needs.build.result != 'success'
@@ -187,4 +197,4 @@ jobs:
         run: |
           gh issue comment "${{ github.event.issue.number }}" --body \
             ":x: Build failed (status: \`${{ needs.build.result }}\`). Logs: $RUN_URL"
-          gh issue edit "${{ github.event.issue.number }}" --add-label build-failed
+          gh issue edit "${{ github.event.issue.number }}" --remove-label building --add-label build-failed
