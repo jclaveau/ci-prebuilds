@@ -8,6 +8,23 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  # Reusable entry point: lets `on-demand-build.yml` (issue-triggered) call
+  # this workflow with version overrides + matrix filters. Every input defaults
+  # to empty / `true` so the push/PR path is byte-identical to today (verified
+  # via manifest-digest match for non-gyp variants on the same source commit).
+  workflow_call:
+    inputs:
+      os_version:      { type: string,  default: '' }   # e.g. '22.04', '3.20'
+      node_version:    { type: string,  default: '' }   # e.g. '20.18.0'
+      pnpm_version:    { type: string,  default: '' }   # e.g. '9.15.3'
+      pw_version:      { type: string,  default: '' }   # e.g. '1.50.1'
+      only_os:         { type: string,  default: '' }   # 'ubuntu' | 'alpine' | '' (both)
+      only_image:      { type: string,  default: '' }   # e.g. 'dood-playwright' | '' (all)
+      # Flavor naming follows the matrix axis at the `promote` job: '' = hardened (consumer
+      # default), '-sudoer' = the un-hardened build-chain image. 'all' means no filter — used
+      # by the push/PR path (default) so both flavors are promoted as today.
+      only_flavor:     { type: string,  default: 'all' }   # 'all' | '' (hardened) | '-sudoer'
+      publish_latest:  { type: boolean, default: true }
   # schedule:
   #   # Run weekly to get security updates
   #   - cron: '0 0 * * 0'
@@ -36,6 +53,15 @@ jobs:
       # Throwaway run-scoped tag. Builds push only this; the chain + tests reference it. The
       # consumer tags (latest / pr-<n>) are added later by `promote`, only once every test passes.
       build_tag: sha-${{ github.sha }}
+      # Workflow_call matrix narrowing. Computed once here, every downstream job's matrix
+      # references these via fromJSON. Job-level `if:` can't see `matrix.*` (matrix expands
+      # after `if:`), so narrowing the matrix at definition time is the only way to skip
+      # entire cells (incl. `container:`-using test jobs, where an unmatched cell would
+      # otherwise try to pull a never-built image).
+      # On push/PR `inputs.*` is null → defaults stand → full matrices, identical to today.
+      os_matrix:     ${{ steps.matrices.outputs.os_matrix }}
+      image_matrix:  ${{ steps.matrices.outputs.image_matrix }}
+      flavor_matrix: ${{ steps.matrices.outputs.flavor_matrix }}
     steps:
       # for debug only
       - run: sudo cat /etc/passwd
@@ -53,6 +79,34 @@ jobs:
       # used later
       - id: extract_docker_group_id
         run: 'echo "docker_group_id=$(getent group docker | cut -d: -f3)" >> "$GITHUB_OUTPUT"'
+
+      # Build the JSON arrays the downstream matrices consume.
+      - id: matrices
+        env:
+          ONLY_OS:     ${{ inputs.only_os }}
+          ONLY_IMAGE:  ${{ inputs.only_image }}
+          ONLY_FLAVOR: ${{ inputs.only_flavor }}
+        run: |
+          set -euo pipefail
+          # OS axis
+          if [ -n "$ONLY_OS" ]; then
+            echo "os_matrix=[\"$ONLY_OS\"]" >> "$GITHUB_OUTPUT"
+          else
+            echo 'os_matrix=["ubuntu", "alpine"]' >> "$GITHUB_OUTPUT"
+          fi
+          # Image axis (used by build-hardened-variants + promote)
+          if [ -n "$ONLY_IMAGE" ]; then
+            echo "image_matrix=[\"$ONLY_IMAGE\"]" >> "$GITHUB_OUTPUT"
+          else
+            echo 'image_matrix=["gha-tools", "dood", "dind", "dood-node", "dind-node", "dood-pnpm", "dind-pnpm", "dood-pnpm-gyp", "dind-pnpm-gyp", "dood-playwright", "dind-playwright", "dood-playwright-gyp", "dind-playwright-gyp"]' >> "$GITHUB_OUTPUT"
+          fi
+          # Flavor axis (used by promote). 'all' = no filter.
+          # ''  = hardened (consumer default), '-sudoer' = build-chain.
+          if [ "$ONLY_FLAVOR" = "all" ] || [ -z "$ONLY_FLAVOR" ]; then
+            echo 'flavor_matrix=["", "-sudoer"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "flavor_matrix=[\"$ONLY_FLAVOR\"]" >> "$GITHUB_OUTPUT"
+          fi
 
       # Structural lint: any smoke YAML that issues a `docker` command must bind the
       # host socket. Without it, act-on-GHA's inherited bridge gives a false-positive
@@ -191,7 +245,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -201,6 +255,8 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.os_version && format('OS_VERSION={0}', inputs.os_version) || '' }}
 
   # Unpublished shared base: ubuntu-gha-tools + docker/compose. Only ever pushed under the
   # throwaway build tag (never promoted); dood and dind are built from it in parallel.
@@ -213,7 +269,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -236,7 +292,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -257,7 +313,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -280,7 +336,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -292,6 +348,8 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.node_version && format('NODE_VERSION={0}', inputs.node_version) || '' }}
 
   build-node-dind:
     runs-on: ubuntu-latest
@@ -302,7 +360,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -314,6 +372,8 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.node_version && format('NODE_VERSION={0}', inputs.node_version) || '' }}
 
 
   build-pnpm-dood:
@@ -325,7 +385,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -336,6 +396,8 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.pnpm_version && format('PNPM_VERSION={0}', inputs.pnpm_version) || '' }}
 
   build-pnpm-dind:
     runs-on: ubuntu-latest
@@ -346,7 +408,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -357,6 +419,8 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.pnpm_version && format('PNPM_VERSION={0}', inputs.pnpm_version) || '' }}
 
 
   # node-gyp variant: pnpm + the C/C++ toolchain the base gha-tools drops. Built from ./pnpm-gyp as a
@@ -370,7 +434,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -382,6 +446,8 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.pnpm_version && format('PNPM_VERSION={0}', inputs.pnpm_version) || '' }}
 
   build-pnpm-gyp-dind:
     runs-on: ubuntu-latest
@@ -392,7 +458,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -404,6 +470,8 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.pnpm_version && format('PNPM_VERSION={0}', inputs.pnpm_version) || '' }}
 
 
   build-playwright-dood:
@@ -415,7 +483,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -427,6 +495,8 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.pw_version && format('PLAYWRIGHT_VERSION={0}', inputs.pw_version) || '' }}
 
   build-playwright-dind:
     runs-on: ubuntu-latest
@@ -437,7 +507,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -449,6 +519,8 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.pw_version && format('PLAYWRIGHT_VERSION={0}', inputs.pw_version) || '' }}
 
 
   # Playwright on the node-gyp base: the SAME ./playwright layer, only the base differs (pnpm-gyp), for
@@ -462,7 +534,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -474,6 +546,8 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.pw_version && format('PLAYWRIGHT_VERSION={0}', inputs.pw_version) || '' }}
 
   build-playwright-gyp-dind:
     runs-on: ubuntu-latest
@@ -484,7 +558,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -496,6 +570,8 @@ jobs:
           build_tag: ${{ needs.github-context.outputs.build_tag }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           changed_map: ${{ needs.changes.outputs.map }}
+          build_args: |
+            ${{ inputs.pw_version && format('PLAYWRIGHT_VERSION={0}', inputs.pw_version) || '' }}
 
 
   # ----------------------------------------------------------------------------
@@ -534,21 +610,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
-        image:
-          - gha-tools
-          - dood
-          - dind
-          - dood-node
-          - dind-node
-          - dood-pnpm
-          - dind-pnpm
-          - dood-pnpm-gyp
-          - dind-pnpm-gyp
-          - dood-playwright
-          - dind-playwright
-          - dood-playwright-gyp
-          - dind-playwright-gyp
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+        image: ${{ fromJSON(needs.github-context.outputs.image_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -577,7 +640,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     container:
       image: ghcr.io/jclaveau/${{ matrix.os }}-gha-tools:${{ needs.github-context.outputs.build_tag }}
       credentials:
@@ -623,7 +686,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
         flavor: ['', '-hardened']
     env:
       IMG: ghcr.io/jclaveau/${{ matrix.os }}-gha-tools${{ matrix.flavor }}:${{ needs.github-context.outputs.build_tag }}
@@ -682,7 +745,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     env:
       IMG: ghcr.io/jclaveau/${{ matrix.os }}-dind-hardened:${{ needs.github-context.outputs.build_tag }}
     steps:
@@ -730,7 +793,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
         mode: [dood, dind]
     container:
       image: ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.mode }}:${{ needs.github-context.outputs.build_tag }}
@@ -777,7 +840,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
         mode: [dood, dind]
     container:
       image: ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.mode }}:${{ needs.github-context.outputs.build_tag }}
@@ -837,7 +900,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
         mode: [dood, dind]
     container:
       image: ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.mode }}-node:${{ needs.github-context.outputs.build_tag }}
@@ -861,7 +924,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
         mode: [dood, dind]
     container:
       image: ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.mode }}-pnpm:${{ needs.github-context.outputs.build_tag }}
@@ -884,7 +947,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
         mode: [dood, dind]
     container:
       image: ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.mode }}-pnpm-gyp:${{ needs.github-context.outputs.build_tag }}
@@ -926,7 +989,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
         mode: [dood, dind]
         variant: [slim, gyp]   # slim = ...-playwright; gyp = ...-playwright-gyp (same PW, gyp base)
     container:
@@ -1007,7 +1070,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
         mode: [dood, dind]
     steps:
       - uses: actions/checkout@v4
@@ -1121,6 +1184,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: v
+        # Skip the ubuntu read when only alpine was requested — the ubuntu image
+        # wasn't built, so `docker run` would fail. The matching ubuntu cells of
+        # `promote` skip via the only_os filter, so their `${{ ... outputs.os }}`
+        # references never resolve.
+        if: inputs.only_os != 'alpine'
         env:
           IMG: ghcr.io/jclaveau/ubuntu-dood-playwright:${{ needs.github-context.outputs.build_tag }}
         run: |
@@ -1136,6 +1204,7 @@ jobs:
           ' >> "$GITHUB_OUTPUT"
       # Alpine minors, read from alpine-dood-playwright (transitively OS + node + pnpm + playwright).
       - id: va
+        if: inputs.only_os != 'ubuntu'
         env:
           IMG: ghcr.io/jclaveau/alpine-dood-playwright:${{ needs.github-context.outputs.build_tag }}
         run: |
@@ -1156,11 +1225,19 @@ jobs:
   # ----------------------------------------------------------------------------
 
   promote:
-    # Publish consumer tags to Docker Hub ONLY on main, ONLY after all tests pass.
-    # The test-gate is satisfied by `needs:` enumerating every `test-*` job below;
-    # the branch-gate (this `if:`) blocks topic-branch / PR / Renovate pushes from
-    # publishing tags. Matches the idiom in playwright-alpine-browsers.yml.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Publish consumer tags to Docker Hub ONLY on main pushes OR via workflow_call
+    # (the on-demand path), ONLY after all tests pass. The test-gate is satisfied by
+    # `needs:` enumerating every `test-*` job below; this `if:` blocks topic-branch /
+    # PR / Renovate pushes from publishing tags.
+    # On workflow_call, the only_os / only_image / only_flavor filters further
+    # narrow which matrix cells actually publish (push/PR path → all empty → no
+    # narrowing, full matrix as today).
+    # Push/PR/Renovate: this job runs only on main pushes. workflow_call (the
+    # on-demand path): always runs but its matrix is already narrowed by
+    # github-context's outputs to the requested cell(s).
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || github.event_name == 'workflow_call'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1170,13 +1247,13 @@ jobs:
       # `imagetools create` — that leaves consumer tags partially advanced.
       fail-fast: false
       matrix:
-        os: [ubuntu, alpine]
-        image: [gha-tools, dood, dind, dood-node, dind-node, dood-pnpm, dind-pnpm, dood-pnpm-gyp, dind-pnpm-gyp, dood-playwright, dind-playwright, dood-playwright-gyp, dind-playwright-gyp]
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+        image: ${{ fromJSON(needs.github-context.outputs.image_matrix) }}
         # '' = default (hardened — runner has no broad NOPASSWD sudo)
         #   → publishes to `<image>:latest`.
         # '-sudoer' = build-chain image (runner NOPASSWD: ALL intact)
         #   → publishes to `<image>-sudoer:latest`.
-        flavor: ['', '-sudoer']
+        flavor: ${{ fromJSON(needs.github-context.outputs.flavor_matrix) }}
     needs: [github-context, versions, build-hardened-variants, test-gha-tools-usage, test-gha-tools-effects, test-dind-hardened-effects, test-dood-dind-usage, test-dood-dind-effects, test-dood-dind-act, test-node-usage, test-pnpm-usage, test-pnpm-gyp-usage, test-playwright-usage]
     steps:
       - uses: docker/setup-buildx-action@v3
@@ -1219,6 +1296,13 @@ jobs:
             dood-playwright|dind-playwright)         TAG="${OS}-${NODE}-${PNPM}-${PW}";;
             dood-playwright-gyp|dind-playwright-gyp) TAG="${OS}-${NODE}-${PNPM}-${PW}-gyp";;
           esac
+          # The hardened flavor (= consumer default) keeps the original tag.
+          # The sudoer flavor gains a `-sudoer` tag suffix so an on-demand request
+          # for it produces a self-describing pin (image namespace `-sudoer` alone
+          # is easy to miss in pipelines that pin by `:tag`).
+          if [ "${{ matrix.flavor }}" = "-sudoer" ]; then
+            TAG="${TAG}-sudoer"
+          fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
       - id: meta
         uses: docker/metadata-action@v5
@@ -1229,7 +1313,12 @@ jobs:
           images: jclaveau/${{ matrix.os }}-${{ matrix.image }}${{ matrix.flavor }}
           tags: |
             type=ref,event=pr
-            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
+            # `:latest` is the consumer-default for the primary stack. The on-demand
+            # path explicitly passes publish_latest=false (it builds an off-primary
+            # version pin and must not advance `:latest`). On push/main, inputs.* is
+            # null, so we gate via event_name first and fall through to inputs only
+            # for the workflow_call path.
+            type=raw,value=latest,enable=${{ github.event_name == 'push' || (github.event_name == 'workflow_call' && inputs.publish_latest) }}
             type=raw,value=${{ steps.pin.outputs.tag }},enable=${{ github.event_name != 'pull_request' }}
             type=sha,prefix={{branch}}-
             type=ref,event=branch
