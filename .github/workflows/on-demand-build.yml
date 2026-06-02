@@ -73,14 +73,13 @@ jobs:
       # All three axes accept CSV / empty. The downstream test-and-publish workflow
       # parses them into matrix arrays; an empty value fans out to every default
       # entry on that axis (full chain rebuild at the requested version pins).
-      os:             ${{ steps.parse.outputs.os }}
-      ubuntu_version: ${{ steps.parse.outputs.ubuntu_version }}
-      alpine_version: ${{ steps.parse.outputs.alpine_version }}
-      image:          ${{ steps.parse.outputs.image }}
-      flavor:         ${{ steps.parse.outputs.flavor }}
-      node_version:   ${{ steps.parse.outputs.node_version }}
-      pnpm_version:   ${{ steps.parse.outputs.pnpm_version }}
-      pw_version:     ${{ steps.parse.outputs.pw_version }}
+      os:           ${{ steps.parse.outputs.os }}
+      os_version:   ${{ steps.parse.outputs.os_version }}
+      image:        ${{ steps.parse.outputs.image }}
+      flavor:       ${{ steps.parse.outputs.flavor }}
+      node_version: ${{ steps.parse.outputs.node_version }}
+      pnpm_version: ${{ steps.parse.outputs.pnpm_version }}
+      pw_version:   ${{ steps.parse.outputs.pw_version }}
     steps:
       - id: ensure-labels
         # `gh issue edit --add-label` errors if the label doesn't exist in the
@@ -133,44 +132,23 @@ jobs:
           # on a single line — exactly the CSV format test-and-publish expects, so
           # parse just passes the value through verbatim. Friendly flavor names
           # (hardened/sudoer) map to matrix values inside the matrices step.
-          OS=$(opt                "OS family")
-          UBUNTU=$(opt            "Ubuntu version(s)")
-          UBUNTU_EXTRA=$(opt      "Ubuntu extra version(s)")
-          ALPINE=$(opt            "Alpine version(s)")
-          ALPINE_EXTRA=$(opt      "Alpine extra version(s)")
-          IMAGE=$(opt             "Image variant(s)")
-          FLAVOR=$(opt            "Flavor")
-          NODE=$(opt              "Node version (optional)")
-          PNPM=$(opt              "pnpm version (optional)")
-          PW=$(opt                "Playwright version (optional)")
-          # Merge per-OS dropdown CSV with the free-text extra CSV: concat with
-          # commas, split, trim, drop empties, dedupe (first-seen order). The
-          # extras let users pin point releases or rcs without us hardcoding
-          # every patch version in the dropdown.
-          merge_csv() {
-            python3 - "$1" "$2" <<'PY'
-          import sys
-          seen = []
-          for v in (sys.argv[1] + ',' + sys.argv[2]).split(','):
-              v = v.strip()
-              if v and v not in seen:
-                  seen.append(v)
-          print(','.join(seen))
-          PY
-          }
-          UBUNTU_VERSION=$(merge_csv "$UBUNTU" "$UBUNTU_EXTRA")
-          ALPINE_VERSION=$(merge_csv "$ALPINE" "$ALPINE_EXTRA")
+          OS=$(opt          "OS family")
+          OS_VERSION=$(opt  "OS version")
+          IMAGE=$(opt       "Image variant(s)")
+          FLAVOR=$(opt      "Flavor")
+          NODE=$(opt        "Node version (optional)")
+          PNPM=$(opt        "pnpm version (optional)")
+          PW=$(opt          "Playwright version (optional)")
           {
             echo "os=$OS"
-            echo "ubuntu_version=$UBUNTU_VERSION"
-            echo "alpine_version=$ALPINE_VERSION"
+            echo "os_version=$OS_VERSION"
             echo "image=$IMAGE"
             echo "flavor=$FLAVOR"
             echo "node_version=$NODE"
             echo "pnpm_version=$PNPM"
             echo "pw_version=$PW"
           } >> "$GITHUB_OUTPUT"
-          echo "Parsed: os='$OS' ubuntu='$UBUNTU_VERSION' alpine='$ALPINE_VERSION' image='$IMAGE' flavor='$FLAVOR' node='$NODE' pnpm='$PNPM' pw='$PW'"
+          echo "Parsed: os='$OS' os_version='$OS_VERSION' image='$IMAGE' flavor='$FLAVOR' node='$NODE' pnpm='$PNPM' pw='$PW'"
 
       # Earlier revisions had a 3/24h quota step here and an existing-tag
       # precheck before that. Both gone: rate-limiting is now serial-execution
@@ -219,8 +197,7 @@ jobs:
     uses: ./.github/workflows/test-and-publish.yml
     secrets: inherit
     with:
-      ubuntu_version: ${{ needs.prepare.outputs.ubuntu_version }}
-      alpine_version: ${{ needs.prepare.outputs.alpine_version }}
+      os_version:     ${{ needs.prepare.outputs.os_version }}
       node_version:   ${{ needs.prepare.outputs.node_version }}
       pnpm_version:   ${{ needs.prepare.outputs.pnpm_version }}
       pw_version:     ${{ needs.prepare.outputs.pw_version }}

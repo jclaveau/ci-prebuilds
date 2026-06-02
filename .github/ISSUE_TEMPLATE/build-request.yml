@@ -10,16 +10,11 @@ body:
         version-pinned tag to Docker Hub. **`:latest` is NOT updated** — only the
         pinned tag is published.
 
-        Rate-limiting is by **serial execution**: one on-demand build runs at a
-        time; new requests queue. There is no per-requester quota.
+        Hard cap: **3 builds per requester per 24h**. The 4th request in that
+        window will be labelled `quota-exceeded` and not built.
 
-        Each (OS, OS version) tuple is its own matrix cell — picking
-        `ubuntu_version=22.04,24.04` builds both as separate cells in parallel.
-        Tags include the OS version (e.g. `jclaveau/ubuntu-24.04-gha-tools:...`).
-
-        Build wall-clock: ~5 min (gha-tools, one cell) up to ~30 min (playwright,
-        full matrix). The workflow comments here when the build starts and again
-        when it finishes.
+        Build wall-clock: ~5 min (gha-tools) up to ~30 min (playwright). The
+        workflow comments here when the build starts and again when it finishes.
   - type: dropdown
     id: os
     attributes:
@@ -30,39 +25,12 @@ body:
         - All
         - ubuntu
         - alpine
-  - type: dropdown
-    id: ubuntu_version
-    attributes:
-      label: Ubuntu version(s)
-      description: 'Pick one or more. Empty = the Ubuntu default (highest LTS in the list). Each pick is its own matrix cell. List is refreshed weekly by `refresh-os-version-options.yml`.'
-      multiple: true
-      options:
-        - '24.04'
-        - '22.04'
-        - '20.04'
   - type: input
-    id: ubuntu_version_extra
+    id: os_version
     attributes:
-      label: Ubuntu extra version(s)
-      description: 'Free-text CSV for Ubuntu versions NOT in the dropdown above (e.g. point releases like `22.04.1` or an unreleased rc). Not validated — typos build broken images.'
-      placeholder: '22.04.1'
-  - type: dropdown
-    id: alpine_version
-    attributes:
-      label: Alpine version(s)
-      description: 'Pick one or more. Empty = the Alpine default (highest in the list). Each pick is its own matrix cell. List is refreshed weekly by `refresh-os-version-options.yml`.'
-      multiple: true
-      options:
-        - '3.21'
-        - '3.20'
-        - '3.19'
-        - '3.18'
-  - type: input
-    id: alpine_version_extra
-    attributes:
-      label: Alpine extra version(s)
-      description: 'Free-text CSV for Alpine versions NOT in the dropdown above. Not validated.'
-      placeholder: '3.21.3'
+      label: OS version
+      description: 'e.g. `22.04` for Ubuntu, `3.20` for Alpine. Leave empty to use the default of each picked OS (24.04 / 3.21).'
+      placeholder: '22.04'
   - type: dropdown
     id: image
     attributes:

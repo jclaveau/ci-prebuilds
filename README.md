@@ -2,14 +2,6 @@
 
 [![Test and Publish](https://github.com/jclaveau/github-action-container-images/actions/workflows/test-and-publish.yml/badge.svg)](https://github.com/jclaveau/github-action-container-images/actions/workflows/test-and-publish.yml)
 
-> **Breaking — tag namespace now includes the OS version.** Old unversioned
-> tags like `jclaveau/ubuntu-gha-tools:latest` are FROZEN as of the
-> per-OS-version-matrix change (commit on `main`); new builds publish to
-> `jclaveau/<os>-<os_version>-<image>:latest` (e.g.
-> `jclaveau/ubuntu-24.04-gha-tools:latest`). Consumers must update their
-> image references. Multiple OS versions per family can now be built in
-> parallel from the on-demand issue form.
-
 Prebuilt container images for GitHub Actions that **speed up CI** by shipping common dependencies
 preinstalled, while mimicking the default `ubuntu-latest` environment (so `docker compose` and friends
 just work). Use one as a job [`container:`](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/run-jobs-in-a-container).
@@ -24,39 +16,35 @@ Images are layered — each builds on the previous — and every layer above the
 **flavors**, `-dood` and `-dind`:
 
 ```
-<os>-<os_version>-gha-tools     GitHub ubuntu-latest mimic (users, env, OS tools; slim — no compiler)
-  └─ docker  (internal)         + Docker Engine & Compose
-       ├─ dood                  shares the host daemon (mounted socket)
-       └─ dind                  boots its own inner daemon
+ubuntu-gha-tools            GitHub ubuntu-latest mimic (users, env, OS tools; slim — no compiler)
+  └─ docker  (internal)     + Docker Engine & Compose
+       ├─ dood              shares the host daemon (mounted socket)
+       └─ dind              boots its own inner daemon
             then:  node ─┬─ pnpm ─────── playwright          (slim; each in both -dood and -dind)
                          └─ pnpm-gyp ─── playwright-gyp       (+ node-gyp toolchain, for native addons)
 ```
 
-Variant images are named `<os>-<os_version>-<mode>[-<layer>]` (`os` ∈ {`ubuntu`,`alpine`}, `mode` ∈
-{`dood`,`dind`}). Every layer ships in both OS flavors and at every supported OS version (e.g.
-`ubuntu-24.04-dood-pnpm`, `ubuntu-22.04-dood-pnpm`, `alpine-3.21-dood-pnpm`). The on-demand issue form
-picks the version(s) to build; the default push-to-main run builds the Dockerfile's
-`ARG OS_VERSION` default per OS family. The Alpine images mirror the Ubuntu dev environment (same
-accounts, tooling, and bash sugar like `ll`) on musl. The one exception is **Playwright on Alpine**,
-which is **Chromium-only** (via the system Chromium package — Playwright's bundled browsers and
-Firefox/WebKit have no musl builds). Each layer is documented on its own:
+Variant images are named `<os>-<mode>[-<layer>]` (`os` ∈ {`ubuntu`,`alpine`}, `mode` ∈ {`dood`,`dind`}).
+Every layer ships in both OS flavors (e.g. `ubuntu-dood-pnpm` and `alpine-dood-pnpm`); the Alpine images
+mirror the Ubuntu dev environment (same accounts, tooling, and bash sugar like `ll`) on musl. The one
+exception is **Playwright on Alpine**, which is **Chromium-only** (via the system Chromium package —
+Playwright's bundled browsers and Firefox/WebKit have no musl builds). Each layer is documented on its own:
 
 | Image | What it adds | Docs |
 | --- | --- | --- |
-| `<os>-<os_version>-gha-tools` | GitHub `ubuntu-latest` mimic (users, env, OS tools; no compiler) | [README](ubuntu-gha-tools/README.md) |
-| `<os>-<os_version>-dood` / `…-dind` | + Docker Engine & Compose (the two flavors) | [dood](dood/README.md) · [dind](dind/README.md) |
+| `ubuntu-gha-tools` | GitHub `ubuntu-latest` mimic (users, env, OS tools; no compiler) | [README](ubuntu-gha-tools/README.md) |
+| `ubuntu-dood` / `ubuntu-dind` | + Docker Engine & Compose (the two flavors) | [dood](dood/README.md) · [dind](dind/README.md) |
 | `…-node` | + Node, npm (slim — no compiler) | [README](node/README.md) |
 | `…-pnpm` | + pnpm | [README](pnpm/README.md) |
 | `…-pnpm-gyp` | + node-gyp toolchain (for native addons) | [README](pnpm-gyp/README.md) |
 | `…-playwright` | + Playwright | [README](playwright/README.md) |
 | `…-playwright-gyp` | + Playwright on the `-gyp` base | [README](pnpm-gyp/README.md) |
 
-Concrete example: `jclaveau/ubuntu-24.04-dood-pnpm:latest`. (The `docker` layer is an internal,
-unpublished base — see [docker/README.md](docker/README.md).)
+(The `docker` layer is an internal, unpublished base — see [docker/README.md](docker/README.md).)
 
 Each push to `main` runs the full test suite and, **only if every test passes**, publishes `latest`
 plus a **version-pinned** tag capturing the OS + tool minors, e.g.
-`ubuntu-24.04-dood-playwright:ubuntu24.04-node22.12-pnpm9.15-pw1.50`.
+`ubuntu-dood-playwright:ubuntu24.04-node22.12-pnpm9.15-pw1.50`.
 
 ## The two flavors
 
