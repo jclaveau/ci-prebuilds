@@ -25,6 +25,15 @@ on:
       only_image:      { type: string,  default: '' }   # CSV of variants, e.g. 'dood-playwright,dind-playwright' | '' (all 13)
       only_flavor:     { type: string,  default: '' }   # 'hardened' | 'sudoer' (CSV) | '' (both)
       publish_latest:  { type: boolean, default: true }
+    outputs:
+      # Newline-separated `jclaveau/<os>-<image><flavor>:<pin>` strings —
+      # every consumer tag actually pushed by `promote`, aggregated from
+      # per-cell artifacts by the `aggregate-tags` job. Used by
+      # `on-demand-build.yml` to enumerate the published tags in the
+      # success comment instead of just linking to Docker Hub.
+      tags:
+        description: Newline-separated repo:tag list pushed to Docker Hub by this run.
+        value: ${{ jobs.aggregate-tags.outputs.tags }}
   # schedule:
   #   # Run weekly to get security updates
   #   - cron: '0 0 * * 0'
@@ -1380,3 +1389,55 @@ jobs:
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             ghcr.io/jclaveau/${{ matrix.os }}-${{ steps.src.outputs.src }}:${{ needs.github-context.outputs.build_tag }}
+      # Emit the pinned tag this cell pushed as a per-cell artifact so the
+      # downstream `aggregate-tags` job can collect across the matrix and
+      # surface the full list as a workflow_call output (consumed by
+      # `on-demand-build.yml`'s success comment).
+      - name: Write tag fragment
+        run: |
+          mkdir -p /tmp/tag
+          echo "jclaveau/${{ matrix.os }}-${{ matrix.image }}${{ matrix.flavor }}:${{ steps.pin.outputs.tag }}" > /tmp/tag/tag.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          # Artifact names must be unique across the matrix. Empty flavor (hardened)
+          # is rewritten to `-hardened` so the name has the same shape as `-sudoer`.
+          name: tag-${{ matrix.os }}-${{ matrix.image }}${{ matrix.flavor || '-hardened' }}
+          path: /tmp/tag/tag.txt
+          retention-days: 1
+          if-no-files-found: error
+
+  # ----------------------------------------------------------------------------
+  # aggregate-tags: collect every `tag-*` artifact (one per promoted cell)
+  # and emit the union as a workflow_call output. on-demand-build.yml reads
+  # `needs.build.outputs.tags` and renders the list in the success comment.
+  # Runs even when some promote cells failed (fail-fast: false on promote),
+  # so partial successes still surface what did publish.
+  # ----------------------------------------------------------------------------
+  aggregate-tags:
+    needs: promote
+    if: always() && needs.promote.result != 'skipped'
+    runs-on: ubuntu-latest
+    outputs:
+      tags: ${{ steps.collect.outputs.tags }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tag-*
+          merge-multiple: true
+          path: /tmp/tags
+      - id: collect
+        run: |
+          set -euo pipefail
+          # No artifacts (e.g. every promote cell failed before the upload step) →
+          # emit empty so consumers fall through to a generic Docker Hub link.
+          if ! ls /tmp/tags/*.txt >/dev/null 2>&1; then
+            echo "tags=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Multi-line outputs use the heredoc-marker form. Tag strings can't
+          # contain `EOF` so a static delimiter is safe.
+          {
+            echo "tags<<EOF"
+            cat /tmp/tags/*.txt | sort -u
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"

@@ -184,9 +184,22 @@ jobs:
         if: needs.build.result == 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Newline-separated list of `jclaveau/<os>-<image><flavor>:<pin>`
+          # strings, emitted by test-and-publish.yml's aggregate-tags job.
+          # Empty when the aggregator collected no artifacts (defensive).
+          TAGS: ${{ needs.build.outputs.tags }}
         run: |
-          gh issue comment "${{ github.event.issue.number }}" --body \
-            ":white_check_mark: Build complete. New pinned tag(s) live under https://hub.docker.com/u/jclaveau — search by image variant + version components matching what you requested."
+          set -euo pipefail
+          if [ -n "$TAGS" ]; then
+            {
+              echo ':white_check_mark: Build complete. Published:'
+              echo
+              echo "$TAGS" | sed 's/^/- `/; s/$/`/'
+            } > /tmp/comment.md
+          else
+            echo ':white_check_mark: Build complete. New pinned tag(s) live under https://hub.docker.com/u/jclaveau — no per-tag list was emitted by the run.' > /tmp/comment.md
+          fi
+          gh issue comment "${{ github.event.issue.number }}" --body-file /tmp/comment.md
           gh issue edit "${{ github.event.issue.number }}" --remove-label building --add-label published
           gh issue close "${{ github.event.issue.number }}"
       - name: Comment failure + label
