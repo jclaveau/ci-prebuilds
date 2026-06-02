@@ -108,6 +108,18 @@ else
 fi
 echo "  CLANG_BASE=$CLANG_BASE  CTARGET=$CTARGET"
 
+# Chromium's unbundle toolchain at //build/toolchain/linux/unbundle:default
+# reads AR/CC/CXX/NM from env to find the real binaries. Without these the
+# ninja command template emits a bare `-MD -MF …` and /bin/sh tries to
+# interpret `-M` as a shell flag (busybox ash doesn't have one) and fails
+# with `illegal option -M`. aports' APKBUILD exports these explicitly; we
+# mirror.
+export AR="$CLANG_BASE/bin/llvm-ar"
+export NM="$CLANG_BASE/bin/llvm-nm"
+export CC="$CLANG_BASE/bin/clang"
+export CXX="$CLANG_BASE/bin/clang++"
+echo "  AR=$AR  CC=$CC  CXX=$CXX  NM=$NM"
+
 OUT_DIR="out/headless"
 mkdir -p "$OUT_DIR"
 

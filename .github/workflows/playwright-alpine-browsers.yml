@@ -93,6 +93,7 @@ concurrency:
 permissions:
   contents: read
   packages: write
+  actions: write   # so the cancel-on-fail step can call /actions/runs/<id>/cancel
 
 jobs:
   build:
