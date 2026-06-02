@@ -83,21 +83,56 @@ else
   done
 fi
 
-# 4a. Strip Chromium-clang-only flags that don't exist in upstream LLVM.
-#     Aports handles this via cr146-sanitize-ignore-for-ubsan-feature.patch
-#     (in the codeberg.org/selfisekai/copium tarball — separate from the
-#     aports community/chromium tree). Until we wire up that fetch too, sed
-#     the offending flag out of the GN compiler config. The flag is purely a
-#     diagnostic-suppression toggle for ubsan; removing it doesn't change
-#     headless_shell's runtime behavior, just makes upstream clang accept the
-#     command line.
-echo "===== Strip Chromium-clang-only flags ====="
-for f in build/config/sanitizers/sanitizers.gni build/config/sanitizers/BUILD.gn build/config/compiler/BUILD.gn; do
-  if [[ -f "$f" ]] && grep -q "fsanitize-ignore-for-ubsan-feature" "$f"; then
-    echo "  strip -fsanitize-ignore-for-ubsan-feature from $f"
-    sed -i 's/ *"-fsanitize-ignore-for-ubsan-feature=[^"]*",//g' "$f"
+# 4a. Apply copium patches — aports' chromium pulls a separate patch bundle
+#     from codeberg.org/selfisekai/copium that handles all the musl + upstream-
+#     clang adjustments aports doesn't ship as standalone .patch files in
+#     community/chromium/. Reads aports' _copium_patches list + _copium_tag
+#     directly from APKBUILD so versions track. Without these we get errors
+#     like "use of undeclared identifier cntrl" in libc++ headers (the cr147
+#     is-musl-libcxx patch fixes it), unknown clang flags (cr146), etc.
+echo "===== Fetch + apply copium patches ====="
+if [[ -f "$APORTS/APKBUILD" ]]; then
+  COPIUM_TAG=$(awk -F= '$1=="_copium_tag"{gsub(/"/,"",$2); print $2; exit}' "$APORTS/APKBUILD")
+  COPIUM_PATCHES=$(awk '
+    /^_copium_patches="/{flag=1; next}
+    /^"$/{flag=0}
+    flag {gsub(/^[ \t]+/,""); gsub(/[ \t]+$/,""); if ($0!="") print}
+  ' "$APORTS/APKBUILD")
+  COPIUM_DIR="$WORK/copium"
+  if [[ ! -d "$COPIUM_DIR" ]]; then
+    mkdir -p "$COPIUM_DIR"
+    echo "  fetch copium-${COPIUM_TAG}.tar.gz from codeberg"
+    curl -fsSL "https://codeberg.org/selfisekai/copium/archive/${COPIUM_TAG}.tar.gz" \
+      | tar -xz -C "$COPIUM_DIR" --strip-components=1
   fi
-done
+  for p in $COPIUM_PATCHES; do
+    if [[ -f "$COPIUM_DIR/$p" ]]; then
+      echo "  apply $p"
+      patch -p1 --forward -i "$COPIUM_DIR/$p" || {
+        echo "  WARN: $p did not apply cleanly" >&2
+      }
+    else
+      echo "  MISS: $p not in copium tag $COPIUM_TAG" >&2
+    fi
+  done
+fi
+
+# 4b. Aports' prepare() does several bootstrap symlinks Chromium's build
+#     expects but our environment doesn't have. Replicate the ones headless_shell
+#     actually needs.
+echo "===== Aports prepare() symlinks ====="
+# Chromium's build looks for node at third_party/node/linux/node-linux-x64/bin/node
+mkdir -p third_party/node/linux/node-linux-x64/bin
+[[ -e third_party/node/linux/node-linux-x64/bin/node ]] || ln -sv /usr/bin/node third_party/node/linux/node-linux-x64/bin/node
+# esbuild symlink (devtools-frontend build path)
+if [[ -d third_party/devtools-frontend/src/third_party/esbuild ]]; then
+  rm -f third_party/devtools-frontend/src/third_party/esbuild/esbuild
+  ln -sv /usr/bin/esbuild third_party/devtools-frontend/src/third_party/esbuild/esbuild
+fi
+# gperf symlink
+if [[ -d third_party/gperf/cipd/bin ]]; then
+  [[ -e third_party/gperf/cipd/bin/gperf ]] || ln -sv /usr/bin/gperf third_party/gperf/cipd/bin/gperf
+fi
 
 # 5. Configure GN. Compose: aports' default args (if its APKBUILD exports any
 #    via a gn_args block) + our overlay (args.gn.overlay) + diagnostic overrides.
