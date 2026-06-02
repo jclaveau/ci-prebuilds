@@ -250,6 +250,13 @@ export CC="$CLANG_BASE/bin/clang"
 export CXX="$CLANG_BASE/bin/clang++"
 echo "  AR=$AR  CC=$CC  CXX=$CXX  NM=$NM"
 
+# Chromium's build scripts pass -Z nightly-only rustc flags (codegen-units,
+# panic-abort-tests, etc.). Stable rust rejects them with "1 nightly option
+# were parsed". RUSTC_BOOTSTRAP=1 is the classic escape hatch — tells stable
+# rustc to accept -Z flags. Aports' chromium APKBUILD sets the same.
+export RUSTC_BOOTSTRAP=1
+echo "  RUSTC_BOOTSTRAP=1 (allow -Z flags on stable rust)"
+
 OUT_DIR="out/headless"
 mkdir -p "$OUT_DIR"
 

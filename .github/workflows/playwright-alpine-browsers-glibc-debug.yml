@@ -96,7 +96,7 @@ jobs:
           docker run --rm --security-opt seccomp=unconfined \
             playwright-alpine-browsers-glibc-debug:${{ github.sha }} \
             sh -c '
-              DIST=$(ls -d /work/firefox-src/obj/dist/firefox /work/firefox-src/obj-*/dist/firefox /work/firefox-src/obj/dist/bin /work/firefox-src/obj-*/dist/bin 2>/dev/null | head -1)
+              DIST=/work/firefox-dist
               [ -z "$DIST" ] && { echo "no firefox dist"; ls /work/firefox-src/obj*/dist 2>&1; exit 1; }
               echo "DIST=$DIST"
               echo "=== firefox --version ==="
@@ -109,7 +109,7 @@ jobs:
       - name: Diagnostic — libxul symbols + omni.ja manifests
         run: |
           docker run --rm playwright-alpine-browsers-glibc-debug:${{ github.sha }} sh -c '
-            DIST=$(ls -d /work/firefox-src/obj/dist/firefox /work/firefox-src/obj-*/dist/firefox /work/firefox-src/obj/dist/bin /work/firefox-src/obj-*/dist/bin 2>/dev/null | head -1)
+            DIST=/work/firefox-dist
             echo "=== libxul Juggler/RemoteAgent symbols ==="
             nm --defined-only "$DIST"/libxul.so 2>/dev/null \
               | grep -iE "juggler|remoteDebuggingPipe|screencastService|RemoteAgent" | head -40
@@ -131,7 +131,7 @@ jobs:
             -e MOZ_LOG='CommandLine:5,Module:5,nsComponentManager:5,nsCategoryManager:5' \
             -e MOZ_LOG_FILE=/tmp/moz.log \
             playwright-alpine-browsers-glibc-debug:${{ github.sha }} sh -c '
-              DIST=$(ls -d /work/firefox-src/obj/dist/firefox /work/firefox-src/obj-*/dist/firefox /work/firefox-src/obj/dist/bin /work/firefox-src/obj-*/dist/bin 2>/dev/null | head -1)
+              DIST=/work/firefox-dist
               timeout 8 "$DIST"/firefox -no-remote -headless -profile /tmp/p -juggler-pipe < /dev/null 3<>/dev/null 4<>/dev/null 2>/tmp/stderr.log || true
               echo "=== stderr ==="
               tail -100 /tmp/stderr.log
