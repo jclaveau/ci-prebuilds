@@ -120,18 +120,20 @@ fi
 # 4b. Aports' prepare() does several bootstrap symlinks Chromium's build
 #     expects but our environment doesn't have. Replicate the ones headless_shell
 #     actually needs.
+#
+# We use `ln -sf` everywhere (not `[[ -e ]] || ln`) because Chromium's source
+# tarball already contains CIPD placeholder files at these paths (e.g. an
+# empty stub at third_party/node/linux/node-linux-x64/bin/node that depot_tools
+# normally resolves). The placeholder satisfies `[[ -e ]]` but fails to exec
+# at build time — exactly what tripped the previous 42-min run. Force-overwrite.
 echo "===== Aports prepare() symlinks ====="
-# Chromium's build looks for node at third_party/node/linux/node-linux-x64/bin/node
 mkdir -p third_party/node/linux/node-linux-x64/bin
-[[ -e third_party/node/linux/node-linux-x64/bin/node ]] || ln -sv /usr/bin/node third_party/node/linux/node-linux-x64/bin/node
-# esbuild symlink (devtools-frontend build path)
+ln -sfv /usr/bin/node third_party/node/linux/node-linux-x64/bin/node
 if [[ -d third_party/devtools-frontend/src/third_party/esbuild ]]; then
-  rm -f third_party/devtools-frontend/src/third_party/esbuild/esbuild
-  ln -sv /usr/bin/esbuild third_party/devtools-frontend/src/third_party/esbuild/esbuild
+  ln -sfv /usr/bin/esbuild third_party/devtools-frontend/src/third_party/esbuild/esbuild
 fi
-# gperf symlink
 if [[ -d third_party/gperf/cipd/bin ]]; then
-  [[ -e third_party/gperf/cipd/bin/gperf ]] || ln -sv /usr/bin/gperf third_party/gperf/cipd/bin/gperf
+  ln -sfv /usr/bin/gperf third_party/gperf/cipd/bin/gperf
 fi
 
 # 5. Configure GN. Compose: aports' default args (if its APKBUILD exports any

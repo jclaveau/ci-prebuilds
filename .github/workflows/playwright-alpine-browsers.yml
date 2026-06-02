@@ -493,19 +493,14 @@ jobs:
           echo "$OUT" | grep -q "${{ steps.pins.outputs.chromium_version }}" \
             || { echo "Tier-1: chrome-headless-shell didn't report expected ${{ steps.pins.outputs.chromium_version }}"; exit 1; }
 
-      # Cancel the still-running sibling Firefox build on any chromium failure.
-      # The chromium build is the diagnostic frontier right now (FF is green +
-      # cached); when chromium fails fast (apk/GN error), letting the parallel
-      # FF build burn ~10 min of runner time is pure waste. cancel-in-progress
-      # at the concurrency level wouldn't help — that cancels OLDER runs, not
-      # sibling jobs in the SAME run.
-      - name: Cancel run on chromium failure
-        if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "chromium build failed — cancelling run ${{ github.run_id }} to stop sibling FF job"
-          gh run cancel ${{ github.run_id }} -R ${{ github.repository }} || true
+      # (Removed) The earlier `Cancel run on chromium failure` step muddied the
+      # job status — chromium-fail → self-cancel → final conclusion becomes
+      # "cancelled" instead of "failure", obscuring real failures. The step
+      # mattered when FF + chromium ran unconditionally in parallel; now FF is
+      # label-gated (default off) so chromium-fail wastes nothing. Drop it.
+      # If you ever enable both browsers via labels and chromium fails first,
+      # the FF build will still continue to completion — that's an accepted
+      # trade for clear status semantics.
 
   smoke-chromium-headless-shell:
     # Tier-2: drive chromium via the Playwright SDK using auto-discovery (NO
