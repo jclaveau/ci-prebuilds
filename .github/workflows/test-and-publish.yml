@@ -203,7 +203,9 @@ jobs:
           add_filter pnpm          dood-pnpm dind-pnpm
           add_filter pnpm_gyp      dood-pnpm-gyp dind-pnpm-gyp
           add_filter playwright    dood-playwright dind-playwright dood-playwright-gyp dind-playwright-gyp
-          echo "test_filters=$filters" >> "$GITHUB_OUTPUT"
+          # jq pretty-prints by default; emit single-line for GITHUB_OUTPUT
+          # (multi-line values need the heredoc-marker form, overkill here).
+          echo "test_filters=$(jq -c <<< "$filters")" >> "$GITHUB_OUTPUT"
 
           # Flavor axis (promote). Friendly names in / matrix values out:
           # 'hardened' → '' (consumer default) | 'sudoer' → '-sudoer' (build-chain).
