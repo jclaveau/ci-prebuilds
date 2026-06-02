@@ -57,7 +57,11 @@ runs:
         # `context deadline exceeded` / `i/o timeout` failures we hit
         # on every other CI run came from this image fetch, not from
         # the actual `imagetools create` push in `promote`).
-        image: mirror.gcr.io/moby/buildkit:buildx-stable-1
+        # The container-image override lives under `driver-opts`, NOT
+        # a top-level `image:` input (a previous attempt used `image:`
+        # and the action silently logged `Unexpected input(s) 'image'`
+        # and fell back to docker.io).
+        driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
     - uses: docker/login-action@v3
       with:
         registry: ghcr.io
