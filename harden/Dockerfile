@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=mirror.gcr.io/docker/dockerfile:1
 #
 # Strip-at-end hardening overlay. Runs LAST in the build pipeline, after every
 # downstream layer is built with the runner sudoers still present (so each

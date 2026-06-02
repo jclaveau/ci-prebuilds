@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=mirror.gcr.io/docker/dockerfile:1
 # Canonical's official Ubuntu from AWS ECR Public (NOT Docker Hub) to avoid Docker Hub's pull rate
 # limit in CI: the rest of the pipeline builds/pulls via GHCR, so CI does zero Docker Hub pulls.
 # Renovate keeps the default pinned; the workflow_call path overrides OS_VERSION for on-demand

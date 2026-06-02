@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=mirror.gcr.io/docker/dockerfile:1
 ARG BASE_IMAGE=jclaveau/ubuntu-dood-pnpm:latest
 FROM ${BASE_IMAGE}
 
