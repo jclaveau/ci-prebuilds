@@ -4,12 +4,19 @@ name: On-demand build (issue-triggered)
 # - Listens on `issues: [opened]`. The form template auto-applies the
 #   `build-request` label so the workflow's filter fires on submit. We
 #   intentionally do NOT listen on `labeled` — that would re-trigger
-#   every time we add our own `quota-exceeded` / `build-failed` labels.
-#   To retry a failed/quota-exceeded request, open a new issue.
-# - Parses the form body, enforces the 3-builds/24h quota, optionally
-#   skips when the predicted tag is already on Docker Hub, then calls
-#   `test-and-publish.yml` via `workflow_call` with the version inputs.
+#   every time we add our own `build-failed` label.
+#   To retry a failed request, open a new issue.
+# - Parses the form body, then calls `test-and-publish.yml` via
+#   `workflow_call` with the version inputs.
 # - Comments status back to the issue and closes on success.
+#
+# Rate-limiting is by **serial execution**, not a counted cap:
+# the workflow-level concurrency group below forces every issue's
+# build to wait for the previous one to finish (cancel-in-progress
+# is false). GH Actions only retains the most recent PENDING run
+# per group — older waiters are silently cancelled — so a tight
+# burst can drop intermediate requests; requesters should re-file
+# if they see their issue accepted but never built.
 
 on:
   issues:
@@ -21,9 +28,11 @@ permissions:
   packages: write   # GHCR push (build-layer)
 
 concurrency:
-  # One in-flight build per issue. Re-labelling cancels the prior attempt.
-  group: on-demand-build-${{ github.event.issue.number }}
-  cancel-in-progress: true
+  # Single global group: only one on-demand build runs at a time.
+  # cancel-in-progress: false → new requests queue rather than
+  # interrupt. (GH Actions queue depth is 1; see workflow header.)
+  group: on-demand-build
+  cancel-in-progress: false
 
 env:
   # `gh` defaults to inferring the repo from a local git remote, which fails
@@ -46,16 +55,14 @@ jobs:
       node_version: ${{ steps.parse.outputs.node_version }}
       pnpm_version: ${{ steps.parse.outputs.pnpm_version }}
       pw_version:   ${{ steps.parse.outputs.pw_version }}
-      quota_ok:     ${{ steps.quota.outputs.ok }}
     steps:
       - id: ensure-labels
         # `gh issue edit --add-label` errors if the label doesn't exist in the
         # repo. `--force` makes `gh label create` idempotent (creates if absent,
         # no-op overwrite if present). `build-request` is created out-of-band
         # by the maintainer (it gates this workflow's prepare-job `if:`).
-        # The other four are state markers swapped on transitions:
+        # The other three are state markers swapped on transitions:
         #   building (in-flight) → published (done) or build-failed (error).
-        #   quota-exceeded is a terminal state set when the requester is over.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -65,9 +72,6 @@ jobs:
           gh label create published --force \
             --description "On-demand build complete; pinned tag(s) pushed to Docker Hub" \
             --color 0E8A16
-          gh label create quota-exceeded --force \
-            --description "On-demand build request blocked: requester hit the 3/24h quota" \
-            --color B60205
           gh label create build-failed --force \
             --description "On-demand build request failed: see linked workflow run" \
             --color B60205
@@ -121,54 +125,13 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Parsed: os='$OS' os_version='$OS_VERSION' image='$IMAGE' flavor='$FLAVOR' node='$NODE' pnpm='$PNPM' pw='$PW'"
 
-      - id: quota
-        # 3 builds / 24h / requester, counting any build-request-labelled issue
-        # opened by this author in the window (including this one — so the
-        # 4th request hits the cap).
-        # Maintainers (OWNER / MEMBER / COLLABORATOR per GitHub's
-        # author_association enum) bypass the cap entirely — they pay for the
-        # CI minutes already, and the cap exists to gate untrusted requesters,
-        # not to rate-limit the repo's own admins.
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AUTHOR: ${{ github.event.issue.user.login }}
-          AUTHOR_ASSOC: ${{ github.event.issue.author_association }}
-        run: |
-          set -euo pipefail
-          case "$AUTHOR_ASSOC" in
-            OWNER|MEMBER|COLLABORATOR)
-              echo "Maintainer (@$AUTHOR, $AUTHOR_ASSOC) — quota check bypassed"
-              echo "ok=true" >> "$GITHUB_OUTPUT"
-              exit 0
-              ;;
-          esac
-          since=$(date -u -d '24 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
-          count=$(gh issue list --repo "$GITHUB_REPOSITORY" \
-            --author "$AUTHOR" \
-            --label build-request \
-            --state all \
-            --search "created:>=$since" \
-            --limit 100 \
-            --json number | jq 'length')
-          echo "build-request issues by @$AUTHOR ($AUTHOR_ASSOC) since $since: $count"
-          if [ "$count" -gt 3 ]; then
-            gh issue comment "${{ github.event.issue.number }}" --body \
-              ":octagonal_sign: Quota exceeded: $count build-request issues from @$AUTHOR in the last 24h (cap = 3). Try again later."
-            gh issue edit "${{ github.event.issue.number }}" --add-label quota-exceeded
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "ok=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      # An existing-tag precheck used to live here, predicting the pinned tag from
-      # the inputs and skipping the build if it was already on Docker Hub. With
-      # multi-select axes the prediction would have to fan out across every
-      # combination, so the precheck was dropped — Docker Hub push of an unchanged
-      # digest is a no-op anyway, and the cost is one rebuild for the rare case
-      # of a fully-redundant request.
+      # Earlier revisions had a 3/24h quota step here and an existing-tag
+      # precheck before that. Both gone: rate-limiting is now serial-execution
+      # via the workflow-level `concurrency` group (see file header), and the
+      # precheck didn't survive multi-select axes cleanly (an unchanged-digest
+      # Docker Hub push is a no-op anyway).
 
       - id: notify-start
-        if: steps.quota.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -179,7 +142,6 @@ jobs:
 
   build:
     needs: prepare
-    if: needs.prepare.outputs.quota_ok == 'true'
     uses: ./.github/workflows/test-and-publish.yml
     secrets: inherit
     with:
@@ -195,7 +157,7 @@ jobs:
   comment-close:
     needs: [prepare, build]
     # Run after the build attempt. `always()` so failures still get a comment.
-    if: always() && needs.prepare.outputs.quota_ok == 'true'
+    if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Comment success + close
