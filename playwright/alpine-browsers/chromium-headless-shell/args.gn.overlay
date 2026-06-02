@@ -32,9 +32,11 @@ host_toolchain = "//build/toolchain/linux/unbundle:default"
 enable_rust = true
 
 # Headless-only target. Disables a lot of UI / browser-frontend code we never
-# use in chrome-headless-shell.
+# use in chrome-headless-shell. We DON'T set headless_use_embedded_resources
+# because it conflicts with the default headless_enable_commands. Aports' build
+# ships external .pak resources too — apply-and-build.sh stages them next to
+# the binary.
 is_component_build = false
-headless_use_embedded_resources = true
 
 # Use system libs where Alpine has reasonable versions (matches aports' build).
 use_sysroot = false
