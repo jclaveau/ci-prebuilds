@@ -18,23 +18,34 @@ FROM alpine:edge AS chromium-builder
 # Initial install: a sufficient toolchain to bootstrap; aports' APKBUILD may
 # require specific clang versions.
 RUN apk add --no-cache \
-        bash curl git patch patchutils tar xz gzip jq make \
-        clang lld llvm \
-        rust cargo \
-        gn ninja-build \
+        bash curl git patch patchutils tar xz gzip jq make perl \
+        bison flex gperf findutils elfutils elfutils-dev \
+        # LLVM toolchain — versioned to match aports' clang patches; _llvmver=22
+        # on alpine:edge today. apply-and-build.sh reads the same _llvmver from
+        # aports' APKBUILD and sets clang_base_path accordingly.
+        clang22 clang22-dev clang22-rtlib lld22 llvm22 \
+        rust cargo rust-bindgen rustfmt \
+        gn ninja-build samurai \
         python3 py3-setuptools \
-        nodejs npm \
-        binutils file unzip \
-        # Chromium build-time deps
-        alsa-lib-dev brotli-dev cairo-dev cups-dev dbus-dev \
-        ffmpeg-dev flac-dev fontconfig-dev freetype-dev gdk-pixbuf-dev \
-        gtk+3.0-dev harfbuzz-dev libdrm-dev libevent-dev libffi-dev \
-        libjpeg-turbo-dev libpng-dev libwebp-dev libxml2-dev libxslt-dev \
-        mesa-dev minizip-dev nspr-dev nss-dev opus-dev pango-dev pciutils-dev \
-        pipewire-dev pulseaudio-dev re2-dev snappy-dev \
-        sqlite-dev wayland-dev libxcomposite-dev libxcursor-dev libxdamage-dev \
-        libxi-dev libxrandr-dev libxscrnsaver-dev libxt-dev libxtst-dev \
-        bsd-compat-headers sccache
+        nodejs npm esbuild \
+        binutils file unzip linux-headers \
+        bsd-compat-headers sccache \
+        # Chromium build-time deps — list mirrors aports' makedepends minus
+        # qt6/cups/libsecret/libusb/pipewire/pulseaudio (headless_shell doesn't
+        # link any of those). If something pkg-config-trips at gn gen we add
+        # it; first-pass batch is sized to cover the assertions seen so far.
+        alsa-lib-dev brotli-dev bzip2-dev cairo-dev crc32c-dev curl-dev \
+        dav1d-dev dbus-dev dbus-glib-dev double-conversion-dev \
+        eudev-dev ffmpeg-dev flac-dev flatbuffers-dev fontconfig-dev \
+        freetype-dev gdk-pixbuf-dev gtk+3.0-dev harfbuzz-dev highway-dev \
+        hwdata-dev jpeg-dev jsoncpp-dev krb5-dev lcms2-dev libbsd-dev \
+        libcap-dev libdrm-dev libevdev-dev libevent-dev libexif-dev \
+        libffi-dev libgcrypt-dev libjpeg-turbo-dev libpng-dev libusb-dev \
+        libva-dev libwebp-dev libxml2-dev libxslt-dev mesa-dev minizip-dev \
+        nspr-dev nss-dev openh264-dev opus-dev pango-dev pciutils-dev \
+        re2-dev simdutf-dev snappy-dev speex-dev sqlite-dev wayland-dev \
+        libxcomposite-dev libxcursor-dev libxdamage-dev libxi-dev \
+        libxinerama-dev libxrandr-dev libxscrnsaver-dev libxt-dev libxtst-dev
 
 WORKDIR /work
 
