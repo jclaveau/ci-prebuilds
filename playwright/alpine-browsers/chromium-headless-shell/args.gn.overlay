@@ -60,8 +60,10 @@ proprietary_codecs = false
 ffmpeg_branding = "Chromium"
 
 # Disable printing — cups-dev intentionally not installed (PW doesn't need
-# print/preview to drive CDP). Without these flags, //printing/BUILD.gn:481
-# tries cups_config_helper.py which fails when cups-config isn't on PATH.
+# print/preview to drive CDP). use_cups is the right knob; enable_basic_printing
+# alone doesn't stop //printing/BUILD.gn from calling cups_config_helper.py at
+# gn-gen time.
+use_cups = false
 enable_basic_printing = false
 enable_print_preview = false
 
