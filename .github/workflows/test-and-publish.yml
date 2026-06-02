@@ -1499,7 +1499,7 @@ jobs:
           # Artifact names must be unique across the matrix. Empty flavor (hardened)
           # is rewritten to `-hardened` so the name has the same shape as `-sudoer`.
           name: tag-${{ matrix.os }}-${{ matrix.image }}${{ matrix.flavor || '-hardened' }}
-          path: /tmp/tag/tag.txt
+          path: /tmp/tag/tag-${{ matrix.os }}-${{ matrix.image }}${{ matrix.flavor || '-hardened' }}.txt
           retention-days: 1
           if-no-files-found: error
 
