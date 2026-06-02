@@ -4,11 +4,14 @@
 # dockerd at it via registry-mirrors.
 # Container options:
 #   --privileged: required for the inner dockerd as on the plain smoke-dind test.
-#   -v /var/run/docker.sock:/var/run/docker.sock: gives the dind access to the
-#       host's docker daemon so it can `docker run registry:2` on the host.
 #   --add-host=host.docker.internal:host-gateway: lets the inner dockerd resolve
 #       the host endpoint on Linux (no-op on Docker Desktop where it's native).
 #   -e DIND_REGISTRY_AUTOSTART=1: flips the gated block in start-dockerd.sh.
+# NOTE: no explicit `-v /var/run/docker.sock:/var/run/docker.sock` here — `act`
+# auto-mounts the host docker socket into every container by default; adding it
+# explicitly errors with "Duplicate mount point". The end-user `.actrc` recipe
+# in dind/README.md DOES include the mount because there's no outer act in
+# that case.
 # Kept out of .github/workflows so real CI ignores it.
 name: act smoke (dind registry autostart)
 on: [push]
@@ -20,7 +23,6 @@ jobs:
       options: >-
         --privileged
         --env DOCKER_HOST=unix:///var/run/dind.sock
-        -v /var/run/docker.sock:/var/run/docker.sock
         --add-host=host.docker.internal:host-gateway
         -e DIND_REGISTRY_AUTOSTART=1
     env:
