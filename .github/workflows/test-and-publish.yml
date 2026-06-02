@@ -18,12 +18,12 @@ on:
       node_version:    { type: string,  default: '' }   # e.g. '20.18.0'
       pnpm_version:    { type: string,  default: '' }   # e.g. '9.15.3'
       pw_version:      { type: string,  default: '' }   # e.g. '1.50.1'
-      only_os:         { type: string,  default: '' }   # 'ubuntu' | 'alpine' | '' (both)
-      only_image:      { type: string,  default: '' }   # e.g. 'dood-playwright' | '' (all)
-      # Flavor naming follows the matrix axis at the `promote` job: '' = hardened (consumer
-      # default), '-sudoer' = the un-hardened build-chain image. 'all' means no filter — used
-      # by the push/PR path (default) so both flavors are promoted as today.
-      only_flavor:     { type: string,  default: 'all' }   # 'all' | '' (hardened) | '-sudoer'
+      # All three `only_*` axes use the same convention: comma-separated friendly names,
+      # empty = no filter (every default-matrix entry runs, byte-identical to today).
+      # Whitespace around commas is tolerated.
+      only_os:         { type: string,  default: '' }   # 'ubuntu' | 'alpine' (CSV) | '' (both)
+      only_image:      { type: string,  default: '' }   # CSV of variants, e.g. 'dood-playwright,dind-playwright' | '' (all 13)
+      only_flavor:     { type: string,  default: '' }   # 'hardened' | 'sudoer' (CSV) | '' (both)
       publish_latest:  { type: boolean, default: true }
   # schedule:
   #   # Run weekly to get security updates
@@ -88,24 +88,58 @@ jobs:
           ONLY_FLAVOR: ${{ inputs.only_flavor }}
         run: |
           set -euo pipefail
-          # OS axis
+
+          # Comma-separated → JSON array. Trims whitespace per entry, drops empties
+          # (so 'a, b' and 'a,b' both work). Optional second arg maps friendly names
+          # to matrix values via a `friendly=value` lookup table (used by flavor).
+          # Unknown entries error out so a typo in an issue body fails loudly here
+          # rather than silently expanding to a never-matching matrix cell.
+          csv_to_json() {
+            local csv="$1" map="${2:-}" json='[' sep=''
+            IFS=',' read -ra parts <<< "$csv"
+            local raw trimmed mapped found pair k v
+            for raw in "${parts[@]}"; do
+              trimmed=$(echo "$raw" | xargs)
+              [ -z "$trimmed" ] && continue
+              if [ -n "$map" ]; then
+                found=0; mapped=''
+                for pair in $map; do
+                  k="${pair%%=*}" v="${pair#*=}"
+                  if [ "$k" = "$trimmed" ]; then mapped="$v"; found=1; break; fi
+                done
+                if [ "$found" = 0 ]; then
+                  echo "::error::Unknown value '$trimmed' (allowed: $(echo "$map" | sed 's/=[^ ]*//g; s/ /,/g'))"
+                  exit 1
+                fi
+                trimmed="$mapped"
+              fi
+              json+="${sep}\"${trimmed}\""
+              sep=','
+            done
+            json+=']'
+            echo "$json"
+          }
+
+          # OS axis (every job with matrix.os).
           if [ -n "$ONLY_OS" ]; then
-            echo "os_matrix=[\"$ONLY_OS\"]" >> "$GITHUB_OUTPUT"
+            echo "os_matrix=$(csv_to_json "$ONLY_OS")" >> "$GITHUB_OUTPUT"
           else
             echo 'os_matrix=["ubuntu", "alpine"]' >> "$GITHUB_OUTPUT"
           fi
-          # Image axis (used by build-hardened-variants + promote)
+
+          # Image axis (build-hardened-variants + promote).
           if [ -n "$ONLY_IMAGE" ]; then
-            echo "image_matrix=[\"$ONLY_IMAGE\"]" >> "$GITHUB_OUTPUT"
+            echo "image_matrix=$(csv_to_json "$ONLY_IMAGE")" >> "$GITHUB_OUTPUT"
           else
             echo 'image_matrix=["gha-tools", "dood", "dind", "dood-node", "dind-node", "dood-pnpm", "dind-pnpm", "dood-pnpm-gyp", "dind-pnpm-gyp", "dood-playwright", "dind-playwright", "dood-playwright-gyp", "dind-playwright-gyp"]' >> "$GITHUB_OUTPUT"
           fi
-          # Flavor axis (used by promote). 'all' = no filter.
-          # ''  = hardened (consumer default), '-sudoer' = build-chain.
-          if [ "$ONLY_FLAVOR" = "all" ] || [ -z "$ONLY_FLAVOR" ]; then
-            echo 'flavor_matrix=["", "-sudoer"]' >> "$GITHUB_OUTPUT"
+
+          # Flavor axis (promote). Friendly names in / matrix values out:
+          # 'hardened' → '' (consumer default) | 'sudoer' → '-sudoer' (build-chain).
+          if [ -n "$ONLY_FLAVOR" ]; then
+            echo "flavor_matrix=$(csv_to_json "$ONLY_FLAVOR" "hardened= sudoer=-sudoer")" >> "$GITHUB_OUTPUT"
           else
-            echo "flavor_matrix=[\"$ONLY_FLAVOR\"]" >> "$GITHUB_OUTPUT"
+            echo 'flavor_matrix=["", "-sudoer"]' >> "$GITHUB_OUTPUT"
           fi
 
       # Structural lint: any smoke YAML that issues a `docker` command must bind the

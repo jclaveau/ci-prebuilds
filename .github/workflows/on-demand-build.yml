@@ -30,17 +30,17 @@ jobs:
     if: contains(github.event.issue.labels.*.name, 'build-request')
     runs-on: ubuntu-latest
     outputs:
-      os:             ${{ steps.parse.outputs.os }}
-      os_version:     ${{ steps.parse.outputs.os_version }}
-      image:          ${{ steps.parse.outputs.image }}
-      flavor:         ${{ steps.parse.outputs.flavor }}        # '' (hardened) or '-sudoer'
-      node_version:   ${{ steps.parse.outputs.node_version }}
-      pnpm_version:   ${{ steps.parse.outputs.pnpm_version }}
-      pw_version:     ${{ steps.parse.outputs.pw_version }}
-      predicted_tag:  ${{ steps.predict.outputs.tag }}
-      docker_repo:    ${{ steps.predict.outputs.repo }}
-      quota_ok:       ${{ steps.quota.outputs.ok }}
-      already_exists: ${{ steps.existing.outputs.exists }}
+      # All three axes accept CSV / empty. The downstream test-and-publish workflow
+      # parses them into matrix arrays; an empty value fans out to every default
+      # entry on that axis (full chain rebuild at the requested version pins).
+      os:           ${{ steps.parse.outputs.os }}
+      os_version:   ${{ steps.parse.outputs.os_version }}
+      image:        ${{ steps.parse.outputs.image }}
+      flavor:       ${{ steps.parse.outputs.flavor }}
+      node_version: ${{ steps.parse.outputs.node_version }}
+      pnpm_version: ${{ steps.parse.outputs.pnpm_version }}
+      pw_version:   ${{ steps.parse.outputs.pw_version }}
+      quota_ok:     ${{ steps.quota.outputs.ok }}
     steps:
       - id: ensure-labels
         # `gh issue edit --add-label` errors if the label doesn't exist in the
@@ -84,18 +84,18 @@ jobs:
             [ "$v" = "_No response_" ] && v=""
             printf '%s' "$v"
           }
-          OS=$(extract "OS family")
-          OS_VERSION=$(extract "OS version")
-          IMAGE=$(extract "Image variant")
-          FLAVOR_LABEL=$(extract "Flavor")
-          NODE=$(opt   "Node version (optional)")
-          PNPM=$(opt   "pnpm version (optional)")
-          PW=$(opt     "Playwright version (optional)")
-          case "$FLAVOR_LABEL" in
-            hardened) FLAVOR="" ;;
-            sudoer)   FLAVOR="-sudoer" ;;
-            *) echo "::error::Unknown flavor: $FLAVOR_LABEL"; exit 1 ;;
-          esac
+          # Every axis is optional in the form (empty = build all). For multi-select
+          # fields, the form body renders selected values as a comma-separated list
+          # on a single line — exactly the CSV format test-and-publish expects, so
+          # parse just passes the value through verbatim. Friendly flavor names
+          # (hardened/sudoer) map to matrix values inside the matrices step.
+          OS=$(opt          "OS family")
+          OS_VERSION=$(opt  "OS version")
+          IMAGE=$(opt       "Image variant(s)")
+          FLAVOR=$(opt      "Flavor")
+          NODE=$(opt        "Node version (optional)")
+          PNPM=$(opt        "pnpm version (optional)")
+          PW=$(opt          "Playwright version (optional)")
           {
             echo "os=$OS"
             echo "os_version=$OS_VERSION"
@@ -105,48 +105,7 @@ jobs:
             echo "pnpm_version=$PNPM"
             echo "pw_version=$PW"
           } >> "$GITHUB_OUTPUT"
-          echo "Parsed: os=$OS os_version=$OS_VERSION image=$IMAGE flavor='$FLAVOR' node='$NODE' pnpm='$PNPM' pw='$PW'"
-
-      - id: predict
-        # Compose the would-be pinned tag from the requested inputs (the actual
-        # tag is composed by `promote` from `docker run` against the built image,
-        # so for unusual minor pinnings this prediction may differ — used only
-        # for the `existing` precheck and the success comment, not for the
-        # publish itself).
-        env:
-          OS:           ${{ steps.parse.outputs.os }}
-          OS_VERSION:   ${{ steps.parse.outputs.os_version }}
-          IMAGE:        ${{ steps.parse.outputs.image }}
-          FLAVOR:       ${{ steps.parse.outputs.flavor }}
-          NODE_VERSION: ${{ steps.parse.outputs.node_version }}
-          PNPM_VERSION: ${{ steps.parse.outputs.pnpm_version }}
-          PW_VERSION:   ${{ steps.parse.outputs.pw_version }}
-        run: |
-          set -euo pipefail
-          # Match the truncation `versions` does: node major.minor from `node -v`,
-          # pnpm major.minor from `pnpm -v`, playwright major.minor from `--version`.
-          # Strip third+ segments from user input so the prediction matches.
-          majmin() { echo "$1" | cut -d. -f1,2; }
-          OS_TAG="${OS}${OS_VERSION}"
-          case "$IMAGE" in
-            gha-tools|dood|dind)
-              TAG="${OS_TAG}" ;;
-            dood-node|dind-node)
-              TAG="${OS_TAG}-node$(majmin "$NODE_VERSION")" ;;
-            dood-pnpm|dind-pnpm)
-              TAG="${OS_TAG}-node$(majmin "$NODE_VERSION")-pnpm$(majmin "$PNPM_VERSION")" ;;
-            dood-pnpm-gyp|dind-pnpm-gyp)
-              TAG="${OS_TAG}-node$(majmin "$NODE_VERSION")-pnpm$(majmin "$PNPM_VERSION")-gyp" ;;
-            dood-playwright|dind-playwright)
-              TAG="${OS_TAG}-node$(majmin "$NODE_VERSION")-pnpm$(majmin "$PNPM_VERSION")-pw$(majmin "$PW_VERSION")" ;;
-            dood-playwright-gyp|dind-playwright-gyp)
-              TAG="${OS_TAG}-node$(majmin "$NODE_VERSION")-pnpm$(majmin "$PNPM_VERSION")-pw$(majmin "$PW_VERSION")-gyp" ;;
-          esac
-          [ "$FLAVOR" = "-sudoer" ] && TAG="${TAG}-sudoer"
-          REPO="jclaveau/${OS}-${IMAGE}${FLAVOR}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
-          echo "Predicted: ${REPO}:${TAG}"
+          echo "Parsed: os='$OS' os_version='$OS_VERSION' image='$IMAGE' flavor='$FLAVOR' node='$NODE' pnpm='$PNPM' pw='$PW'"
 
       - id: quota
         # 3 builds / 24h / requester. Counts any build-request-labelled issue
@@ -175,44 +134,25 @@ jobs:
             echo "ok=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - id: existing
-        # Best-effort precheck — if the predicted tag is already on Docker Hub,
-        # skip the build (push would be a no-op anyway). Anonymous manifest
-        # inspect; rate limited at 100/6h, well above the 3/24h quota.
-        if: steps.quota.outputs.ok == 'true'
-        env:
-          REPO: ${{ steps.predict.outputs.repo }}
-          TAG: ${{ steps.predict.outputs.tag }}
-        run: |
-          set -euo pipefail
-          if docker manifest inspect "${REPO}:${TAG}" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Predicted tag already on Docker Hub — skipping build"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+      # An existing-tag precheck used to live here, predicting the pinned tag from
+      # the inputs and skipping the build if it was already on Docker Hub. With
+      # multi-select axes the prediction would have to fan out across every
+      # combination, so the precheck was dropped — Docker Hub push of an unchanged
+      # digest is a no-op anyway, and the cost is one rebuild for the rare case
+      # of a fully-redundant request.
 
       - id: notify-start
-        if: steps.quota.outputs.ok == 'true' && steps.existing.outputs.exists != 'true'
+        if: steps.quota.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           gh issue comment "${{ github.event.issue.number }}" --body \
-            ":hammer_and_wrench: Build started: ${{ steps.predict.outputs.repo }}:${{ steps.predict.outputs.tag }}. Wall-clock ~5-30 min depending on variant. Progress: $RUN_URL"
-
-      - id: skip-existing-notify
-        if: steps.quota.outputs.ok == 'true' && steps.existing.outputs.exists == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh issue comment "${{ github.event.issue.number }}" --body \
-            ":white_check_mark: That combination is already published as \`${{ steps.predict.outputs.repo }}:${{ steps.predict.outputs.tag }}\`. Pull it directly — no rebuild needed."
-          gh issue close "${{ github.event.issue.number }}"
+            ":hammer_and_wrench: Build started. Wall-clock ~5-30 min depending on variant + matrix size. Progress: $RUN_URL"
 
   build:
     needs: prepare
-    if: needs.prepare.outputs.quota_ok == 'true' && needs.prepare.outputs.already_exists != 'true'
+    if: needs.prepare.outputs.quota_ok == 'true'
     uses: ./.github/workflows/test-and-publish.yml
     secrets: inherit
     with:
@@ -227,9 +167,8 @@ jobs:
 
   comment-close:
     needs: [prepare, build]
-    # Run only after the build attempt, ONLY if quota passed (skip-existing
-    # closes the issue itself). `always()` so failures still get a comment.
-    if: always() && needs.prepare.outputs.quota_ok == 'true' && needs.prepare.outputs.already_exists != 'true'
+    # Run after the build attempt. `always()` so failures still get a comment.
+    if: always() && needs.prepare.outputs.quota_ok == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Comment success + close
@@ -238,7 +177,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh issue comment "${{ github.event.issue.number }}" --body \
-            ":white_check_mark: Build complete. Published: \`${{ needs.prepare.outputs.docker_repo }}:${{ needs.prepare.outputs.predicted_tag }}\`. (If you pinned other minors, the actual tag may differ — check https://hub.docker.com/r/${{ needs.prepare.outputs.docker_repo }}/tags.)"
+            ":white_check_mark: Build complete. New pinned tag(s) live under https://hub.docker.com/u/jclaveau — search by image variant + version components matching what you requested."
           gh issue close "${{ github.event.issue.number }}"
       - name: Comment failure + label
         if: needs.build.result != 'success'
