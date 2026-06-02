@@ -33,7 +33,7 @@ RUN apk add --no-cache \
         mesa-dev minizip-dev nspr-dev nss-dev opus-dev pango-dev pciutils-dev \
         pipewire-dev pulseaudio-dev re2-dev snappy-dev \
         sqlite-dev wayland-dev libxcomposite-dev libxcursor-dev libxdamage-dev \
-        libxi-dev libxrandr-dev libxss-dev libxt-dev libxtst-dev \
+        libxi-dev libxrandr-dev libxscrnsaver-dev libxt-dev libxtst-dev \
         bsd-compat-headers sccache
 
 WORKDIR /work

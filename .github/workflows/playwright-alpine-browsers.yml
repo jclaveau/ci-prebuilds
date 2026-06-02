@@ -445,7 +445,7 @@ jobs:
           FROM alpine:edge
           RUN apk update && apk add --no-cache \\
               nss freetype harfbuzz ca-certificates ttf-freefont libdrm mesa-gl \\
-              libwebp libwebpdemux libxcomposite libxdamage libxrandr libxss libxtst \\
+              libwebp libwebpdemux libxcomposite libxdamage libxrandr libxscrnsaver libxtst \\
               libx11 libxcb libxext libxi cups-libs alsa-lib dbus-libs pango cairo
           COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:chs-sha-${{ github.sha }} \\
                /chrome-headless-shell-linux64 \\
@@ -483,7 +483,7 @@ jobs:
           RUN apk update && apk add --no-cache \\
               nodejs npm bash \\
               nss freetype harfbuzz ca-certificates ttf-freefont libdrm mesa-gl \\
-              libwebp libwebpdemux libxcomposite libxdamage libxrandr libxss libxtst \\
+              libwebp libwebpdemux libxcomposite libxdamage libxrandr libxscrnsaver libxtst \\
               libx11 libxcb libxext libxi cups-libs alsa-lib dbus-libs pango cairo
           COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:chs-sha-${{ github.sha }} \\
                /chrome-headless-shell-linux64 \\
