@@ -3,6 +3,27 @@
 Ubuntu 24.04 set up to mimic GitHub's `ubuntu-latest` runner environment — the shared foundation every
 other image in this repo builds on.
 
+## Usage
+
+Published as `jclaveau/ubuntu-gha-tools` on Docker Hub. Tags: `:latest` and version-pinned
+`:ubuntu24.04`. The `-sudoer` flavor lives at `jclaveau/ubuntu-gha-tools-sudoer` (see
+[hardened vs sudoer](../README.md#hardened-default-and--sudoer-flavors)).
+
+```yaml
+jobs:
+  shell-job:
+    runs-on: ubuntu-latest
+    container: jclaveau/ubuntu-gha-tools:latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: jq --version && git --version
+```
+
+Locally: `docker run --rm -it jclaveau/ubuntu-gha-tools:latest bash`.
+
+Need Docker / Node / pnpm / Playwright? Pick a downstream layer instead — see
+[the image table at the root](../README.md#pick-your-image).
+
 ## What it adds
 - **Accounts** matching the hosted runner: `runner` (uid 1001) and `packer` (uid 1000), both with
   passwordless `sudo`.

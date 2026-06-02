@@ -2,6 +2,31 @@
 
 Adds [Playwright](https://playwright.dev) + browsers on top of the [pnpm](../pnpm/README.md) layer.
 
+## Usage
+
+Published as `jclaveau/<os>-<mode>-playwright` on Docker Hub — four variants
+(`ubuntu-dood-playwright`, `ubuntu-dind-playwright`, `alpine-dood-playwright`,
+`alpine-dind-playwright`), plus the `-gyp` twin for each. Tags: `:latest` and version-pinned
+`:<os>-<node-minor>-<pnpm-minor>-pw<pw-minor>`, e.g.
+`jclaveau/ubuntu-dood-playwright:ubuntu24.04-node22.12-pnpm9.15-pw1.50`. Append `-sudoer` to the
+image name for the non-hardened flavor; append `-gyp` (image AND tag) for native-addon builds.
+
+```yaml
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    container: jclaveau/ubuntu-dood-playwright:latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright test
+```
+
+**Ubuntu vs Alpine**: pick **Ubuntu** for the full three-engine matrix (Chromium + Firefox +
+WebKit, Playwright-bundled browsers). Pick **Alpine** for a smaller image when **Chromium-only**
+coverage is enough — see [Why Alpine is Chromium-only](#why-alpine-is-chromium-only). Alpine
+consumers also need the [`playwright.config.ts` snippet below](#required-playwrightconfigts-for-alpine-consumers).
+
 ## What it adds
 - **Playwright** (pinned by `PLAYWRIGHT_VERSION`) installed globally.
   - **Ubuntu**: the bundled browsers via `playwright install --with-deps --only-shell`;

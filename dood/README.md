@@ -7,6 +7,9 @@ the host's `/var/run/docker.sock`. GitHub Actions bind-mounts that socket into e
 Ships in both OS flavors (`ubuntu-dood`, `alpine-dood`) with identical behavior — the examples below use
 `ubuntu-dood`; swap the prefix for the Alpine build.
 
+Published as `jclaveau/<os>-dood` on Docker Hub. Tags: `:latest` and version-pinned `:<os>`, e.g.
+`jclaveau/ubuntu-dood:ubuntu24.04`. Append `-sudoer` to the image name for the non-hardened flavor.
+
 ## What it implies
 - **Runtime**: mount the host socket (`-v /var/run/docker.sock:/var/run/docker.sock`); on GHA it's already
   present. Lighter and instant (no daemon to boot).

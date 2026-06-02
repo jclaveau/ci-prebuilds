@@ -6,9 +6,62 @@ Prebuilt container images for GitHub Actions that **speed up CI** by shipping co
 preinstalled, while mimicking the default `ubuntu-latest` environment (so `docker compose` and friends
 just work). Use one as a job [`container:`](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/run-jobs-in-a-container).
 
+## Quickstart
+
+Pull from Docker Hub (`docker.io/jclaveau/<image>`) — drop one into your workflow as the job
+`container:`:
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: jclaveau/ubuntu-dood-pnpm:latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+```
+
+That's it — `pnpm`, `node`, `git`, `docker`, the `runner` user, and the `ubuntu-latest` env are all
+already there. For `docker compose` see [dood](dood/README.md) (shared host daemon, lighter) or
+[dind](dind/README.md) (isolated daemon, no port/name clashes). For browser tests pick
+[playwright](playwright/README.md). For native-addon builds (`node-gyp`) pick the
+[`-gyp`](pnpm-gyp/README.md) twin.
+
+## Pick your image
+
+Image names follow `<os>-<mode>[-<layer>][-sudoer]`. Pick one of each axis:
+
+| Axis | Options | Default if unsure |
+| --- | --- | --- |
+| **OS** | `ubuntu` (24.04, glibc) · `alpine` (3.21, musl, smaller) | `ubuntu` |
+| **Mode** | `dood` (host daemon, instant) · `dind` (own daemon, isolated, `--privileged`) | `dood` |
+| **Layer** | none · `-node` · `-pnpm` · `-pnpm-gyp` · `-playwright` · `-playwright-gyp` | the highest one you need |
+| **Flavor** | hardened (default — no runtime sudo) · `-sudoer` (keeps `NOPASSWD: ALL`) | hardened |
+
+Every combination is published with a `:latest` tag plus a version-pinned tag. Examples on the
+current chain (Ubuntu 24.04 / Node 22.12 / pnpm 9.15 / Playwright 1.50):
+
+| Image | `:latest` example | Version-pinned tag example |
+| --- | --- | --- |
+| `jclaveau/ubuntu-gha-tools` | `:latest` | `:ubuntu24.04` |
+| `jclaveau/ubuntu-dood` · `jclaveau/ubuntu-dind` | `:latest` | `:ubuntu24.04` |
+| `jclaveau/ubuntu-dood-node` | `:latest` | `:ubuntu24.04-node22.12` |
+| `jclaveau/ubuntu-dood-pnpm` | `:latest` | `:ubuntu24.04-node22.12-pnpm9.15` |
+| `jclaveau/ubuntu-dood-pnpm-gyp` | `:latest` | `:ubuntu24.04-node22.12-pnpm9.15-gyp` |
+| `jclaveau/ubuntu-dood-playwright` | `:latest` | `:ubuntu24.04-node22.12-pnpm9.15-pw1.50` |
+| `jclaveau/ubuntu-dood-playwright-gyp` | `:latest` | `:ubuntu24.04-node22.12-pnpm9.15-pw1.50-gyp` |
+
+Swap `ubuntu` → `alpine` and the same shape works (`:alpine3.21-…`). Swap `dood` → `dind` for the
+isolated-daemon variant. Append `-sudoer` to the image name (not the tag) for the non-hardened
+flavor — e.g. `jclaveau/ubuntu-dood-pnpm-sudoer:latest`.
+
+> `ghcr.io/jclaveau/…:sha-<commit>` tags also exist but are **build intermediates** — the consumer
+> contract is Docker Hub `:latest` and the version-pinned tags above.
+
 ## Goals
-- [ ] Prepare images with installed dependencies to speed up CI
-- [ ] Provide an environment similar to the default `ubuntu-latest` (allowing `docker compose`)
+- [x] Prepare images with installed dependencies to speed up CI
+- [x] Provide an environment similar to the default `ubuntu-latest` (allowing `docker compose`)
 
 ## The big picture
 
@@ -98,8 +151,9 @@ install …`, `sudo -i`, etc.) is denied as on the dood family.
 > `runner`. If your workflow runs `sudo apt-get install …` mid-job, switch to
 > `<image>-sudoer:latest` (one-line change) or move the install into a downstream Dockerfile.
 
-## Todo
-- Check [the issues](https://github.com/jclaveau/github-action-container-images/issues)
+## Roadmap
+
+See [open issues](https://github.com/jclaveau/github-action-container-images/issues).
 
 ## License
 

@@ -3,6 +3,27 @@
 Alpine 3.21 set up to mirror [`ubuntu-gha-tools`](../ubuntu-gha-tools/README.md) as closely as
 musl/Alpine allows — the lightweight foundation for the `alpine-*` flavor of every other image here.
 
+## Usage
+
+Published as `jclaveau/alpine-gha-tools` on Docker Hub. Tags: `:latest` and version-pinned
+`:alpine3.21`. The `-sudoer` flavor lives at `jclaveau/alpine-gha-tools-sudoer` (see
+[hardened vs sudoer](../README.md#hardened-default-and--sudoer-flavors)).
+
+```yaml
+jobs:
+  shell-job:
+    runs-on: ubuntu-latest
+    container: jclaveau/alpine-gha-tools:latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: jq --version && git --version
+```
+
+Locally: `docker run --rm -it jclaveau/alpine-gha-tools:latest bash`.
+
+Need Docker / Node / pnpm / Playwright? Pick a downstream layer — see
+[the image table at the root](../README.md#pick-your-image).
+
 ## What it adds
 - **Accounts** matching the hosted runner: `runner` (uid 1001) and `packer` (uid 1000), both with
   passwordless `sudo` (via the `shadow` + `sudo` packages, so the user setup is identical to Ubuntu's).
