@@ -28,7 +28,20 @@ jobs:
     env:
       DOCKER_STORAGE_DRIVER: fuse-overlayfs
     steps:
+      # Regression guard: autostart must NEVER touch the bind-mounted host socket
+      # (a chown writes the in-container `docker` GID to the host's inode, locking
+      # the host user out when the host's docker GID differs — was the original
+      # autostart bug). Snapshot uid:gid:mode before, assert it's byte-identical
+      # after. Any future re-introduction of `chown`/`chmod` on /var/run/docker.sock
+      # inside start-dockerd.sh fails this step.
+      - name: Snapshot host docker.sock perms (before start-dockerd)
+        run: |
+          stat -c '%u:%g:%a' /var/run/docker.sock | tee /tmp/sock-before.txt
       - run: start-dockerd
+      - name: Host docker.sock perms are unchanged by start-dockerd
+        run: |
+          stat -c '%u:%g:%a' /var/run/docker.sock | tee /tmp/sock-after.txt
+          diff /tmp/sock-before.txt /tmp/sock-after.txt
       - name: Inner dockerd has the mirror configured
         run: |
           docker info 2>&1 | tee /tmp/info.txt

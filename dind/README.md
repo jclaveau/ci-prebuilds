@@ -88,6 +88,12 @@ defaults the var when unset.
   control. Acceptable for `act`-on-dev-machine; **do not enable on hosted
   GHA runners** (autostart silently falls through when the host socket is
   absent, but the bind-mount itself shouldn't be configured there).
+- Autostart never mutates the host socket. It talks to the host daemon via
+  `sudo docker -H unix:///var/run/docker.sock …` inside the container — no
+  `chown` / `chmod` on the bind-mounted inode. (Earlier versions chowned it
+  to the in-container `docker` GID, which locked host users out when the
+  host's docker GID differed from the in-container one. Guarded by
+  `tests/act/smoke-dind-registry-autostart.yml`'s perms-snapshot diff.)
 - `--add-host=host.docker.internal:host-gateway` is required on Linux for
   the inner dockerd to resolve the host endpoint; harmless on Docker
   Desktop where it's native.

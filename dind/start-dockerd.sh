@@ -18,12 +18,16 @@ set -euo pipefail
 case "${DIND_REGISTRY_AUTOSTART:-}" in
   1|true|TRUE|yes|YES)
     if [ -S /var/run/docker.sock ]; then
-      # Make the host socket usable by `runner` without sudo: chown to the
-      # in-container `docker` group (GID may differ from host's, which is
-      # why we chown rather than rely on the bind-mounted host perms).
-      sudo chown root:docker /var/run/docker.sock
-      sudo chmod 660 /var/run/docker.sock
-      HOST_DOCKER="docker -H unix:///var/run/docker.sock"
+      # Talk to the host daemon via `sudo docker` — never chown/chmod the
+      # bind-mounted host socket. The inode is shared with the host, so a
+      # chown writes the in-container `docker` GID to the host's inode; if
+      # the host's `docker` group has a different GID (it commonly does on
+      # non-Debian/Ubuntu hosts, e.g. 130 vs the 118 baked here), the host
+      # user gets locked out of their own docker socket until they restore
+      # it with `sudo chown root:docker /var/run/docker.sock`. The narrow
+      # `/usr/bin/docker` sudoers entry (dind/Dockerfile) keeps this
+      # working on the hardened flavor.
+      HOST_DOCKER="sudo docker -H unix:///var/run/docker.sock"
       $HOST_DOCKER inspect ci-prebuilds-dind-registry >/dev/null 2>&1 \
         || $HOST_DOCKER run -d --restart=unless-stopped \
              --name ci-prebuilds-dind-registry \
