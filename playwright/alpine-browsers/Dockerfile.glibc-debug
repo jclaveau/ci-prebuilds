@@ -74,7 +74,14 @@ COPY firefox/mozconfig.overlay /work/firefox/mozconfig.overlay
 # Fetch aports + PW patches (we still fetch aports so the script's optional
 # blocks are exercised the same way; PW_SKIP_APORTS=1 below skips applying
 # them).
-RUN set -a && . /work/versions.env && set +a \
+#
+# GITHUB_TOKEN is mounted via BuildKit secret (forwarded by the workflow's
+# secrets: GITHUB_TOKEN= input). fetch-pw-patches.sh reads it from env and
+# passes via Authorization: Bearer to dodge raw.githubusercontent.com's
+# unauthenticated rate limit (~60/hr). Without this the 100+ Juggler file
+# walk 403s mid-loop on the first glibc-debug run (musl side caches layers).
+RUN --mount=type=secret,id=GITHUB_TOKEN,env=GITHUB_TOKEN \
+    set -a && . /work/versions.env && set +a \
     && bash /work/firefox/scripts/fetch-aports.sh /work/aports \
     && bash /work/firefox/scripts/fetch-pw-patches.sh /work/pw-firefox
 

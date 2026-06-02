@@ -85,6 +85,11 @@ jobs:
           build-args: |
             PW_JUGGLER_ORDER_FIRST=${{ inputs.juggler_order_first || 'false' }}
             PW_JUGGLER_CATEGORY_RENAME=${{ inputs.juggler_category_rename || 'false' }}
+          # GITHUB_TOKEN passes through to fetch-pw-patches.sh's curl. Anonymous
+          # raw.githubusercontent.com requests rate-limit to ~60/hr/IP; the
+          # 100+ Juggler-file walk hits that ceiling. Authenticated → 5000/hr.
+          secrets: |
+            GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}
 
       - name: Diagnostic — firefox --help on glibc
         run: |

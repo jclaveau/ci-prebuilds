@@ -27,14 +27,40 @@ mkdir -p "$OUT/patches" "$OUT/juggler" "$OUT/preferences"
 
 GH_RAW="https://raw.githubusercontent.com/microsoft/playwright/v${PW_VERSION}"
 
+# raw.githubusercontent.com + api.github.com rate-limit unauthenticated traffic
+# to ~60 req/hr per IP. The glibc-debug path (no buildcache hit) downloads
+# 100+ Juggler files in one RUN and hits the limit mid-loop, surfacing as a
+# 403. Pass GITHUB_TOKEN via curl --header when available — it bumps the limit
+# to 5000 req/hr. In the producer Dockerfile, the secret is forwarded via
+# --secret=id=github-token (or via build-arg / env), then read here.
+#
+# Plus a 3-try retry with backoff: transient 403/429 in mid-fetch shouldn't
+# kill the whole 100-file walk.
+AUTH_HEADER=()
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  AUTH_HEADER=(-H "Authorization: Bearer $GITHUB_TOKEN")
+fi
+retry_curl() {
+  local n=1
+  while (( n <= 3 )); do
+    if curl -fsSL "${AUTH_HEADER[@]}" "$@"; then
+      return 0
+    fi
+    echo "  retry $n/3 (rate limit?) — sleep $((n*5))s" >&2
+    sleep $((n*5))
+    n=$((n+1))
+  done
+  return 1
+}
+
 # browsers.json (from playwright-core on unpkg) — the canonical firefox revision pin.
-curl -fsSL "https://unpkg.com/playwright-core@${PW_VERSION}/browsers.json" -o "$OUT/browsers.json"
+retry_curl "https://unpkg.com/playwright-core@${PW_VERSION}/browsers.json" -o "$OUT/browsers.json"
 
 # UPSTREAM_CONFIG.sh records which Mozilla SHA PW patches were authored against.
-curl -fsSL "$GH_RAW/browser_patches/firefox/UPSTREAM_CONFIG.sh" -o "$OUT/UPSTREAM_CONFIG.sh"
+retry_curl "$GH_RAW/browser_patches/firefox/UPSTREAM_CONFIG.sh" -o "$OUT/UPSTREAM_CONFIG.sh"
 
 # bootstrap.diff — the single rolled patch.
-curl -fsSL "$GH_RAW/browser_patches/firefox/patches/bootstrap.diff" -o "$OUT/patches/bootstrap.diff"
+retry_curl "$GH_RAW/browser_patches/firefox/patches/bootstrap.diff" -o "$OUT/patches/bootstrap.diff"
 
 # Juggler + preferences — directory trees of new files. The GitHub raw API
 # doesn't expose tree listings, so we use the contents API to enumerate then
@@ -43,12 +69,12 @@ fetch_tree() {
   local subdir="$1"   # e.g. juggler
   local local_dir="$2"
   # GitHub contents API needs a recursive walk; jq builds the file list.
-  curl -fsSL "https://api.github.com/repos/microsoft/playwright/git/trees/v${PW_VERSION}?recursive=1" \
+  retry_curl "https://api.github.com/repos/microsoft/playwright/git/trees/v${PW_VERSION}?recursive=1" \
     | jq -r --arg p "browser_patches/firefox/$subdir/" '.tree[] | select(.type=="blob" and (.path|startswith($p))) | .path' \
     | while read -r path; do
         rel="${path#browser_patches/firefox/$subdir/}"
         mkdir -p "$local_dir/$(dirname "$rel")"
-        curl -fsSL "$GH_RAW/$path" -o "$local_dir/$rel"
+        retry_curl "$GH_RAW/$path" -o "$local_dir/$rel"
       done
 }
 

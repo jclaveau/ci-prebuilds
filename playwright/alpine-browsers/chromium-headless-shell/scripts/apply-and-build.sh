@@ -104,15 +104,19 @@ mkdir -p "$OUT_DIR"
 echo "  args.gn:"
 sed 's/^/    /' "$OUT_DIR/args.gn"
 
-# `gn` is built into Chromium's vendored buildtools/. We use it directly.
-if [[ -x "buildtools/linux64/gn" ]]; then
+# Chromium's source tarball ships `buildtools/linux64/gn` as a depot_tools/CIPD
+# placeholder, not a usable binary — running it returns exit 127. We bring our
+# own `gn` from the alpine apk install (community/gn pkg). Prefer system gn
+# unconditionally; only fall back to the vendored path if it ever materializes.
+if command -v gn >/dev/null; then
+  GN="$(command -v gn)"
+elif [[ -x "buildtools/linux64/gn" ]] && file "buildtools/linux64/gn" | grep -q ELF; then
   GN="buildtools/linux64/gn"
-elif command -v gn >/dev/null; then
-  GN="gn"
 else
-  echo "ERROR: no gn binary found (expected buildtools/linux64/gn or system gn)" >&2
+  echo "ERROR: no usable gn binary (need apk add gn)" >&2
   exit 4
 fi
+echo "  using gn at: $GN"
 
 "$GN" gen "$OUT_DIR"
 
