@@ -97,13 +97,21 @@ jobs:
             playwright-alpine-browsers-glibc-debug:${{ github.sha }} \
             sh -c '
               DIST=/work/firefox-dist
-              [ -z "$DIST" ] && { echo "no firefox dist"; ls /work/firefox-src/obj*/dist 2>&1; exit 1; }
-              echo "DIST=$DIST"
+              echo "=== $DIST contents (top-level) ==="
+              ls -la "$DIST" | head -30
+              echo ""
+              echo "=== find omni.ja anywhere ==="
+              find /work -name omni.ja 2>/dev/null | head -5
+              echo ""
+              # LD_LIBRARY_PATH so firefox can find libxul.so in $DIST.
+              # Without it XPCOMGlueLoad fails — "Couldn`t load XPCOM".
+              export LD_LIBRARY_PATH="$DIST:$LD_LIBRARY_PATH"
               echo "=== firefox --version ==="
-              "$DIST"/firefox --version
+              "$DIST"/firefox --version || echo "(version failed)"
               echo ""
               echo "=== firefox --help | juggler/remote ==="
-              "$DIST"/firefox --help 2>&1 | grep -iE "juggler|remote|marionette|debugger" || echo "(no juggler/remote in --help)"
+              "$DIST"/firefox --help 2>&1 | grep -iE "juggler|remote|marionette|debugger" \
+                || echo "(no juggler/remote in --help)"
             '
 
       - name: Diagnostic — libxul symbols + omni.ja manifests
@@ -118,11 +126,19 @@ jobs:
             strings "$DIST"/libxul.so 2>/dev/null \
               | grep -E "command-line-handler|m-remote|m-juggler|@mozilla.org/remote/(agent|juggler)" | sort -u
             echo ""
-            cd /tmp && mkdir oj && cd oj && unzip -q "$DIST"/omni.ja
-            echo "=== chrome.manifest (juggler) ==="
-            grep -i juggler chrome.manifest || echo "(none)"
-            echo "=== components.manifest (juggler/m-remote/category) ==="
-            grep -iE "juggler|m-remote|command-line-handler" components/components.manifest || echo "(none)"
+            # omni.ja may be at $DIST/omni.ja OR (if not packaged) somewhere in obj/.
+            # find it dynamically.
+            OMNI=$(find / -name omni.ja -path "*firefox*" 2>/dev/null | head -1)
+            if [ -n "$OMNI" ] && [ -f "$OMNI" ]; then
+              echo "=== omni.ja found at $OMNI ==="
+              cd /tmp && rm -rf oj && mkdir oj && cd oj && unzip -q "$OMNI"
+              echo "=== chrome.manifest (juggler) ==="
+              grep -i juggler chrome.manifest 2>/dev/null || echo "(none)"
+              echo "=== components.manifest (juggler/m-remote/category) ==="
+              grep -iE "juggler|m-remote|command-line-handler" components/components.manifest 2>/dev/null || echo "(none)"
+            else
+              echo "(omni.ja not found anywhere — build may not have packaged JS)"
+            fi
           '
 
       - name: Diagnostic — launch with -juggler-pipe + capture moz.log
@@ -132,6 +148,7 @@ jobs:
             -e MOZ_LOG_FILE=/tmp/moz.log \
             playwright-alpine-browsers-glibc-debug:${{ github.sha }} sh -c '
               DIST=/work/firefox-dist
+              export LD_LIBRARY_PATH="$DIST:$LD_LIBRARY_PATH"
               timeout 8 "$DIST"/firefox -no-remote -headless -profile /tmp/p -juggler-pipe < /dev/null 3<>/dev/null 4<>/dev/null 2>/tmp/stderr.log || true
               echo "=== stderr ==="
               tail -100 /tmp/stderr.log
