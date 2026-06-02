@@ -1360,9 +1360,14 @@ jobs:
     # Push/PR/Renovate: this job runs only on main pushes. workflow_call (the
     # on-demand path): always runs but its matrix is already narrowed by
     # github-context's outputs to the requested cell(s).
+    # `!failure() && !cancelled()` lets `promote` tolerate test-* needs that
+    # were skipped by `test_filters` on narrowed on-demand runs — without it,
+    # default `success()` semantics would skip promote (and aggregate-tags →
+    # the on-demand published-tags comment) whenever ANY test was filtered out.
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main')
-      || github.event_name == 'workflow_call'
+      !failure() && !cancelled()
+      && ((github.event_name == 'push' && github.ref == 'refs/heads/main')
+        || github.event_name == 'workflow_call')
     runs-on: ubuntu-latest
     permissions:
       contents: read
