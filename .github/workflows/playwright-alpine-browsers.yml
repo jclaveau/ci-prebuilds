@@ -19,6 +19,22 @@ on:
       - '.github/workflows/playwright-alpine-browsers.yml'
   workflow_dispatch:
     inputs:
+      # Which browser(s) to build. Default firefox=false, chromium=true: the
+      # FF artifact is already green + cached, and chromium is the active
+      # diagnostic frontier — most manual dispatches want chromium only.
+      # Flip to true if you want FF rebuilt (cache bump, FF patch reroll, etc).
+      build_firefox:
+        description: 'Build Firefox (musl, PW-patched) — default off; flip on for a FF rebuild'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      build_chromium_headless_shell:
+        description: 'Build chromium-headless-shell (musl) — default on'
+        required: false
+        default: 'true'
+        type: choice
+        options: ['false', 'true']
       diagnostic:
         description: 'Run Tier-3 diagnostic (symbol dump, JS Juggler load trace)'
         required: false
@@ -80,6 +96,15 @@ permissions:
 
 jobs:
   build:
+    # FF gate. Runs on:
+    # - push to main: always (canonical promotion path)
+    # - workflow_dispatch: only when build_firefox=true (default off — see
+    #   inputs above for rationale)
+    # - pull_request: only when the `build-firefox` label is on the PR
+    if: |
+      github.event_name == 'push'
+      || (github.event_name == 'workflow_dispatch' && inputs.build_firefox == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-firefox'))
     runs-on: ubuntu-latest
     timeout-minutes: 240   # 4h ceiling — clean build ~2h, hot rebuild ~30 min
     outputs:
@@ -380,6 +405,15 @@ jobs:
   # uses `chs-sha-` prefix to avoid colliding with the FF artifact on the same
   # commit SHA.
   build-chromium-headless-shell:
+    # Chromium gate. Symmetrical to the FF `build` job:
+    # - push to main: always
+    # - workflow_dispatch: when build_chromium_headless_shell=true (default ON
+    #   while it's the active diagnostic frontier)
+    # - pull_request: when the `build-chromium-headless-shell` label is on the PR
+    if: |
+      github.event_name == 'push'
+      || (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell'))
     runs-on: ubuntu-latest
     timeout-minutes: 300   # 5h ceiling — Chromium cold-build is heavier than FF
     outputs:
