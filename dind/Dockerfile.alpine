@@ -14,7 +14,7 @@ RUN sudo chmod 0755 /usr/local/bin/start-dockerd
 # the hardened flavor — but `sudo apk add …` etc. stay denied.
 # `visudo -c` validates the file at build time; a typo would otherwise break
 # ALL sudo at runtime.
-RUN echo "runner ALL=(root) NOPASSWD: /usr/sbin/dockerd, /usr/bin/chown root\:docker /var/run/dind.sock, /usr/bin/chmod 660 /var/run/dind.sock" \
+RUN echo "runner ALL=(root) NOPASSWD: /usr/sbin/dockerd, /usr/bin/chown root\:docker /var/run/dind.sock, /usr/bin/chmod 660 /var/run/dind.sock, /usr/bin/chown root\:docker /var/run/docker.sock, /usr/bin/chmod 660 /var/run/docker.sock, /usr/bin/tee /etc/docker/daemon.json" \
       | sudo install -m 0440 /dev/stdin /etc/sudoers.d/dind \
     && sudo visudo -c -f /etc/sudoers.d/dind
 

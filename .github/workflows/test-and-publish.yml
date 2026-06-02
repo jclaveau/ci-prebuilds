@@ -1284,6 +1284,42 @@ jobs:
 
 
   # ----------------------------------------------------------------------------
+  # act: exercise the DIND_REGISTRY_AUTOSTART path — the dind image auto-spawns
+  # `ci-prebuilds-dind-registry` on the host docker daemon (reached via the
+  # bind-mounted host socket) and points its inner dockerd at it via
+  # registry-mirrors. Piggybacks the `dood_dind` filter — no new filter key.
+  # ----------------------------------------------------------------------------
+
+  test-dind-registry-autostart:
+    runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).dood_dind
+    needs: [github-context, build-dind]
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install act
+        run: curl -sSL "https://raw.githubusercontent.com/nektos/act/v${ACT_VERSION}/install.sh" | sudo bash -s -- -b /usr/local/bin
+      - name: Pre-pull the container image
+        run: docker pull "ghcr.io/jclaveau/${{ matrix.os }}-dind:${{ needs.github-context.outputs.build_tag }}"
+      - name: Run the autostart smoke workflow through act
+        env:
+          IMG: ghcr.io/jclaveau/${{ matrix.os }}-dind:${{ needs.github-context.outputs.build_tag }}
+        run: |
+          act push -W tests/act/smoke-dind-registry-autostart.yml \
+            -P ubuntu-latest=-self-hosted \
+            --var RUNNER_IMAGE="$IMG"
+
+
+  # ----------------------------------------------------------------------------
   # Versions: read the actual installed minors once from the top dood image (it
   # transitively contains OS + node + pnpm + playwright). `promote` turns these
   # into the version-pinned consumer tags. node is read from the image because its
@@ -1391,7 +1427,7 @@ jobs:
         # '-sudoer' = build-chain image (runner NOPASSWD: ALL intact)
         #   → publishes to `<image>-sudoer:latest`.
         flavor: ${{ fromJSON(needs.github-context.outputs.flavor_matrix) }}
-    needs: [github-context, versions, build-hardened-variants, test-gha-tools-usage, test-gha-tools-effects, test-dind-hardened-effects, test-dood-dind-usage, test-dood-dind-effects, test-dood-dind-act, test-node-usage, test-pnpm-usage, test-pnpm-gyp-usage, test-playwright-usage]
+    needs: [github-context, versions, build-hardened-variants, test-gha-tools-usage, test-gha-tools-effects, test-dind-hardened-effects, test-dood-dind-usage, test-dood-dind-effects, test-dood-dind-act, test-dind-registry-autostart, test-node-usage, test-pnpm-usage, test-pnpm-gyp-usage, test-playwright-usage]
     steps:
       - uses: docker/setup-buildx-action@v3
       # GHCR login to READ the tested source image.

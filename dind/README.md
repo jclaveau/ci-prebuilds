@@ -43,3 +43,52 @@ jobs:
       - run: docker compose -f docker-compose-tests.yaml up -d --wait
       - run: nc -zv localhost 5432
 ```
+
+## Auto-shared pull-through cache for `act` shards
+
+`act` matrix shards on a dev machine each spin up their own dind, and each
+inner `dockerd` re-pulls the same base images — duplicated bandwidth × shard
+count. The dind images can auto-spawn a `registry:2` container on the
+HOST docker daemon (named `ci-prebuilds-dind-registry`, port `36000`,
+upstream `mirror.gcr.io`) and point every inner dockerd at it via
+`registry-mirrors`. First shard to start wins; siblings detect it via
+`docker inspect` and no-op.
+
+**One-time setup** — drop into `~/.actrc` (or project-local `./.actrc`):
+
+```
+-P ubuntu-latest=ghcr.io/jclaveau/ubuntu-dind:latest
+--container-options=--privileged
+--container-options=-v /var/run/docker.sock:/var/run/docker.sock
+--container-options=--add-host=host.docker.internal:host-gateway
+--container-options=-e DIND_REGISTRY_AUTOSTART=1
+```
+
+**Per-run cost** — none. `act` (no extra flags). The first invocation
+brings up `ci-prebuilds-dind-registry`; every subsequent invocation and
+every sharded sibling re-uses it.
+
+**Inspect / wipe** the cache from the host:
+
+```
+docker logs ci-prebuilds-dind-registry
+docker volume inspect ci-prebuilds-dind-registry-data
+docker rm -f ci-prebuilds-dind-registry && docker volume rm ci-prebuilds-dind-registry-data
+```
+
+**Explicit endpoint** — set `DIND_REGISTRY_MIRROR=http://your-host:port` to
+point the inner dockerd at a registry you run elsewhere. Autostart only
+defaults the var when unset.
+
+**Caveats**
+- Bind-mounting `/var/run/docker.sock` gives the dind workload host-Docker
+  control. Acceptable for `act`-on-dev-machine; **do not enable on hosted
+  GHA runners** (autostart silently falls through when the host socket is
+  absent, but the bind-mount itself shouldn't be configured there).
+- `--add-host=host.docker.internal:host-gateway` is required on Linux for
+  the inner dockerd to resolve the host endpoint; harmless on Docker
+  Desktop where it's native.
+- Autostart silently falls through to no-mirror if (a) `/var/run/docker.sock`
+  isn't a socket or (b) the registry takes >15 s to come up. To diagnose,
+  read `/tmp/dockerd.log` inside the dind or `docker ps` on the host.
+
