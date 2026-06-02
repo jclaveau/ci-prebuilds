@@ -55,6 +55,18 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
+      chromium_skip_aports:
+        description: 'PW_CHROMIUM_SKIP_APORTS: chromium build without aports musl patches (glibc-debug equivalent)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      chromium_enable_debug:
+        description: 'PW_CHROMIUM_ENABLE_DEBUG: is_debug=true + dcheck_always_on=true (validation track)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 # Never abort an in-flight 2h build — the cost of restarting outweighs the cost
 # of finishing a stale one.
@@ -361,3 +373,135 @@ jobs:
             -t jclaveau/playwright-alpine-browsers:ff-latest \
             -t jclaveau/playwright-alpine-browsers:sha-${{ github.sha }} \
             "$SRC"
+
+  # ── Chromium-headless-shell parallel pipeline ──────────────────────────────
+  # Mirrors the FF jobs above but builds a musl-native chrome-headless-shell
+  # at the revision PW pins via playwright-core's browsers.json. Artifact tag
+  # uses `chs-sha-` prefix to avoid colliding with the FF artifact on the same
+  # commit SHA.
+  build-chromium-headless-shell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300   # 5h ceiling — Chromium cold-build is heavier than FF
+    outputs:
+      build_tag: chs-sha-${{ github.sha }}
+      pw_version: ${{ steps.pins.outputs.pw_version }}
+      chromium_revision: ${{ steps.pins.outputs.chromium_revision }}
+      chromium_version: ${{ steps.pins.outputs.chromium_version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: pins
+        run: |
+          set -a; . playwright/alpine-browsers/versions.env; set +a
+          echo "pw_version=$PW_VERSION" >> "$GITHUB_OUTPUT"
+          BROWSERS_JSON=$(curl -fsSL "https://unpkg.com/playwright-core@${PW_VERSION}/browsers.json")
+          REV=$(jq -r '.browsers[] | select(.name=="chromium-headless-shell") | .revision' <<<"$BROWSERS_JSON")
+          VER=$(jq -r '.browsers[] | select(.name=="chromium-headless-shell") | .browserVersion' <<<"$BROWSERS_JSON")
+          echo "chromium_revision=$REV" >> "$GITHUB_OUTPUT"
+          echo "chromium_version=$VER" >> "$GITHUB_OUTPUT"
+          echo "PW v${PW_VERSION} → chromium-headless-shell revision=${REV} browserVersion=${VER}"
+
+      - name: Free up runner disk (chromium source + out dir is ~30 GB)
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/jclaveau/playwright-alpine-browsers
+          tags: |
+            type=raw,value=chs-sha-${{ github.sha }}
+            type=raw,value=chs-edge,enable=${{ github.event_name != 'pull_request' }}
+
+      - name: Build artifact image
+        uses: docker/build-push-action@v5
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          target: artifact
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs,mode=max
+          build-args: |
+            PW_CHROMIUM_SKIP_APORTS=${{ inputs.chromium_skip_aports || 'false' }}
+            PW_CHROMIUM_ENABLE_DEBUG=${{ inputs.chromium_enable_debug || 'false' }}
+
+      # Tier-1 smoke: binary self-identifies as the PW-pinned browserVersion.
+      - name: Tier-1 smoke (chrome-headless-shell --version)
+        run: |
+          cat > /tmp/Dockerfile.chs-t1 <<EOF
+          FROM alpine:edge
+          RUN apk update && apk add --no-cache \\
+              nss freetype harfbuzz ca-certificates ttf-freefont libdrm mesa-gl \\
+              libwebp libwebpdemux libxcomposite libxdamage libxrandr libxss libxtst \\
+              libx11 libxcb libxext libxi cups-libs alsa-lib dbus-libs pango cairo
+          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:chs-sha-${{ github.sha }} \\
+               /chrome-headless-shell-linux64 \\
+               /opt/chs
+          EOF
+          docker build -t chs-t1:${{ github.sha }} -f /tmp/Dockerfile.chs-t1 /tmp
+          OUT=$(docker run --rm chs-t1:${{ github.sha }} /opt/chs/chrome-headless-shell --version 2>&1 || true)
+          echo "chrome-headless-shell --version output:"
+          echo "$OUT"
+          echo "$OUT" | grep -q "${{ steps.pins.outputs.chromium_version }}" \
+            || { echo "Tier-1: chrome-headless-shell didn't report expected ${{ steps.pins.outputs.chromium_version }}"; exit 1; }
+
+  smoke-chromium-headless-shell:
+    # Tier-2: drive chromium via the Playwright SDK using auto-discovery (NO
+    # executablePath passed; we stage the artifact at PW's cache path and the
+    # SDK finds it). Validates the "no playwright.config.ts change" invariant.
+    needs: build-chromium-headless-shell
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build a candidate Alpine runner consuming the artifact
+        env:
+          CHS_REV: ${{ needs.build-chromium-headless-shell.outputs.chromium_revision }}
+        run: |
+          cat > /tmp/Dockerfile.chs-runner <<EOF
+          FROM alpine:edge
+          RUN apk update && apk add --no-cache \\
+              nodejs npm bash \\
+              nss freetype harfbuzz ca-certificates ttf-freefont libdrm mesa-gl \\
+              libwebp libwebpdemux libxcomposite libxdamage libxrandr libxss libxtst \\
+              libx11 libxcb libxext libxi cups-libs alsa-lib dbus-libs pango cairo
+          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:chs-sha-${{ github.sha }} \\
+               /chrome-headless-shell-linux64 \\
+               /ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64
+          RUN touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_COMPLETE
+          ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+          WORKDIR /smoke
+          RUN npm install -g playwright@${{ needs.build-chromium-headless-shell.outputs.pw_version }}
+          EOF
+          docker build -t chs-runner:${{ github.sha }} -f /tmp/Dockerfile.chs-runner /tmp
+
+      - name: Run Tier-2 smoke (PW SDK auto-discovery)
+        run: |
+          docker run --rm \
+            --security-opt seccomp=unconfined \
+            -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/smoke:/smoke" \
+            -w /smoke \
+            -e NODE_PATH=/usr/local/lib/node_modules \
+            -e DEBUG=pw:browser \
+            chs-runner:${{ github.sha }} \
+            node launch.cjs 2>&1 | tail -200

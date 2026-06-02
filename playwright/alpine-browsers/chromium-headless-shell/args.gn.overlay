@@ -1,0 +1,39 @@
+# GN args for the musl chrome-headless-shell build.
+#
+# Strategy: minimal headless build. We don't need full chromium features —
+# only the bits PW SDK drives via CDP through headless_shell.
+#
+# Sourced into args.gn by apply-and-build.sh after aports' args (if any) are
+# applied. This file's lines OVERRIDE earlier ones.
+
+# Release build, no debuginfo (keeps the binary lean and the link step under
+# the hosted runner's memory budget).
+is_debug = false
+symbol_level = 0
+is_official_build = false  # set true if we want PGO + maximum optimization; significantly slower build
+
+# Headless-only target. Disables a lot of UI / browser-frontend code we never
+# use in chrome-headless-shell.
+is_component_build = false
+headless_use_embedded_resources = true
+
+# Use system libs where Alpine has reasonable versions (matches aports' build).
+use_sysroot = false
+use_custom_libcxx = false
+use_lld = true
+
+# Disable bundled NaCl / sandbox bits aports patches handle differently.
+enable_nacl = false
+
+# Don't treat warnings as errors — Chromium's musl build trips on a few
+# clang warnings aports usually suppresses.
+treat_warnings_as_errors = false
+
+# Skip features chrome-headless-shell doesn't need: nothing audio-related, no
+# WebRTC (PW SDK uses CDP, not WebRTC), no FFmpeg codecs beyond what headless
+# needs for canvas/screenshot.
+rtc_use_pipewire = false
+use_pulseaudio = false
+use_alsa = false
+proprietary_codecs = false
+ffmpeg_branding = "Chromium"

@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# Main build pipeline for musl chrome-headless-shell.
+#
+# Inputs (from versions.env + fetch-pw-browsers-json.sh):
+#   PW_VERSION                          — sole hand-edited pin
+#   CHROMIUM_HEADLESS_SHELL_REVISION    — derived; baked into artifact tag
+#   CHROMIUM_HEADLESS_SHELL_VERSION     — derived; chosen Chromium source tag
+#   ALPINE_APORTS_CHROMIUM_REF          — aports SHA whose APKBUILD pkgver matches the above
+#
+# Diagnostic env vars (default off — same idempotent-block pattern as Firefox):
+#   PW_CHROMIUM_SKIP_APORTS=1           — don't apply aports musl patches (glibc-debug path)
+#   PW_CHROMIUM_ENABLE_DEBUG=1          — is_debug=true, dcheck_always_on=true; for validation track
+#
+# Output: /work/chromium-dist/{chrome-headless-shell, *.so, locales/, …} — a
+# runnable headless_shell tree, ready for stage-cache-layout.sh to rename into
+# PW's expected directory shape.
+
+set -euo pipefail
+
+WORK="${1:?usage: apply-and-build.sh <work_dir>}"
+APORTS="$WORK/aports"
+SCRIPTS_DIR="$WORK/chromium-headless-shell/scripts"
+
+# 1. Read PW_VERSION + ALPINE_APORTS_CHROMIUM_REF from versions.env, then derive
+#    the chromium pins from PW's browsers.json. fetch-pw-browsers-json.sh emits
+#    env-var assignments on stdout; eval them into our scope.
+set -a
+. "$WORK/versions.env"
+eval "$("$SCRIPTS_DIR/fetch-pw-browsers-json.sh" chromium-headless-shell)"
+set +a
+
+CHS_REV="${CHROMIUM_HEADLESS_SHELL_REVISION:?derivation failed}"
+CHS_VER="${CHROMIUM_HEADLESS_SHELL_VERSION:?derivation failed}"
+echo "===== build: PW_VERSION=$PW_VERSION CHS_REV=$CHS_REV CHS_VER=$CHS_VER ====="
+
+: "${PW_CHROMIUM_SKIP_APORTS:=0}"
+: "${PW_CHROMIUM_ENABLE_DEBUG:=0}"
+truthy() { case "${1,,}" in 1|true|yes|on) echo 1 ;; *) echo 0 ;; esac; }
+PW_CHROMIUM_SKIP_APORTS=$(truthy "$PW_CHROMIUM_SKIP_APORTS")
+PW_CHROMIUM_ENABLE_DEBUG=$(truthy "$PW_CHROMIUM_ENABLE_DEBUG")
+echo "Flags: PW_CHROMIUM_SKIP_APORTS=$PW_CHROMIUM_SKIP_APORTS PW_CHROMIUM_ENABLE_DEBUG=$PW_CHROMIUM_ENABLE_DEBUG"
+
+# 2. Sanity: aports' APKBUILD pkgver must match CHS_VER, otherwise the patches
+#    were authored against a different Chromium and may not apply.
+if [[ "$PW_CHROMIUM_SKIP_APORTS" != "1" ]]; then
+  [[ -f "$APORTS/APKBUILD" ]] || { echo "missing $APORTS/APKBUILD" >&2; exit 1; }
+  APORTS_PKGVER=$(awk -F= '$1=="pkgver"{gsub(/"/,"",$2); print $2; exit}' "$APORTS/APKBUILD")
+  if [[ "$APORTS_PKGVER" != "$CHS_VER" ]]; then
+    echo "ERROR: aports pkgver=$APORTS_PKGVER but PW pins CHS_VER=$CHS_VER" >&2
+    echo "  Bump ALPINE_APORTS_CHROMIUM_REF in versions.env to a commit where pkgver matches." >&2
+    exit 2
+  fi
+  echo "  aports pkgver matches CHS_VER ✓"
+fi
+
+# 3. Source tree.
+SRC="$WORK/chromium-src/chromium-${CHS_VER}"
+if [[ ! -d "$SRC" ]]; then
+  echo "ERROR: expected source tree at $SRC (fetch-chromium-src.sh ran?)" >&2
+  exit 3
+fi
+cd "$SRC"
+
+# 4. Apply aports' musl patches. Skip arch-specific ones (riscv, ppc, etc.) —
+#    amd64 only for now. aports' APKBUILD has a `prepare()` shell function that
+#    enumerates patches; we mimic it but skip what we don't need.
+if [[ "$PW_CHROMIUM_SKIP_APORTS" == "1" ]]; then
+  echo "===== SKIP aports patches (PW_CHROMIUM_SKIP_APORTS=1) ====="
+else
+  echo "===== Apply aports musl patches ====="
+  # All .patch files in aports/ — aports' APKBUILD generally applies them in
+  # alphabetical order via the source= array. Honor the same order.
+  for p in $(ls -1 "$APORTS"/*.patch 2>/dev/null | sort); do
+    name=$(basename "$p")
+    # Skip arch-specific patches we don't need on amd64.
+    case "$name" in
+      *riscv*|*ppc*|*loong*) echo "  skip $name (non-amd64)"; continue ;;
+    esac
+    echo "  apply $name"
+    patch -p1 --forward -i "$p" || {
+      echo "  WARN: $name did not apply cleanly; continuing — chromium may still build" >&2
+    }
+  done
+fi
+
+# 5. Configure GN. Compose: aports' default args (if its APKBUILD exports any
+#    via a gn_args block) + our overlay (args.gn.overlay) + diagnostic overrides.
+echo "===== Configure GN ====="
+
+OUT_DIR="out/headless"
+mkdir -p "$OUT_DIR"
+
+{
+  cat "$WORK/chromium-headless-shell/args.gn.overlay"
+  echo ""
+  echo "# Diagnostic-flag overrides"
+  if [[ "$PW_CHROMIUM_ENABLE_DEBUG" == "1" ]]; then
+    echo "is_debug = true"
+    echo "dcheck_always_on = true"
+    echo "symbol_level = 1"
+  fi
+} > "$OUT_DIR/args.gn"
+
+echo "  args.gn:"
+sed 's/^/    /' "$OUT_DIR/args.gn"
+
+# `gn` is built into Chromium's vendored buildtools/. We use it directly.
+if [[ -x "buildtools/linux64/gn" ]]; then
+  GN="buildtools/linux64/gn"
+elif command -v gn >/dev/null; then
+  GN="gn"
+else
+  echo "ERROR: no gn binary found (expected buildtools/linux64/gn or system gn)" >&2
+  exit 4
+fi
+
+"$GN" gen "$OUT_DIR"
+
+# 6. Build. headless_shell is the canonical chrome-headless-shell binary
+#    target. ninja parallelism caps to the runner's CPU count automatically.
+echo "===== START ninja headless_shell ====="
+ninja_rc=0
+ninja -C "$OUT_DIR" -j "${NINJA_JOBS:-$(nproc)}" headless_shell || ninja_rc=$?
+echo "===== END ninja headless_shell (rc=$ninja_rc) ====="
+
+if [[ $ninja_rc -ne 0 ]]; then
+  echo "ERROR: ninja failed with rc=$ninja_rc" >&2
+  exit 5
+fi
+
+# 7. Locate the output. Chromium's headless_shell target produces:
+#    out/headless/headless_shell (binary)
+#    out/headless/icudtl.dat, *.bin, headless_lib_data/, locales/, …
+BIN="$OUT_DIR/headless_shell"
+if [[ ! -x "$BIN" ]]; then
+  echo "ERROR: expected $BIN to exist after ninja" >&2
+  ls -la "$OUT_DIR" | head -20
+  exit 6
+fi
+
+# 8. Invariant assertion — the binary must report the PW-expected browserVersion.
+echo "===== Version invariant check ====="
+ACTUAL_VER=$("$BIN" --version 2>&1 || true)
+echo "  $BIN --version → $ACTUAL_VER"
+if ! echo "$ACTUAL_VER" | grep -q "$CHS_VER"; then
+  echo "ERROR: binary version does not contain expected $CHS_VER" >&2
+  exit 7
+fi
+echo "  version matches PW's pinned $CHS_VER ✓"
+
+# 9. Stage to /work/chromium-dist/ for the artifact stage.
+DIST="$WORK/chromium-dist"
+mkdir -p "$DIST"
+# Files chrome-headless-shell needs at runtime. From Chromium's
+# install_headless_shell_*.txt manifests / aports' chromium-headless.post-install.
+# Copy the binary plus its data dependencies.
+cp -a "$BIN" "$DIST/"
+for f in icudtl.dat snapshot_blob.bin v8_context_snapshot.bin chrome_100_percent.pak chrome_200_percent.pak resources.pak; do
+  [[ -f "$OUT_DIR/$f" ]] && cp -a "$OUT_DIR/$f" "$DIST/"
+done
+[[ -d "$OUT_DIR/locales" ]] && cp -a "$OUT_DIR/locales" "$DIST/"
+[[ -d "$OUT_DIR/headless_lib_data" ]] && cp -a "$OUT_DIR/headless_lib_data" "$DIST/"
+
+# Also any .so it links to (locally-bundled libs Chromium produces).
+find "$OUT_DIR" -maxdepth 1 -name '*.so' -exec cp -a {} "$DIST/" \;
+
+echo "===== DIST staged at $DIST ====="
+ls -lh "$DIST" | head -20
+
+echo "===== Build complete: CHS_REV=$CHS_REV CHS_VER=$CHS_VER ====="
