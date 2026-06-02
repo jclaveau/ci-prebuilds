@@ -38,7 +38,10 @@ const ok = (cond, msg) => { if (!cond) { console.error('FAIL:', msg); process.ex
 
   let intercepted = 0;
   await page.route('**/*.png', route => { intercepted++; route.abort(); });
-  await page.setContent('<img src="/x.png">').catch(() => {});
+  // Use an absolute URL: setContent on a data: page makes relative URLs
+  // un-resolvable, so the img never triggers a real network request and the
+  // route handler has nothing to intercept.
+  await page.setContent('<img src="http://x.invalid/x.png">').catch(() => {});
   ok(intercepted >= 1, `page.route fired (intercepted=${intercepted})`);
 
   const png = await page.screenshot();

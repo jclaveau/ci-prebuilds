@@ -373,12 +373,23 @@ echo "===== END ./mach build (rc=$mach_rc) ====="
 # package subcommand creates a Python "common" venv that's unreliable on
 # Alpine, so we let it fail and fall back to extracting the .tar.xz it
 # produces in passing.
-echo "===== START ./mach build package ====="
+#
+# Under PW_SKIP_APORTS=1 (glibc-debug workflow) we skip packaging entirely:
+# Mozilla's package-manifest.in expects bundled NSS but we configure with
+# --with-system-nss, so packaging fails with "missing libnss3.so" errors and
+# can also OOM on hosted runners during the libxul link/pack. For diagnostic
+# use we just need a runnable firefox, which obj/dist/bin/ already provides.
 pkg_rc=0
-./mach build package || pkg_rc=$?
-echo "===== END ./mach build package (rc=$pkg_rc) ====="
+if [[ "$PW_SKIP_APORTS" == "1" ]]; then
+  echo "===== SKIP ./mach build package (PW_SKIP_APORTS=1; use obj/dist/bin/ directly) ====="
+else
+  echo "===== START ./mach build package ====="
+  ./mach build package || pkg_rc=$?
+  echo "===== END ./mach build package (rc=$pkg_rc) ====="
+fi
 
-# 9. Locate the dist. Try unpacked dir first, then extract from tarball.
+# 9. Locate the dist. Try the packaged unpacked dir first, then the
+# .tar.xz fallback, then obj/dist/bin/ (post-`./mach build`, packaging-free).
 set +e
 DIST=
 for candidate in obj/dist/firefox obj-*/dist/firefox; do
@@ -397,6 +408,19 @@ if [ -z "$DIST" ]; then
     tar -xf "$TARBALL" -C "$tar_dir"
     [ -d "$tar_dir/firefox" ] && DIST="$tar_dir/firefox"
   fi
+fi
+
+if [ -z "$DIST" ]; then
+  # Packaging-free fallback (PW_SKIP_APORTS=1 path): obj/dist/bin/ has the
+  # built firefox binary + libxul.so + chrome/ + omni.ja + everything else
+  # needed at runtime. It's the same content the packaged dist contains —
+  # just without the post-process layout.
+  for candidate in obj/dist/bin obj-*/dist/bin; do
+    if [ -d "$candidate" ] && [ -x "$candidate/firefox" ]; then
+      DIST="$candidate"
+      break
+    fi
+  done
 fi
 set -e
 
