@@ -213,6 +213,44 @@ sed -i -e 's/\<xmlMalloc\>/malloc/g' -e 's/\<xmlFree\>/free/g' \
   third_party/blink/renderer/core/xml/parser/xml_document_parser.cc \
   third_party/libxml/chromium/*.cc 2>/dev/null || true
 
+# (h) Replace bundled-lib build files with system-library equivalents. Aports
+# does this so Chromium uses Alpine's system fontconfig/freetype/harfbuzz/etc.
+# rather than its bundled forks (which assume glibc — bundled fontconfig uses
+# `initstate_r`/`random_r` which don't exist in musl).
+#
+# `build/linux/unbundle/replace_gn_files.py` is upstream Chromium's tool for
+# this. It rewrites the BUILD.gn for each named lib to source-link from
+# `build/linux/unbundle/<lib>.gn` instead of `third_party/<lib>/BUILD.gn`.
+echo "===== Replace bundled libs with system equivalents ====="
+USE_SYSTEM_LIBS=(
+  brotli
+  crc32c
+  dav1d
+  double-conversion
+  ffmpeg
+  flac
+  fontconfig
+  freetype
+  harfbuzz
+  highway
+  libdrm
+  libjpeg
+  libwebp
+  libxml
+  libxslt
+  openh264
+  opus
+  zlib
+  zstd
+)
+if [[ -x build/linux/unbundle/replace_gn_files.py ]] || [[ -f build/linux/unbundle/replace_gn_files.py ]]; then
+  python3 build/linux/unbundle/replace_gn_files.py \
+    --system-libraries "${USE_SYSTEM_LIBS[@]}" \
+    || { echo "  replace_gn_files.py failed; some libs may stay bundled" >&2; }
+else
+  echo "  WARN: build/linux/unbundle/replace_gn_files.py missing — skipping" >&2
+fi
+
 # 5. Configure GN. Compose: aports' default args (if its APKBUILD exports any
 #    via a gn_args block) + our overlay (args.gn.overlay) + diagnostic overrides.
 echo "===== Configure GN ====="
