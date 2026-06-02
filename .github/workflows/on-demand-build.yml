@@ -1,9 +1,12 @@
 name: On-demand build (issue-triggered)
 
 # Issue-form-driven entry point for off-primary version pins.
-# - Listens on `issues: [opened]`. The form template auto-applies the
-#   `build-request` label so the workflow's filter fires on submit. We
-#   intentionally do NOT listen on `labeled` — that would re-trigger
+# - Listens on `issues: [opened, reopened]`. The form template auto-
+#   applies the `build-request` label so the workflow's filter fires on
+#   submit; reopening a closed build-request issue re-fires using its
+#   (possibly edited) form body — convenient for rebuilding when an
+#   upstream image moved or for re-running with tweaked version pins.
+#   We intentionally do NOT listen on `labeled` — that would re-trigger
 #   every time we add our own `build-failed` label.
 # - Also listens on `issue_comment: [edited]` to support one-click
 #   retry of a failed build. The failure comment carries a
@@ -26,7 +29,7 @@ name: On-demand build (issue-triggered)
 
 on:
   issues:
-    types: [opened]
+    types: [opened, reopened]
   issue_comment:
     types: [edited]
 
