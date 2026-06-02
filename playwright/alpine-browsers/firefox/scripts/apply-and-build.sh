@@ -466,7 +466,12 @@ ls -la "$DIST/" | head -20 || true
 # cache mount — its contents vanish when the RUN ends, so a subsequent stage
 # that COPYs from this image won't see anything there). /work/firefox-dist
 # lives in the regular image filesystem and persists to firefox-stage.
+#
+# Mozilla's obj/dist/bin/ is a tree of SYMLINKS pointing back into obj/...
+# (and obj/dist/bin/test-stage/, etc.). cp -a copies the symlinks themselves,
+# which all become dangling once the cache mount unmounts. Use cp -aL to
+# dereference — symlinks become real files, and the staged tree survives.
 echo "===== Staging dist to /work/firefox-dist ====="
 mkdir -p /work/firefox-dist
-cp -a "$DIST"/. /work/firefox-dist/
+cp -aL "$DIST"/. /work/firefox-dist/ 2>/dev/null || cp -a "$DIST"/. /work/firefox-dist/
 echo "Staged: $(du -sh /work/firefox-dist | cut -f1)"
