@@ -61,6 +61,25 @@ if [[ ! -d "$SRC" ]]; then
 fi
 cd "$SRC"
 
+# 3a. Persistent obj/ cache. BuildKit cache mounts can't templatize their
+# target path, so the Dockerfile mounts at the stable /work/chromium-out and
+# we symlink $SRC/out → there at runtime. Ninja then writes its obj graph
+# into the cache mount; subsequent runs reuse the dep state and most of the
+# .o files (instead of re-discovering 38k actions each iteration).
+#
+# sccache caches the compiler invocations per-file, but ninja still has to
+# walk + dispatch the full action graph each time without this. Symlinking
+# out/ to a persistent mount means ninja sees an already-populated obj tree
+# and only rebuilds what changed.
+CACHE_OUT="/work/chromium-out"
+if [[ -d "$CACHE_OUT" ]]; then
+  rm -rf out
+  ln -sf "$CACHE_OUT" out
+  echo "  out/ symlinked to $CACHE_OUT (BuildKit cache mount)"
+else
+  echo "  WARN: $CACHE_OUT not present (cache mount missing?) — running without obj cache" >&2
+fi
+
 # 4. Apply aports' musl patches. Skip arch-specific ones (riscv, ppc, etc.) —
 #    amd64 only for now. aports' APKBUILD has a `prepare()` shell function that
 #    enumerates patches; we mimic it but skip what we don't need.

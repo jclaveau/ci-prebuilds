@@ -78,7 +78,11 @@ RUN set -a && . /work/versions.env && . /work/derived.env && set +a \
 # pattern is the workaround once cold-build is green.
 ARG PW_CHROMIUM_SKIP_APORTS=false
 ARG PW_CHROMIUM_ENABLE_DEBUG=false
-RUN --mount=type=cache,target=/work/chromium-src/chromium-src/out,id=chr-out,sharing=locked \
+# Cache mount target is the FIXED path /work/chromium-out — BuildKit evaluates
+# target= at Dockerfile parse time, so we can't templatize the dynamic
+# chromium-<CHS_VER>/ segment. apply-and-build.sh symlinks $SRC/out at runtime
+# to this stable cache mount so ninja's obj tree persists across iterations.
+RUN --mount=type=cache,target=/work/chromium-out,id=chr-out,sharing=locked \
     --mount=type=cache,target=/root/.cache/sccache,id=chr-sccache,sharing=locked \
     set -a && . /work/versions.env && . /work/derived.env && set +a \
     && PW_CHROMIUM_SKIP_APORTS="$PW_CHROMIUM_SKIP_APORTS" \
