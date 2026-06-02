@@ -50,11 +50,22 @@ enable_nacl = false
 # clang warnings aports usually suppresses.
 treat_warnings_as_errors = false
 
-# Skip features chrome-headless-shell doesn't need: nothing audio-related, no
-# WebRTC (PW SDK uses CDP, not WebRTC), no FFmpeg codecs beyond what headless
-# needs for canvas/screenshot.
-rtc_use_pipewire = false
-use_pulseaudio = false
-use_alsa = false
+# Skip features chrome-headless-shell doesn't need. Each line corresponds to
+# an apk dep we deliberately don't install — and Chromium's GN config will
+# pkg-config-check for it unless disabled here.
+rtc_use_pipewire = false       # pipewire-dev not installed
+use_pulseaudio = false         # pulseaudio-dev not installed
+use_alsa = false               # alsa-lib-dev installed (harmless)
 proprietary_codecs = false
 ffmpeg_branding = "Chromium"
+
+# Disable printing — cups-dev intentionally not installed (PW doesn't need
+# print/preview to drive CDP). Without these flags, //printing/BUILD.gn:481
+# tries cups_config_helper.py which fails when cups-config isn't on PATH.
+enable_basic_printing = false
+enable_print_preview = false
+
+# Other defaults-on features chrome-headless-shell skips:
+enable_remoting = false        # not the same as chrome-headless-shell remote-debugging
+enable_extensions = false      # PW SDK doesn't load WebExtensions
+enable_pdf = false             # no PDF viewer integration needed
