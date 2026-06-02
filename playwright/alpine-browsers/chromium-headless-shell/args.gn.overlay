@@ -31,6 +31,16 @@ host_toolchain = "//build/toolchain/linux/unbundle:default"
 # upstream; apply-and-build.sh appends it before gn gen.
 enable_rust = true
 
+# Where Chromium finds the Rust toolchain. Upstream defaults to
+# //third_party/rust-toolchain which depot_tools fetches; we don't run
+# depot_tools, so point at system rust (/usr) installed via the apk
+# `rust` + `rust-bindgen` packages. copium's cr148-rust-toolchain-var.patch
+# replaces hardcoded //third_party/rust-toolchain refs with $rust_sysroot
+# so this var takes effect.
+rust_sysroot_absolute = "/usr"
+rust_bindgen_root = "/usr"
+rustc_version = "yes"
+
 # Headless-only target. Disables a lot of UI / browser-frontend code we never
 # use in chrome-headless-shell. We DON'T set headless_use_embedded_resources
 # because it conflicts with the default headless_enable_commands. Aports' build

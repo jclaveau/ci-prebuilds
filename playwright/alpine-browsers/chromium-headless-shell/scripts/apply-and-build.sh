@@ -95,7 +95,7 @@ if [[ -f "$APORTS/APKBUILD" ]]; then
   COPIUM_TAG=$(awk -F= '$1=="_copium_tag"{gsub(/"/,"",$2); print $2; exit}' "$APORTS/APKBUILD")
   COPIUM_PATCHES=$(awk '
     /^_copium_patches="/{flag=1; next}
-    /^"$/{flag=0}
+    flag && /"/{flag=0; next}  # closing " may have leading whitespace
     flag {gsub(/^[ \t]+/,""); gsub(/[ \t]+$/,""); if ($0!="") print}
   ' "$APORTS/APKBUILD")
   COPIUM_DIR="$WORK/copium"
