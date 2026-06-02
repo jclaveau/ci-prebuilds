@@ -5,7 +5,13 @@ name: On-demand build (issue-triggered)
 #   `build-request` label so the workflow's filter fires on submit. We
 #   intentionally do NOT listen on `labeled` — that would re-trigger
 #   every time we add our own `build-failed` label.
-#   To retry a failed request, open a new issue.
+# - Also listens on `issue_comment: [edited]` to support one-click
+#   retry of a failed build. The failure comment carries a
+#   `- [ ] Re-run this build` task box; flipping it to `[x]` fires
+#   `edited`, and the prepare `if:` matches on the body diff
+#   (unchecked → checked). The bot's own PATCH to strip the box on
+#   retry is filtered out via `sender.type != 'Bot'`, so no
+#   self-trigger loop.
 # - Parses the form body, then calls `test-and-publish.yml` via
 #   `workflow_call` with the version inputs.
 # - Comments status back to the issue and closes on success.
@@ -21,6 +27,8 @@ name: On-demand build (issue-triggered)
 on:
   issues:
     types: [opened]
+  issue_comment:
+    types: [edited]
 
 permissions:
   contents: read    # test-and-publish needs checkout
@@ -42,7 +50,24 @@ env:
 
 jobs:
   prepare:
-    if: contains(github.event.issue.labels.*.name, 'build-request')
+    # Two entry points (see file header):
+    # - `issues.opened` with the form-applied `build-request` label.
+    # - `issue_comment.edited` where someone flipped the failure
+    #   comment's `- [ ] Re-run this build` box from unchecked to
+    #   checked. The body / changes.body.from pair encodes the
+    #   flip — every edit fires `edited`, but only a flip retries.
+    #   `sender.type != 'Bot'` filters out the workflow's own
+    #   PATCH to strip the box on retry (no self-trigger loop).
+    if: >-
+      (github.event_name == 'issues'
+        && contains(github.event.issue.labels.*.name, 'build-request'))
+      ||
+      (github.event_name == 'issue_comment'
+        && github.event.sender.type != 'Bot'
+        && contains(github.event.issue.labels.*.name, 'build-request')
+        && contains(github.event.issue.labels.*.name, 'build-failed')
+        && contains(github.event.comment.body, '- [x] Re-run this build')
+        && !contains(github.event.changes.body.from, '- [x] Re-run this build'))
     runs-on: ubuntu-latest
     outputs:
       # All three axes accept CSV / empty. The downstream test-and-publish workflow
@@ -132,6 +157,7 @@ jobs:
       # Docker Hub push is a no-op anyway).
 
       - id: notify-start
+        if: github.event_name == 'issues'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -139,6 +165,32 @@ jobs:
           gh issue comment "${{ github.event.issue.number }}" --body \
             ":hammer_and_wrench: Build started. Wall-clock ~5-30 min depending on variant + matrix size. Progress: $RUN_URL"
           gh issue edit "${{ github.event.issue.number }}" --add-label building
+
+      - id: notify-retry
+        if: github.event_name == 'issue_comment'
+        # Retry path: a requester checked `- [x] Re-run this build`
+        # on a prior failure comment.
+        # - Strip the matching line from the clicked comment so it
+        #   can't re-fire mid-build. Older failure comments on the
+        #   same issue keep their unchecked boxes; clicking one of
+        #   those queues another retry against the same form body
+        #   (harmless; the workflow-level concurrency group gates).
+        # - Swap build-failed → building, link the new run.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+          # Drop the (now-checked) re-run line; preserve the rest of the body verbatim.
+          stripped=$(printf '%s\n' "$COMMENT_BODY" | grep -v '^- \[[ x]\] Re-run this build$' || true)
+          gh api -X PATCH "repos/${GH_REPO}/issues/comments/${COMMENT_ID}" \
+            --field body="$stripped"
+          gh issue comment "${{ github.event.issue.number }}" --body \
+            ":arrows_counterclockwise: Retry started. Progress: $RUN_URL"
+          gh issue edit "${{ github.event.issue.number }}" \
+            --remove-label build-failed --add-label building
 
   build:
     needs: prepare
@@ -188,6 +240,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          gh issue comment "${{ github.event.issue.number }}" --body \
-            ":x: Build failed (status: \`${{ needs.build.result }}\`). Logs: $RUN_URL"
+          # The task box below is the retry trigger: prepare.if:
+          # matches an issue_comment.edited where this exact line
+          # flips from `[ ]` to `[x]`. Keep the literal text in sync
+          # with the strip-line pattern in `notify-retry`.
+          {
+            echo ":x: Build failed (status: \`${{ needs.build.result }}\`). Logs: $RUN_URL"
+            echo
+            echo "- [ ] Re-run this build"
+          } > /tmp/failure-comment.md
+          gh issue comment "${{ github.event.issue.number }}" --body-file /tmp/failure-comment.md
           gh issue edit "${{ github.event.issue.number }}" --remove-label building --add-label build-failed
