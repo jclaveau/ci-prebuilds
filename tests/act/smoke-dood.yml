@@ -33,4 +33,6 @@ jobs:
             overlay2|fuse-overlayfs|btrfs|zfs) echo "OK: real daemon";;
             *) echo "FAIL: storage driver $driver not expected from a host docker"; exit 1;;
           esac
-      - run: docker run --rm hello-world
+      # See smoke-dind.yml for the rationale; same mirror, same
+      # reason (no DH dependency in CI).
+      - run: docker run --rm mirror.gcr.io/library/hello-world
