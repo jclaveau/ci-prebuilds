@@ -136,23 +136,41 @@ if [[ -f "$APORTS/APKBUILD" ]]; then
   done
 fi
 
-# 4b. Aports' prepare() does several bootstrap symlinks Chromium's build
-#     expects but our environment doesn't have. Replicate the ones headless_shell
-#     actually needs.
-#
-# We use `ln -sf` everywhere (not `[[ -e ]] || ln`) because Chromium's source
-# tarball already contains CIPD placeholder files at these paths (e.g. an
-# empty stub at third_party/node/linux/node-linux-x64/bin/node that depot_tools
-# normally resolves). The placeholder satisfies `[[ -e ]]` but fails to exec
-# at build time — exactly what tripped the previous 42-min run. Force-overwrite.
-echo "===== Aports prepare() symlinks ====="
+# 4b. Aports' prepare() does several bootstrap steps Chromium's build expects
+#     but our environment doesn't have. Replicate the ones headless_shell
+#     actually needs. Skipping the headless-irrelevant ones (usb.ids sed,
+#     OFFICIAL_BUILD sed, replace_gn_files.py for system libs — we keep
+#     Chromium's bundled libs).
+echo "===== Aports prepare() bootstrap ====="
+
+# (a) Strip embedded binaries from third_party/. Chromium's source tarball
+# contains pre-built binaries in various third_party/ dirs (M127+). They're
+# usually CIPD-fetched placeholders that conflict with our system-provided
+# tools or simply waste space. scanelf finds them; rm cleans.
+if command -v scanelf >/dev/null; then
+  echo "  scanelf: removing embedded ELF binaries from source tree"
+  scanelf -RA -F "%F" . 2>/dev/null | while read -r elf; do
+    rm -f "$elf"
+  done
+fi
+
+# (b) test_fonts/test_fonts: aports replaces this with a self-symlink to
+# avoid Chromium's test_fonts build action that downloads more data we don't
+# need. Headless_shell doesn't run tests but the build graph still includes
+# the action.
+if [[ -d third_party/test_fonts/test_fonts ]]; then
+  rmdir third_party/test_fonts/test_fonts 2>/dev/null
+  ln -sf ../../../ third_party/test_fonts/test_fonts
+fi
+
+# (c) node binary symlink. Chromium ships a CIPD placeholder; force-overwrite.
 mkdir -p third_party/node/linux/node-linux-x64/bin
 ln -sfv /usr/bin/node third_party/node/linux/node-linux-x64/bin/node
-# esbuild: replace BOTH the standalone binary AND the node_modules JS host.
-# Chromium pins 0.25.1; alpine apk ships 0.27.1. If only the binary is
-# symlinked, the host JS gets a version-mismatch RuntimeError ("Host version
-# X does not match binary version Y"). Replace the JS module too so they
-# share a version. Aports does the same in its prepare().
+
+# (d) esbuild: replace BOTH the standalone binary AND the node_modules JS host.
+# Chromium pins 0.25.1; alpine apk ships 0.27.1 — if only the binary is
+# symlinked, the host JS hits a version-mismatch RuntimeError. Aports replaces
+# both halves in prepare().
 if [[ -d third_party/devtools-frontend/src/third_party/esbuild ]]; then
   ln -sfv /usr/bin/esbuild third_party/devtools-frontend/src/third_party/esbuild/esbuild
 fi
@@ -160,9 +178,40 @@ if [[ -d third_party/devtools-frontend/src/node_modules/esbuild ]]; then
   rm -rf third_party/devtools-frontend/src/node_modules/esbuild
   ln -sfv /usr/lib/node_modules/esbuild third_party/devtools-frontend/src/node_modules/esbuild
 fi
+
+# (e) rollup: Chromium's devtools-frontend bundles rollup at a specific
+# version. Alpine's apk doesn't ship @rollup/wasm-node, so aports fetches the
+# npm tarball at the version pinned via _rollup in APKBUILD. Without this,
+# the next ninja action (devtools-frontend bundles) will fail like esbuild did.
+if [[ -d third_party/devtools-frontend/src/node_modules ]] && [[ -f "$APORTS/APKBUILD" ]]; then
+  ROLLUP_VER=$(awk -F= '$1=="_rollup"{gsub(/"/,"",$2); print $2; exit}' "$APORTS/APKBUILD")
+  if [[ -n "$ROLLUP_VER" ]]; then
+    ROLLUP_TGZ="$WORK/rollup-wasm-${ROLLUP_VER}.tgz"
+    if [[ ! -f "$ROLLUP_TGZ" ]]; then
+      echo "  fetch @rollup/wasm-node@${ROLLUP_VER} from npm"
+      curl -fsSL "https://registry.npmjs.org/@rollup/wasm-node/-/wasm-node-${ROLLUP_VER}.tgz" -o "$ROLLUP_TGZ"
+    fi
+    rm -rf third_party/devtools-frontend/src/node_modules/rollup
+    mkdir third_party/devtools-frontend/src/node_modules/rollup
+    tar -xf "$ROLLUP_TGZ" --strip-components=1 \
+      -C third_party/devtools-frontend/src/node_modules/rollup
+    echo "  rollup-wasm extracted ($(ls third_party/devtools-frontend/src/node_modules/rollup | wc -l) files)"
+  fi
+fi
+
+# (f) gperf symlink (CIPD placeholder, same shape).
 if [[ -d third_party/gperf/cipd/bin ]]; then
   ln -sfv /usr/bin/gperf third_party/gperf/cipd/bin/gperf
 fi
+
+# (g) libxml malloc/free fix — aports replaces xmlMalloc/xmlFree → malloc/free
+# in blink + libxml chromium glue. See crbug.com/893950. Without it, builds
+# error against libxml's symbol export differences with the system libxml.
+echo "  libxml malloc/free fix"
+sed -i -e 's/\<xmlMalloc\>/malloc/g' -e 's/\<xmlFree\>/free/g' \
+  third_party/blink/renderer/core/xml/*.cc \
+  third_party/blink/renderer/core/xml/parser/xml_document_parser.cc \
+  third_party/libxml/chromium/*.cc 2>/dev/null || true
 
 # 5. Configure GN. Compose: aports' default args (if its APKBUILD exports any
 #    via a gn_args block) + our overlay (args.gn.overlay) + diagnostic overrides.

@@ -19,7 +19,7 @@ FROM alpine:edge AS chromium-builder
 # require specific clang versions.
 RUN apk add --no-cache \
         bash curl git patch patchutils tar xz gzip jq make perl \
-        bison flex gperf findutils elfutils elfutils-dev \
+        bison flex gperf findutils elfutils elfutils-dev pax-utils \
         # LLVM toolchain — versioned to match aports' clang patches; _llvmver=22
         # on alpine:edge today. apply-and-build.sh reads the same _llvmver from
         # aports' APKBUILD and sets clang_base_path accordingly.
