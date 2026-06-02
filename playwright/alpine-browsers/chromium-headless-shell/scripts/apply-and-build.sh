@@ -83,6 +83,22 @@ else
   done
 fi
 
+# 4a. Strip Chromium-clang-only flags that don't exist in upstream LLVM.
+#     Aports handles this via cr146-sanitize-ignore-for-ubsan-feature.patch
+#     (in the codeberg.org/selfisekai/copium tarball — separate from the
+#     aports community/chromium tree). Until we wire up that fetch too, sed
+#     the offending flag out of the GN compiler config. The flag is purely a
+#     diagnostic-suppression toggle for ubsan; removing it doesn't change
+#     headless_shell's runtime behavior, just makes upstream clang accept the
+#     command line.
+echo "===== Strip Chromium-clang-only flags ====="
+for f in build/config/sanitizers/sanitizers.gni build/config/sanitizers/BUILD.gn build/config/compiler/BUILD.gn; do
+  if [[ -f "$f" ]] && grep -q "fsanitize-ignore-for-ubsan-feature" "$f"; then
+    echo "  strip -fsanitize-ignore-for-ubsan-feature from $f"
+    sed -i 's/ *"-fsanitize-ignore-for-ubsan-feature=[^"]*",//g' "$f"
+  fi
+done
+
 # 5. Configure GN. Compose: aports' default args (if its APKBUILD exports any
 #    via a gn_args block) + our overlay (args.gn.overlay) + diagnostic overrides.
 echo "===== Configure GN ====="
