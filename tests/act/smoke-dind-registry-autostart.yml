@@ -1,0 +1,60 @@
+# Smoke workflow run through `act` to exercise the DIND_REGISTRY_AUTOSTART path:
+# the dind image auto-spawns `ci-prebuilds-dind-registry` on the HOST docker
+# daemon (reached via the bind-mounted host socket) and points the inner
+# dockerd at it via registry-mirrors.
+# Container options:
+#   --privileged: required for the inner dockerd as on the plain smoke-dind test.
+#   --add-host=host.docker.internal:host-gateway: lets the inner dockerd resolve
+#       the host endpoint on Linux (no-op on Docker Desktop where it's native).
+#   -e DIND_REGISTRY_AUTOSTART=1: flips the gated block in start-dockerd.sh.
+# NOTE: no explicit `-v /var/run/docker.sock:/var/run/docker.sock` here — `act`
+# auto-mounts the host docker socket into every container by default; adding it
+# explicitly errors with "Duplicate mount point". The end-user `.actrc` recipe
+# in dind/README.md DOES include the mount because there's no outer act in
+# that case.
+# Kept out of .github/workflows so real CI ignores it.
+name: act smoke (dind registry autostart)
+on: [push]
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ vars.RUNNER_IMAGE }}
+      options: >-
+        --privileged
+        --env DOCKER_HOST=unix:///var/run/dind.sock
+        --add-host=host.docker.internal:host-gateway
+        -e DIND_REGISTRY_AUTOSTART=1
+    env:
+      DOCKER_STORAGE_DRIVER: fuse-overlayfs
+    steps:
+      - run: start-dockerd
+      - name: Inner dockerd has the mirror configured
+        run: |
+          docker info 2>&1 | tee /tmp/info.txt
+          grep -F 'http://host.docker.internal:36000' /tmp/info.txt
+      - name: Host docker has the ci-prebuilds-dind-registry container running
+        run: |
+          docker -H unix:///var/run/docker.sock inspect ci-prebuilds-dind-registry \
+            --format '{{.State.Status}}' | tee /tmp/state.txt
+          grep -Fx running /tmp/state.txt
+      - name: First pull populates the cache
+        # Unqualified name → docker.io → matched by registry-mirrors, so the
+        # inner dockerd routes the pull through ci-prebuilds-dind-registry.
+        # The registry is a pull-through cache for mirror.gcr.io upstream,
+        # so this stays egress-stable (no Docker Hub direct dependency).
+        run: docker pull library/hello-world
+      - name: Second pull serves from the cache
+        # Force a re-pull; the registry should log requests for the
+        # hello-world repository in pull-through proxy mode.
+        run: |
+          docker rmi library/hello-world
+          docker pull library/hello-world
+          docker -H unix:///var/run/docker.sock logs ci-prebuilds-dind-registry 2>&1 \
+            | tee /tmp/reg.log
+          grep -F 'hello-world' /tmp/reg.log
+      - name: Cleanup (so re-runs on the same host start from a clean state)
+        if: always()
+        run: |
+          docker -H unix:///var/run/docker.sock rm -f ci-prebuilds-dind-registry || true
+          docker -H unix:///var/run/docker.sock volume rm ci-prebuilds-dind-registry-data || true
