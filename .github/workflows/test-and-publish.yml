@@ -71,6 +71,10 @@ jobs:
       os_matrix:     ${{ steps.matrices.outputs.os_matrix }}
       image_matrix:  ${{ steps.matrices.outputs.image_matrix }}
       flavor_matrix: ${{ steps.matrices.outputs.flavor_matrix }}
+      # JSON object {gha_tools, dind_hardened, dood_dind, node, pnpm,
+      # pnpm_gyp, playwright} → bool. Each test job gates on the relevant
+      # key via fromJSON(); skipped tests don't block the `promote` gate.
+      test_filters: ${{ steps.matrices.outputs.test_filters }}
     steps:
       # for debug only
       - run: sudo cat /etc/passwd
@@ -155,10 +159,51 @@ jobs:
           # through to the full default. No 'All' sentinel on this axis (would be
           # unreachable from the form).
           if [ -n "$ONLY_IMAGE" ]; then
-            echo "image_matrix=$(csv_to_json "$ONLY_IMAGE")" >> "$GITHUB_OUTPUT"
+            image_matrix=$(csv_to_json "$ONLY_IMAGE")
           else
-            echo 'image_matrix=["gha-tools", "dood", "dind", "dood-node", "dind-node", "dood-pnpm", "dind-pnpm", "dood-pnpm-gyp", "dind-pnpm-gyp", "dood-playwright", "dind-playwright", "dood-playwright-gyp", "dind-playwright-gyp"]' >> "$GITHUB_OUTPUT"
+            image_matrix='["gha-tools", "dood", "dind", "dood-node", "dind-node", "dood-pnpm", "dind-pnpm", "dood-pnpm-gyp", "dind-pnpm-gyp", "dood-playwright", "dind-playwright", "dood-playwright-gyp", "dind-playwright-gyp"]'
           fi
+          echo "image_matrix=$image_matrix" >> "$GITHUB_OUTPUT"
+
+          # test_filters: per-test booleans gating which test jobs run based on
+          # image_matrix membership. Without these, on-demand requests that
+          # narrow image_matrix (e.g. only_image=gha-tools) would still spawn
+          # every test job, and tests that pull `<os>-<variant>-hardened` for
+          # a non-built variant would fail with "manifest unknown".
+          # Each filter answers "is any of this test's covered images in the
+          # requested image_matrix?". Tests cover one or more images:
+          #   gha_tools_*       → gha-tools
+          #   dind_hardened     → dind
+          #   dood_dind_*       → dood, dind
+          #   node_*            → dood-node, dind-node
+          #   pnpm_*            → dood-pnpm, dind-pnpm
+          #   pnpm_gyp_*        → dood-pnpm-gyp, dind-pnpm-gyp
+          #   playwright_*      → dood-playwright[-gyp], dind-playwright[-gyp]
+          mapfile -t _imgs < <(jq -r '.[]' <<< "$image_matrix")
+          declare -A _in_image
+          for i in "${_imgs[@]}"; do _in_image[$i]=1; done
+          intersects() {
+            local img
+            for img in "$@"; do
+              if [ -n "${_in_image[$img]:-}" ]; then return 0; fi
+            done
+            return 1
+          }
+          filters='{}'
+          add_filter() {
+            local k="$1"; shift
+            local v=false
+            if intersects "$@"; then v=true; fi
+            filters=$(jq --arg k "$k" --argjson v "$v" '.[$k] = $v' <<< "$filters")
+          }
+          add_filter gha_tools     gha-tools
+          add_filter dind_hardened dind
+          add_filter dood_dind     dood dind
+          add_filter node          dood-node dind-node
+          add_filter pnpm          dood-pnpm dind-pnpm
+          add_filter pnpm_gyp      dood-pnpm-gyp dind-pnpm-gyp
+          add_filter playwright    dood-playwright dind-playwright dood-playwright-gyp dind-playwright-gyp
+          echo "test_filters=$filters" >> "$GITHUB_OUTPUT"
 
           # Flavor axis (promote). Friendly names in / matrix values out:
           # 'hardened' → '' (consumer default) | 'sudoer' → '-sudoer' (build-chain).
@@ -696,6 +741,7 @@ jobs:
 
   test-gha-tools-usage:
     runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).gha_tools
     needs: [github-context, build-gha-tools]
     timeout-minutes: 5
     strategy:
@@ -742,6 +788,7 @@ jobs:
     # strip-at-end overlay output which gets published as `<image>:latest`. Both share
     # the WORKDIR/USER/env defaults; they diverge only on whether sudo works.
     runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).gha_tools
     needs: [github-context, build-gha-tools, build-hardened-variants]
     timeout-minutes: 5
     strategy:
@@ -801,6 +848,7 @@ jobs:
     # the file presence + content + that broad sudo is denied. The full
     # start-dockerd flow is implicit (any breakage would surface elsewhere).
     runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).dind_hardened
     needs: [github-context, build-hardened-variants]
     timeout-minutes: 5
     strategy:
@@ -844,6 +892,7 @@ jobs:
 
   test-dood-dind-usage:
     runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).dood_dind
     needs: [github-context, build-dood, build-dind]
     timeout-minutes: 5
     env:
@@ -894,6 +943,7 @@ jobs:
 
   test-dood-dind-effects:
     runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).dood_dind
     needs: [github-context, build-dood, build-dind]
     timeout-minutes: 5
     env:
@@ -956,6 +1006,7 @@ jobs:
 
   test-node-usage:
     runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).node
     needs: [github-context, build-node-dood, build-node-dind]
     timeout-minutes: 5
     strategy:
@@ -980,6 +1031,7 @@ jobs:
 
   test-pnpm-usage:
     runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).pnpm
     needs: [github-context, build-pnpm-dood, build-pnpm-dind]
     timeout-minutes: 5
     strategy:
@@ -1003,6 +1055,7 @@ jobs:
   # and that a real native addon compiles (the test moved here from test-node-usage when node went slim).
   test-pnpm-gyp-usage:
     runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).pnpm_gyp
     needs: [github-context, build-pnpm-gyp-dood, build-pnpm-gyp-dind]
     timeout-minutes: 5
     strategy:
@@ -1045,6 +1098,7 @@ jobs:
 
   test-playwright-usage:
     runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).playwright
     needs: [github-context, build-playwright-dood, build-playwright-dind, build-playwright-gyp-dood, build-playwright-gyp-dind]
     timeout-minutes: 5
     strategy:
@@ -1126,6 +1180,7 @@ jobs:
 
   test-dood-dind-act:
     runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).dood_dind
     needs: [github-context, build-dood, build-dind]
     timeout-minutes: 10
     strategy:
