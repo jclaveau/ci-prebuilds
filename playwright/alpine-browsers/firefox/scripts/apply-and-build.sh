@@ -265,6 +265,14 @@ fi
 if [[ "$PW_SKIP_APORTS" == "1" ]]; then
   # Minimal Mozilla-default mozconfig — no system libs, all bundled. We're
   # diagnosing PW patch behavior, not shipping a tuned distro package.
+  #
+  # --disable-lto + RUSTFLAGS below: the default Firefox release config builds
+  # the gkrust crate with `-Clto -C debuginfo=2`, which OOM-kills rustc on
+  # GHA's `ubuntu-latest` (~7 GB usable RAM) during the LTO link phase. We
+  # don't ship this binary, so we trade some optimization headroom for a
+  # build that actually completes. Aports' build doesn't hit this because it
+  # runs on Alpine builders with more memory budget AND its mozconfig already
+  # tunes LTO down.
   cat > .mozconfig <<'EOF'
 ac_add_options --disable-bootstrap
 ac_add_options --disable-crashreporter
@@ -276,6 +284,7 @@ ac_add_options --enable-optimize="-O2 -pipe"
 ac_add_options --enable-linker=lld
 ac_add_options --with-libclang-path=/usr/lib/llvm-19/lib
 ac_add_options --without-wasm-sandboxed-libraries
+ac_add_options --disable-lto
 mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj
 EOF
   cat "$OVERLAY" >> .mozconfig
@@ -316,6 +325,19 @@ export MOZ_APP_REMOTINGNAME=firefox
 # Let firefox's own cargo settings drive these — aports unsets them too.
 unset CARGO_PROFILE_RELEASE_OPT_LEVEL
 unset CARGO_PROFILE_RELEASE_LTO
+
+# Under PW_SKIP_APORTS=1 (glibc-debug workflow), forcibly disable Rust LTO and
+# strip debuginfo. Two-thirds of GHA hosted runners can't fit the `gkrust` LTO
+# link step in memory (rustc gets OOM-killed with exit 254). The mozconfig's
+# `--disable-lto` covers C/C++ LTO but Firefox's Rust crates pick LTO up from
+# CARGO_PROFILE_RELEASE_LTO / RUSTFLAGS. Setting RUSTFLAGS here bypasses both
+# the cargo profile and any inherited toolchain default. Diagnostic-only path —
+# the musl producer build (aports' mozconfig) keeps LTO on for shipping perf.
+if [[ "$PW_SKIP_APORTS" == "1" ]]; then
+  export CARGO_PROFILE_RELEASE_LTO=false
+  export RUSTFLAGS="-Copt-level=2 -Cdebuginfo=0 -Cembed-bitcode=no"
+  echo "  PW_SKIP_APORTS=1: forcing RUSTFLAGS='$RUSTFLAGS' to avoid GHA-runner OOM"
+fi
 
 # aports' mozconfig has `ac_add_options --enable-optimize="$CFLAGS"`. Its
 # build() function exports a tuned CFLAGS, but we don't run that function, so
