@@ -43,6 +43,12 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
+      juggler_service_bootstrap:
+        description: 'PW_JUGGLER_SERVICE_BOOTSTRAP: profile-after-change → service,@mozilla.org/remote/juggler;1 (fix for Mozilla RemoteAgent shadowing m-remote)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
       use_prebuilt:
         description: 'Use prebuilt-base image (fast iteration; requires prebuilt-base-ff-<rev> to exist on GHCR)'
         required: false
@@ -152,6 +158,7 @@ jobs:
             PW_JUGGLER_ORDER_FIRST=${{ inputs.juggler_order_first || 'false' }}
             PW_JUGGLER_CATEGORY_RENAME=${{ inputs.juggler_category_rename || 'false' }}
             PW_JUGGLER_INSTRUMENT=${{ inputs.juggler_instrument || 'false' }}
+            PW_JUGGLER_SERVICE_BOOTSTRAP=${{ inputs.juggler_service_bootstrap || 'false' }}
             BASE_PREBUILT=${{ steps.dockerfile-choice.outputs.base }}
 
       # Tier-1 smoke: the binary self-identifies. Catches build-succeeded-but-

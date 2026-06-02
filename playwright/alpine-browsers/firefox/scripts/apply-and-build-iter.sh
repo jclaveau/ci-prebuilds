@@ -28,11 +28,13 @@ echo "===== iter build: PW_VERSION=${PW_VERSION:-?} ====="
 : "${PW_JUGGLER_ORDER_FIRST:=0}"
 : "${PW_JUGGLER_CATEGORY_RENAME:=0}"
 : "${PW_JUGGLER_INSTRUMENT:=0}"
+: "${PW_JUGGLER_SERVICE_BOOTSTRAP:=0}"
 truthy() { case "${1,,}" in 1|true|yes|on) echo 1 ;; *) echo 0 ;; esac; }
 PW_JUGGLER_ORDER_FIRST=$(truthy "$PW_JUGGLER_ORDER_FIRST")
 PW_JUGGLER_CATEGORY_RENAME=$(truthy "$PW_JUGGLER_CATEGORY_RENAME")
 PW_JUGGLER_INSTRUMENT=$(truthy "$PW_JUGGLER_INSTRUMENT")
-echo "Flags: PW_JUGGLER_ORDER_FIRST=$PW_JUGGLER_ORDER_FIRST PW_JUGGLER_CATEGORY_RENAME=$PW_JUGGLER_CATEGORY_RENAME PW_JUGGLER_INSTRUMENT=$PW_JUGGLER_INSTRUMENT"
+PW_JUGGLER_SERVICE_BOOTSTRAP=$(truthy "$PW_JUGGLER_SERVICE_BOOTSTRAP")
+echo "Flags: PW_JUGGLER_ORDER_FIRST=$PW_JUGGLER_ORDER_FIRST PW_JUGGLER_CATEGORY_RENAME=$PW_JUGGLER_CATEGORY_RENAME PW_JUGGLER_INSTRUMENT=$PW_JUGGLER_INSTRUMENT PW_JUGGLER_SERVICE_BOOTSTRAP=$PW_JUGGLER_SERVICE_BOOTSTRAP"
 
 cd "$SRC"
 
@@ -69,6 +71,22 @@ if [[ "$PW_JUGGLER_CATEGORY_RENAME" == "1" ]]; then
   # m-remote is gone.
   echo "  PW_JUGGLER_CATEGORY_RENAME: renaming m-remote → m-juggler in juggler/components/components.conf"
   sed -i 's/"command-line-handler": "m-remote"/"command-line-handler": "m-juggler"/' juggler/components/components.conf
+fi
+
+if [[ "$PW_JUGGLER_SERVICE_BOOTSTRAP" == "1" ]]; then
+  # PW's components.conf declares `"profile-after-change": "Juggler"` — a bare
+  # observer name, NOT a contract_id, so the static_components iterator never
+  # auto-instantiates JugglerFactory at profile-after-change. As a result
+  # JugglerFactory only loads if Mozilla's RemoteAgent activates first (they
+  # collide on `command-line-handler:m-remote`; Mozilla shadows PW's entry
+  # silently). Rewriting the value to `service,@mozilla.org/remote/juggler;1`
+  # forces eager instantiation at profile-after-change, independent of Mozilla.
+  if grep -q '"profile-after-change": "service,@mozilla.org/remote/juggler;1"' juggler/components/components.conf 2>/dev/null; then
+    echo "  PW_JUGGLER_SERVICE_BOOTSTRAP: service bootstrap already in place — skip"
+  else
+    echo "  PW_JUGGLER_SERVICE_BOOTSTRAP: rewriting profile-after-change → service,@mozilla.org/remote/juggler;1"
+    sed -i 's|"profile-after-change": "Juggler"|"profile-after-change": "service,@mozilla.org/remote/juggler;1"|' juggler/components/components.conf
+  fi
 fi
 
 if [[ "$PW_JUGGLER_INSTRUMENT" == "1" ]]; then

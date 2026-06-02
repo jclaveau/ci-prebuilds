@@ -35,7 +35,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         nodejs npm \
         sccache \
         binutils file unzip \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    # Ubuntu ships python3-gyp (the Debian-patched gyp) at
+    # /usr/lib/python3/dist-packages/gyp/. Mozilla's mach prefers the system
+    # gyp when found, but the Debian variant hard-codes /build/gyp_includes/
+    # for downstream packaging — which doesn't exist when building from source.
+    # Remove it so Mozilla's vendored gyp (firefox-src/third_party/python/gyp/)
+    # gets picked up.
+    && rm -rf /usr/lib/python3/dist-packages/gyp \
+              /usr/lib/python3/dist-packages/gyp-*.egg-info
 
 # Ubuntu 24.04 ships rustc 1.75 — too old for FF 147 (needs ≥1.86). Install
 # rustup + stable so the toolchain matches what aports' Alpine builders use.

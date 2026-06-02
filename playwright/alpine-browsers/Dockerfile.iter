@@ -36,6 +36,7 @@ COPY firefox/scripts /work/firefox/scripts
 ARG PW_JUGGLER_ORDER_FIRST=false
 ARG PW_JUGGLER_CATEGORY_RENAME=false
 ARG PW_JUGGLER_INSTRUMENT=false
+ARG PW_JUGGLER_SERVICE_BOOTSTRAP=false
 
 # Incremental rebuild. Cache mount IDs match the prebuilt-base
 # (ffx-mozbuild-pb / ffx-sccache-pb) so any state persisted by the cold build
@@ -47,6 +48,7 @@ RUN --mount=type=cache,target=/root/.mozbuild,id=ffx-mozbuild-pb,sharing=locked 
     && PW_JUGGLER_ORDER_FIRST="$PW_JUGGLER_ORDER_FIRST" \
        PW_JUGGLER_CATEGORY_RENAME="$PW_JUGGLER_CATEGORY_RENAME" \
        PW_JUGGLER_INSTRUMENT="$PW_JUGGLER_INSTRUMENT" \
+       PW_JUGGLER_SERVICE_BOOTSTRAP="$PW_JUGGLER_SERVICE_BOOTSTRAP" \
        bash /work/firefox/scripts/apply-and-build-iter.sh /work
 
 # ---- Artifact ----------------------------------------------------------------
