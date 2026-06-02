@@ -39,17 +39,19 @@ jobs:
             --format '{{.State.Status}}' | tee /tmp/state.txt
           grep -Fx running /tmp/state.txt
       - name: First pull populates the cache
-        run: docker pull mirror.gcr.io/library/hello-world
+        # Unqualified name → docker.io → matched by registry-mirrors, so the
+        # inner dockerd routes the pull through ci-prebuilds-dind-registry.
+        # The registry is a pull-through cache for mirror.gcr.io upstream,
+        # so this stays egress-stable (no Docker Hub direct dependency).
+        run: docker pull library/hello-world
       - name: Second pull serves from the cache
-        # Trigger by-digest re-pull on a freshly removed local copy; the
-        # registry logs the hit. We then grep for a cache-style line.
+        # Force a re-pull; the registry should log requests for the
+        # hello-world repository in pull-through proxy mode.
         run: |
-          docker rmi mirror.gcr.io/library/hello-world
-          docker pull mirror.gcr.io/library/hello-world
+          docker rmi library/hello-world
+          docker pull library/hello-world
           docker -H unix:///var/run/docker.sock logs ci-prebuilds-dind-registry 2>&1 \
             | tee /tmp/reg.log
-          # The pull-through proxy mode logs blob/manifest requests; just
-          # assert the registry handled traffic for the pulled name.
           grep -F 'hello-world' /tmp/reg.log
       - name: Cleanup (so re-runs on the same host start from a clean state)
         if: always()
