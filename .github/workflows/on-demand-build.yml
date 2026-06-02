@@ -122,14 +122,26 @@ jobs:
           echo "Parsed: os='$OS' os_version='$OS_VERSION' image='$IMAGE' flavor='$FLAVOR' node='$NODE' pnpm='$PNPM' pw='$PW'"
 
       - id: quota
-        # 3 builds / 24h / requester. Counts any build-request-labelled issue
+        # 3 builds / 24h / requester, counting any build-request-labelled issue
         # opened by this author in the window (including this one — so the
         # 4th request hits the cap).
+        # Maintainers (OWNER / MEMBER / COLLABORATOR per GitHub's
+        # author_association enum) bypass the cap entirely — they pay for the
+        # CI minutes already, and the cap exists to gate untrusted requesters,
+        # not to rate-limit the repo's own admins.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AUTHOR: ${{ github.event.issue.user.login }}
+          AUTHOR_ASSOC: ${{ github.event.issue.author_association }}
         run: |
           set -euo pipefail
+          case "$AUTHOR_ASSOC" in
+            OWNER|MEMBER|COLLABORATOR)
+              echo "Maintainer (@$AUTHOR, $AUTHOR_ASSOC) — quota check bypassed"
+              echo "ok=true" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
           since=$(date -u -d '24 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
           count=$(gh issue list --repo "$GITHUB_REPOSITORY" \
             --author "$AUTHOR" \
@@ -138,7 +150,7 @@ jobs:
             --search "created:>=$since" \
             --limit 100 \
             --json number | jq 'length')
-          echo "build-request issues by $AUTHOR since $since: $count"
+          echo "build-request issues by @$AUTHOR ($AUTHOR_ASSOC) since $since: $count"
           if [ "$count" -gt 3 ]; then
             gh issue comment "${{ github.event.issue.number }}" --body \
               ":octagonal_sign: Quota exceeded: $count build-request issues from @$AUTHOR in the last 24h (cap = 3). Try again later."
