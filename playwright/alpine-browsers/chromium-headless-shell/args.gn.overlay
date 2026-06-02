@@ -12,6 +12,25 @@ is_debug = false
 symbol_level = 0
 is_official_build = false  # set true if we want PGO + maximum optimization; significantly slower build
 
+# musl libc — without this Chromium picks a glibc-only codepath and the build
+# fails at link with undefined refs against glibc-specific symbols (e.g.
+# __libc_dlopen_mode). aports' chromium APKBUILD sets the same flag.
+is_musl = true
+
+# System clang via Chromium's unbundle toolchain — the bundled chromium clang
+# doesn't link against musl. clang_base_path is provided at build time by the
+# alpine apk install at /usr/lib/llvmNN (the version is picked up from
+# `_llvmver` in aports' APKBUILD; the apply-and-build.sh script injects it).
+is_clang = true
+clang_use_chrome_plugins = false
+custom_toolchain = "//build/toolchain/linux/unbundle:default"
+host_toolchain = "//build/toolchain/linux/unbundle:default"
+
+# Rust — Chromium 148+ requires Rust support enabled. The triple
+# `x86_64-alpine-linux-musl` isn't in Chromium's known-target-triples.txt
+# upstream; apply-and-build.sh appends it before gn gen.
+enable_rust = true
+
 # Headless-only target. Disables a lot of UI / browser-frontend code we never
 # use in chrome-headless-shell.
 is_component_build = false
@@ -19,7 +38,7 @@ headless_use_embedded_resources = true
 
 # Use system libs where Alpine has reasonable versions (matches aports' build).
 use_sysroot = false
-use_custom_libcxx = false
+use_custom_libcxx = true   # aports keeps Chromium's bundled libc++ to avoid alpine's libstdc++ ABI mismatch
 use_lld = true
 
 # Disable bundled NaCl / sandbox bits aports patches handle differently.

@@ -87,11 +87,36 @@ fi
 #    via a gn_args block) + our overlay (args.gn.overlay) + diagnostic overrides.
 echo "===== Configure GN ====="
 
+# Chromium's Rust build path enforces a list of known target triples (defined
+# in build/rust/known-target-triples.txt). The Alpine clang reports its target
+# as `x86_64-alpine-linux-musl`, which upstream doesn't list. Aports handles
+# this with a shell-side append in its APKBUILD's _configure() — replicate.
+CTARGET="${CTARGET:-$(cc -dumpmachine)}"
+if ! grep -qx "$CTARGET" build/rust/known-target-triples.txt 2>/dev/null; then
+  echo "  appending $CTARGET to build/rust/known-target-triples.txt"
+  echo "$CTARGET" >> build/rust/known-target-triples.txt
+fi
+
+# clang_base_path GN arg points at where chromium will look for system clang.
+# aports uses /usr/lib/llvm$_llvmver — read the same _llvmver from aports'
+# APKBUILD so our build matches the version of clang the patches expect.
+if [[ -f "$APORTS/APKBUILD" ]]; then
+  LLVMVER=$(awk -F= '$1=="_llvmver"{gsub(/[^0-9]/,"",$2); print $2; exit}' "$APORTS/APKBUILD")
+  CLANG_BASE="/usr/lib/llvm${LLVMVER:-22}"
+else
+  CLANG_BASE="/usr/lib/llvm22"  # fallback; alpine:edge currently ships llvm22
+fi
+echo "  CLANG_BASE=$CLANG_BASE  CTARGET=$CTARGET"
+
 OUT_DIR="out/headless"
 mkdir -p "$OUT_DIR"
 
 {
   cat "$WORK/chromium-headless-shell/args.gn.overlay"
+  echo ""
+  echo "# Injected at build time"
+  echo "clang_base_path = \"$CLANG_BASE\""
+  echo "clang_version = \"${LLVMVER:-22}\""
   echo ""
   echo "# Diagnostic-flag overrides"
   if [[ "$PW_CHROMIUM_ENABLE_DEBUG" == "1" ]]; then
