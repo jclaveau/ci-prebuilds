@@ -67,7 +67,10 @@ use_cups = false
 enable_basic_printing = false
 enable_print_preview = false
 
-# Other defaults-on features chrome-headless-shell skips:
-enable_remoting = false        # not the same as chrome-headless-shell remote-debugging
-enable_extensions = false      # PW SDK doesn't load WebExtensions
-enable_pdf = false             # no PDF viewer integration needed
+# Note: tried enable_extensions=false / enable_pdf=false / enable_remoting=false
+# here. They trigger downstream assert failures (e.g. //chrome/browser/background/
+# extensions/BUILD.gn asserts enable_extensions_core regardless of whether the
+# chrome target is even in our build graph). The headless_shell target isn't
+# affected by these flags' default values at runtime, so keep them at default
+# rather than chase the assert chain. If we ever need to shrink the build
+# graph further, the right move is target-level pruning, not feature flags.
