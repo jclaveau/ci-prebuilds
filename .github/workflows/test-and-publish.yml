@@ -1454,10 +1454,25 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
       - name: Promote tested digest to consumer tags
+        # Docker Hub intermittently returns 400 Bad Request on one child
+        # manifest PUT during multi-arch fan-out; the same payload succeeds
+        # on retry. `imagetools create` is idempotent, so retry the whole
+        # call (up to 3 attempts, sleeping 10s then 30s between them).
         run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            ghcr.io/jclaveau/${{ matrix.os }}-${{ steps.src.outputs.src }}:${{ needs.github-context.outputs.build_tag }}
+          set -e
+          for i in 1 2 3; do
+            if docker buildx imagetools create \
+              $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+              ghcr.io/jclaveau/${{ matrix.os }}-${{ steps.src.outputs.src }}:${{ needs.github-context.outputs.build_tag }}; then
+              exit 0
+            fi
+            [ $i -lt 3 ] || break
+            sleep_for=$((10 * 3 ** (i - 1)))
+            echo "Attempt $i/3 failed; sleeping ${sleep_for}s before retry"
+            sleep "$sleep_for"
+          done
+          echo "Promote failed after 3 attempts."
+          exit 1
       # Emit the pinned tag this cell pushed as a per-cell artifact so the
       # downstream `aggregate-tags` job can collect across the matrix and
       # surface the full list as a workflow_call output (consumed by
