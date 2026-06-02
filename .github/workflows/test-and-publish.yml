@@ -1485,9 +1485,15 @@ jobs:
       # surface the full list as a workflow_call output (consumed by
       # `on-demand-build.yml`'s success comment).
       - name: Write tag fragment
+        # File name carries the matrix coordinates so `aggregate-tags`'
+        # `download-artifact merge-multiple: true` doesn't collapse 16
+        # `tag.txt` files into one (each artifact has a unique NAME but
+        # the per-artifact filename was identical, so the merge raced
+        # and only one cell's tag survived).
         run: |
           mkdir -p /tmp/tag
-          echo "jclaveau/${{ matrix.os }}-${{ matrix.image }}${{ matrix.flavor }}:${{ steps.pin.outputs.tag }}" > /tmp/tag/tag.txt
+          echo "jclaveau/${{ matrix.os }}-${{ matrix.image }}${{ matrix.flavor }}:${{ steps.pin.outputs.tag }}" \
+            > /tmp/tag/tag-${{ matrix.os }}-${{ matrix.image }}${{ matrix.flavor || '-hardened' }}.txt
       - uses: actions/upload-artifact@v4
         with:
           # Artifact names must be unique across the matrix. Empty flavor (hardened)
