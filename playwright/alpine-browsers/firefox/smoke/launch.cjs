@@ -14,7 +14,16 @@ const ok = (cond, msg) => { if (!cond) { console.error('FAIL:', msg); process.ex
   // `firefox.launch()` runtime resolution — we must pass executablePath
   // explicitly here.
   const executablePath = process.env.PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH || undefined;
-  const browser = await firefox.launch({ executablePath });
+  // musl-build Juggler-dormant workaround: Juggler's
+  // command-line-handler:m-remote entry is shadowed by Mozilla's RemoteAgent
+  // (both register under the same name). JugglerFactory only instantiates as
+  // a side-effect of RemoteAgent activating. Passing --remote-debugging-port=0
+  // wakes RemoteAgent, which in turn unblocks Juggler. Port 0 = ephemeral, the
+  // BiDi server we don't use binds to a throwaway port.
+  const browser = await firefox.launch({
+    executablePath,
+    args: ['--remote-debugging-port=0'],
+  });
   ok(browser, 'firefox.launch() returned a browser');
 
   const ctx = await browser.newContext();
