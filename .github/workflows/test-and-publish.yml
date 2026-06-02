@@ -217,7 +217,13 @@ jobs:
               os_matrix=$(jq -c --arg o "$fam" --arg v "$v" '. + [{os: $o, os_version: $v}]' <<< "$os_matrix")
             done < <(resolve_versions "$fam")
           done < <(jq -r '.[]' <<< "$os_fams")
-          echo "os_matrix=$os_matrix" >> "$GITHUB_OUTPUT"
+          # Wrap as `{include: [...]}` because that's the documented shape for
+          # `strategy.matrix: ${{ fromJSON(...) }}` consumption. The bare-array
+          # form (`matrix.include: ${{ fromJSON(<array>) }}`) parses as YAML but
+          # GH Actions rejects it at run-start (workflow-file error, no jobs
+          # queued). The internal jq pipeline above keeps building the bare
+          # array because it's easier to reason about; we wrap on emit.
+          echo "os_matrix={\"include\":$os_matrix}" >> "$GITHUB_OUTPUT"
 
           # Image axis (build-hardened-variants + promote). On the issue path the
           # form requires ≥1 explicit pick; on push/PR inputs.* is null so we fall
@@ -294,17 +300,21 @@ jobs:
             jq -nc --argjson o "$1" --argjson i "$2" --arg k "$3" \
               '[$o[] as $a | $i[] as $b | $a + {($k): $b}]'
           }
+          # Cartesian shell vars stay bare arrays so downstream cartesians can
+          # consume them. Each GITHUB_OUTPUT emit wraps as `{include: [...]}`
+          # because that's the documented shape for
+          # `strategy.matrix: ${{ fromJSON(...) }}`.
           hardened_matrix=$(cartesian "$os_matrix" "$image_matrix" image)
-          echo "hardened_matrix=$hardened_matrix" >> "$GITHUB_OUTPUT"
+          echo "hardened_matrix={\"include\":$hardened_matrix}" >> "$GITHUB_OUTPUT"
           test_gha_matrix=$(cartesian "$os_matrix" '["", "-hardened"]' flavor)
-          echo "test_gha_matrix=$test_gha_matrix" >> "$GITHUB_OUTPUT"
+          echo "test_gha_matrix={\"include\":$test_gha_matrix}" >> "$GITHUB_OUTPUT"
           test_mode_matrix=$(cartesian "$os_matrix" '["dood", "dind"]' mode)
-          echo "test_mode_matrix=$test_mode_matrix" >> "$GITHUB_OUTPUT"
+          echo "test_mode_matrix={\"include\":$test_mode_matrix}" >> "$GITHUB_OUTPUT"
           test_pw_matrix=$(cartesian "$test_mode_matrix" '["slim", "gyp"]' variant)
-          echo "test_pw_matrix=$test_pw_matrix" >> "$GITHUB_OUTPUT"
+          echo "test_pw_matrix={\"include\":$test_pw_matrix}" >> "$GITHUB_OUTPUT"
           # promote: os_matrix × image_matrix × flavor_matrix.
           promote_matrix=$(cartesian "$hardened_matrix" "$flavor_matrix" flavor)
-          echo "promote_matrix=$promote_matrix" >> "$GITHUB_OUTPUT"
+          echo "promote_matrix={\"include\":$promote_matrix}" >> "$GITHUB_OUTPUT"
 
       # Structural lint: any smoke YAML that issues a `docker` command must bind the
       # host socket. Without it, act-on-GHA's inherited bridge gives a false-positive
@@ -420,7 +430,10 @@ jobs:
           # Key format matches the build-layer `image:` (per-job
           # ${matrix.os}-${matrix.os_version}-<suffix>), keeping the gate
           # lookup in build-layer a direct hit.
-          tuples = json.loads(os.environ["OS_MATRIX"])
+          # os_matrix is emitted as `{"include": [{os, os_version}, ...]}` so
+          # downstream jobs can `matrix: ${{ fromJSON(...) }}` directly; unwrap
+          # to the bare tuple list here.
+          tuples = json.loads(os.environ["OS_MATRIX"])["include"]
           for t in tuples:
               osname = t["os"]
               ver = t["os_version"]
@@ -458,8 +471,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -485,8 +497,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -508,8 +519,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -529,8 +539,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -552,8 +561,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -576,8 +584,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -601,8 +608,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -624,8 +630,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -650,8 +655,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -674,8 +678,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -699,8 +702,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -723,8 +725,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -750,8 +751,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -774,8 +774,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -826,8 +825,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.hardened_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.hardened_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/build-layer
@@ -856,8 +854,7 @@ jobs:
     timeout-minutes: 5
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     container:
       image: ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.os_version }}-gha-tools:${{ needs.github-context.outputs.build_tag }}
       credentials:
@@ -903,8 +900,7 @@ jobs:
     timeout-minutes: 5
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.test_gha_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.test_gha_matrix) }}
     env:
       IMG: ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.os_version }}-gha-tools${{ matrix.flavor }}:${{ needs.github-context.outputs.build_tag }}
     steps:
@@ -962,8 +958,7 @@ jobs:
     timeout-minutes: 5
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     env:
       IMG: ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.os_version }}-dind-hardened:${{ needs.github-context.outputs.build_tag }}
     steps:
@@ -1011,8 +1006,7 @@ jobs:
       DOCKER_STORAGE_DRIVER: fuse-overlayfs
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.test_mode_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.test_mode_matrix) }}
     container:
       image: ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.os_version }}-${{ matrix.mode }}:${{ needs.github-context.outputs.build_tag }}
       credentials:
@@ -1058,8 +1052,7 @@ jobs:
       DOCKER_STORAGE_DRIVER: fuse-overlayfs
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.test_mode_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.test_mode_matrix) }}
     container:
       image: ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.os_version }}-${{ matrix.mode }}:${{ needs.github-context.outputs.build_tag }}
       credentials:
@@ -1118,8 +1111,7 @@ jobs:
     timeout-minutes: 5
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.test_mode_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.test_mode_matrix) }}
     container:
       image: ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.os_version }}-${{ matrix.mode }}-node:${{ needs.github-context.outputs.build_tag }}
       credentials:
@@ -1142,8 +1134,7 @@ jobs:
     timeout-minutes: 5
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.test_mode_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.test_mode_matrix) }}
     container:
       image: ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.os_version }}-${{ matrix.mode }}-pnpm:${{ needs.github-context.outputs.build_tag }}
       credentials:
@@ -1165,8 +1156,7 @@ jobs:
     timeout-minutes: 5
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.test_mode_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.test_mode_matrix) }}
     container:
       image: ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.os_version }}-${{ matrix.mode }}-pnpm-gyp:${{ needs.github-context.outputs.build_tag }}
       credentials:
@@ -1207,9 +1197,8 @@ jobs:
     timeout-minutes: 5
     strategy:
       fail-fast: false
-      matrix:
-        # variant: 'slim' = ...-playwright; 'gyp' = ...-playwright-gyp (same PW, gyp base)
-        include: ${{ fromJSON(needs.github-context.outputs.test_pw_matrix) }}
+      # variant: 'slim' = ...-playwright; 'gyp' = ...-playwright-gyp (same PW, gyp base)
+      matrix: ${{ fromJSON(needs.github-context.outputs.test_pw_matrix) }}
     container:
       image: ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.os_version }}-${{ matrix.mode }}-playwright${{ matrix.variant == 'gyp' && '-gyp' || '' }}:${{ needs.github-context.outputs.build_tag }}
       credentials:
@@ -1288,8 +1277,7 @@ jobs:
     timeout-minutes: 10
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.test_mode_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.test_mode_matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/login-action@v3
@@ -1400,8 +1388,7 @@ jobs:
       packages: read
     strategy:
       fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+      matrix: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
       - uses: docker/login-action@v3
         with:
@@ -1498,15 +1485,14 @@ jobs:
       # One transient Docker Hub 502 should not cancel the other cells mid-
       # `imagetools create` — that leaves consumer tags partially advanced.
       fail-fast: false
-      matrix:
-        # promote_matrix is os_matrix × image_matrix × flavor_matrix, precomputed
-        # in github-context (each cell carries os, os_version, image, flavor).
-        # The `flavor` axis:
-        #   '' = default (hardened — runner has no broad NOPASSWD sudo)
-        #     → publishes to `<image>:latest`.
-        #   '-sudoer' = build-chain image (runner NOPASSWD: ALL intact)
-        #     → publishes to `<image>-sudoer:latest`.
-        include: ${{ fromJSON(needs.github-context.outputs.promote_matrix) }}
+      # promote_matrix is os_matrix × image_matrix × flavor_matrix, precomputed
+      # in github-context (each cell carries os, os_version, image, flavor).
+      # The `flavor` axis:
+      #   '' = default (hardened — runner has no broad NOPASSWD sudo)
+      #     → publishes to `<image>:latest`.
+      #   '-sudoer' = build-chain image (runner NOPASSWD: ALL intact)
+      #     → publishes to `<image>-sudoer:latest`.
+      matrix: ${{ fromJSON(needs.github-context.outputs.promote_matrix) }}
     needs: [github-context, versions-aggregate, build-hardened-variants, test-gha-tools-usage, test-gha-tools-effects, test-dind-hardened-effects, test-dood-dind-usage, test-dood-dind-effects, test-dood-dind-act, test-node-usage, test-pnpm-usage, test-pnpm-gyp-usage, test-playwright-usage]
     steps:
       - uses: docker/setup-buildx-action@v3
