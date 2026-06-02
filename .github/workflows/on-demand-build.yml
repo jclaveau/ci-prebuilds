@@ -25,6 +25,12 @@ concurrency:
   group: on-demand-build-${{ github.event.issue.number }}
   cancel-in-progress: true
 
+env:
+  # `gh` defaults to inferring the repo from a local git remote, which fails
+  # in jobs without `actions/checkout`. Setting GH_REPO short-circuits that
+  # inference and applies to every `gh` invocation in this workflow.
+  GH_REPO: ${{ github.repository }}
+
 jobs:
   prepare:
     if: contains(github.event.issue.labels.*.name, 'build-request')
