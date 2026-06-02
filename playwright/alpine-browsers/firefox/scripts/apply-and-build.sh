@@ -457,7 +457,10 @@ if [ -z "$DIST" ] || [ ! -x "$DIST/firefox" ]; then
   exit 1
 fi
 echo "===== Built: $SRC/$DIST (mach rc=$mach_rc, package rc=$pkg_rc; artifact OK) ====="
-ls -la "$DIST/" | head -20
+# `| head -20` would trigger SIGPIPE under `set -o pipefail` (ls writes ~100s
+# of lines, head closes stdin at 20, ls exits 141, pipefail propagates). Use
+# `|| true` so the diagnostic dump can't kill a build that already succeeded.
+ls -la "$DIST/" | head -20 || true
 
 # Copy the dist OUT of the cache mount (/work/firefox-src/obj is a buildkit
 # cache mount — its contents vanish when the RUN ends, so a subsequent stage
