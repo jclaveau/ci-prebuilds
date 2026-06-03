@@ -9,7 +9,30 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ${{ vars.RUNNER_IMAGE }}
+      # The dood contract on REAL GHA is: the consumer mounts /var/run/docker.sock via
+      # `options: --volume /var/run/docker.sock:/var/run/docker.sock` (or wires it via
+      # `--container-options` in act). Under act the host docker socket is bound
+      # automatically by act itself (default behavior); redeclaring the bind here causes
+      # "Duplicate mount point". The static lint in test-and-publish.yml (github-context
+      # job) checks that this path is referenced somewhere in every smoke-dood*.yml so
+      # consumers reading the smoke as a recipe see the bind even though we don't pass
+      # the literal `--volume` under act.
       options: --privileged
     steps:
-      - run: docker info
-      - run: docker run --rm hello-world
+      - name: docker daemon reachable
+        run: docker info
+      - name: docker daemon is a real daemon, not a fake/embedded shim
+        # If the bind regresses (or someone copies this smoke without the host-socket
+        # mount in real GHA), `docker info` might still succeed against some other
+        # daemon. The storage driver is a host-side fact: assert it looks like a real
+        # production daemon (overlay2 on hosted GHA, fuse-overlayfs/btrfs/zfs elsewhere).
+        run: |
+          driver=$(docker info --format '{{ .Driver }}')
+          echo "storage driver=$driver"
+          case "$driver" in
+            overlay2|fuse-overlayfs|btrfs|zfs) echo "OK: real daemon";;
+            *) echo "FAIL: storage driver $driver not expected from a host docker"; exit 1;;
+          esac
+      # See smoke-dind.yml for the rationale; same mirror, same
+      # reason (no DH dependency in CI).
+      - run: docker run --rm mirror.gcr.io/library/hello-world

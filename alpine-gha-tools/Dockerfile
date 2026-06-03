@@ -1,7 +1,10 @@
-# syntax=docker/dockerfile:1
+# syntax=mirror.gcr.io/docker/dockerfile:1
 # Alpine official image mirrored on AWS ECR Public (NOT Docker Hub) to avoid Docker Hub's pull rate
 # limit in CI: the rest of the pipeline builds/pulls via GHCR, so CI does zero Docker Hub pulls.
-FROM public.ecr.aws/docker/library/alpine:3.21
+# Renovate keeps the default pinned; the workflow_call path overrides OS_VERSION for on-demand
+# requests targeting a different Alpine (e.g. 3.20). Default = current consumer pin.
+ARG OS_VERSION=3.21
+FROM public.ecr.aws/docker/library/alpine:${OS_VERSION}
 
 # Alpine/musl counterpart of ubuntu-gha-tools: the same accounts, env, curated OS tooling and the
 # interactive bash sugar (ll/la/l) so the developer environment is identical across both flavors.
@@ -117,7 +120,12 @@ SCRIPT
 chmod 0755 /usr/local/bin/nss-wrapper-setup
 EOF
 
-USER runner
+ENV RUNNER_TOOL_CACHE=/opt/hostedtoolcache
 
-# Github overrides workdir and entrypoint during `docker create`; this CMD is the only way to set PWD.
-CMD ["cd", "$PWD"]
+# Match the hosted runner's default cwd. GHA's `container:` overrides via
+# `docker exec -w $GITHUB_WORKSPACE`, and act --bind sets its own workdir
+# — both ignore this. Only affects `docker run` use (interactive sanity
+# checks, dood bind-mode when the consumer hasn't passed `-w` explicitly).
+WORKDIR /home/runner
+USER runner
+# Default CMD inherits from the base image (sh on alpine).

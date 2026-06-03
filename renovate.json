@@ -3,6 +3,7 @@
   "extends": [
     "config:recommended"
   ],
+  "pinDigests": true,
   "packageRules": [
     {
       "matchDatasources": ["docker"],
@@ -13,11 +14,6 @@
       "matchDatasources": ["docker"],
       "matchPackageNames": ["docker"],
       "groupName": "Docker Engine"
-    },
-    {
-      "matchDatasources": ["github-releases"],
-      "matchPackageNames": ["docker/compose"],
-      "groupName": "Docker Compose"
     },
     {
       "matchDatasources": ["npm"],
@@ -33,12 +29,17 @@
       "matchDatasources": ["node-version"],
       "matchPackageNames": ["node"],
       "groupName": "Node.js"
+    },
+    {
+      "matchDatasources": ["github-releases"],
+      "matchPackageNames": ["nektos/act"],
+      "groupName": "nektos/act"
     }
   ],
   "customManagers": [
     {
       "customType": "regex",
-      "fileMatch": ["^docker/Dockerfile$"],
+      "fileMatch": ["^docker/Dockerfile(\\.alpine)?$"],
       "matchStrings": [
         "ARG DOCKER_VERSION=(?<currentValue>.*?)\\n"
       ],
@@ -48,17 +49,7 @@
     },
     {
       "customType": "regex",
-      "fileMatch": ["^docker/Dockerfile$"],
-      "matchStrings": [
-        "ARG DOCKER_COMPOSE_VERSION=(?<currentValue>.*?)\\n"
-      ],
-      "datasourceTemplate": "github-releases",
-      "depNameTemplate": "docker/compose",
-      "versioningTemplate": "semver"
-    },
-    {
-      "customType": "regex",
-      "fileMatch": ["^node/Dockerfile$"],
+      "fileMatch": ["^node/Dockerfile(\\.alpine)?$"],
       "matchStrings": [
         "ARG NODE_VERSION=(?<currentValue>.*?)\\n"
       ],
@@ -68,7 +59,7 @@
     },
     {
       "customType": "regex",
-      "fileMatch": ["^playwright/Dockerfile$"],
+      "fileMatch": ["^playwright/Dockerfile(\\.alpine)?$"],
       "matchStrings": [
         "ARG PLAYWRIGHT_VERSION=(?<currentValue>.*?)\\n"
       ],
@@ -95,6 +86,16 @@
       "datasourceTemplate": "npm",
       "depNameTemplate": "pnpm",
       "versioningTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "fileMatch": ["^\\.github/workflows/.*\\.ya?ml$"],
+      "matchStrings": [
+        "ACT_VERSION:\\s*(?<currentValue>[\\w.-]+)"
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "nektos/act",
+      "versioningTemplate": "semver"
     }
   ],
   "schedule": [

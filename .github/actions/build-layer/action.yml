@@ -26,6 +26,14 @@ inputs:
     description: DOCKER_GROUP_ID build-arg; only the docker layer needs it
     required: false
     default: ""
+  build_args:
+    description: >-
+      Extra build-args to forward, one KEY=VAL per line. Used by the
+      workflow_call path to inject OS_VERSION / NODE_VERSION / etc. for
+      on-demand version pins. Empty lines are dropped by build-push-action,
+      so existing call sites can pass nothing.
+    required: false
+    default: ""
   github_token:
     description: Token for the GHCR push (composite actions can't read secrets; pass secrets.GITHUB_TOKEN)
     required: true
@@ -44,6 +52,16 @@ runs:
     - uses: docker/setup-buildx-action@v3
       with:
         buildkitd-flags: --debug
+        # Pull buildkit from Google's transparent Docker Hub mirror to
+        # bypass DH's network flakes on GHA-shared egress IPs (the
+        # `context deadline exceeded` / `i/o timeout` failures we hit
+        # on every other CI run came from this image fetch, not from
+        # the actual `imagetools create` push in `promote`).
+        # The container-image override lives under `driver-opts`, NOT
+        # a top-level `image:` input (a previous attempt used `image:`
+        # and the action silently logged `Unexpected input(s) 'image'`
+        # and fell back to docker.io).
+        driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
     - uses: docker/login-action@v3
       with:
         registry: ghcr.io
@@ -82,6 +100,7 @@ runs:
         build-args: |
           ${{ inputs.base_image && format('BASE_IMAGE=ghcr.io/jclaveau/{0}:{1}', inputs.base_image, inputs.build_tag) || '' }}
           ${{ inputs.docker_group_id && format('DOCKER_GROUP_ID={0}', inputs.docker_group_id) || '' }}
+          ${{ inputs.build_args }}
         cache-from: type=registry,ref=ghcr.io/jclaveau/${{ inputs.image }}:buildcache
         cache-to: type=registry,ref=ghcr.io/jclaveau/${{ inputs.image }}:buildcache,mode=max
     # Unchanged layer: skip the build, just point this run's sha at the existing `edge` image

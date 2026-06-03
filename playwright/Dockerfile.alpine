@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=mirror.gcr.io/docker/dockerfile:1
 ARG BASE_IMAGE=jclaveau/alpine-dood-pnpm:latest
 FROM ${BASE_IMAGE}
 
@@ -9,11 +9,10 @@ LABEL org.opencontainers.image.description="Playwright (system Chromium) in Alpi
 
 # Playwright's bundled browsers are glibc-only and `playwright install --with-deps` runs apt — neither
 # works on Alpine/musl. So install Alpine's own Chromium + its runtime libs/fonts and point Playwright
-# at it. Chromium-only: there are no official Firefox/WebKit musl builds. PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
-# is read by playwright.config.ts to switch to the system browser; SKIP_BROWSER_DOWNLOAD stops both the
-# image build and the test's `pnpm install` from fetching the (glibc) bundled browsers.
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
-    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+# at /usr/bin/chromium-browser via `launchOptions: { executablePath: ... }` in your config. Chromium-only:
+# there are no official Firefox/WebKit musl builds. SKIP_BROWSER_DOWNLOAD stops both the image build and
+# the test's `pnpm install` from fetching the (glibc) bundled browsers.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 RUN echo "Install Alpine Chromium + Playwright CLI (system Chromium is used; no browser download)" \
     && sudo apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont \

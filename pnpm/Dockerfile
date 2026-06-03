@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=mirror.gcr.io/docker/dockerfile:1
 ARG BASE_IMAGE=jclaveau/ubuntu-dood-node:latest
 FROM ${BASE_IMAGE}
 
@@ -16,5 +16,5 @@ ENV PNPM_HOME="/home/runner/.local/share/pnpm"
 ENV PATH="${PATH}:${PNPM_HOME}"
 
 
-RUN echo "Install PNPM https://pnpm.io/installation#in-a-docker-container" \
-    && wget -qO- https://get.pnpm.io/install.sh | PNPM_VERSION=${PNPM_VERSION} ENV="$HOME/.bashrc" SHELL="$(which bash)" bash -
+RUN echo "Install PNPM via the npm registry (SHA512-checked tarballs)" \
+    && sudo npm install -g pnpm@${PNPM_VERSION}

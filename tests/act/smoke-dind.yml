@@ -16,4 +16,8 @@ jobs:
     steps:
       - run: start-dockerd
       - run: docker info
-      - run: docker run --rm hello-world
+      # Pull the smoke image from Google's transparent Docker Hub
+      # mirror so the test doesn't depend on DH egress (the same
+      # flake class that drove the buildkit + syntax-frontend
+      # mirroring in build-layer / Dockerfiles).
+      - run: docker run --rm mirror.gcr.io/library/hello-world

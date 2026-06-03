@@ -1,0 +1,82 @@
+name: Build request (specific version combo)
+description: Request a build of a specific (OS, image, flavor) tuple at custom versions
+title: "[build] "
+labels: ["build-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        On submit, a workflow auto-builds the requested combination and pushes the
+        version-pinned tag to Docker Hub. **`:latest` is NOT updated** — only the
+        pinned tag is published.
+
+        Hard cap: **3 builds per requester per 24h**. The 4th request in that
+        window will be labelled `quota-exceeded` and not built.
+
+        Build wall-clock: ~5 min (gha-tools) up to ~30 min (playwright). The
+        workflow comments here when the build starts and again when it finishes.
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS family
+      description: 'Pick one or more. Picking `All` (or leaving empty) builds both — ~2x wall-clock.'
+      multiple: true
+      options:
+        - All
+        - ubuntu
+        - alpine
+  - type: input
+    id: os_version
+    attributes:
+      label: OS version
+      description: 'e.g. `22.04` for Ubuntu, `3.20` for Alpine. Leave empty to use the default of each picked OS (24.04 / 3.21).'
+      placeholder: '22.04'
+  - type: dropdown
+    id: image
+    attributes:
+      label: Image variant(s)
+      description: 'Pick one or more. `gha-tools` is the OS-only base; the full list mirrors the matrix in `test-and-publish.yml`. Each picked variant becomes one cell in the build matrix.'
+      multiple: true
+      options:
+        - gha-tools
+        - dood
+        - dind
+        - dood-node
+        - dind-node
+        - dood-pnpm
+        - dind-pnpm
+        - dood-pnpm-gyp
+        - dind-pnpm-gyp
+        - dood-playwright
+        - dind-playwright
+        - dood-playwright-gyp
+        - dind-playwright-gyp
+    validations: { required: true }
+  - type: dropdown
+    id: flavor
+    attributes:
+      label: Flavor
+      description: 'Pick one or more. Picking `All` (or leaving empty) builds both. `hardened` is the consumer default (no broad sudo); `sudoer` is the build-chain image (runner NOPASSWD intact).'
+      multiple: true
+      options:
+        - All
+        - hardened
+        - sudoer
+  - type: input
+    id: node_version
+    attributes:
+      label: Node version (optional)
+      description: 'Leave empty for `gha-tools` / `dood` / `dind`. Otherwise e.g. `20.18.0`.'
+      placeholder: '22.12.0'
+  - type: input
+    id: pnpm_version
+    attributes:
+      label: pnpm version (optional)
+      description: 'Leave empty if the variant has no pnpm. Otherwise e.g. `9.15.3`.'
+      placeholder: '9.15.3'
+  - type: input
+    id: pw_version
+    attributes:
+      label: Playwright version (optional)
+      description: 'Only for `*-playwright[-gyp]` variants. e.g. `1.50.1`.'
+      placeholder: '1.50.1'

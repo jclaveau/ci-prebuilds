@@ -4,6 +4,28 @@ pnpm **plus the node-gyp build toolchain** — the opt-in counterpart to the sli
 as a **sibling** of `…-pnpm` (both `FROM` the [node](../node/README.md) layer), so the slim and `-gyp`
 chains build in parallel.
 
+## Usage
+
+Published as `jclaveau/<os>-<mode>-pnpm-gyp` on Docker Hub — four variants
+(`ubuntu-dood-pnpm-gyp`, `ubuntu-dind-pnpm-gyp`, `alpine-dood-pnpm-gyp`, `alpine-dind-pnpm-gyp`).
+Tags: `:latest` and version-pinned `:<os>-<node-minor>-<pnpm-minor>-gyp`, e.g.
+`jclaveau/ubuntu-dood-pnpm-gyp:ubuntu24.04-node22.12-pnpm9.15-gyp`. Append `-sudoer` to the image
+name for the non-hardened flavor.
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: jclaveau/ubuntu-dood-pnpm-gyp:latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pnpm install --frozen-lockfile   # native addons compile in place
+      - run: pnpm test
+```
+
+**When to pick `-gyp` over `-pnpm`**: if `pnpm install` ever rebuilds a `*.node` (sharp,
+better-sqlite3, bcrypt, canvas, …) it needs the compiler this layer adds.
+
 ## Why it exists
 The base [`gha-tools`](../ubuntu-gha-tools/README.md) deliberately drops the C/C++ compiler to keep
 every image slim (see its README). Most CI never compiles native code, but some `npm`/`pnpm install`

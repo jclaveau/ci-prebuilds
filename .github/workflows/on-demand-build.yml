@@ -1,0 +1,256 @@
+name: On-demand build (issue-triggered)
+
+# Issue-form-driven entry point for off-primary version pins.
+# - Listens on `issues: [opened, reopened]`. The form template auto-
+#   applies the `build-request` label so the workflow's filter fires on
+#   submit; reopening a closed build-request issue re-fires using its
+#   (possibly edited) form body — convenient for rebuilding when an
+#   upstream image moved or for re-running with tweaked version pins.
+#   We intentionally do NOT listen on `labeled` — that would re-trigger
+#   every time we add our own `build-failed` label.
+# - Also listens on `issue_comment: [edited]` to support one-click
+#   retry of a failed build. The failure comment carries a
+#   `- [ ] Re-run this build` task box; flipping it to `[x]` fires
+#   `edited`, and the prepare `if:` matches on the body diff
+#   (unchecked → checked). The bot's own PATCH to strip the box on
+#   retry is filtered out via `sender.type != 'Bot'`, so no
+#   self-trigger loop.
+# - Parses the form body, then calls `test-and-publish.yml` via
+#   `workflow_call` with the version inputs.
+# - Comments status back to the issue and closes on success.
+#
+# Rate-limiting is by **serial execution**, not a counted cap:
+# the workflow-level concurrency group below forces every issue's
+# build to wait for the previous one to finish (cancel-in-progress
+# is false). GH Actions only retains the most recent PENDING run
+# per group — older waiters are silently cancelled — so a tight
+# burst can drop intermediate requests; requesters should re-file
+# if they see their issue accepted but never built.
+
+on:
+  issues:
+    types: [opened, reopened]
+  issue_comment:
+    types: [edited]
+
+permissions:
+  contents: read    # test-and-publish needs checkout
+  issues: write     # comment + label
+  packages: write   # GHCR push (build-layer)
+
+concurrency:
+  # Single global group: only one on-demand build runs at a time.
+  # cancel-in-progress: false → new requests queue rather than
+  # interrupt. (GH Actions queue depth is 1; see workflow header.)
+  group: on-demand-build
+  cancel-in-progress: false
+
+env:
+  # `gh` defaults to inferring the repo from a local git remote, which fails
+  # in jobs without `actions/checkout`. Setting GH_REPO short-circuits that
+  # inference and applies to every `gh` invocation in this workflow.
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  prepare:
+    # Two entry points (see file header):
+    # - `issues.opened` with the form-applied `build-request` label.
+    # - `issue_comment.edited` where someone flipped the failure
+    #   comment's `- [ ] Re-run this build` box from unchecked to
+    #   checked. The body / changes.body.from pair encodes the
+    #   flip — every edit fires `edited`, but only a flip retries.
+    #   `sender.type != 'Bot'` filters out the workflow's own
+    #   PATCH to strip the box on retry (no self-trigger loop).
+    if: >-
+      (github.event_name == 'issues'
+        && contains(github.event.issue.labels.*.name, 'build-request'))
+      ||
+      (github.event_name == 'issue_comment'
+        && github.event.sender.type != 'Bot'
+        && contains(github.event.issue.labels.*.name, 'build-request')
+        && contains(github.event.issue.labels.*.name, 'build-failed')
+        && contains(github.event.comment.body, '- [x] Re-run this build')
+        && !contains(github.event.changes.body.from, '- [x] Re-run this build'))
+    runs-on: ubuntu-latest
+    outputs:
+      # All three axes accept CSV / empty. The downstream test-and-publish workflow
+      # parses them into matrix arrays; an empty value fans out to every default
+      # entry on that axis (full chain rebuild at the requested version pins).
+      os:           ${{ steps.parse.outputs.os }}
+      os_version:   ${{ steps.parse.outputs.os_version }}
+      image:        ${{ steps.parse.outputs.image }}
+      flavor:       ${{ steps.parse.outputs.flavor }}
+      node_version: ${{ steps.parse.outputs.node_version }}
+      pnpm_version: ${{ steps.parse.outputs.pnpm_version }}
+      pw_version:   ${{ steps.parse.outputs.pw_version }}
+    steps:
+      - id: ensure-labels
+        # `gh issue edit --add-label` errors if the label doesn't exist in the
+        # repo. `--force` makes `gh label create` idempotent (creates if absent,
+        # no-op overwrite if present). `build-request` is created out-of-band
+        # by the maintainer (it gates this workflow's prepare-job `if:`).
+        # The other three are state markers swapped on transitions:
+        #   building (in-flight) → published (done) or build-failed (error).
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create building --force \
+            --description "On-demand build is in flight" \
+            --color FBCA04
+          gh label create published --force \
+            --description "On-demand build complete; pinned tag(s) pushed to Docker Hub" \
+            --color 0E8A16
+          gh label create build-failed --force \
+            --description "On-demand build request failed: see linked workflow run" \
+            --color B60205
+
+      - id: parse
+        # Issue-form bodies render as `### <label>\n\n<value>\n\n### <next>...`.
+        # Optional fields with no value render as `_No response_` which we treat
+        # as empty. The awk extractor finds the matching `### <label>` line and
+        # returns the first non-empty content line under it.
+        env:
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$BODY" > /tmp/body.md
+          extract() {
+            awk -v field="$1" '
+              BEGIN { found = 0 }
+              /^### / {
+                if (found) exit
+                if (substr($0, 5) == field) found = 1
+                next
+              }
+              found && NF { print; exit }
+            ' /tmp/body.md
+          }
+          opt() {
+            v=$(extract "$1")
+            [ "$v" = "_No response_" ] && v=""
+            printf '%s' "$v"
+          }
+          # Every axis is optional in the form (empty = build all). For multi-select
+          # fields, the form body renders selected values as a comma-separated list
+          # on a single line — exactly the CSV format test-and-publish expects, so
+          # parse just passes the value through verbatim. Friendly flavor names
+          # (hardened/sudoer) map to matrix values inside the matrices step.
+          OS=$(opt          "OS family")
+          OS_VERSION=$(opt  "OS version")
+          IMAGE=$(opt       "Image variant(s)")
+          FLAVOR=$(opt      "Flavor")
+          NODE=$(opt        "Node version (optional)")
+          PNPM=$(opt        "pnpm version (optional)")
+          PW=$(opt          "Playwright version (optional)")
+          {
+            echo "os=$OS"
+            echo "os_version=$OS_VERSION"
+            echo "image=$IMAGE"
+            echo "flavor=$FLAVOR"
+            echo "node_version=$NODE"
+            echo "pnpm_version=$PNPM"
+            echo "pw_version=$PW"
+          } >> "$GITHUB_OUTPUT"
+          echo "Parsed: os='$OS' os_version='$OS_VERSION' image='$IMAGE' flavor='$FLAVOR' node='$NODE' pnpm='$PNPM' pw='$PW'"
+
+      # Earlier revisions had a 3/24h quota step here and an existing-tag
+      # precheck before that. Both gone: rate-limiting is now serial-execution
+      # via the workflow-level `concurrency` group (see file header), and the
+      # precheck didn't survive multi-select axes cleanly (an unchanged-digest
+      # Docker Hub push is a no-op anyway).
+
+      - id: notify-start
+        if: github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" --body \
+            ":hammer_and_wrench: Build started. Wall-clock ~5-30 min depending on variant + matrix size. Progress: $RUN_URL"
+          gh issue edit "${{ github.event.issue.number }}" --add-label building
+
+      - id: notify-retry
+        if: github.event_name == 'issue_comment'
+        # Retry path: a requester checked `- [x] Re-run this build`
+        # on a prior failure comment.
+        # - Strip the matching line from the clicked comment so it
+        #   can't re-fire mid-build. Older failure comments on the
+        #   same issue keep their unchecked boxes; clicking one of
+        #   those queues another retry against the same form body
+        #   (harmless; the workflow-level concurrency group gates).
+        # - Swap build-failed → building, link the new run.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+          # Drop the (now-checked) re-run line; preserve the rest of the body verbatim.
+          stripped=$(printf '%s\n' "$COMMENT_BODY" | grep -v '^- \[[ x]\] Re-run this build$' || true)
+          gh api -X PATCH "repos/${GH_REPO}/issues/comments/${COMMENT_ID}" \
+            --field body="$stripped"
+          gh issue comment "${{ github.event.issue.number }}" --body \
+            ":arrows_counterclockwise: Retry started. Progress: $RUN_URL"
+          gh issue edit "${{ github.event.issue.number }}" \
+            --remove-label build-failed --add-label building
+
+  build:
+    needs: prepare
+    uses: ./.github/workflows/test-and-publish.yml
+    secrets: inherit
+    with:
+      os_version:     ${{ needs.prepare.outputs.os_version }}
+      node_version:   ${{ needs.prepare.outputs.node_version }}
+      pnpm_version:   ${{ needs.prepare.outputs.pnpm_version }}
+      pw_version:     ${{ needs.prepare.outputs.pw_version }}
+      only_os:        ${{ needs.prepare.outputs.os }}
+      only_image:     ${{ needs.prepare.outputs.image }}
+      only_flavor:    ${{ needs.prepare.outputs.flavor }}
+      publish_latest: false
+
+  comment-close:
+    needs: [prepare, build]
+    # Run after the build attempt. `always()` so failures still get a comment.
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment success + close
+        if: needs.build.result == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Newline-separated list of `jclaveau/<os>-<image><flavor>:<pin>`
+          # strings, emitted by test-and-publish.yml's aggregate-tags job.
+          # Empty when the aggregator collected no artifacts (defensive).
+          TAGS: ${{ needs.build.outputs.tags }}
+        run: |
+          set -euo pipefail
+          if [ -n "$TAGS" ]; then
+            {
+              echo ':white_check_mark: Build complete. Published:'
+              echo
+              echo "$TAGS" | sed 's/^/- `/; s/$/`/'
+            } > /tmp/comment.md
+          else
+            echo ':white_check_mark: Build complete. New pinned tag(s) live under https://hub.docker.com/u/jclaveau — no per-tag list was emitted by the run.' > /tmp/comment.md
+          fi
+          gh issue comment "${{ github.event.issue.number }}" --body-file /tmp/comment.md
+          gh issue edit "${{ github.event.issue.number }}" --remove-label building --add-label published
+          gh issue close "${{ github.event.issue.number }}"
+      - name: Comment failure + label
+        if: needs.build.result != 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # The task box below is the retry trigger: prepare.if:
+          # matches an issue_comment.edited where this exact line
+          # flips from `[ ]` to `[x]`. Keep the literal text in sync
+          # with the strip-line pattern in `notify-retry`.
+          {
+            echo ":x: Build failed (status: \`${{ needs.build.result }}\`). Logs: $RUN_URL"
+            echo
+            echo "- [ ] Re-run this build"
+          } > /tmp/failure-comment.md
+          gh issue comment "${{ github.event.issue.number }}" --body-file /tmp/failure-comment.md
+          gh issue edit "${{ github.event.issue.number }}" --remove-label building --add-label build-failed
