@@ -67,12 +67,7 @@ Why each flag:
   sudoers rule matches (sudo works); `/home/runner` (group-writable, `0775`) accepts
   writes to `~/.cache` / `~/.npm` / `~/.config`; `/opt/hostedtoolcache` (`2775`, SGID +
   g+w) accepts `setup-node` / `setup-python` / … writes, with new subdirs inheriting
-  group `runner`. On the `*-pnpm` / `*-pnpm-gyp` / `*-playwright` / `*-playwright-gyp`
-  layers, `~/.local/share/pnpm`, `~/.cache/pnpm`, and `~/.config/pnpm` are also
-  recursively `2775 runner:runner` (re-normalized at end-of-build so the deep subtree
-  `pnpm install -g playwright` creates inherits the same mode), so `pnpm install -g <pkg>`
-  writes succeed for any host UID + `--group-add 1001` (no manual `chown -R` needed in
-  the consumer workflow).
+  group `runner`.
 - `-e HOME=/home/runner` — sets `$HOME` explicitly so tools that read the env (git, npm,
   pnpm, docker, playwright, …) resolve `~` cleanly without an `/etc/passwd` entry for the
   caller's UID. Tools that call `getpwuid()` directly may still log a cosmetic warning;
