@@ -22,7 +22,7 @@ ARG CHS_REV
 # tags. Same PW_VERSION drives `pnpm install -g playwright@…` AND the
 # COPY --from tags above — they must match (PW SDK reads its bundled
 # browsers.json to know the expected revision in the cache path).
-ARG PLAYWRIGHT_VERSION=1.50.1
+ARG PLAYWRIGHT_VERSION=1.60.0
 
 LABEL org.opencontainers.image.description="Playwright (musl-native chromium-headless-shell + Firefox) in Alpine based DinD as Github Actions Container"
 
