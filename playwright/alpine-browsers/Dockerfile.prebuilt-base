@@ -1,0 +1,55 @@
+# syntax=docker/dockerfile:1
+#
+# Prebuilt-base image. Built ONCE per upstream Firefox revision; contains the
+# full source tree at /work/firefox-src (with aports + PW patches applied) AND
+# the populated /work/firefox-src/obj/ tree from a successful `./mach build`,
+# plus all build tools (apk packages, sccache, rustup-pinned rust).
+#
+# Subsequent diagnostic iterations FROM this image only apply tweaks (e.g.
+# PW_JUGGLER_INSTRUMENT injects dump() calls into Juggler.js) and run an
+# incremental `./mach build` — ~5 min vs the ~3h cold compile.
+#
+# Tagged as `jclaveau/playwright-alpine-browsers:prebuilt-base-ff-<rev>` via
+# the dedicated playwright-alpine-browsers-prebuilt-base.yml workflow.
+
+ARG ALPINE_VERSION=edge
+
+FROM alpine:${ALPINE_VERSION} AS firefox-builder
+
+# Same tool deps as the regular Dockerfile. Keep this in sync.
+RUN apk add --no-cache \
+        bash curl git patch patchutils tar xz gzip jq gettext-envsubst make sccache \
+        alsa-lib-dev automake bsd-compat-headers cargo cbindgen \
+        clang22 clang22-libclang clang22-dev compiler-rt \
+        dbus dbus-dev gettext gtk+3.0-dev hunspell-dev icu-dev \
+        libevent-dev libffi-dev libjpeg-turbo-dev libnotify-dev libogg-dev \
+        libtheora-dev libtool libvorbis-dev libvpx-dev libwebp-dev \
+        libxcomposite-dev libxt-dev lld22 llvm22-dev m4 mesa-dev \
+        mesa-dri-gallium mimalloc2-insecure nasm nodejs nspr-dev nss-dev \
+        patchelf pciutils pipewire-dev pulseaudio-dev py3-mozshellutil \
+        python3 perl scudo-malloc sed wasi-sdk wireless-tools-dev \
+        xvfb-run zip
+
+WORKDIR /work
+
+COPY versions.env /work/versions.env
+COPY firefox/scripts /work/firefox/scripts
+COPY firefox/mozconfig.overlay /work/firefox/mozconfig.overlay
+
+# Fetch aports + PW patches into the image filesystem (NOT a cache mount). They
+# need to persist into derivative images so apply-and-build-iter.sh can read
+# them and skip re-fetching.
+RUN set -a && . /work/versions.env && set +a \
+    && bash /work/firefox/scripts/fetch-aports.sh /work/aports \
+    && bash /work/firefox/scripts/fetch-pw-patches.sh /work/pw-firefox
+
+# Heavy compile. Critically: obj/ output is NOT in a cache mount — it stays in
+# the image filesystem. mozbuild + sccache CAN use cache mounts since they're
+# regenerable. ~3h cold; subsequent iterations FROM this image are ~5 min.
+RUN --mount=type=cache,target=/root/.mozbuild,id=ffx-mozbuild-pb,sharing=locked \
+    --mount=type=cache,target=/root/.cache/sccache,id=ffx-sccache-pb,sharing=locked \
+    set -a && . /work/versions.env && set +a \
+    && bash /work/firefox/scripts/apply-and-build.sh /work
+
+# This image IS the final stage — no scratch artifact here. The whole point is
+# to preserve the build environment + obj/ for fast incremental iterations.

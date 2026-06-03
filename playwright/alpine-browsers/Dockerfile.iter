@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1
+#
+# Iteration Dockerfile. Consumes a prebuilt-base image (which already has the
+# Firefox source tree patched + a populated obj/ from a successful cold build)
+# and produces the same `FROM scratch` artifact as the regular Dockerfile, but
+# in ~5 min instead of ~3h.
+#
+# When to use:
+#   - You've built jclaveau/playwright-alpine-browsers:prebuilt-base-ff-<rev>
+#     once via playwright-alpine-browsers-prebuilt-base.yml.
+#   - You're iterating on Juggler tweaks / diagnostic flags / patch overlays
+#     that don't change the upstream Firefox revision.
+#
+# Expected tag:
+#   BASE_PREBUILT=jclaveau/playwright-alpine-browsers:prebuilt-base-ff-<rev>
+#
+# What's inherited from the base (do NOT re-do here):
+#   - apk deps (clang22/lld22/llvm22, rust toolchain, gtk+3, nss, ...)
+#   - /work/versions.env, /work/firefox/mozconfig.overlay
+#   - /work/aports (fetched), /work/pw-firefox (fetched)
+#   - /work/firefox-src with patches applied + populated obj/ from cold build
+#
+# What this Dockerfile re-COPYs:
+#   - firefox/scripts — they may have been updated since the prebuilt was built;
+#     in particular apply-and-build-iter.sh is the iteration entrypoint.
+
+ARG BASE_PREBUILT
+FROM ${BASE_PREBUILT} AS firefox-builder
+
+# Refresh scripts — everything else in /work is inherited from the base.
+COPY firefox/scripts /work/firefox/scripts
+
+# Diagnostic flags forwarded to apply-and-build-iter.sh. Same set as the
+# regular Dockerfile (minus PW_SKIP_APORTS / PW_ENABLE_TESTS which only matter
+# during the cold build that already happened in the base).
+ARG PW_JUGGLER_ORDER_FIRST=false
+ARG PW_JUGGLER_CATEGORY_RENAME=false
+ARG PW_JUGGLER_INSTRUMENT=false
+ARG PW_JUGGLER_SERVICE_BOOTSTRAP=false
+
+# Incremental rebuild. Cache mount IDs match the prebuilt-base
+# (ffx-mozbuild-pb / ffx-sccache-pb) so any state persisted by the cold build
+# is picked up here. obj/ is NOT a cache mount — it lives in the base image's
+# filesystem and is mutated in place by ./mach build.
+RUN --mount=type=cache,target=/root/.mozbuild,id=ffx-mozbuild-pb,sharing=locked \
+    --mount=type=cache,target=/root/.cache/sccache,id=ffx-sccache-pb,sharing=locked \
+    set -a && . /work/versions.env && set +a \
+    && PW_JUGGLER_ORDER_FIRST="$PW_JUGGLER_ORDER_FIRST" \
+       PW_JUGGLER_CATEGORY_RENAME="$PW_JUGGLER_CATEGORY_RENAME" \
+       PW_JUGGLER_INSTRUMENT="$PW_JUGGLER_INSTRUMENT" \
+       PW_JUGGLER_SERVICE_BOOTSTRAP="$PW_JUGGLER_SERVICE_BOOTSTRAP" \
+       bash /work/firefox/scripts/apply-and-build-iter.sh /work
+
+# ---- Artifact ----------------------------------------------------------------
+# Same shape as the regular Dockerfile: scratch image with /firefox = dist tree.
+FROM scratch AS artifact
+COPY --from=firefox-builder /work/firefox-dist /firefox

@@ -1,0 +1,11 @@
+- [Autonomous CI-fix loop](feedback_autonomous_ci_loop.md) — iterate amend + `push --force-with-lease` to main until CI green without checking in; monitor prompt-free via the allow-listed `pnpm ci:watch`; keep amends file-scoped
+- [Prefer pnpm ci:logs](feedback_prefer_pnpm_ci_logs.md) — for diagnosing latest CI failures, `pnpm ci:logs` (no args, auto-detects latest failed job in latest run) is preferred over raw `gh api .../jobs/<id>/logs` which prompts every time
+- [Bench baseline is load-bearing](feedback_bench_baseline_load_bearing.md) — never drop `baseline` from the PW bench matrix; it's the comparison reference for every Δ column
+- [Similar projects landscape](reference_similar_projects.md) — adjacent repos (catthehacker, official Playwright/pnpm/docker:dind images, ARC); none do this repo's exact dood+dind layered matrix
+- [act --bind host-UID recipe](project_act_bind_host_uid_recipe.md) — `--user $(id -u):$(id -g) --group-add 1001 -e HOME=/home/runner` to avoid 1001-owned files on the host
+- [GHA runner UID = image runner UID = 1001](project_gha_runner_uid_is_1001.md) — naive `--user $(id -u)` is a no-op on GHA; pick UID 1000 or 5000 to actually exercise overrides
+- [sudo requires getpwuid](project_sudo_requires_getpwuid.md) — sudo refuses unresolvable UIDs ("you do not exist in the passwd database"); not Alpine-specific
+- [Per-image Docker build context](project_docker_build_context_per_image.md) — `COPY` resolves from `./<image>/`, not repo root; inline shared scripts via BuildKit heredoc
+- [nss_wrapper scope (A vs B)](project_nss_wrapper_scope.md) — LD_PRELOAD env fixes cosmetic getpwuid; sudo needs `/etc/ld.so.preload` (Ubuntu-only, invasive)
+- [act chowns workspace to --user target](project_act_chowns_workspace_to_user.md) — TP cleanup needs `sudo rm -rf` when act target UID ≠ runner UID
+- [TP bind-test pattern](project_tp_bind_test_pattern.md) — use `$GITHUB_WORKSPACE/_bind-test*` subdirs (not `mktemp -d`); `chmod g+rwx` + `sudo rm -rf` cleanup

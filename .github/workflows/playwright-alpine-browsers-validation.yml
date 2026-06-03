@@ -1,0 +1,169 @@
+name: Playwright Alpine Browsers — validation (Mozilla self-tests)
+
+# Validation gate: prove the musl-built Firefox behaves like vanilla Firefox at
+# the engine level. Without this, PW tests passing on our musl FF wouldn't be
+# meaningful — a passing PW test on a subtly-broken Firefox is a false positive.
+#
+# Two layers:
+#   1. Mozilla's own self-tests (xpcshell, gtest, mochitest subset)
+#   2. PW SDK integration (Juggler-driven smoke + curated tests/library subset)
+#
+# Triggered manually. The --enable-tests build is ~30% slower than the
+# production producer image and ~2 GB heavier, so we don't run it on every PR.
+
+on:
+  # Auto-fire on every PR push that has the `run-validation` label, so the
+  # validation cache populates in parallel with the regular producer build.
+  # The `if:` on the first job filters out events that aren't either:
+  #   - workflow_dispatch
+  #   - labeled with `run-validation`
+  #   - a push to a PR that already has the `run-validation` label
+  pull_request:
+    types: [labeled, synchronize, opened, reopened]
+  workflow_dispatch:
+    inputs:
+      run_xpcshell:
+        description: 'Run ./mach xpcshell-test (subset)'
+        required: false
+        default: 'true'
+        type: choice
+        options: ['false', 'true']
+      run_gtest:
+        description: 'Run ./mach gtest (subset)'
+        required: false
+        default: 'true'
+        type: choice
+        options: ['false', 'true']
+      run_mochitest_js:
+        description: 'Run ./mach mochitest-plain --subsuite=javascript'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      run_pw_subset:
+        description: 'Run PW tests/library subset against the built FF'
+        required: false
+        default: 'true'
+        type: choice
+        options: ['false', 'true']
+
+concurrency:
+  group: playwright-alpine-browsers-validation-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-tests:
+    # Only run on:
+    #   - workflow_dispatch (manual trigger)
+    #   - PR getting LABELED with `run-validation` (kicks off first time)
+    #   - any subsequent push/sync/open on a PR that already has the label
+    # Any other label add / PR event without the label is ignored.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event_name == 'pull_request'
+          && (github.event.action == 'labeled' && github.event.label.name == 'run-validation'
+              || github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'run-validation')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 300   # --enable-tests is bigger; cold build ~4h
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build test-enabled image
+        uses: docker/build-push-action@v5
+        with:
+          context: playwright/alpine-browsers
+          target: firefox-builder   # keep the full builder; we run mach tests INSIDE it
+          push: false
+          load: true
+          tags: pwfftest:${{ github.sha }}
+          # Separate cache scope so the production producer's :buildcache stays
+          # untouched. The --enable-tests build produces extra object files
+          # that would bloat the production cache.
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-tests
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-tests,mode=max
+          build-args: |
+            PW_ENABLE_TESTS=true
+
+      - name: Mozilla xpcshell-test (subset)
+        if: inputs.run_xpcshell == 'true'
+        run: |
+          docker run --rm --security-opt seccomp=unconfined pwfftest:${{ github.sha }} sh -c '
+            cd /work/firefox-src
+            # Curated subset: object model, JS spec compliance, XPCOM basics.
+            # The full suite has thousands of tests + can hang on missing
+            # display deps. Subset stays under 10 min on hosted runner.
+            ./mach xpcshell-test \
+              js/xpconnect/tests/unit/test_xpcomutils.js \
+              xpcom/tests/unit/test_iniProcessor.js \
+              dom/base/test/unit/test_serializers.js \
+              --setpref="security.sandbox.content.level=0" \
+              2>&1 | tail -100
+          '
+
+      - name: Mozilla gtest (subset)
+        if: inputs.run_gtest == 'true'
+        run: |
+          docker run --rm pwfftest:${{ github.sha }} sh -c '
+            cd /work/firefox-src
+            # gtest is C++ unit tests baked into libxul. Subset by filter so we
+            # do not run the multi-hour MSE/codec suites.
+            ./mach gtest "Mozilla.IPC.*:Mozilla.dom.*:Mozilla.netwerk.*" 2>&1 | tail -100
+          '
+
+      - name: Mozilla mochitest-plain javascript subsuite
+        if: inputs.run_mochitest_js == 'true'
+        run: |
+          docker run --rm --security-opt seccomp=unconfined pwfftest:${{ github.sha }} sh -c '
+            cd /work/firefox-src
+            ./mach mochitest-plain --subsuite=javascript --headless 2>&1 | tail -150
+          '
+
+      - name: PW tests/library subset (Juggler-driven SDK calls)
+        if: inputs.run_pw_subset == 'true'
+        run: |
+          # apply-and-build.sh stages the dist to /work/firefox-dist (out of
+          # the cache mount, which is empty post-RUN). Copy from there.
+          docker create --name ext pwfftest:${{ github.sha }}
+          mkdir -p /tmp/ff-dist
+          mkdir -p /tmp/ff-dist/firefox
+          docker cp ext:/work/firefox-dist/. /tmp/ff-dist/firefox/
+          docker rm ext
+          ls /tmp/ff-dist/firefox/ | head -10
+
+          cat > /tmp/Dockerfile.pwrunner <<EOF
+          FROM alpine:edge
+          RUN apk add --no-cache nodejs npm bash \
+              alsa-lib dbus-libs fontconfig freetype glib gtk+3.0 harfbuzz \
+              icu-libs libevent libffi libjpeg-turbo libnotify libogg \
+              libtheora libvorbis libvpx libwebp libwebp-tools libxcomposite \
+              libxt mesa-gl mesa-dri-gallium nspr nss pipewire-libs libpulse \
+              ttf-freefont
+          COPY firefox /opt/playwright/firefox
+          ENV LD_LIBRARY_PATH=/opt/playwright/firefox
+          ENV PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH=/opt/playwright/firefox/firefox
+          ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+          RUN npm install -g playwright@1.60.0
+          EOF
+          docker build -t pwrunner:${{ github.sha }} -f /tmp/Dockerfile.pwrunner /tmp/ff-dist
+          docker run --rm --security-opt seccomp=unconfined \
+            -v "$PWD/playwright/alpine-browsers/firefox/smoke:/smoke" \
+            -w /smoke -e NODE_PATH=/usr/local/lib/node_modules \
+            pwrunner:${{ github.sha }} node launch.cjs

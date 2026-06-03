@@ -1,0 +1,106 @@
+# syntax=docker/dockerfile:1
+#
+# TEMPORARY diagnostic Dockerfile. Builds PW-patched Firefox on Ubuntu/glibc
+# (NOT musl). Goal: prove whether the Juggler-doesn't-activate issue is
+# musl-specific or generic to our patch application. PW_SKIP_APORTS=1 skips
+# aports' musl patches entirely so we test PW patches alone.
+#
+# Not promoted, never published. Image only exists during the diagnostic
+# workflow run.
+
+ARG UBUNTU_VERSION=24.04
+
+FROM ubuntu:${UBUNTU_VERSION} AS firefox-builder-glibc
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Mozilla's standard Linux build-deps. List based on mach bootstrap output for
+# desktop firefox on Ubuntu. We skip GUI/test-only deps to keep the layer
+# small. Same versions of compilers/lld as the musl side (clang/lld 19 on
+# Ubuntu 24.04) so the build is comparable.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        bash curl git patch patchutils tar xz-utils gzip jq gettext-base make \
+        ca-certificates \
+        build-essential clang-19 lld-19 llvm-19 libclang-19-dev \
+        python3 python3-pip python3-venv perl m4 \
+        nasm \
+        wasi-libc \
+        libasound2-dev libdbus-1-dev libgtk-3-dev libpulse-dev libpipewire-0.3-dev \
+        libxcomposite-dev libxt-dev libxrandr-dev \
+        libx11-xcb-dev libxcursor-dev libxdamage-dev libxfixes-dev libxi-dev \
+        libxrender-dev libxtst-dev libxss-dev \
+        libgl-dev libegl-dev libgl1-mesa-dev \
+        libffi-dev libnotify-dev pkg-config \
+        libnspr4-dev libnss3-dev \
+        nodejs npm \
+        sccache \
+        binutils file unzip \
+    && rm -rf /var/lib/apt/lists/* \
+    # Ubuntu ships python3-gyp (the Debian-patched gyp) at
+    # /usr/lib/python3/dist-packages/gyp/. Mozilla's mach prefers the system
+    # gyp when found, but the Debian variant hard-codes /build/gyp_includes/
+    # for downstream packaging — which doesn't exist when building from source.
+    # Remove it so Mozilla's vendored gyp (firefox-src/third_party/python/gyp/)
+    # gets picked up.
+    && rm -rf /usr/lib/python3/dist-packages/gyp \
+              /usr/lib/python3/dist-packages/gyp-*.egg-info
+
+# Ubuntu 24.04 ships rustc 1.75 — too old for FF 147 (needs ≥1.86). Install
+# rustup + stable so the toolchain matches what aports' Alpine builders use.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+        --default-toolchain stable --profile minimal \
+    && ln -sf /root/.cargo/bin/rustc /usr/local/bin/rustc \
+    && ln -sf /root/.cargo/bin/cargo /usr/local/bin/cargo \
+    && rustc --version
+
+# cbindgen ≥0.29.1 (Ubuntu 24.04 ships 0.26 — too old for FF 147). Install via
+# cargo to get the latest stable, then symlink onto PATH.
+RUN /root/.cargo/bin/cargo install --locked cbindgen \
+    && ln -sf /root/.cargo/bin/cbindgen /usr/local/bin/cbindgen \
+    && cbindgen --version
+
+# Make clang the default to match aports' pinning style (apply-and-build.sh
+# with PW_SKIP_APORTS=1 defaults CC=clang).
+RUN ln -sf /usr/bin/clang-19 /usr/bin/clang \
+    && ln -sf /usr/bin/clang++-19 /usr/bin/clang++ \
+    && ln -sf /usr/bin/lld-19 /usr/bin/lld
+
+WORKDIR /work
+
+COPY versions.env /work/versions.env
+COPY firefox/scripts /work/firefox/scripts
+COPY firefox/mozconfig.overlay /work/firefox/mozconfig.overlay
+
+# Fetch aports + PW patches (we still fetch aports so the script's optional
+# blocks are exercised the same way; PW_SKIP_APORTS=1 below skips applying
+# them).
+#
+# GITHUB_TOKEN is mounted via BuildKit secret (forwarded by the workflow's
+# secrets: GITHUB_TOKEN= input). fetch-pw-patches.sh reads it from env and
+# passes via Authorization: Bearer to dodge raw.githubusercontent.com's
+# unauthenticated rate limit (~60/hr). Without this the 100+ Juggler file
+# walk 403s mid-loop on the first glibc-debug run (musl side caches layers).
+RUN --mount=type=secret,id=GITHUB_TOKEN,env=GITHUB_TOKEN \
+    set -a && . /work/versions.env && set +a \
+    && bash /work/firefox/scripts/fetch-aports.sh /work/aports \
+    && bash /work/firefox/scripts/fetch-pw-patches.sh /work/pw-firefox
+
+# Heavy compile. PW_SKIP_APORTS=1 → use Mozilla-default mozconfig, no aports
+# patches, no aports-pinned clang version. Cache mounts share IDs with the
+# musl side BY DESIGN NOT — see -glibc suffix so they don't collide.
+ARG PW_JUGGLER_ORDER_FIRST=false
+ARG PW_JUGGLER_CATEGORY_RENAME=false
+ARG PW_ENABLE_TESTS=false
+RUN --mount=type=cache,target=/work/firefox-src/obj,id=ffx-obj-glibc,sharing=locked \
+    --mount=type=cache,target=/root/.mozbuild,id=ffx-mozbuild-glibc,sharing=locked \
+    --mount=type=cache,target=/root/.cache/sccache,id=ffx-sccache-glibc,sharing=locked \
+    set -a && . /work/versions.env && set +a \
+    && PW_SKIP_APORTS=1 \
+       PW_JUGGLER_ORDER_FIRST="$PW_JUGGLER_ORDER_FIRST" \
+       PW_JUGGLER_CATEGORY_RENAME="$PW_JUGGLER_CATEGORY_RENAME" \
+       PW_ENABLE_TESTS="$PW_ENABLE_TESTS" \
+       bash /work/firefox/scripts/apply-and-build.sh /work
+
+# Artifact stage — keep the full builder (no FROM scratch) so the diagnostic
+# step can inspect everything in place. Image isn't published.
+FROM firefox-builder-glibc AS artifact
