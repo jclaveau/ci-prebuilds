@@ -44,19 +44,26 @@ COPY --from=ff-source /firefox /ms-playwright/firefox-${FF_REV}/firefox
 RUN sudo touch /ms-playwright/firefox-${FF_REV}/INSTALLATION_COMPLETE \
  && sudo chmod 755 /ms-playwright/firefox-${FF_REV}
 
-# Juggler-activation workaround — on our musl FF build (and also on glibc
-# with the same patches; see ~/.claude/plans/as-alpine-is-the-synchronous-
-# kahan.md §FF root-cause-status), PW's `m-remote` command-line-handler is
-# shadowed by Mozilla's RemoteAgent in static_components dedup. `-juggler-pipe`
-# alone is silent. Activating Mozilla's RemoteAgent via `--remote-debugging-
-# port=0` side-effects Juggler into life. Wrap the binary with a 4-line shim
-# that prepends the flag. Drop this block once a build-side Juggler self-
-# bootstrap fix lands in the producer.
+# Firefox launch shim — wraps two workarounds:
+#  1. Juggler activation — on our musl FF build (and also on glibc with the
+#     same patches; see ~/.claude/plans/as-alpine-is-the-synchronous-kahan.md
+#     §FF root-cause-status), PW's `m-remote` command-line-handler is
+#     shadowed by Mozilla's RemoteAgent in static_components dedup.
+#     `-juggler-pipe` alone is silent; activating Mozilla's RemoteAgent via
+#     `--remote-debugging-port=0` side-effects Juggler into life. Drop this
+#     half once a build-side Juggler self-bootstrap fix lands in the producer.
+#  2. LD_LIBRARY_PATH — libxul.so was built by aports with a hardcoded
+#     `RUNPATH=/usr/lib/firefox`, but we stage the artifact at
+#     /ms-playwright/firefox-{rev}/firefox/. Without prepending the bundle
+#     dir to LD_LIBRARY_PATH, the loader fails to resolve libmozsandbox.so
+#     and other peer .so files. Drop this half once the producer patches
+#     libxul's RUNPATH to `$ORIGIN` via patchelf (mirrors chromium artifact).
 RUN sudo mv /ms-playwright/firefox-${FF_REV}/firefox/firefox \
             /ms-playwright/firefox-${FF_REV}/firefox/firefox.real \
  && printf '%s\n' \
         '#!/bin/sh' \
-        'exec "$(dirname "$0")/firefox.real" --remote-debugging-port=0 "$@"' \
+        'DIR="$(dirname "$0")"' \
+        'exec env LD_LIBRARY_PATH="$DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$DIR/firefox.real" --remote-debugging-port=0 "$@"' \
   | sudo tee /ms-playwright/firefox-${FF_REV}/firefox/firefox >/dev/null \
  && sudo chmod +x /ms-playwright/firefox-${FF_REV}/firefox/firefox
 
