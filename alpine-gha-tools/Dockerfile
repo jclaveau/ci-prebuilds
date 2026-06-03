@@ -3,14 +3,7 @@
 # limit in CI: the rest of the pipeline builds/pulls via GHCR, so CI does zero Docker Hub pulls.
 # Renovate keeps the default pinned; the workflow_call path overrides OS_VERSION for on-demand
 # requests targeting a different Alpine (e.g. 3.20). Default = current consumer pin.
-# Bumped 3.21 → edge so the playwright/Dockerfile.alpine consumer's FF
-# artifact (built by the playwright-alpine-browsers producer on alpine edge,
-# ICU 78) finds matching system .so versions. Alpine 3.21 ships ICU 74,
-# 3.22/3.23 ship ICU 76 — only edge ships ICU 78. Trade-off: rolling-release
-# churn on the alpine base in exchange for ABI alignment with the producer
-# artifact. Long-term alternative: bundle libicu*.so into the FF producer
-# artifact (ldd-walk like chromium-headless-shell) and revert this.
-ARG OS_VERSION=edge
+ARG OS_VERSION=3.21
 FROM public.ecr.aws/docker/library/alpine:${OS_VERSION}
 
 # Alpine/musl counterpart of ubuntu-gha-tools: the same accounts, env, curated OS tooling and the
