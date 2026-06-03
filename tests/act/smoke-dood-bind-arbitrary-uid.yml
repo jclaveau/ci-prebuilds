@@ -29,3 +29,12 @@ jobs:
           test "$name" = "runner"
       # Workspace write (TP step asserts host-side ownership matches --user)
       - run: touch ./from-act.txt
+      # PNPM_HOME / .cache/pnpm / .config/pnpm writable for non-1001 callers in --group-add 1001.
+      # No-op on bare *-dood / *-dind images (no pnpm on PATH); the assertion fires when this
+      # smoke is driven by test-dood-pnpm-act against a *-pnpm / *-pnpm-gyp / *-playwright[-gyp] image.
+      - name: PNPM_HOME writable (asserts on pnpm-layered images, no-op on bare)
+        run: |
+          command -v pnpm || { echo 'no pnpm layer; skipping'; exit 0; }
+          mkdir "$PNPM_HOME/.act-bind-canary"     && rmdir "$PNPM_HOME/.act-bind-canary"
+          mkdir "$HOME/.cache/pnpm/.canary"       && rmdir "$HOME/.cache/pnpm/.canary"
+          mkdir "$HOME/.config/pnpm/.canary"      && rmdir "$HOME/.config/pnpm/.canary"

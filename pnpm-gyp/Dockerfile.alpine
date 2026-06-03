@@ -18,3 +18,14 @@ RUN echo "Install PNPM via the npm registry (SHA512-checked tarballs)" \
 
 RUN echo "Install the node-gyp toolchain (build-base) for native addon compilation" \
     && sudo apk add --no-cache build-base
+
+RUN echo "Normalize PNPM-state dirs to 2775 runner:runner so non-1001 callers in --group-add 1001 can write at runtime (mirrors the /opt/hostedtoolcache treatment in the gha-tools base). Recursive because a prior RUN's pnpm install may have populated subtrees at mode 0755." \
+    && sudo mkdir -p \
+         /home/runner/.local/share/pnpm \
+         /home/runner/.cache/pnpm \
+         /home/runner/.config/pnpm \
+    && sudo chown -R runner:runner /home/runner/.local /home/runner/.cache /home/runner/.config \
+    && sudo find /home/runner/.local /home/runner/.cache /home/runner/.config \
+         -type d -exec chmod 2775 {} + \
+    && sudo find /home/runner/.local /home/runner/.cache /home/runner/.config \
+         -type f -exec chmod g+w {} +
