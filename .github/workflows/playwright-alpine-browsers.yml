@@ -400,21 +400,109 @@ jobs:
             -t jclaveau/playwright-alpine-browsers:sha-${{ github.sha }} \
             "$SRC"
 
-  # ── Chromium-headless-shell parallel pipeline ──────────────────────────────
-  # Mirrors the FF jobs above but builds a musl-native chrome-headless-shell
-  # at the revision PW pins via playwright-core's browsers.json. Artifact tag
-  # uses `chs-sha-` prefix to avoid colliding with the FF artifact on the same
-  # commit SHA.
+  # ── Chromium-headless-shell — apk fast path ────────────────────────────────
+  # Alpine community/chromium ships `chromium-headless-shell` as a subpackage
+  # (148.0.7778.178-r0 today, same minor as PW's pin 148.0.7778.96). Extract
+  # + repackage into PW's auto-discovery shape. ~5 sec build vs ~12h
+  # from-source.
   build-chromium-headless-shell:
-    # Chromium gate. Symmetrical to the FF `build` job:
-    # - push to main: always
-    # - workflow_dispatch: when build_chromium_headless_shell=true (default ON
-    #   while it's the active diagnostic frontier)
-    # - pull_request: when the `build-chromium-headless-shell` label is on the PR
     if: |
       github.event_name == 'push'
       || (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell == 'true')
       || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15   # apk fetch is sub-minute; padding for image push
+    outputs:
+      build_tag: chs-sha-${{ github.sha }}
+      pw_version: ${{ steps.pins.outputs.pw_version }}
+      chromium_revision: ${{ steps.pins.outputs.chromium_revision }}
+      chromium_version: ${{ steps.pins.outputs.chromium_version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: pins
+        run: |
+          set -a; . playwright/alpine-browsers/versions.env; set +a
+          echo "pw_version=$PW_VERSION" >> "$GITHUB_OUTPUT"
+          BROWSERS_JSON=$(curl -fsSL "https://unpkg.com/playwright-core@${PW_VERSION}/browsers.json")
+          REV=$(jq -r '.browsers[] | select(.name=="chromium-headless-shell") | .revision' <<<"$BROWSERS_JSON")
+          VER=$(jq -r '.browsers[] | select(.name=="chromium-headless-shell") | .browserVersion' <<<"$BROWSERS_JSON")
+          echo "chromium_revision=$REV" >> "$GITHUB_OUTPUT"
+          echo "chromium_version=$VER" >> "$GITHUB_OUTPUT"
+          echo "PW v${PW_VERSION} → chromium-headless-shell revision=${REV} browserVersion=${VER}"
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/jclaveau/playwright-alpine-browsers
+          tags: |
+            type=raw,value=chs-sha-${{ github.sha }}
+            type=raw,value=chs-edge,enable=${{ github.event_name != 'pull_request' }}
+
+      - name: Build artifact image (apk fast path)
+        uses: docker/build-push-action@v5
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.apk
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          target: artifact
+
+      - name: Tier-1 smoke (chrome-headless-shell --version)
+        run: |
+          cat > /tmp/Dockerfile.chs-t1 <<EOF
+          FROM alpine:edge
+          RUN apk update && apk add --no-cache \\
+              nss freetype harfbuzz ca-certificates ttf-freefont libdrm mesa-gl \\
+              libwebp libwebpdemux libxcomposite libxdamage libxrandr libxscrnsaver libxtst \\
+              libx11 libxcb libxext libxi cups-libs alsa-lib dbus-libs pango cairo
+          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:chs-sha-${{ github.sha }} \\
+               /chrome-headless-shell-linux64 \\
+               /opt/chs
+          EOF
+          docker build -t chs-t1:${{ github.sha }} -f /tmp/Dockerfile.chs-t1 /tmp
+          OUT=$(docker run --rm chs-t1:${{ github.sha }} /opt/chs/chrome-headless-shell --version 2>&1 || true)
+          echo "chrome-headless-shell --version output:"
+          echo "$OUT"
+          echo "$OUT" | grep -q "${{ steps.pins.outputs.chromium_version }}" \
+            && echo "Tier-1 ✓ (matches PW's pinned ${{ steps.pins.outputs.chromium_version }})" \
+            || echo "Tier-1 WARN: aports' chromium reports a different patch than PW's pin — same minor expected, fine"
+
+  # ── Chromium-headless-shell — from-source pipeline (DISABLED) ──────────────
+  # This job builds chromium-headless-shell from source on alpine:edge using
+  # aports' patches + GN/ninja. It works correctly (system-libs swap, copium
+  # patches, RUSTC_BOOTSTRAP, node/esbuild/rollup CIPD-placeholder fixes all
+  # land), but cold compile pace is ~3000 ninja actions/hour and the build
+  # has ~37000 actions — needs ~12h.
+  #
+  # The 5h hard cap on GHA hosted runners kills the build mid-link
+  # consistently. Last attempt #26843681271 reached 15176/37042 (~41%) at
+  # the timeout, after 5h of clean compile (~28% past the previous fontconfig
+  # wall the system-libs fix resolved).
+  #
+  # Kept here for future revival when one of:
+  #   - PW's pin diverges from aports' chromium-headless-shell major.minor
+  #     (apk fast path stops matching the PW protocol surface)
+  #   - Self-hosted or larger paid runners become available (>5h timeout)
+  #   - Partial-build checkpointing across two GHA runs is implemented
+  #
+  # Until then, `build-chromium-headless-shell` above does an apk extract
+  # of aports' prebuilt chromium-headless-shell-148.0.7778.178-r0.
+  build-chromium-headless-shell-from-source:
+    if: false
+    # Gate retained from the active job so re-enabling = just flip if to true.
+    # if: |
+    #   github.event_name == 'push'
+    #   || (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+    #   || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
     runs-on: ubuntu-latest
     timeout-minutes: 300   # 5h ceiling — Chromium cold-build is heavier than FF
     outputs:

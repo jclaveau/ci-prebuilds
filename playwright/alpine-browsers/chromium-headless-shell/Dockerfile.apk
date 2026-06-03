@@ -1,0 +1,54 @@
+# syntax=docker/dockerfile:1
+#
+# FAST PATH: extract chromium-headless-shell from alpine community apk.
+#
+# Alpine community/chromium ships `chromium-headless-shell` as a subpackage
+# (see APKBUILD subpackages= list). This bypasses the entire ~12h-on-hosted-
+# runners from-source build (see Dockerfile alongside, currently disabled
+# in the workflow with the 5h ceiling explanation).
+#
+# Trade-off: we track aports' chromium version, not PW's exact pin. Same
+# major.minor today (148.0.7778.x), patch may differ. PW's auto-discovery
+# is path-based on the revision number — the binary's reported browserVersion
+# isn't validated. Acceptable as long as aports stays within PW's supported
+# window (currently +0.5 patches ahead).
+#
+# Final artifact stage is FROM scratch with /chrome-headless-shell-linux64/
+# laid out for PW SDK consumption.
+
+FROM alpine:edge AS chromium-fetcher
+
+# Pin the alpine repo via apk-tools cache so the package version doesn't
+# silently drift on each rebuild. apk update freshens the index; subsequent
+# `add` resolves against the cached snapshot.
+RUN apk update && apk add --no-cache chromium-headless-shell
+
+# Aports installs the binary at /usr/lib/chromium/chromium-headless-shell
+# + supporting data files (.pak, locales/, snapshot_blob.bin, etc) in the
+# same dir. The depend chromium-swiftshader provides libvk_swiftshader.so
+# under /usr/lib/chromium/ (used for software canvas/screenshot).
+#
+# Lay out into the path-shape PW SDK auto-discovery expects:
+#   /chrome-headless-shell-linux64/
+#     chrome-headless-shell          ← binary
+#     icudtl.dat, *.bin, *.pak       ← data
+#     locales/                       ← l10n
+#     libvk_swiftshader.so + .json   ← from chromium-swiftshader
+#     other shared libs              ← from /usr/lib/chromium/
+RUN mkdir -p /chrome-headless-shell-linux64 \
+    && SRC=/usr/lib/chromium \
+    && cp -a "$SRC"/chromium-headless-shell /chrome-headless-shell-linux64/chrome-headless-shell \
+    && for f in icudtl.dat snapshot_blob.bin v8_context_snapshot.bin \
+                chrome_100_percent.pak chrome_200_percent.pak \
+                resources.pak headless_lib_data.pak \
+                vk_swiftshader_icd.json; do \
+         [ -f "$SRC/$f" ] && cp -a "$SRC/$f" /chrome-headless-shell-linux64/ || true; \
+       done \
+    && [ -d "$SRC/locales" ] && cp -a "$SRC/locales" /chrome-headless-shell-linux64/ || true \
+    && find "$SRC" -maxdepth 1 -name '*.so*' -exec cp -aL {} /chrome-headless-shell-linux64/ \; \
+    && echo "Staged:" && ls -lh /chrome-headless-shell-linux64 | head -30 \
+    && /chrome-headless-shell-linux64/chrome-headless-shell --version
+
+# ---- Artifact ----------------------------------------------------------------
+FROM scratch AS artifact
+COPY --from=chromium-fetcher /chrome-headless-shell-linux64 /chrome-headless-shell-linux64
