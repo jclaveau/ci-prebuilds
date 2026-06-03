@@ -2,18 +2,73 @@
 ARG BASE_IMAGE=jclaveau/alpine-dood-pnpm:latest
 FROM ${BASE_IMAGE}
 
-# Renovate will update this
+# Renovate will update this in lockstep with the producer image's published
+# tags. Same PW_VERSION drives `pnpm install -g playwright@…` AND the
+# COPY --from tags below — they must match (PW SDK reads its bundled
+# browsers.json to know the expected revision in the cache path).
 ARG PLAYWRIGHT_VERSION=1.50.1
 
-LABEL org.opencontainers.image.description="Playwright (system Chromium) in Alpine based DinD as Github Actions Container"
+# Browser-artifact revisions — derived from PW's browsers.json upstream and
+# published as stable tags by the `playwright-alpine-browsers.yml` producer
+# workflow. When PW bumps a revision, Renovate's custom manager bumps these
+# in lockstep with PLAYWRIGHT_VERSION above.
+ARG FF_REV=1522
+ARG CHS_REV=1223
 
-# Playwright's bundled browsers are glibc-only and `playwright install --with-deps` runs apt — neither
-# works on Alpine/musl. So install Alpine's own Chromium + its runtime libs/fonts and point Playwright
-# at /usr/bin/chromium-browser via `launchOptions: { executablePath: ... }` in your config. Chromium-only:
-# there are no official Firefox/WebKit musl builds. SKIP_BROWSER_DOWNLOAD stops both the image build and
-# the test's `pnpm install` from fetching the (glibc) bundled browsers.
+LABEL org.opencontainers.image.description="Playwright (musl-native chromium-headless-shell + Firefox) in Alpine based DinD as Github Actions Container"
+
+# Playwright's bundled browsers are glibc-only and `playwright install
+# --with-deps` runs apt — neither works on Alpine/musl. We stage musl-built
+# browsers from our producer image at PW SDK's auto-discovery cache path; the
+# SDK finds them via PLAYWRIGHT_BROWSERS_PATH lookup at launch time. No
+# executablePath override required in playwright.config.ts.
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+# Suppresses PW's "musl not supported" warning — its hostPlatform.ts detects
+# `linux-musl` but its DOWNLOAD_PATHS table has no entry. Safe because we
+# PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 anyway; no download is attempted.
+ENV PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24
 
-RUN echo "Install Alpine Chromium + Playwright CLI (system Chromium is used; no browser download)" \
-    && sudo apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont \
-    && pnpm install -g playwright@${PLAYWRIGHT_VERSION}
+# Firefox — musl-built, PW-patched. The producer artifact ships the dist tree
+# at /firefox; we stage it where PW SDK looks for firefox-{rev}/firefox/.
+COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:ff-${FF_REV} \
+     /firefox \
+     /ms-playwright/firefox-${FF_REV}/firefox
+RUN sudo touch /ms-playwright/firefox-${FF_REV}/INSTALLATION_COMPLETE \
+ && sudo chmod 755 /ms-playwright/firefox-${FF_REV}
+
+# Juggler-activation workaround — on our musl FF build (and also on glibc
+# with the same patches; see ~/.claude/plans/as-alpine-is-the-synchronous-
+# kahan.md §FF root-cause-status), PW's `m-remote` command-line-handler is
+# shadowed by Mozilla's RemoteAgent in static_components dedup. `-juggler-pipe`
+# alone is silent. Activating Mozilla's RemoteAgent via `--remote-debugging-
+# port=0` side-effects Juggler into life. Wrap the binary with a 4-line shim
+# that prepends the flag. Drop this block once a build-side Juggler self-
+# bootstrap fix lands in the producer.
+RUN sudo mv /ms-playwright/firefox-${FF_REV}/firefox/firefox \
+            /ms-playwright/firefox-${FF_REV}/firefox/firefox.real \
+ && printf '%s\n' \
+        '#!/bin/sh' \
+        'exec "$(dirname "$0")/firefox.real" --remote-debugging-port=0 "$@"' \
+  | sudo tee /ms-playwright/firefox-${FF_REV}/firefox/firefox >/dev/null \
+ && sudo chmod +x /ms-playwright/firefox-${FF_REV}/firefox/firefox
+
+# chromium-headless-shell — apk-extracted, self-contained via RPATH=$ORIGIN.
+# Smaller artifact than full chromium; deterministic timing for tests.
+COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:chs-${CHS_REV} \
+     /chrome-headless-shell-linux64 \
+     /ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64
+RUN sudo touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_COMPLETE \
+ && sudo chmod 755 /ms-playwright/chromium_headless_shell-${CHS_REV}
+
+# Runtime libs. Chromium artifact is self-contained (RPATH=$ORIGIN), but the
+# musl Firefox build dynamically links against system libs per aports'
+# mozconfig — install the runtime deps from aports' community/firefox
+# `depends=` minus things headless doesn't load.
+RUN sudo apk add --no-cache \
+        ca-certificates font-opensans ttf-freefont \
+        alsa-lib dbus-libs fontconfig glib gtk+3.0 harfbuzz icu-libs \
+        libdrm libevent libffi libjpeg-turbo libnotify libogg libtheora \
+        libvorbis libvpx libwebp libwebpdemux libxcomposite libxt mesa-gl \
+        nspr nss pipewire-libs libpulse \
+ && pnpm install -g playwright@${PLAYWRIGHT_VERSION}

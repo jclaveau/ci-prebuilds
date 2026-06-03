@@ -13,18 +13,18 @@ import { existsSync } from 'node:fs';
  * See https://playwright.dev/docs/test-configuration.
  */
 
-// On Alpine/musl, Playwright's bundled browsers don't run, so we use the system Chromium installed
-// at /usr/bin/chromium-browser by the alpine-…-playwright Dockerfile (`apk add chromium`). Chromium
-// is the only option (no official Firefox/WebKit musl builds). Other OSes get the full bundled
-// browser matrix below.
-const systemChromium = existsSync('/usr/bin/chromium-browser') ? '/usr/bin/chromium-browser' : undefined;
+// On the Alpine flavor, the alpine-...-playwright Dockerfile COPYs musl-native
+// chromium-headless-shell + Firefox from the `playwright-alpine-browsers`
+// producer image and stages them at PW SDK's auto-discovery cache path. No
+// executablePath override needed. WebKit is not shipped yet (sub-project
+// deferred), so we skip it on alpine to keep `playwright test` (no
+// --project) green. Drop the alpine branch once the WebKit producer lands.
+const isAlpine = existsSync('/etc/alpine-release');
 
-const projects = systemChromium
+const projects = isAlpine
   ? [
-      {
-        name: 'chromium',
-        use: { ...devices['Desktop Chrome'], launchOptions: { executablePath: systemChromium } },
-      },
+      { name: 'chromium', use: { ...devices['Desktop Chrome']  } },
+      { name: 'firefox',  use: { ...devices['Desktop Firefox'] } },
     ]
   : [
       {
@@ -84,7 +84,8 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
 
-  /* Configure projects for major browsers (Chromium-only on Alpine; see `projects` above) */
+  /* Configure projects for major browsers. On Alpine: chromium + firefox
+     only (WebKit deferred). See `projects` block above for rationale. */
   projects,
 
   /* Run your local dev server before starting the tests */
