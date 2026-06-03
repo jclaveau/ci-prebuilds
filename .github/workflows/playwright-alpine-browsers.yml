@@ -458,23 +458,34 @@ jobs:
 
       - name: Tier-1 smoke (chrome-headless-shell --version)
         run: |
+          set -o pipefail
+          # `chromium-common` + `chromium-swiftshader` are aports' canonical
+          # depend packages — they pull in every transitive .so the
+          # chromium-headless-shell binary needs (libavcodec, libopus,
+          # libdav1d, libxkbcommon, libxslt, libhwy, libgbm, libudev, …) at
+          # versions matched to the binary. Manually enumerating each .so
+          # apk is fragile + drifts; this is the same set the apk dep
+          # solver would pick if we ran `apk add chromium-headless-shell`.
+          # `font-opensans` + `icu-data-full` cover data files chromium
+          # loads at startup. `ttf-freefont` adds a default font.
           cat > /tmp/Dockerfile.chs-t1 <<EOF
           FROM alpine:edge
           RUN apk update && apk add --no-cache \\
-              nss freetype harfbuzz ca-certificates ttf-freefont libdrm mesa-gl \\
-              libwebp libwebpdemux libxcomposite libxdamage libxrandr libxscrnsaver libxtst \\
-              libx11 libxcb libxext libxi cups-libs alsa-lib dbus-libs pango cairo
+              chromium-common chromium-swiftshader \\
+              font-opensans icu-data-full ttf-freefont \\
+              ca-certificates
           COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:chs-sha-${{ github.sha }} \\
                /chrome-headless-shell-linux64 \\
                /opt/chs
           EOF
           docker build -t chs-t1:${{ github.sha }} -f /tmp/Dockerfile.chs-t1 /tmp
-          OUT=$(docker run --rm chs-t1:${{ github.sha }} /opt/chs/chrome-headless-shell --version 2>&1 || true)
+          # Don't swallow exit codes — relocation/runtime errors should fail
+          # the step, not pass via `|| true` like the first iteration.
+          OUT=$(docker run --rm chs-t1:${{ github.sha }} /opt/chs/chrome-headless-shell --version 2>&1)
           echo "chrome-headless-shell --version output:"
           echo "$OUT"
-          echo "$OUT" | grep -q "${{ steps.pins.outputs.chromium_version }}" \
-            && echo "Tier-1 ✓ (matches PW's pinned ${{ steps.pins.outputs.chromium_version }})" \
-            || echo "Tier-1 WARN: aports' chromium reports a different patch than PW's pin — same minor expected, fine"
+          echo "$OUT" | grep -q "HeadlessChrome\|Chromium" \
+            || { echo "Tier-1: binary didn't self-identify"; exit 1; }
 
   # ── Chromium-headless-shell — from-source pipeline (DISABLED) ──────────────
   # This job builds chromium-headless-shell from source on alpine:edge using
@@ -610,13 +621,16 @@ jobs:
         env:
           CHS_REV: ${{ needs.build-chromium-headless-shell.outputs.chromium_revision }}
         run: |
+          # Same `chromium-common` + `chromium-swiftshader` apk dep set as
+          # Tier-1 — aports' canonical .so/data dep bundle for chromium-
+          # headless-shell. See Tier-1 comment for rationale.
           cat > /tmp/Dockerfile.chs-runner <<EOF
           FROM alpine:edge
           RUN apk update && apk add --no-cache \\
               nodejs npm bash \\
-              nss freetype harfbuzz ca-certificates ttf-freefont libdrm mesa-gl \\
-              libwebp libwebpdemux libxcomposite libxdamage libxrandr libxscrnsaver libxtst \\
-              libx11 libxcb libxext libxi cups-libs alsa-lib dbus-libs pango cairo
+              chromium-common chromium-swiftshader \\
+              font-opensans icu-data-full ttf-freefont \\
+              ca-certificates
           COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:chs-sha-${{ github.sha }} \\
                /chrome-headless-shell-linux64 \\
                /ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64
@@ -629,6 +643,11 @@ jobs:
 
       - name: Run Tier-2 smoke (PW SDK auto-discovery)
         run: |
+          # `set -o pipefail` so the docker exit code propagates through tail.
+          # Without it, the earlier iteration showed "success" while the
+          # binary was actually failing relocation — the tail return-0
+          # masked node's exit(1).
+          set -o pipefail
           docker run --rm \
             --security-opt seccomp=unconfined \
             -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/smoke:/smoke" \
