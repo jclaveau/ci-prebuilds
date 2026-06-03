@@ -802,25 +802,27 @@ jobs:
           check l  'ls -CF'
 
   test-gha-tools-effects:
-    # Asserts the image's RUNTIME defaults (WORKDIR, USER, env, dir perms) that GHA's
-    # `container:` overrides hide from `test-gha-tools-usage` — i.e. what consumers see
-    # under act, local `docker run`, dood --bind, etc. Mirrors the usage/effects split
-    # already used for dood/dind.
-    # `flavor` covers both contracts: '' = build-chain (sudoer-equivalent, has runner
-    # NOPASSWD) which gets published as `<image>-sudoer:latest`; '-hardened' = the
-    # strip-at-end overlay output which gets published as `<image>:latest`. Both share
-    # the WORKDIR/USER/env defaults; they diverge only on whether sudo works.
+    # Asserts the build-chain image's RUNTIME defaults (WORKDIR, USER, env, dir perms)
+    # that GHA's `container:` overrides hide from `test-gha-tools-usage` — i.e. what
+    # consumers see under act, local `docker run`, dood --bind, etc. Mirrors the
+    # usage/effects split already used for dood/dind.
+    # Tests the build-chain image only (published as `<image>-sudoer:latest`). The
+    # hardened sibling changes ONLY whether broad sudo is granted (harden/Dockerfile is
+    # literally `rm -f /etc/sudoers.d/runner`, nothing else) so the WORKDIR/USER/env
+    # defaults asserted here are hardening-invariant — the delta lives in
+    # test-gha-tools-hardened-effects, which is the only thing that has to wait for
+    # build-hardened-variants. Splitting like this lets this job run as soon as
+    # build-gha-tools finishes, in parallel with the rest of the build pipeline.
     runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).gha_tools
-    needs: [github-context, build-gha-tools, build-hardened-variants]
+    needs: [github-context, build-gha-tools]
     timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
-        flavor: ['', '-hardened']
     env:
-      IMG: ghcr.io/jclaveau/${{ matrix.os }}-gha-tools${{ matrix.flavor }}:${{ needs.github-context.outputs.build_tag }}
+      IMG: ghcr.io/jclaveau/${{ matrix.os }}-gha-tools:${{ needs.github-context.outputs.build_tag }}
     steps:
       - uses: docker/login-action@v3
         with:
@@ -851,14 +853,35 @@ jobs:
         # WORKDIR is /home/runner; chmod 0775 + runner group must keep it writable for UID 5000.
         # Load-bearing for the dood `--bind --user $HOST_UID --group-add 1001` recipe.
         run: docker run --rm --user 5000:5000 --group-add 1001 "$IMG" sh -c 'touch ./probe && echo OK'
-      - name: sudoer (build-chain) — sudo IS granted to runner
-        if: matrix.flavor == ''
+      - name: sudo IS granted to runner on the build-chain image
         run: |
           docker run --rm "$IMG" sh -c 'sudo -n true' \
             || { echo "FAIL: sudo unexpectedly failed on the build-chain/sudoer image"; exit 1; }
           echo "OK: sudo correctly succeeds on the build-chain image (becomes <image>-sudoer:latest)"
-      - name: hardened — sudo is NOT granted to runner (frozen-toolkit contract)
-        if: matrix.flavor == '-hardened'
+
+  test-gha-tools-hardened-effects:
+    # Hardening delta vs the build-chain `test-gha-tools-effects`: harden/Dockerfile
+    # only removes /etc/sudoers.d/runner, so the only behavior change on the hardened
+    # image is that broad `sudo -n true` must FAIL. All other defaults (WORKDIR, USER,
+    # env, perms) are hardening-invariant and asserted upstream. Sibling of the
+    # existing test-dind-hardened-effects.
+    runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).gha_tools
+    needs: [github-context, build-hardened-variants]
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+    env:
+      IMG: ghcr.io/jclaveau/${{ matrix.os }}-gha-tools-hardened:${{ needs.github-context.outputs.build_tag }}
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: broad sudo IS denied (frozen-toolkit contract)
         run: |
           docker run --rm "$IMG" sh -c '! sudo -n true 2>/dev/null' \
             || { echo "FAIL: sudo unexpectedly succeeded on the -hardened image"; exit 1; }
@@ -1506,7 +1529,7 @@ jobs:
         # '-sudoer' = build-chain image (runner NOPASSWD: ALL intact)
         #   → publishes to `<image>-sudoer:latest`.
         flavor: ${{ fromJSON(needs.github-context.outputs.flavor_matrix) }}
-    needs: [github-context, versions, build-hardened-variants, test-gha-tools-usage, test-gha-tools-effects, test-dind-hardened-effects, test-dood-dind-usage, test-dood-dind-effects, test-dood-dind-act, test-dood-pnpm-act, test-dind-registry-autostart, test-node-usage, test-pnpm-usage, test-pnpm-gyp-usage, test-playwright-usage]
+    needs: [github-context, versions, build-hardened-variants, test-gha-tools-usage, test-gha-tools-effects, test-gha-tools-hardened-effects, test-dind-hardened-effects, test-dood-dind-usage, test-dood-dind-effects, test-dood-dind-act, test-dood-pnpm-act, test-dind-registry-autostart, test-node-usage, test-pnpm-usage, test-pnpm-gyp-usage, test-playwright-usage]
     steps:
       - uses: docker/setup-buildx-action@v3
       # GHCR login to READ the tested source image.
