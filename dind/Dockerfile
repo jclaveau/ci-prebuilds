@@ -6,6 +6,8 @@ FROM ${BASE_IMAGE}
 # Built on the docker base (and on each *-dood-<layer>) via the BASE_IMAGE build-arg.
 LABEL org.opencontainers.image.description="True DinD variant (boots an inner dockerd) of the *-dood images"
 
+ENV DOCKER_MODE=dind
+
 COPY start-dockerd.sh /usr/local/bin/start-dockerd
 RUN sudo chmod 0755 /usr/local/bin/start-dockerd
 

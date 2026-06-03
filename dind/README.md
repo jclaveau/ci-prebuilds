@@ -35,6 +35,8 @@ jobs:
 - [`start-dockerd`](./start-dockerd.sh) — launches the inner daemon and points clients at it.
 - `fuse-overlayfs` (fast nested copy-on-write) and a log-only `daemon.json`. The `ENTRYPOINT` boots the
   daemon automatically under `docker run` / `act`.
+- `DOCKER_MODE=dind` env var (sibling [`-dood`](../dood/README.md) ships `=dood`) so portable workflow
+  steps can branch on `$DOCKER_MODE` without socket / `pgrep` probing.
 
 ## What it implies
 - **Runtime**: `--privileged`. In GHA the image `ENTRYPOINT` is overridden, so run `start-dockerd` as the

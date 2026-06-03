@@ -19,6 +19,8 @@ Published as `jclaveau/<os>-dood` on Docker Hub. Tags: `:latest` and version-pin
   with the host or with other jobs sharing the daemon.
 - **Container names / state** are siblings on the shared daemon → cross-job name/state collisions.
 - Reuses the host's **layer cache** (fast pulls). Socket access ≈ **root on the host**.
+- **`DOCKER_MODE=dood`** baked into the image (sibling [`-dind`](../dind/README.md) ships `=dind`) so
+  portable workflow steps can branch on `$DOCKER_MODE` without socket / `pgrep` probing.
 - With **`act`** (local): uses your local Docker, so test containers mix with your own (possible
   name/port clashes).
 

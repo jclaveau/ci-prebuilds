@@ -19,6 +19,8 @@ jobs:
       # the literal `--volume` under act.
       options: --privileged
     steps:
+      - name: DOCKER_MODE baked in
+        run: test "$DOCKER_MODE" = "dood"
       - name: docker daemon reachable
         run: docker info
       - name: docker daemon is a real daemon, not a fake/embedded shim

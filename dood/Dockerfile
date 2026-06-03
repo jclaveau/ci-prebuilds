@@ -6,3 +6,5 @@ FROM ${BASE_IMAGE}
 # (GitHub Actions bind-mounts /var/run/docker.sock into container jobs). Nothing to add over the
 # docker base — this is just the published, named variant. (dind is the sibling overlay.)
 LABEL org.opencontainers.image.description="Docker-outside-of-Docker variant (uses a shared host daemon via the mounted socket)"
+
+ENV DOCKER_MODE=dood

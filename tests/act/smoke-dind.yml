@@ -14,6 +14,8 @@ jobs:
     env:
       DOCKER_STORAGE_DRIVER: fuse-overlayfs
     steps:
+      - name: DOCKER_MODE baked in
+        run: test "$DOCKER_MODE" = "dind"
       - run: start-dockerd
       - run: docker info
       # Pull the smoke image from Google's transparent Docker Hub
