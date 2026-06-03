@@ -459,21 +459,16 @@ jobs:
       - name: Tier-1 smoke (chrome-headless-shell --version)
         run: |
           set -o pipefail
-          # `chromium-common` + `chromium-swiftshader` are aports' canonical
-          # depend packages — they pull in every transitive .so the
-          # chromium-headless-shell binary needs (libavcodec, libopus,
-          # libdav1d, libxkbcommon, libxslt, libhwy, libgbm, libudev, …) at
-          # versions matched to the binary. Manually enumerating each .so
-          # apk is fragile + drifts; this is the same set the apk dep
-          # solver would pick if we ran `apk add chromium-headless-shell`.
-          # `font-opensans` + `icu-data-full` cover data files chromium
-          # loads at startup. `ttf-freefont` adds a default font.
+          # Minimal runtime — the artifact bundles all chromium .so deps and
+          # the binary has RPATH=$ORIGIN, so we just need:
+          # - ca-certificates (TLS root store; chromium reads on startup)
+          # - font fallbacks (chromium opens fontconfig early; no fonts =
+          #   "Couldn't find a font" warnings, and some text APIs hang)
+          # - icu-data-full only needed for non-default locales; skip.
           cat > /tmp/Dockerfile.chs-t1 <<EOF
           FROM alpine:edge
           RUN apk update && apk add --no-cache \\
-              chromium-common chromium-swiftshader \\
-              font-opensans icu-data-full ttf-freefont \\
-              ca-certificates
+              ca-certificates font-opensans ttf-freefont
           COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:chs-sha-${{ github.sha }} \\
                /chrome-headless-shell-linux64 \\
                /opt/chs
@@ -621,16 +616,12 @@ jobs:
         env:
           CHS_REV: ${{ needs.build-chromium-headless-shell.outputs.chromium_revision }}
         run: |
-          # Same `chromium-common` + `chromium-swiftshader` apk dep set as
-          # Tier-1 — aports' canonical .so/data dep bundle for chromium-
-          # headless-shell. See Tier-1 comment for rationale.
+          # Minimal runtime — see Tier-1 comment; artifact bundles all .so deps.
           cat > /tmp/Dockerfile.chs-runner <<EOF
           FROM alpine:edge
           RUN apk update && apk add --no-cache \\
               nodejs npm bash \\
-              chromium-common chromium-swiftshader \\
-              font-opensans icu-data-full ttf-freefont \\
-              ca-certificates
+              ca-certificates font-opensans ttf-freefont
           COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:chs-sha-${{ github.sha }} \\
                /chrome-headless-shell-linux64 \\
                /ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64
