@@ -1,19 +1,28 @@
 # syntax=mirror.gcr.io/docker/dockerfile:1
+
+# Global ARGs (visible in FROM lines below). BuildKit doesn't support ARG
+# expansion in `COPY --from=` URLs, so we alias the producer-image refs as
+# named build stages and COPY --from those names later.
+ARG FF_REV=1522
+ARG CHS_REV=1223
 ARG BASE_IMAGE=jclaveau/alpine-dood-pnpm:latest
+
+# Producer-image stage aliases — Renovate's custom manager bumps the tag
+# revisions in lockstep with PLAYWRIGHT_VERSION below.
+FROM ghcr.io/jclaveau/playwright-alpine-browsers:ff-${FF_REV} AS ff-source
+FROM ghcr.io/jclaveau/playwright-alpine-browsers:chs-${CHS_REV} AS chs-source
+
 FROM ${BASE_IMAGE}
+
+# Re-declare so ${FF_REV}/${CHS_REV} expand in this stage's paths.
+ARG FF_REV
+ARG CHS_REV
 
 # Renovate will update this in lockstep with the producer image's published
 # tags. Same PW_VERSION drives `pnpm install -g playwright@…` AND the
-# COPY --from tags below — they must match (PW SDK reads its bundled
+# COPY --from tags above — they must match (PW SDK reads its bundled
 # browsers.json to know the expected revision in the cache path).
 ARG PLAYWRIGHT_VERSION=1.50.1
-
-# Browser-artifact revisions — derived from PW's browsers.json upstream and
-# published as stable tags by the `playwright-alpine-browsers.yml` producer
-# workflow. When PW bumps a revision, Renovate's custom manager bumps these
-# in lockstep with PLAYWRIGHT_VERSION above.
-ARG FF_REV=1522
-ARG CHS_REV=1223
 
 LABEL org.opencontainers.image.description="Playwright (musl-native chromium-headless-shell + Firefox) in Alpine based DinD as Github Actions Container"
 
@@ -31,9 +40,7 @@ ENV PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24
 
 # Firefox — musl-built, PW-patched. The producer artifact ships the dist tree
 # at /firefox; we stage it where PW SDK looks for firefox-{rev}/firefox/.
-COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:ff-${FF_REV} \
-     /firefox \
-     /ms-playwright/firefox-${FF_REV}/firefox
+COPY --from=ff-source /firefox /ms-playwright/firefox-${FF_REV}/firefox
 RUN sudo touch /ms-playwright/firefox-${FF_REV}/INSTALLATION_COMPLETE \
  && sudo chmod 755 /ms-playwright/firefox-${FF_REV}
 
@@ -55,9 +62,7 @@ RUN sudo mv /ms-playwright/firefox-${FF_REV}/firefox/firefox \
 
 # chromium-headless-shell — apk-extracted, self-contained via RPATH=$ORIGIN.
 # Smaller artifact than full chromium; deterministic timing for tests.
-COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:chs-${CHS_REV} \
-     /chrome-headless-shell-linux64 \
-     /ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64
+COPY --from=chs-source /chrome-headless-shell-linux64 /ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64
 RUN sudo touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_COMPLETE \
  && sudo chmod 755 /ms-playwright/chromium_headless_shell-${CHS_REV}
 
