@@ -28,6 +28,7 @@ on:
       node_version:    { type: string,  default: '' }   # e.g. '20.18.0'
       pnpm_version:    { type: string,  default: '' }   # e.g. '9.15.3'
       pw_version:      { type: string,  default: '' }   # e.g. '1.50.1'
+      chs_rev:         { type: string,  default: '' }   # e.g. '1217' (chromium-headless-shell revision; alpine-only); derived from pw_version's browsers.json by on-demand-build.yml. Empty = use Dockerfile.alpine's ARG CHS_REV default (current pin).
       # All three `only_*` axes use the same convention: comma-separated friendly names,
       # empty = no filter (every default-matrix entry runs, byte-identical to today).
       # Whitespace around commas is tolerated.
@@ -626,6 +627,7 @@ jobs:
           changed_map: ${{ needs.changes.outputs.map }}
           build_args: |
             ${{ inputs.pw_version && format('PLAYWRIGHT_VERSION={0}', inputs.pw_version) || '' }}
+            ${{ inputs.chs_rev && format('CHS_REV={0}', inputs.chs_rev) || '' }}
 
   build-playwright-dind:
     runs-on: ubuntu-latest
@@ -650,6 +652,7 @@ jobs:
           changed_map: ${{ needs.changes.outputs.map }}
           build_args: |
             ${{ inputs.pw_version && format('PLAYWRIGHT_VERSION={0}', inputs.pw_version) || '' }}
+            ${{ inputs.chs_rev && format('CHS_REV={0}', inputs.chs_rev) || '' }}
 
 
   # Playwright on the node-gyp base: the SAME ./playwright layer, only the base differs (pnpm-gyp), for
@@ -677,6 +680,7 @@ jobs:
           changed_map: ${{ needs.changes.outputs.map }}
           build_args: |
             ${{ inputs.pw_version && format('PLAYWRIGHT_VERSION={0}', inputs.pw_version) || '' }}
+            ${{ inputs.chs_rev && format('CHS_REV={0}', inputs.chs_rev) || '' }}
 
   build-playwright-gyp-dind:
     runs-on: ubuntu-latest
@@ -701,6 +705,7 @@ jobs:
           changed_map: ${{ needs.changes.outputs.map }}
           build_args: |
             ${{ inputs.pw_version && format('PLAYWRIGHT_VERSION={0}', inputs.pw_version) || '' }}
+            ${{ inputs.chs_rev && format('CHS_REV={0}', inputs.chs_rev) || '' }}
 
 
   # ----------------------------------------------------------------------------

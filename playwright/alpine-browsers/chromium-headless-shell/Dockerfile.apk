@@ -23,6 +23,17 @@ FROM alpine:edge AS chromium-fetcher
 # `add` resolves against the cached snapshot.
 RUN apk update && apk add --no-cache chromium-headless-shell patchelf binutils
 
+# PW's expected chromium browserVersion (e.g. 148.0.7778.96). The producer
+# workflow derives this from playwright-core@${PW_VERSION}/browsers.json and
+# passes it as build-arg. We compare to the binary's actual --version output
+# below — if they drift (alpine:edge ships a different patch level than PW
+# pinned), bake a warning file into the artifact so the consumer image build
+# can surface the drift at build time. Drift is silent at PW SDK launch (PW
+# doesn't validate version, just path); the warning is the only signal.
+# Empty = no check (push/PR path with no override; produces today's edge
+# without sanity-checking against PW).
+ARG EXPECTED_CHROMIUM_VERSION=
+
 # Aports installs the binary at /usr/lib/chromium/chromium-headless-shell
 # + supporting data files (.pak, locales/, snapshot_blob.bin, etc) in the
 # same dir. The depend chromium-swiftshader provides libvk_swiftshader.so
@@ -77,6 +88,29 @@ RUN mkdir -p /chrome-headless-shell-linux64 \
     # Quick sanity: binary's ldd should show no "not found".
     && ! ldd "$DST"/chrome-headless-shell 2>&1 | grep -E "not found" \
     && "$DST"/chrome-headless-shell --version
+
+# Drift check. If EXPECTED_CHROMIUM_VERSION was passed (on-demand path), and
+# the binary's --version output doesn't carry that exact version prefix,
+# bake `.version-drift-warning` into the artifact root. Compares on the
+# first 3 dot-segments (e.g. 148.0.7778) — patch-level drift within the
+# same minor is treated as acceptable (it's what alpine:edge naturally has).
+RUN if [ -n "$EXPECTED_CHROMIUM_VERSION" ]; then \
+      ACTUAL=$(/chrome-headless-shell-linux64/chrome-headless-shell --version | awk '{print $NF}'); \
+      EXPECTED_PREFIX=$(echo "$EXPECTED_CHROMIUM_VERSION" | awk -F. '{ print $1 "." $2 "." $3 }'); \
+      case "$ACTUAL" in \
+        "$EXPECTED_PREFIX"*) \
+          echo "drift-check: OK — actual=$ACTUAL matches expected prefix $EXPECTED_PREFIX.*"; \
+          ;; \
+        *) \
+          echo "drift-check: DRIFT — actual=$ACTUAL, expected=$EXPECTED_CHROMIUM_VERSION (prefix $EXPECTED_PREFIX.*)"; \
+          printf 'Chromium version drift detected at producer build time:\n  expected (PW pin): %s\n  actual (alpine:edge apk): %s\n\nThis artifact is tagged after the EXPECTED revision but the binary is the\nACTUAL one. PW SDK will launch it (path-name match), but tests depending\non chromium-version-specific behaviors may surface differences.\n' \
+              "$EXPECTED_CHROMIUM_VERSION" "$ACTUAL" \
+              > /chrome-headless-shell-linux64/.version-drift-warning; \
+          ;; \
+      esac; \
+    else \
+      echo "drift-check: skipped (no EXPECTED_CHROMIUM_VERSION build-arg)"; \
+    fi
 
 # ---- Artifact ----------------------------------------------------------------
 FROM scratch AS artifact

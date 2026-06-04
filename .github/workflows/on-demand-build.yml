@@ -83,6 +83,7 @@ jobs:
       node_version: ${{ steps.parse.outputs.node_version }}
       pnpm_version: ${{ steps.parse.outputs.pnpm_version }}
       pw_version:   ${{ steps.parse.outputs.pw_version }}
+      chs_rev:      ${{ steps.derive-chs.outputs.chs_rev }}
     steps:
       - id: ensure-labels
         # `gh issue edit --add-label` errors if the label doesn't exist in the
@@ -153,6 +154,48 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Parsed: os='$OS' os_version='$OS_VERSION' image='$IMAGE' flavor='$FLAVOR' node='$NODE' pnpm='$PNPM' pw='$PW'"
 
+      - id: derive-chs
+        # Alpine consumer Dockerfile's `ARG CHS_REV` controls which producer
+        # tag (chs-<rev>) the playwright variants COPY --from. Default is the
+        # current pin baked into Dockerfile.alpine. When the requester pins a
+        # PW version that differs, derive the matching chs revision from PW's
+        # browsers.json so the consumer image stages the right artifact path.
+        #
+        # No PW version requested → empty output → test-and-publish keeps the
+        # Dockerfile.alpine default (no behavior change for the primary flow).
+        #
+        # Pre-flight: assert the producer has actually published chs-<rev>.
+        # The producer is push-on-main or workflow_dispatch — historical pins
+        # only exist if someone dispatched the producer for that PW version
+        # while alpine:edge still shipped that chromium (catalog accumulation;
+        # see playwright-alpine-browsers.yml). Missing tag → fail-loud with
+        # guidance, no wasted ~10 min consumer build.
+        env:
+          PW: ${{ steps.parse.outputs.pw_version }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PW" ]; then
+            echo "chs_rev=" >> "$GITHUB_OUTPUT"
+            echo "no PW version requested → consumer keeps Dockerfile.alpine default CHS_REV"
+            exit 0
+          fi
+          CHS_REV=$(curl -fsSL "https://unpkg.com/playwright-core@${PW}/browsers.json" \
+            | jq -r '.browsers[] | select(.name=="chromium-headless-shell") | .revision')
+          if [ -z "$CHS_REV" ] || [ "$CHS_REV" = "null" ]; then
+            echo "::error::Cannot resolve chromium-headless-shell revision for PW $PW. browsers.json may not list it (very old PW?). Bump the request to a supported PW version."
+            exit 1
+          fi
+          echo "PW $PW → chromium-headless-shell rev $CHS_REV"
+          echo "chs_rev=$CHS_REV" >> "$GITHUB_OUTPUT"
+          # Pre-flight: tag must already exist on GHCR. The producer publishes
+          # one tag per dispatched PW version; if it's not there, the
+          # alpine-playwright consumer build would fail at COPY time.
+          if ! docker manifest inspect "ghcr.io/jclaveau/playwright-alpine-browsers:chs-${CHS_REV}" >/dev/null 2>&1; then
+            echo "::error::Producer tag ghcr.io/jclaveau/playwright-alpine-browsers:chs-${CHS_REV} not published. Dispatch playwright-alpine-browsers.yml with build_chromium_headless_shell=true and pw_version=${PW} first, then reopen this issue."
+            exit 1
+          fi
+          echo "pre-flight: chs-${CHS_REV} confirmed on GHCR"
+
       # Earlier revisions had a 3/24h quota step here and an existing-tag
       # precheck before that. Both gone: rate-limiting is now serial-execution
       # via the workflow-level `concurrency` group (see file header), and the
@@ -204,6 +247,7 @@ jobs:
       node_version:   ${{ needs.prepare.outputs.node_version }}
       pnpm_version:   ${{ needs.prepare.outputs.pnpm_version }}
       pw_version:     ${{ needs.prepare.outputs.pw_version }}
+      chs_rev:        ${{ needs.prepare.outputs.chs_rev }}
       only_os:        ${{ needs.prepare.outputs.os }}
       only_image:     ${{ needs.prepare.outputs.image }}
       only_flavor:    ${{ needs.prepare.outputs.flavor }}

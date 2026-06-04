@@ -46,7 +46,18 @@ ENV PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24
 # Smaller artifact than full chromium; deterministic timing for tests.
 COPY --from=chs-source /chrome-headless-shell-linux64 /ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64
 RUN sudo touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_COMPLETE \
- && sudo chmod 755 /ms-playwright/chromium_headless_shell-${CHS_REV}
+ && sudo chmod 755 /ms-playwright/chromium_headless_shell-${CHS_REV} \
+ # Drift warning: the producer bakes /chrome-headless-shell-linux64/.version-drift-warning
+ # when alpine:edge's chromium pkgver doesn't match PW's pinned browserVersion.
+ # PW SDK doesn't validate version at launch (path-name match is enough), but
+ # tests on version-sensitive APIs may behave differently. Echo the file at
+ # image build time so the drift is visible in build logs; image still ships.
+ && WARN=/ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64/.version-drift-warning \
+ && if [ -f "$WARN" ]; then \
+      echo "===== chromium-headless-shell version drift warning =====" >&2; \
+      cat "$WARN" >&2; \
+      echo "==========================================================" >&2; \
+    fi
 
 # Runtime. The chromium-headless-shell artifact is RPATH=$ORIGIN
 # self-contained for ELF resolution, but Chromium still touches the system
