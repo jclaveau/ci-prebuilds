@@ -2,9 +2,8 @@
 
 [![Test and Publish](https://github.com/jclaveau/github-action-container-images/actions/workflows/test-and-publish.yml/badge.svg)](https://github.com/jclaveau/github-action-container-images/actions/workflows/test-and-publish.yml)
 
-Prebuilt container images for GitHub Actions that **speed up CI** by shipping common dependencies
-preinstalled, while mimicking the default `ubuntu-latest` environment (so `docker compose` and friends
-just work). Use one as a job [`container:`](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/run-jobs-in-a-container).
+**Speed up GitHub Actions and [`act`](https://nektosact.com) by removing the dep-install steps from
+your workflow.**
 
 ## Quickstart
 
@@ -40,6 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: pnpm install --frozen-lockfile
+      - run: docker compose up -d --wait  # not possible on mcr.microsoft.com/playwright (no docker)
       - run: pnpm exec playwright test
 ```
 
