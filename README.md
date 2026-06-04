@@ -40,7 +40,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: pnpm install --frozen-lockfile
       - run: docker compose up -d --wait  # not possible on mcr.microsoft.com/playwright (no docker)
-      - run: pnpm exec playwright test
+      - run: pnpm exec playwright test  # no `playwright install --with-deps` (browsers pre-baked)
 ```
 
 ## Pick your image
