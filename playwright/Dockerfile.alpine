@@ -1,19 +1,27 @@
 # syntax=mirror.gcr.io/docker/dockerfile:1
 
 # Global ARGs (visible in FROM lines below). BuildKit doesn't support ARG
-# expansion in `COPY --from=` URLs, so we alias the producer-image ref as
-# a named build stage and COPY --from that name later.
+# expansion in `COPY --from=` URLs, so we alias the producer-image refs as
+# named build stages and COPY --from that name later.
 ARG CHS_REV=1223
+# Pinned to the producer sha-tag temporarily (PR #44 not yet promoted to
+# ff-${FF_REV}). Flip to ghcr.io/jclaveau/playwright-alpine-browsers:ff-${FF_REV}
+# once PR #44 lands and the promote job tags the canonical ff-1522 with the
+# fixed artifact.
+ARG FF_REV=1522
+ARG FF_TAG=sha-03f812dcf9d26729bf7abafd35da78a3a15bcc40
 ARG BASE_IMAGE=jclaveau/alpine-dood-pnpm:latest
 
-# Producer-image stage alias — Renovate's custom manager bumps the tag
+# Producer-image stage aliases — Renovate's custom manager bumps the tag
 # revision in lockstep with PLAYWRIGHT_VERSION below.
 FROM ghcr.io/jclaveau/playwright-alpine-browsers:chs-${CHS_REV} AS chs-source
+FROM ghcr.io/jclaveau/playwright-alpine-browsers:${FF_TAG} AS ff-source
 
 FROM ${BASE_IMAGE}
 
-# Re-declare so ${CHS_REV} expands in this stage's paths.
+# Re-declare so ${CHS_REV} / ${FF_REV} expand in this stage's paths.
 ARG CHS_REV
+ARG FF_REV
 
 # Renovate will update this in lockstep with the producer image's published
 # tag. Same PW_VERSION drives `pnpm install -g playwright@…` AND the
@@ -21,20 +29,13 @@ ARG CHS_REV
 # browsers.json to know the expected revision in the cache path).
 ARG PLAYWRIGHT_VERSION=1.60.0
 
-LABEL org.opencontainers.image.description="Playwright (musl-native chromium-headless-shell) in Alpine based DinD as Github Actions Container"
+LABEL org.opencontainers.image.description="Playwright (musl-native chromium-headless-shell + Firefox) in Alpine based DinD as Github Actions Container"
 
 # Playwright's bundled browsers are glibc-only and `playwright install
-# --with-deps` runs apt — neither works on Alpine/musl. We stage the
-# musl-native chromium-headless-shell from our producer image at PW SDK's
-# auto-discovery cache path; the SDK finds it via PLAYWRIGHT_BROWSERS_PATH
-# lookup at launch time. No executablePath override required in
-# playwright.config.ts.
-#
-# Firefox is NOT shipped here (yet) — the producer artifact has a
-# cross-musl-version ABI mismatch when it runs on a different alpine base
-# than the producer was built on (edge vs 3.21). Follow-up to either match
-# alpine versions or scope the bundle correctly. See
-# ~/.claude/plans/as-alpine-is-the-synchronous-kahan.md for details.
+# --with-deps` runs apt — neither works on Alpine/musl. We stage both
+# musl-native browsers from our producer image at PW SDK's auto-discovery
+# cache path; the SDK finds them via PLAYWRIGHT_BROWSERS_PATH lookup at
+# launch time. No executablePath override required in playwright.config.ts.
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # Suppresses PW's "musl not supported" warning — its hostPlatform.ts detects
@@ -59,14 +60,50 @@ RUN sudo touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_CO
       echo "==========================================================" >&2; \
     fi
 
-# Runtime. The chromium-headless-shell artifact is RPATH=$ORIGIN
-# self-contained for ELF resolution, but Chromium still touches the system
-# for config files (fontconfig) and dlopen'd helper libs (NSS, DBus, GLib)
-# even when the corresponding .so is bundled. List mirrors aports'
-# community/chromium `depends=`, trimmed to what headless actually loads.
+# Firefox — musl-built, PW-patched. The producer artifact ships the dist tree
+# at /firefox; stage it at PW SDK's auto-discovery path
+# /ms-playwright/firefox-${FF_REV}/firefox.
+COPY --from=ff-source /firefox /ms-playwright/firefox-${FF_REV}/firefox
+RUN sudo touch /ms-playwright/firefox-${FF_REV}/INSTALLATION_COMPLETE \
+ && sudo chmod 755 /ms-playwright/firefox-${FF_REV}
+
+# Firefox launch shim — handles two musl-FF quirks:
+#
+# 1. ICU data file. aports builds firefox --with-system-icu; Alpine's
+#    libicudata.so.${maj} is a 12 KB stub and the real data file lives at
+#    /usr/share/icu/${ver}/icudt${maj}l.dat. The producer bakes that file
+#    into the artifact (see bundle-dist.sh); the shim points ICU_DATA at
+#    the artifact dir so libicuuc resolves it relatively. ICU_DATA can't
+#    be ENV-set image-wide — it'd leak into Node.js (built against a
+#    different ICU major) and break its ICU module with "RangeError:
+#    Internal error. Icu error." on first localeCompare call.
+#
+# 2. Juggler-activation. On the musl FF build (and also on glibc with the
+#    same patches — not musl-specific), PW's `m-remote` command-line-handler
+#    is shadowed by Mozilla's RemoteAgent in static_components dedup.
+#    `-juggler-pipe` alone is silent. Activating Mozilla's RemoteAgent via
+#    `--remote-debugging-port=0` side-effects Juggler into life. The producer
+#    Tier-2 smoke does this from test code; the shim makes PW-driven launches
+#    get the flag transparently. Drop the flag once a build-side Juggler
+#    self-bootstrap fix lands in the producer.
+RUN sudo mv /ms-playwright/firefox-${FF_REV}/firefox/firefox \
+            /ms-playwright/firefox-${FF_REV}/firefox/firefox.real \
+ && printf '%s\n' \
+        '#!/bin/sh' \
+        'DIR="$(dirname "$0")"' \
+        'ICU_DATA="$DIR" exec "$DIR/firefox.real" --remote-debugging-port=0 "$@"' \
+  | sudo tee /ms-playwright/firefox-${FF_REV}/firefox/firefox >/dev/null \
+ && sudo chmod +x /ms-playwright/firefox-${FF_REV}/firefox/firefox
+
+# Runtime libs. chromium-headless-shell is RPATH=$ORIGIN self-contained,
+# Firefox bundles its peer .so + ICU data but still needs the universal-
+# runtime libs (libstdc++, libgcc_s, musl) to resolve from the consumer
+# base. Apk list union of aports' community/chromium + community/firefox
+# `depends=`, trimmed to what headless actually loads.
 RUN sudo apk add --no-cache \
         ca-certificates font-opensans ttf-freefont \
-        dbus-libs fontconfig glib harfbuzz \
-        libdrm libffi libjpeg-turbo libwebp libwebpdemux libxcomposite \
-        mesa-gl nspr nss \
+        alsa-lib dbus-libs fontconfig glib gtk+3.0 harfbuzz \
+        libdrm libevent libffi libjpeg-turbo libnotify libogg libtheora \
+        libvorbis libvpx libwebp libwebpdemux libxcomposite libxt mesa-gl \
+        nspr nss pipewire-libs libpulse libstdc++ libgcc \
  && pnpm install -g playwright@${PLAYWRIGHT_VERSION}
