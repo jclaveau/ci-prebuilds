@@ -255,10 +255,36 @@ jobs:
 
   comment-close:
     needs: [prepare, build]
-    # Run after the build attempt. `always()` so failures still get a comment.
-    if: always() && needs.prepare.result == 'success'
+    # Run after build OR after prepare-side failure. The previous gate
+    # (`prepare.result == 'success'`) silently dropped derive-chs's
+    # pre-flight rejection — issue got no comment, only `::error` in the
+    # Actions UI. `always()` so prepare-failure → comment; the
+    # build-request label check filters out unrelated issue/comment
+    # events that would otherwise trip the new prepare-fail step.
+    if: always() && contains(github.event.issue.labels.*.name, 'build-request')
     runs-on: ubuntu-latest
     steps:
+      - name: Comment prepare failure + label
+        # Pre-flight rejection (chs-${rev} tag missing on GHCR, PW version
+        # not resolvable, parse error, etc.) — surface the failure in the
+        # issue with a retry box so the requester can re-fire after fixing
+        # the underlying cause (e.g. dispatching the producer manually).
+        if: needs.prepare.result != 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo ":x: Build request rejected at the prepare stage (status: \`${{ needs.prepare.result }}\`)."
+            echo
+            echo "Logs: $RUN_URL — typically the chromium-headless-shell tag matching the requested PW version isn't published yet. Dispatch [\`playwright-alpine-browsers.yml\`](${{ github.server_url }}/${{ github.repository }}/actions/workflows/playwright-alpine-browsers.yml) with \`build_chromium_headless_shell=true\` and \`pw_version=<your pin>\`, then click the retry box below."
+            echo
+            echo "- [ ] Re-run this build"
+          } > /tmp/prepare-fail-comment.md
+          gh issue comment "${{ github.event.issue.number }}" --body-file /tmp/prepare-fail-comment.md
+          gh issue edit "${{ github.event.issue.number }}" --remove-label building --add-label build-failed || \
+            gh issue edit "${{ github.event.issue.number }}" --add-label build-failed
+
       - id: detect-chromium-drift
         # Alpine playwright variants COPY the chromium-headless-shell artifact
         # from the producer. If the producer's edge-current chromium pkgver
@@ -345,7 +371,10 @@ jobs:
           gh issue edit "${{ github.event.issue.number }}" --remove-label building --add-label published
           gh issue close "${{ github.event.issue.number }}"
       - name: Comment failure + label
-        if: needs.build.result != 'success'
+        # Only when the build job actually ran AND failed. When prepare
+        # itself fails, `build.result == 'skipped'` and the prepare-fail
+        # step above already posted a tailored comment — don't double-post.
+        if: needs.prepare.result == 'success' && needs.build.result != 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
