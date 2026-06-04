@@ -68,6 +68,12 @@
       ],
       "automerge": false,
       "description": "Producer/consumer chain + stack pins — every bump touches the prebuilt image surface, manual review required"
+    },
+    {
+      "matchFileNames": ["playwright/package.json"],
+      "matchDepNames": ["!playwright", "!@playwright/test"],
+      "enabled": false,
+      "description": "Stack-internal transitives (e.g. @types/node) — version is dictated by playwright itself; we only pin the stack"
     }
   ],
   "customManagers": [
