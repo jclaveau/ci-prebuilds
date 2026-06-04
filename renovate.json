@@ -72,8 +72,8 @@
     {
       "matchFileNames": ["playwright/package.json"],
       "matchDepNames": ["!playwright", "!@playwright/test"],
-      "enabled": false,
-      "description": "Stack-internal transitives (e.g. @types/node) — version is dictated by playwright itself; we only pin the stack"
+      "automerge": true,
+      "description": "Stack-internal transitives (e.g. @types/node) — keep current and auto-merge; not part of the prebuilt-image surface"
     }
   ],
   "customManagers": [
