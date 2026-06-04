@@ -3,12 +3,17 @@
   "extends": [
     "config:recommended"
   ],
-  "pinDigests": true,
+  "osvVulnerabilityAlerts": true,
   "packageRules": [
     {
       "matchDatasources": ["docker"],
-      "matchPackageNames": ["ubuntu"],
+      "matchPackageNames": ["ubuntu", "public.ecr.aws/ubuntu/ubuntu"],
       "groupName": "Ubuntu base image"
+    },
+    {
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["alpine", "public.ecr.aws/docker/library/alpine"],
+      "groupName": "Alpine base image"
     },
     {
       "matchDatasources": ["docker"],
@@ -16,13 +21,11 @@
       "groupName": "Docker Engine"
     },
     {
-      "matchDatasources": ["npm"],
-      "matchPackageNames": ["playwright"],
+      "matchDepNames": ["playwright", "@playwright/test"],
       "groupName": "Playwright"
     },
     {
-      "matchDatasources": ["npm"],
-      "matchPackageNames": ["pnpm"],
+      "matchDepNames": ["pnpm"],
       "groupName": "pnpm"
     },
     {
@@ -34,12 +37,16 @@
       "matchDatasources": ["github-releases"],
       "matchPackageNames": ["nektos/act"],
       "groupName": "nektos/act"
+    },
+    {
+      "matchPackageNames": ["ghcr.io/jclaveau/playwright-alpine-browsers"],
+      "groupName": "Chromium headless shell (alpine consumer fallback)"
     }
   ],
   "customManagers": [
     {
       "customType": "regex",
-      "fileMatch": ["^docker/Dockerfile(\\.alpine)?$"],
+      "fileMatch": ["^docker/Dockerfile$"],
       "matchStrings": [
         "ARG DOCKER_VERSION=(?<currentValue>.*?)\\n"
       ],
@@ -49,7 +56,7 @@
     },
     {
       "customType": "regex",
-      "fileMatch": ["^node/Dockerfile(\\.alpine)?$"],
+      "fileMatch": ["^node/Dockerfile$"],
       "matchStrings": [
         "ARG NODE_VERSION=(?<currentValue>.*?)\\n"
       ],
@@ -79,7 +86,7 @@
     },
     {
       "customType": "regex",
-      "fileMatch": ["^pnpm/Dockerfile$", "^pnpm-gyp/Dockerfile$", "^pnpm-gyp/Dockerfile.alpine$"],
+      "fileMatch": ["^pnpm/Dockerfile$", "^pnpm-gyp/Dockerfile$", "^pnpm-gyp/Dockerfile\\.alpine$"],
       "matchStrings": [
         "ARG PNPM_VERSION=(?<currentValue>.*?)\\n"
       ],
@@ -96,6 +103,47 @@
       "datasourceTemplate": "github-releases",
       "depNameTemplate": "nektos/act",
       "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "fileMatch": ["^alpine-gha-tools/Dockerfile$"],
+      "matchStrings": [
+        "ARG OS_VERSION=(?<currentValue>.*?)\\n"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "public.ecr.aws/docker/library/alpine",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "fileMatch": ["^ubuntu-gha-tools/Dockerfile$"],
+      "matchStrings": [
+        "ARG OS_VERSION=(?<currentValue>.*?)\\n"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "public.ecr.aws/ubuntu/ubuntu",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "fileMatch": ["^playwright/alpine-browsers/Dockerfile\\.glibc-debug$"],
+      "matchStrings": [
+        "ARG UBUNTU_VERSION=(?<currentValue>.*?)\\n"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "ubuntu",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "fileMatch": ["^playwright/Dockerfile\\.alpine$"],
+      "matchStrings": [
+        "ARG CHS_REV=(?<currentValue>\\d+)"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "ghcr.io/jclaveau/playwright-alpine-browsers",
+      "extractVersionTemplate": "^chs-(?<version>\\d+)$",
+      "versioningTemplate": "loose"
     }
   ],
   "schedule": [
