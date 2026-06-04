@@ -9,3 +9,8 @@
 - [nss_wrapper scope (A vs B)](project_nss_wrapper_scope.md) — LD_PRELOAD env fixes cosmetic getpwuid; sudo needs `/etc/ld.so.preload` (Ubuntu-only, invasive)
 - [act chowns workspace to --user target](project_act_chowns_workspace_to_user.md) — TP cleanup needs `sudo rm -rf` when act target UID ≠ runner UID
 - [TP bind-test pattern](project_tp_bind_test_pattern.md) — use `$GITHUB_WORKSPACE/_bind-test*` subdirs (not `mktemp -d`); `chmod g+rwx` + `sudo rm -rf` cleanup
+- [pnpm chmod-EPERM is upstream](project_pnpm_chmod_eperm_upstream.md) — pnpm/pnpm#3699: `linkBin` re-chmods existing global bins; POSIX chmod is owner-or-root; no image-side fix possible; consumer workaround is gated `sudo chown`
+- [DOCKER_MODE env convention](project_docker_mode_env.md) — `ENV DOCKER_MODE=dind|dood` baked into leaf overlays; inherits through every derived layer; smoke-tested
+- [PNPM_HOME split design rejected](project_pnpm_home_split_rejected.md) — runtime+build PNPM_HOME isolation rejected: transitive-dep dedup re-exposes the chmod trap on shared store inodes
+- [ci-watch script is branch-blind](project_ci_watch_branch_blindness.md) — `pnpm ci:watch:tp` latches on the latest TP run regardless of branch; use a targeted run-id poll after `git push origin main` if a parallel PR run is in flight
+- [Split tests by `needs:` not matrix](project_test_split_by_needs_pattern.md) — when matrix flavors pull different `build-*` deps, split into sibling jobs so the lighter side doesn't wait for the heavier (e.g., test-gha-tools-effects + test-gha-tools-hardened-effects)
