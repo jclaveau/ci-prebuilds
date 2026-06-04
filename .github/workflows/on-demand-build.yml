@@ -259,6 +259,50 @@ jobs:
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     steps:
+      - id: detect-chromium-drift
+        # Alpine playwright variants COPY the chromium-headless-shell artifact
+        # from the producer. If the producer's edge-current chromium pkgver
+        # didn't match the PW pin requested by this issue, it baked a
+        # /chrome-headless-shell-linux64/.version-drift-warning file inside
+        # the artifact. PW SDK is silent on this at launch (path-name match
+        # is enough); the only signal is that file. Surface it in the issue
+        # comment so requesters who need exact chromium-version semantics
+        # see the warning before they consume the image.
+        if: needs.build.result == 'success' && needs.prepare.outputs.chs_rev != ''
+        env:
+          TAGS: ${{ needs.build.outputs.tags }}
+          CHS_REV: ${{ needs.prepare.outputs.chs_rev }}
+        run: |
+          set -euo pipefail
+          # Pick the first alpine playwright tag from the aggregator's output.
+          # Any variant (dood/dind, slim/gyp) has the same chromium artifact,
+          # so the first match is representative.
+          TAG=$(echo "$TAGS" | grep -E 'alpine-(dood|dind)-playwright' | head -1 || true)
+          if [ -z "$TAG" ]; then
+            echo "No alpine playwright tag in the build outputs (image variant not selected?) — skip drift check"
+            echo "warning=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Checking $TAG for chromium drift warning"
+          # Anonymous Docker Hub pull (one-off; well within free rate limit).
+          # Returns the warning file contents to stdout if present; empty otherwise.
+          docker pull -q "$TAG" >/dev/null
+          WARN=$(docker run --rm --entrypoint=/bin/sh "$TAG" -c \
+            "cat /ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64/.version-drift-warning 2>/dev/null" \
+            || true)
+          if [ -n "$WARN" ]; then
+            echo "drift detected:"
+            echo "$WARN"
+            {
+              echo 'warning<<DRIFT_EOF'
+              echo "$WARN"
+              echo 'DRIFT_EOF'
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "no drift warning baked"
+            echo "warning=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Comment success + close
         if: needs.build.result == 'success'
         env:
@@ -267,16 +311,35 @@ jobs:
           # strings, emitted by test-and-publish.yml's aggregate-tags job.
           # Empty when the aggregator collected no artifacts (defensive).
           TAGS: ${{ needs.build.outputs.tags }}
+          DRIFT: ${{ steps.detect-chromium-drift.outputs.warning }}
         run: |
           set -euo pipefail
+          : > /tmp/comment.md
+          # Prepend the drift warning (if any) so requesters see it above the
+          # tag list. Keeps the success status intact — the image WAS published
+          # successfully; the drift is an advisory, not a failure.
+          if [ -n "$DRIFT" ]; then
+            {
+              echo ':warning: **Chromium version drift in the alpine variants**'
+              echo
+              echo '```'
+              echo "$DRIFT"
+              echo '```'
+              echo
+              echo 'PW SDK will still launch the binary (path-name match), but tests depending on chromium-version-specific behaviors may behave differently.'
+              echo
+              echo '---'
+              echo
+            } >> /tmp/comment.md
+          fi
           if [ -n "$TAGS" ]; then
             {
               echo ':white_check_mark: Build complete. Published:'
               echo
               echo "$TAGS" | sed 's/^/- `/; s/$/`/'
-            } > /tmp/comment.md
+            } >> /tmp/comment.md
           else
-            echo ':white_check_mark: Build complete. New pinned tag(s) live under https://hub.docker.com/u/jclaveau — no per-tag list was emitted by the run.' > /tmp/comment.md
+            echo ':white_check_mark: Build complete. New pinned tag(s) live under https://hub.docker.com/u/jclaveau — no per-tag list was emitted by the run.' >> /tmp/comment.md
           fi
           gh issue comment "${{ github.event.issue.number }}" --body-file /tmp/comment.md
           gh issue edit "${{ github.event.issue.number }}" --remove-label building --add-label published
