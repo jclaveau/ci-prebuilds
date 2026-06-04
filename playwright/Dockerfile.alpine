@@ -48,9 +48,14 @@ COPY --from=chs-source /chrome-headless-shell-linux64 /ms-playwright/chromium_he
 RUN sudo touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_COMPLETE \
  && sudo chmod 755 /ms-playwright/chromium_headless_shell-${CHS_REV}
 
-# Runtime: chromium-headless-shell artifact is self-contained (RPATH=$ORIGIN
-# bundles all its .so deps + system libs). Only ca-certificates + a font are
-# needed at runtime. pnpm install -g playwright pins the SDK to the same
-# version the producer used to derive the artifact revision.
-RUN sudo apk add --no-cache ca-certificates ttf-freefont \
+# Runtime. The chromium-headless-shell artifact is RPATH=$ORIGIN
+# self-contained for ELF resolution, but Chromium still touches the system
+# for config files (fontconfig) and dlopen'd helper libs (NSS, DBus, GLib)
+# even when the corresponding .so is bundled. List mirrors aports'
+# community/chromium `depends=`, trimmed to what headless actually loads.
+RUN sudo apk add --no-cache \
+        ca-certificates font-opensans ttf-freefont \
+        dbus-libs fontconfig glib harfbuzz \
+        libdrm libffi libjpeg-turbo libwebp libwebpdemux libxcomposite \
+        mesa-gl nspr nss \
  && pnpm install -g playwright@${PLAYWRIGHT_VERSION}
