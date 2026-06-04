@@ -1,0 +1,136 @@
+name: auto-resolve-aports
+
+# Triggered when a PR (typically Renovate's) bumps PW_VERSION in versions.env.
+# Resolves the matching ALPINE_APORTS_CHROMIUM_REF and commits the new SHA to
+# the same PR — preempting the chromium producer build's pkgver fail-fast
+# (apply-and-build.sh:43-54).
+#
+# Firefox (ALPINE_APORTS_REF) is NOT auto-resolved; the WIP firefox-on-Alpine
+# pipeline owns that surface.
+#
+# Limits known up-front:
+#   - resolve-aports-ref.sh matches by major.minor.patch PREFIX; apply-and-build.sh
+#     does STRICT pkgver equality. If aports' latest matching commit shipped a
+#     newer dot-release than PW pins, the pre-flight check fails and the workflow
+#     comments without committing. The human resolves manually in that case.
+#
+# Manual smoke:
+#   1. Open a draft PR bumping PW_VERSION in versions.env.
+#   2. Expect this workflow to either commit the chromium SHA bump (with [skip ci])
+#      or post a failure comment explaining the manual fallback.
+#   3. tests-aports.yml then verifies the resulting pair is consistent.
+
+on:
+  pull_request:
+    paths:
+      - 'playwright/alpine-browsers/versions.env'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: aports-resolve-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    # Loop guard: skip when our own bot pushed the synchronize event.
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: resolve & pre-flight chromium aports SHA
+        id: resolve
+        run: |
+          set -euo pipefail
+          set -a; . playwright/alpine-browsers/versions.env; set +a
+          : "${PW_VERSION:?versions.env missing PW_VERSION}"
+          : "${ALPINE_APORTS_CHROMIUM_REF:?versions.env missing ALPINE_APORTS_CHROMIUM_REF}"
+
+          BROWSERS_JSON=$(curl -fsSL "https://unpkg.com/playwright-core@${PW_VERSION}/browsers.json")
+          CHS_VER=$(jq -r '.browsers[] | select(.name=="chromium-headless-shell") | .browserVersion' <<<"$BROWSERS_JSON")
+          if [ -z "$CHS_VER" ] || [ "$CHS_VER" = "null" ]; then
+            echo "::error::browsers.json for PW $PW_VERSION has no chromium-headless-shell entry"
+            exit 1
+          fi
+          echo "PW $PW_VERSION → CHS_VER=$CHS_VER"
+
+          NEW_SHA=$(bash playwright/alpine-browsers/chromium-headless-shell/scripts/resolve-aports-ref.sh "$CHS_VER")
+          echo "resolved aports SHA: $NEW_SHA (current: $ALPINE_APORTS_CHROMIUM_REF)"
+
+          # Pre-flight: mirror apply-and-build.sh's strict pkgver check at PR time.
+          APKBUILD=$(curl -fsSL "https://gitlab.alpinelinux.org/alpine/aports/-/raw/${NEW_SHA}/community/chromium/APKBUILD")
+          PKGVER=$(echo "$APKBUILD" | awk -F= '/^pkgver=/ { gsub(/"/, "", $2); print $2; exit }')
+          if [ "$PKGVER" != "$CHS_VER" ]; then
+            echo "::error::pre-flight: aports@${NEW_SHA} pkgver=$PKGVER but PW pins CHS_VER=$CHS_VER (strict match required by apply-and-build.sh)"
+            exit 1
+          fi
+          echo "pre-flight: pkgver=$PKGVER matches CHS_VER ✓"
+
+          # Truncate to 8 chars to match versions.env's existing abbreviation style.
+          NEW_SHA_SHORT=${NEW_SHA:0:8}
+          {
+            echo "pw_version=$PW_VERSION"
+            echo "chs_ver=$CHS_VER"
+            echo "old_sha=$ALPINE_APORTS_CHROMIUM_REF"
+            echo "new_sha=$NEW_SHA_SHORT"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: commit & push
+        if: steps.resolve.outputs.new_sha != steps.resolve.outputs.old_sha
+        env:
+          OLD: ${{ steps.resolve.outputs.old_sha }}
+          NEW: ${{ steps.resolve.outputs.new_sha }}
+          PW:  ${{ steps.resolve.outputs.pw_version }}
+          CHS: ${{ steps.resolve.outputs.chs_ver }}
+        run: |
+          set -euo pipefail
+          awk -v old="$OLD" -v new="$NEW" '
+            /^ALPINE_APORTS_CHROMIUM_REF=/ { sub(old, new); print; next }
+            { print }
+          ' playwright/alpine-browsers/versions.env > versions.env.new
+          mv versions.env.new playwright/alpine-browsers/versions.env
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add playwright/alpine-browsers/versions.env
+          git commit \
+            -m "chore(versions.env): auto-resolve aports chromium SHA $OLD → $NEW for PW $PW [skip ci]" \
+            -m "Pre-flight verified: aports@$NEW community/chromium/APKBUILD pkgver=$CHS matches PW $PW's browsers.json pin." \
+            -m "Assisted-by: Claude:claude-opus-4-7"
+          git push
+
+      - name: no-op
+        if: steps.resolve.outputs.new_sha == steps.resolve.outputs.old_sha
+        run: echo "ALPINE_APORTS_CHROMIUM_REF already matches PW ${{ steps.resolve.outputs.pw_version }}; nothing to commit."
+
+      - name: comment on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BODY: |
+            ## :warning: auto-resolve-aports failed
+
+            Could not auto-resolve a strict-match `ALPINE_APORTS_CHROMIUM_REF` for the PW version in this PR. This usually means aports' latest chromium APKBUILD ships a different dot-release than PW pins.
+
+            Run manually:
+            ```bash
+            . playwright/alpine-browsers/versions.env
+            CHS_VER=$(curl -fsSL "https://unpkg.com/playwright-core@$PW_VERSION/browsers.json" | jq -r '.browsers[]|select(.name=="chromium-headless-shell").browserVersion')
+            bash playwright/alpine-browsers/chromium-headless-shell/scripts/resolve-aports-ref.sh "$CHS_VER"
+            ```
+            …then edit `ALPINE_APORTS_CHROMIUM_REF` in `versions.env` and push.
+
+            Run log: __RUN_URL__
+        run: |
+          BODY_RENDERED=${BODY/__RUN_URL__/$RUN_URL}
+          gh pr comment "$PR" --body "$BODY_RENDERED"

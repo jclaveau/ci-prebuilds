@@ -1,0 +1,35 @@
+name: tests-aports
+
+# Cheap consistency guards for playwright/alpine-browsers/versions.env's
+# chromium pin pair. Runs in seconds — catches drift between PW_VERSION and
+# ALPINE_APORTS_CHROMIUM_REF without spinning up the 30+ minute producer build.
+#
+# Firefox (ALPINE_APORTS_REF) is intentionally out of scope; a separate WIP
+# pipeline owns firefox-on-Alpine.
+
+on:
+  pull_request:
+    paths:
+      - 'playwright/alpine-browsers/versions.env'
+      - 'playwright/alpine-browsers/chromium-headless-shell/scripts/resolve-aports-ref.sh'
+      - 'tests/aports/**'
+      - '.github/workflows/tests-aports.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'playwright/alpine-browsers/versions.env'
+      - 'playwright/alpine-browsers/chromium-headless-shell/scripts/resolve-aports-ref.sh'
+      - 'tests/aports/**'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: resolve-aports-ref unit test
+        run: bash tests/aports/test-resolve-aports-ref.sh
+      - name: versions.env consistency
+        run: bash tests/aports/test-versions-env-consistency.sh

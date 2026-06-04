@@ -20,3 +20,4 @@
 - [On-demand prepare-failure UX](project_on_demand_prepare_failure_ux.md) — comment-close.if must be `always()`, not `prepare.result == 'success'`; separate prepare-fail step; every dispatch outcome → issue comment
 - [Vanilla-config test PW alignment](project_vanilla_config_test_pw_alignment.md) — `pnpm add -D @playwright/test@$(playwright --version | awk '{print $2}')`, never unversioned (resolves to LATEST and breaks non-default PW builds)
 - [READMEs: link parents, don't duplicate](feedback_readme_no_parent_duplication.md) — derived image READMEs cross-ref parent sections via anchor; only document what the layer itself contributes
+- [Firefox-on-Alpine WIP pipeline lives elsewhere](project_firefox_alpine_wip_pipeline.md) — do NOT add firefox-side checks to this repo's aports tooling/tests; chromium pin pair IS auto-tracked, firefox is not

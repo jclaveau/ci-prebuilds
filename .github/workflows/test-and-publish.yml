@@ -1185,6 +1185,9 @@ jobs:
         run: |
           PW_VERSION="$(playwright --version | awk '{print $2}')"
           pnpm add -D "@playwright/test@$PW_VERSION" "playwright@$PW_VERSION"
+          # Invariant guard: the just-installed @playwright/test must equal the image's CLI version.
+          INSTALLED="$(node -p 'require("@playwright/test/package.json").version')"
+          [ "$INSTALLED" = "$PW_VERSION" ] || { echo "ERROR: @playwright/test=$INSTALLED vs playwright CLI=$PW_VERSION" >&2; exit 1; }
 
       - run: pnpm playwright test
         working-directory: playwright
@@ -1210,6 +1213,8 @@ jobs:
           # build-arg (set by on-demand-build's chs_rev derivation).
           PW_VERSION="$(playwright --version | awk '{print $2}')"
           pnpm add -D "@playwright/test@$PW_VERSION"
+          INSTALLED="$(node -p 'require("@playwright/test/package.json").version')"
+          [ "$INSTALLED" = "$PW_VERSION" ] || { echo "ERROR: @playwright/test=$INSTALLED vs playwright CLI=$PW_VERSION" >&2; exit 1; }
           cat > playwright.config.ts <<'TS'
           import { defineConfig } from '@playwright/test';
           export default defineConfig({ projects: [{ name: 'chromium' }] });
