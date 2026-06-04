@@ -6,7 +6,7 @@
 set -euo pipefail
 
 wf=$1
-repo=jclaveau/github-action-container-images
+repo=jclaveau/ci-prebuilds
 
 run=$(gh run list --workflow="$wf" -L1 --json databaseId --jq '.[0].databaseId')
 job=$(gh api "repos/$repo/actions/runs/$run/jobs" \

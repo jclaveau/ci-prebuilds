@@ -1,6 +1,6 @@
 # CI-Prebuilds
 
-[![Test and Publish](https://github.com/jclaveau/github-action-container-images/actions/workflows/test-and-publish.yml/badge.svg)](https://github.com/jclaveau/github-action-container-images/actions/workflows/test-and-publish.yml)
+[![Test and Publish](https://github.com/jclaveau/ci-prebuilds/actions/workflows/test-and-publish.yml/badge.svg)](https://github.com/jclaveau/ci-prebuilds/actions/workflows/test-and-publish.yml)
 
 Speed up [GitHub Actions](https://docs.github.com/en/actions/get-started/quickstart) and [Act](https://nektosact.com) by removing the dep-install steps from your workflows
 
@@ -103,12 +103,12 @@ current chain (Ubuntu 24.04 / Node 22.12 / pnpm 9.15 / Playwright 1.50):
 
 ## Gains
 
-See [The last benchmarks](https://github.com/jclaveau/github-action-container-images/actions/workflows/benchmark-playwright.yml).
+See [The last benchmarks](https://github.com/jclaveau/ci-prebuilds/actions/workflows/benchmark-playwright.yml).
 
 
 ## Roadmap
 
-See [open issues](https://github.com/jclaveau/github-action-container-images/issues).
+See [open issues](https://github.com/jclaveau/ci-prebuilds/issues).
 
 ## License
 

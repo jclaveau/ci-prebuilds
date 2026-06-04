@@ -7,7 +7,7 @@ metadata:
   originSessionId: 3f0ef504-2d86-4db0-ab57-675965af3665
 ---
 
-When fixing CI for the `github-action-container-images` repo, Jean delegates the whole iterate-until-green loop: stage → `git commit --amend --no-edit` → `git push --force-with-lease origin main` → watch CI → diagnose failure → fix → repeat, **without checking in between iterations**. Only report on success or a genuine blocker (e.g. registry outage, a decision that needs their call).
+When fixing CI for the `ci-prebuilds` repo, Jean delegates the whole iterate-until-green loop: stage → `git commit --amend --no-edit` → `git push --force-with-lease origin main` → watch CI → diagnose failure → fix → repeat, **without checking in between iterations**. Only report on success or a genuine blocker (e.g. registry outage, a decision that needs their call).
 
 **Why:** Jean keeps the whole feature on a single squashed commit (e.g. "feat: true dind and dood") and force-pushes amended versions to `main` — this is their deliberate solo-repo workflow, not something to warn about each time. They got tired of being pinged after every CI run.
 

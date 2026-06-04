@@ -27,7 +27,7 @@ jobs:
 - **Pick Ubuntu** for the full three-engine matrix (Chromium + Firefox + WebKit,
   Playwright-bundled browsers).
 - **Pick Alpine** for a smaller image — ships **musl-native chromium-headless-shell**
-  via the [`playwright-alpine-browsers`](https://github.com/jclaveau/github-action-container-images/tree/main/playwright/alpine-browsers)
+  via the [`playwright-alpine-browsers`](https://github.com/jclaveau/ci-prebuilds/tree/main/playwright/alpine-browsers)
   producer image.
 - Firefox and WebKit on Alpine are deferred ([see below](#musl-native-browsers-on-alpine));
   the alpine `playwright.config.ts` skips them automatically so `playwright test`

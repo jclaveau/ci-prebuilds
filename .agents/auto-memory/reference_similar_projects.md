@@ -1,6 +1,6 @@
 ---
 name: similar-projects-landscape
-description: Adjacent/competitor projects to github-action-container-images (prebuilt GHA container images). No popular repo does the exact dood+dind layered matrix as a drop-in CI optimization.
+description: Adjacent/competitor projects to ci-prebuilds (prebuilt GHA container images). No popular repo does the exact dood+dind layered matrix as a drop-in CI optimization.
 metadata:
   type: reference
 ---
