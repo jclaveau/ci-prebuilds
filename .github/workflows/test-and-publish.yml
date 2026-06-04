@@ -1202,7 +1202,14 @@ jobs:
         run: |
           mkdir -p /tmp/pw-vanilla && cd /tmp/pw-vanilla
           echo '{"name":"v","version":"1.0.0"}' > package.json
-          pnpm add -D @playwright/test
+          # Align to the image's PW CLI version — same trick as the
+          # "Align fixture to image's Playwright version" step above. An
+          # unversioned `pnpm add -D @playwright/test` resolves to LATEST
+          # which expects whatever chromium revision LATEST pins, but the
+          # image staged the revision matching the image's PLAYWRIGHT_VERSION
+          # build-arg (set by on-demand-build's chs_rev derivation).
+          PW_VERSION="$(playwright --version | awk '{print $2}')"
+          pnpm add -D "@playwright/test@$PW_VERSION"
           cat > playwright.config.ts <<'TS'
           import { defineConfig } from '@playwright/test';
           export default defineConfig({ projects: [{ name: 'chromium' }] });
