@@ -1,8 +1,8 @@
 # `{ubuntu,alpine}-dind` — true Docker-in-Docker
 
 The [`docker`](../docker/README.md) base plus an **inner `dockerd`** that boots on its own socket
-`/var/run/dind.sock`, giving the container an isolated daemon. See the
-[`-dood` vs `-dind`](../README.md#the-two-flavors) comparison.
+`/var/run/dind.sock`, giving the container an isolated daemon. For the shared-host-daemon
+alternative, see [`-dood`](../dood/README.md).
 
 Ships in both OS flavors (`ubuntu-dind`, `alpine-dind`) with identical behavior — the examples below use
 `ubuntu-dind`; swap the prefix for the Alpine build.
@@ -52,8 +52,14 @@ jobs:
   GitHub-hosted runners. Override with `--env DOCKER_STORAGE_DRIVER=vfs` (always-works fallback)
   when `/dev/fuse` isn't available; overlay2 is unstable nested.
 - **Bind mounts** resolve in the **container's** namespace → `$PWD` / `/__w/…` just work. **Published
-  ports** land on the job container's `localhost`. State is fully **isolated** (no cross-job clashes).
+  ports** land on the job container's `localhost`.
+- **Isolation / security**: `--privileged` grants kernel-level capabilities, but state is fully
+  **isolated** — no cross-job name/port collisions (the cost [`-dood`](../dood/README.md) pays for
+  being lighter).
 - Heavier (~seconds to boot); the image cache is cold per job unless explicitly cached.
+- **With `act` (local)**: self-contained — no clashes with your local containers (unlike
+  [`-dood`](../dood/README.md), which mixes test containers with your host's). If overlay2 nesting
+  fails on your backend, override `--env DOCKER_STORAGE_DRIVER=vfs`.
 
 ## Auto-shared pull-through cache for `act` shards
 

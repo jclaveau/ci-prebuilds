@@ -2,7 +2,7 @@
 
 The [`docker`](../docker/README.md) base used with a **shared host daemon**: the `docker` CLI talks to
 the host's `/var/run/docker.sock`. GitHub Actions bind-mounts that socket into every container job; with
-`docker run` you mount it yourself. See the [`-dood` vs `-dind`](../README.md#the-two-flavors) comparison.
+`docker run` you mount it yourself. For the isolated-daemon alternative, see [`-dind`](../dind/README.md).
 
 Ships in both OS flavors (`ubuntu-dood`, `alpine-dood`) with identical behavior — the examples below use
 `ubuntu-dood`; swap the prefix for the Alpine build.
@@ -13,6 +13,10 @@ Published as `jclaveau/<os>-dood` on Docker Hub. Tags: `:latest` and version-pin
 ## What it implies
 - **Runtime**: mount the host socket (`-v /var/run/docker.sock:/var/run/docker.sock`); on GHA it's already
   present. Lighter and instant (no daemon to boot).
+- **GHA first step**: none — the host daemon is already present
+  ([`-dind`](../dind/README.md) requires `start-dockerd`).
+- **Storage driver**: reuses the host's
+  ([`-dind`](../dind/README.md) bakes `DOCKER_STORAGE_DRIVER=fuse-overlayfs`).
 - **Bind mounts** resolve in the **host** filesystem — container paths like `/__w/<repo>/…` don't exist
   on the host (you get an empty dir / "No such file"), so they need host-path rewriting.
 - **Published ports** land on the **host**; reach them via `host.docker.internal`; they can **clash**

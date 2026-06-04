@@ -99,31 +99,6 @@ Each push to `main` runs the full test suite and, **only if every test passes**,
 plus a **version-pinned** tag capturing the OS + tool minors, e.g.
 `ubuntu-dood-playwright:ubuntu24.04-node22.12-pnpm9.15-pw1.50`.
 
-## The two flavors
-
-| Aspect | `-dood` (Docker-outside-of-Docker) | `-dind` (true Docker-in-Docker) |
-| --- | --- | --- |
-| **Usage** | | |
-| Docker daemon | Shared **host** daemon | Own inner `dockerd` started per job |
-| Socket | Host `/var/run/docker.sock` (GHA bind-mounts it; with `docker run` mount it yourself) | `/var/run/dind.sock` (separate, to avoid the mounted host socket) |
-| Required runtime flag | host-socket mount (`-v /var/run/docker.sock:/var/run/docker.sock`) | `--privileged` |
-| GHA first step | none — daemon already present | `- run: start-dockerd` (ENTRYPOINT is overridden in container jobs) |
-| Client config | default socket | `DOCKER_HOST=unix:///var/run/dind.sock` (set via the container `--env`) |
-| Mode detection | `$DOCKER_MODE=dood` (baked at build time) | `$DOCKER_MODE=dind` (baked at build time) — portable steps can branch on `$DOCKER_MODE` without socket-probing |
-| Compose-service address | `$HOST_ADDRESS=host.docker.internal` (baked at build time) | `$HOST_ADDRESS=127.0.0.1` (baked at build time) — consumers read `$HOST_ADDRESS` instead of hard-coding the per-mode value when reaching compose services from inside the runner |
-| Storage driver | the host's | `$DOCKER_STORAGE_DRIVER=fuse-overlayfs` (baked at build time); override with `=vfs` (always-works fallback) when `/dev/fuse` isn't available, or `=overlay2` only when the parent FS supports overlay-on-overlay |
-| Startup / weight | instant, lighter | ~seconds to boot the daemon, heavier |
-| **Effects** | | |
-| PWD / bind mounts | sources resolve in the **host** namespace → container paths like `/__w/<repo>/…` don't exist on the host (empty dir / "No such file"); needs host-path rewriting | resolve in the **container's** namespace → `$PWD` / `/__w/…` paths just work |
-| Published ports | land on the **host**; reach via `host.docker.internal`; can **conflict** with the host or other jobs sharing the daemon | land on the job container's `localhost`; isolated, no host port conflicts |
-| Container names / state | siblings on the shared host daemon → **name/state clashes** and concurrent-job collisions | isolated daemon → no cross-job name/state collisions |
-| Image cache | reuses the host's layer cache (fast pulls) | cold per job unless explicitly cached |
-| Isolation / security | socket access ≈ control of the host daemon (root-equivalent on the host) | `--privileged` (kernel-level power), but fully isolated state |
-| With `act` (local) | uses your local Docker → test containers mix with your own; possible name/port clashes; Docker-Desktop/rootless path quirks | self-contained; if overlay2 nesting fails on your backend set `DOCKER_STORAGE_DRIVER=vfs`; no clashes with your local containers |
-
-See [dood/README.md](dood/README.md) and [dind/README.md](dind/README.md) for the runtime details and
-`docker compose` usage examples.
-
 ## Hardened (default) and `-sudoer` flavors
 
 Most published images ship in two flavors. The contract is: **pre-installed deps are the value
