@@ -488,13 +488,31 @@ echo "===== Bundling .so deps + patchelf RPATH=\$ORIGIN ====="
 DST=/work/firefox-dist
 FF_BINS="$DST/firefox $DST/firefox-bin $DST/glxtest $DST/vaapitest $DST/pingsender"
 
+# Universal-runtime libs that MUST resolve from the consumer's base, not the
+# bundle. The binary's ELF interpreter is hardcoded to the system loader
+# (/lib/ld-musl-x86_64.so.1) — patchelf --set-interpreter can't be relative —
+# so the loader+libc ABI is fixed by the consumer's musl version. If we bundle
+# our build-time copies, peer .so files resolve them via RPATH=$ORIGIN and end
+# up calling a different libc than the loader, which corrupts dynamic linker
+# state and segfaults at XPCOM init when the consumer base's musl version
+# diverges from the builder's (e.g. consumer alpine 3.21 musl 1.2.5-r11 vs
+# builder alpine:edge musl 1.2.6-r0). Skip and let the system loader pick up
+# the consumer's matching copies via default search paths.
+# - ld-musl-x86_64.so.1: musl loader/libc. Same file as libc.musl-x86_64.so.1.
+# - libgcc_s.so.1, libstdc++.so.6: GCC runtime/C++ stdlib. Tracks the system
+#   toolchain; bundling a foreign-version copy breaks libc-coupled symbols
+#   (__cxa_thread_atexit_impl etc).
+EXCLUDE_LIBS="ld-musl-x86_64.so.1 libc.musl-x86_64.so.1 libgcc_s.so.1 libstdc++.so.6"
+
 # Walk ldd on a target, copy system .so deps into $DST (top level only —
 # nested gmp-clearkey/ etc. dlopen explicitly and inherit firefox's RPATH).
 ldd_walk() {
   local target="$1"
   [ -e "$target" ] || return 0
   for so in $(ldd "$target" 2>/dev/null | awk '{print $3}' | grep '^/' || true); do
-    [ -f "$so" ] && [ ! -f "$DST/$(basename "$so")" ] && cp -aL "$so" "$DST"/ || true
+    base=$(basename "$so")
+    case " $EXCLUDE_LIBS " in *" $base "*) continue ;; esac
+    [ -f "$so" ] && [ ! -f "$DST/$base" ] && cp -aL "$so" "$DST"/ || true
   done
 }
 
@@ -516,6 +534,27 @@ for so in "$DST"/*.so*; do
   [ -L "$so" ] && continue
   patchelf --set-rpath '$ORIGIN' "$so" 2>/dev/null || true
 done
+
+# ICU data file. aports builds firefox with --with-system-icu, and Alpine's
+# libicudata.so.78 is a 12 KB stub — the actual locale data ships separately
+# as /usr/share/icu/${ver}/icudt${maj}l.dat in the icu-data-full apk. At
+# runtime libicuuc stats that absolute path; on a consumer base with a
+# different ICU major (alpine 3.21 has ICU 76, builder edge has 78) the stat
+# returns ENOENT and the load deref's null → SEGV at XPCOM init. Bundle the
+# data file next to the .so files; the consumer image sets
+# ICU_DATA=<bundle dir> so libicuuc finds it without the absolute path.
+ICU_VER=$(ls /usr/share/icu/ 2>/dev/null | head -1)
+if [ -n "$ICU_VER" ]; then
+  ICU_DAT=$(ls /usr/share/icu/"$ICU_VER"/icudt*l.dat 2>/dev/null | head -1)
+  if [ -f "$ICU_DAT" ]; then
+    cp -aL "$ICU_DAT" "$DST"/
+    echo "===== Bundled ICU data: $(basename "$ICU_DAT") (icu $ICU_VER) ====="
+  else
+    echo "WARN: /usr/share/icu/$ICU_VER/icudt*l.dat not found; consumer may segfault at XPCOM init" >&2
+  fi
+else
+  echo "WARN: no ICU data dir under /usr/share/icu/ on builder" >&2
+fi
 
 # Sanity check: no "not found" in libxul ldd. Fail loud at producer time,
 # not silently at consumer runtime. (firefox-bin is small; libxul.so is the

@@ -27,7 +27,7 @@ RUN apk add --no-cache \
         bash curl git patch patchutils tar xz gzip jq gettext-envsubst make sccache \
         alsa-lib-dev automake bsd-compat-headers cargo cbindgen \
         clang22 clang22-libclang clang22-dev compiler-rt \
-        dbus dbus-dev gettext gtk+3.0-dev hunspell-dev icu-dev \
+        dbus dbus-dev gettext gtk+3.0-dev hunspell-dev icu-dev icu-data-full \
         libevent-dev libffi-dev libjpeg-turbo-dev libnotify-dev libogg-dev \
         libtheora-dev libtool libvorbis-dev libvpx-dev libwebp-dev \
         libxcomposite-dev libxt-dev lld22 llvm22-dev m4 mesa-dev \
