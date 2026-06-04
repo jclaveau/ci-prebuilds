@@ -192,19 +192,47 @@ jobs:
             type=raw,value=edge,enable=${{ github.event_name != 'pull_request' }}
 
       # Pick between full cold build (Dockerfile, ~2h) and incremental
-      # iteration FROM the prebuilt-base image (Dockerfile.iter, ~5 min). The
-      # prebuilt-base tag must already exist on GHCR for the FF revision PW
-      # resolved above — it's published by the
-      # playwright-alpine-browsers-prebuilt-base.yml workflow.
+      # iteration FROM the prebuilt-base image (Dockerfile.iter, ~5 min).
+      # Selection logic:
+      # - workflow_dispatch use_prebuilt=true  → force iter (explicit override)
+      # - workflow_dispatch use_prebuilt=false → force cold (explicit override)
+      # - PR / push events                     → auto: iter if prebuilt-base-
+      #   ff-${rev} exists on GHCR, else cold. Lets PR iteration loops finish
+      #   in ~10min instead of ~3h, transparently.
+      #
+      # Why not always iter: BuildKit's --mount=type=cache mounts don't export
+      # via cache-to=registry (verified by inspecting the buildcache config —
+      # zero exec.cachemount records). So obj/.mozbuild/sccache go cold every
+      # GHA run. The prebuilt-base path sidesteps that by shipping obj/ as
+      # image layers (cache-from CAN restore those). When prebuilt-base hasn't
+      # been published yet (fresh FF revision), we still need the cold path
+      # once to seed it.
       - id: dockerfile-choice
+        env:
+          BASE_TAG: ghcr.io/jclaveau/playwright-alpine-browsers:prebuilt-base-ff-${{ steps.pins.outputs.firefox_revision }}
         run: |
-          if [ "${{ inputs.use_prebuilt }}" = "true" ]; then
+          choose_iter() {
             echo "file=playwright/alpine-browsers/Dockerfile.iter" >> "$GITHUB_OUTPUT"
-            echo "base=ghcr.io/jclaveau/playwright-alpine-browsers:prebuilt-base-ff-${{ steps.pins.outputs.firefox_revision }}" >> "$GITHUB_OUTPUT"
-          else
+            echo "base=$BASE_TAG" >> "$GITHUB_OUTPUT"
+            echo "::notice::iter path: FROM $BASE_TAG"
+          }
+          choose_cold() {
             echo "file=playwright/alpine-browsers/Dockerfile" >> "$GITHUB_OUTPUT"
             echo "base=" >> "$GITHUB_OUTPUT"
-          fi
+            echo "::notice::cold path: full Dockerfile build (no prebuilt-base for ff-${{ steps.pins.outputs.firefox_revision }})"
+          }
+          case "${{ inputs.use_prebuilt }}" in
+            true)  choose_iter ;;
+            false) choose_cold ;;
+            "")
+              # Auto-select. Pre-flight: does the prebuilt-base tag exist?
+              if docker manifest inspect "$BASE_TAG" >/dev/null 2>&1; then
+                choose_iter
+              else
+                choose_cold
+              fi
+              ;;
+          esac
 
       - name: Build artifact image
         uses: docker/build-push-action@v5
