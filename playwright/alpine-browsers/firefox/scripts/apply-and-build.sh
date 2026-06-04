@@ -535,6 +535,27 @@ for so in "$DST"/*.so*; do
   patchelf --set-rpath '$ORIGIN' "$so" 2>/dev/null || true
 done
 
+# ICU data file. aports builds firefox with --with-system-icu, and Alpine's
+# libicudata.so.78 is a 12 KB stub — the actual locale data ships separately
+# as /usr/share/icu/${ver}/icudt${maj}l.dat in the icu-data-full apk. At
+# runtime libicuuc stats that absolute path; on a consumer base with a
+# different ICU major (alpine 3.21 has ICU 76, builder edge has 78) the stat
+# returns ENOENT and the load deref's null → SEGV at XPCOM init. Bundle the
+# data file next to the .so files; the consumer image sets
+# ICU_DATA=<bundle dir> so libicuuc finds it without the absolute path.
+ICU_VER=$(ls /usr/share/icu/ 2>/dev/null | head -1)
+if [ -n "$ICU_VER" ]; then
+  ICU_DAT=$(ls /usr/share/icu/"$ICU_VER"/icudt*l.dat 2>/dev/null | head -1)
+  if [ -f "$ICU_DAT" ]; then
+    cp -aL "$ICU_DAT" "$DST"/
+    echo "===== Bundled ICU data: $(basename "$ICU_DAT") (icu $ICU_VER) ====="
+  else
+    echo "WARN: /usr/share/icu/$ICU_VER/icudt*l.dat not found; consumer may segfault at XPCOM init" >&2
+  fi
+else
+  echo "WARN: no ICU data dir under /usr/share/icu/ on builder" >&2
+fi
+
 # Sanity check: no "not found" in libxul ldd. Fail loud at producer time,
 # not silently at consumer runtime. (firefox-bin is small; libxul.so is the
 # fat one and most likely to surface missing deps.)
