@@ -32,14 +32,20 @@ RUN echo "runner ALL=(root) NOPASSWD: /usr/sbin/dockerd, /usr/bin/chown root\:do
 
 # fuse-overlayfs: overlay-like copy-on-write storage that works nested (overlay2-on-overlayfs is
 # unstable in GHA container jobs) and is far faster/leaner than vfs. Needs /dev/fuse at runtime,
-# which GitHub-hosted runners expose under --privileged. Select it via DOCKER_STORAGE_DRIVER.
+# which GitHub-hosted runners expose under --privileged.
 RUN sudo apt-get update \
     && sudo apt-get install -y --no-install-recommends fuse-overlayfs \
     && sudo rm -rf /var/lib/apt/lists/*
 
-# The inner daemon owns its storage-driver choice (auto-detect by default, or the
-# DOCKER_STORAGE_DRIVER override at runtime), so we set only log options here and leave the
-# storage-driver unset (the docker base intentionally ships no daemon.json).
+# Default the inner dockerd's storage driver to fuse-overlayfs (rationale on the
+# install line above). Consumers on a backend without /dev/fuse (some rootless / btrfs
+# / zfs setups under `act`) override with `--env DOCKER_STORAGE_DRIVER=vfs` (always
+# works) or `=overlay2` (only when the parent FS supports overlay-on-overlay).
+ENV DOCKER_STORAGE_DRIVER=fuse-overlayfs
+
+# Log options only; storage-driver is passed as a CLI flag by start-dockerd.sh
+# (reading $DOCKER_STORAGE_DRIVER, defaulted above to fuse-overlayfs). The docker
+# base intentionally ships no daemon.json.
 RUN sudo mkdir -p /etc/docker \
     && echo '{"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}' \
     | sudo tee /etc/docker/daemon.json >/dev/null

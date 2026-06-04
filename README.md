@@ -111,7 +111,7 @@ plus a **version-pinned** tag capturing the OS + tool minors, e.g.
 | Client config | default socket | `DOCKER_HOST=unix:///var/run/dind.sock` (set via the container `--env`) |
 | Mode detection | `$DOCKER_MODE=dood` (baked at build time) | `$DOCKER_MODE=dind` (baked at build time) — portable steps can branch on `$DOCKER_MODE` without socket-probing |
 | Compose-service address | `$HOST_ADDRESS=host.docker.internal` (baked at build time) | `$HOST_ADDRESS=127.0.0.1` (baked at build time) — consumers read `$HOST_ADDRESS` instead of hard-coding the per-mode value when reaching compose services from inside the runner |
-| Storage driver | the host's | `DOCKER_STORAGE_DRIVER=fuse-overlayfs` (or `vfs` fallback); overlay2 is unstable nested |
+| Storage driver | the host's | `$DOCKER_STORAGE_DRIVER=fuse-overlayfs` (baked at build time); override with `=vfs` (always-works fallback) when `/dev/fuse` isn't available, or `=overlay2` only when the parent FS supports overlay-on-overlay |
 | Startup / weight | instant, lighter | ~seconds to boot the daemon, heavier |
 | **Effects** | | |
 | PWD / bind mounts | sources resolve in the **host** namespace → container paths like `/__w/<repo>/…` don't exist on the host (empty dir / "No such file"); needs host-path rewriting | resolve in the **container's** namespace → `$PWD` / `/__w/…` paths just work |

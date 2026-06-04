@@ -22,8 +22,6 @@ jobs:
       image: jclaveau/ubuntu-dind:latest
       # DOCKER_HOST via --env (not $GITHUB_ENV) so it never leaks to GHA's host-side cleanup
       options: --privileged --env DOCKER_HOST=unix:///var/run/dind.sock
-    env:
-      DOCKER_STORAGE_DRIVER: fuse-overlayfs   # fast nested CoW; use vfs if your runner lacks /dev/fuse
     steps:
       - run: start-dockerd            # boots the inner daemon (persists across the steps below)
       - uses: actions/checkout@v4
@@ -41,14 +39,18 @@ jobs:
   — the address where compose-published services are reachable from inside the runner. Literal
   `127.0.0.1` (not `localhost`) forces ipv4 to dodge connection-refused on stacks that resolve
   `localhost` to `::1`.
+- `DOCKER_STORAGE_DRIVER=fuse-overlayfs` env var baked in — start-dockerd uses this by default so
+  consumers don't have to set it. Override with `--env DOCKER_STORAGE_DRIVER=vfs` (always works,
+  slower) or `=overlay2` (parent FS must support overlay-on-overlay) on backends without `/dev/fuse`.
 
 ## What it implies
 - **Runtime**: `--privileged`. In GHA the image `ENTRYPOINT` is overridden, so run `start-dockerd` as the
   **first step** (the daemon then persists across the job's steps).
 - Set **`DOCKER_HOST=unix:///var/run/dind.sock` via the container `--env`** — *not* `$GITHUB_ENV`, which
   would leak it to GHA's host-side post-job cleanup and fail the job.
-- Pick a nested-friendly **storage driver** with `DOCKER_STORAGE_DRIVER`: `fuse-overlayfs` is fast and
-  works on GitHub-hosted runners; `vfs` is the always-works fallback. overlay2 is unstable nested.
+- **Storage driver** defaults to `fuse-overlayfs` (`ENV` baked at build time) — fast on
+  GitHub-hosted runners. Override with `--env DOCKER_STORAGE_DRIVER=vfs` (always-works fallback)
+  when `/dev/fuse` isn't available; overlay2 is unstable nested.
 - **Bind mounts** resolve in the **container's** namespace → `$PWD` / `/__w/…` just work. **Published
   ports** land on the job container's `localhost`. State is fully **isolated** (no cross-job clashes).
 - Heavier (~seconds to boot); the image cache is cold per job unless explicitly cached.

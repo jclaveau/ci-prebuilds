@@ -58,8 +58,10 @@ if [ -n "${DIND_REGISTRY_MIRROR:-}" ]; then
     | sudo tee /etc/docker/daemon.json >/dev/null
 fi
 
-# Empty => dockerd auto-selects (overlay2 where supported).
-# Override for portability (act on btrfs/zfs/rootless): DOCKER_STORAGE_DRIVER=vfs|overlay2|fuse-overlayfs
+# dind/Dockerfile bakes DOCKER_STORAGE_DRIVER=fuse-overlayfs as the default.
+# Override for portability (act on btrfs/zfs/rootless without /dev/fuse): set the
+# env to vfs (always works) or overlay2 (only where the parent FS supports
+# overlay-on-overlay). Explicit empty string => dockerd's own auto-select.
 driver=""
 [ -n "${DOCKER_STORAGE_DRIVER:-}" ] && driver="--storage-driver=${DOCKER_STORAGE_DRIVER}"
 

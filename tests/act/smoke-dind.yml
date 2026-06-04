@@ -11,13 +11,13 @@ jobs:
       image: ${{ vars.RUNNER_IMAGE }}
       # dind: point clients at the inner daemon via the container --env (mirrors the GHA setup).
       options: --privileged --env DOCKER_HOST=unix:///var/run/dind.sock
-    env:
-      DOCKER_STORAGE_DRIVER: fuse-overlayfs
     steps:
       - name: DOCKER_MODE baked in
         run: test "$DOCKER_MODE" = "dind"
       - name: HOST_ADDRESS baked in
         run: test "$HOST_ADDRESS" = "127.0.0.1"
+      - name: DOCKER_STORAGE_DRIVER baked in
+        run: test "$DOCKER_STORAGE_DRIVER" = "fuse-overlayfs"
       - run: start-dockerd
       - run: docker info
       # Pull the smoke image from Google's transparent Docker Hub
