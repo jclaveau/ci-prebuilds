@@ -41,39 +41,6 @@
     {
       "matchPackageNames": ["ghcr.io/jclaveau/playwright-alpine-browsers"],
       "groupName": "Chromium headless shell (alpine consumer fallback)"
-    },
-    {
-      "matchUpdateTypes": ["pin", "digest", "lockFileMaintenance"],
-      "automerge": true,
-      "description": "Safe categories — no behavior change, only metadata/lockfile refresh"
-    },
-    {
-      "matchDepTypes": ["devDependencies"],
-      "matchPackageNames": ["@types/**"],
-      "matchUpdateTypes": ["minor", "patch"],
-      "automerge": true,
-      "description": "@types/* are type-only; minor/patch can't change runtime behavior"
-    },
-    {
-      "matchDepNames": [
-        "playwright",
-        "@playwright/test",
-        "pnpm",
-        "ubuntu",
-        "public.ecr.aws/ubuntu/ubuntu",
-        "alpine",
-        "public.ecr.aws/docker/library/alpine",
-        "docker",
-        "ghcr.io/jclaveau/playwright-alpine-browsers"
-      ],
-      "automerge": false,
-      "description": "Producer/consumer chain + stack pins — every bump touches the prebuilt image surface, manual review required"
-    },
-    {
-      "matchFileNames": ["playwright/package.json"],
-      "matchDepNames": ["!playwright", "!@playwright/test"],
-      "automerge": true,
-      "description": "Stack-internal transitives (e.g. @types/node) — keep current and auto-merge; not part of the prebuilt-image surface"
     }
   ],
   "customManagers": [
@@ -182,7 +149,7 @@
   "schedule": [
     "before 6am on Monday"
   ],
-  "automerge": false,
+  "automerge": true,
   "automergeStrategy": "squash",
   "prHourlyLimit": 2,
   "prConcurrentLimit": 5
