@@ -17,8 +17,30 @@ on:
       - 'playwright/alpine-browsers/**'
       - '!playwright/alpine-browsers/Dockerfile.glibc-debug'
       - '.github/workflows/playwright-alpine-browsers.yml'
+  # Catalog accumulator: weekly cron grabs whatever alpine:edge currently
+  # ships as chromium-headless-shell and publishes it as chs-${rev} where
+  # ${rev} is derived from versions.env's PW_VERSION default. Without this,
+  # once alpine:edge moves to a newer chromium pkgver, the old chs-${rev}
+  # tag stays as the last successful publish but no NEW tags accumulate
+  # for in-between PW versions. The cron locks in each alpine:edge state
+  # against the matching PW pin while the apk is still pullable. Sundays
+  # at 06:00 UTC — outside typical PR / on-demand traffic windows.
+  schedule:
+    - cron: '0 6 * * 0'
   workflow_dispatch:
     inputs:
+      # PW version override. When set, the producer derives CHS_REV / FF_REV
+      # from this version's `playwright-core@${pw_version}/browsers.json`
+      # instead of the versions.env default. The resulting tag (chs-${REV})
+      # is named after THAT PW pin even if alpine:edge currently ships a
+      # different chromium pkgver — drift detection in the build script
+      # bakes a warning file into the artifact, surfaced at consumer image
+      # build time. Empty = use versions.env's PW_VERSION (default flow).
+      pw_version:
+        description: 'PW version to derive CHS_REV/FF_REV from (empty = versions.env default)'
+        required: false
+        default: ''
+        type: string
       # Which browser(s) to build. Default firefox=false, chromium=true: the
       # FF artifact is already green + cached, and chromium is the active
       # diagnostic frontier — most manual dispatches want chromium only.
@@ -95,6 +117,13 @@ permissions:
   packages: write
   actions: write   # so the cancel-on-fail step can call /actions/runs/<id>/cancel
 
+env:
+  # Surface workflow_dispatch's pw_version input to every step's PW_VERSION
+  # resolution. The `pins` steps source versions.env then check this — if
+  # non-empty, it wins. Empty on push/PR events; set only when the user
+  # explicitly picks a non-default PW pin via workflow_dispatch.
+  PW_VERSION_OVERRIDE: ${{ inputs.pw_version || '' }}
+
 jobs:
   build:
     # FF gate. Runs on:
@@ -121,6 +150,13 @@ jobs:
       - id: pins
         run: |
           set -a; . playwright/alpine-browsers/versions.env; set +a
+          # workflow_dispatch override: if `pw_version` input was set, it wins
+          # over versions.env's PW_VERSION default. Powers the on-demand path
+          # where a different PW pin (e.g. 1.59.1) needs its own chs/ff rev.
+          if [ -n "${PW_VERSION_OVERRIDE:-}" ]; then
+            echo "pin override: PW_VERSION=$PW_VERSION → $PW_VERSION_OVERRIDE (workflow_dispatch input)"
+            PW_VERSION="$PW_VERSION_OVERRIDE"
+          fi
           echo "pw_version=$PW_VERSION" >> "$GITHUB_OUTPUT"
           # Resolve PW's pinned firefox revision + version from the matching
           # playwright-core npm package's browsers.json. Single source of truth.
@@ -410,8 +446,16 @@ jobs:
   promote-chromium-headless-shell:
     # Parallel promote for the apk-fast-path chromium artifact. Same dual-
     # target shape as FF promote: GHCR for CI consumption, DH for external.
+    # Triggers:
+    # - push to main (canonical promotion path; uses versions.env default PW)
+    # - workflow_dispatch with build_chromium_headless_shell=true (on-demand
+    #   catalog accumulation: dispatcher can pass pw_version to publish the
+    #   chs-${rev} tag matching a non-default PW pin)
     needs: [build-chromium-headless-shell, smoke-chromium-headless-shell]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || github.event_name == 'schedule'
+      || (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: docker/setup-buildx-action@v3
@@ -448,6 +492,7 @@ jobs:
   build-chromium-headless-shell:
     if: |
       github.event_name == 'push'
+      || github.event_name == 'schedule'
       || (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell == 'true')
       || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell'))
     runs-on: ubuntu-latest
@@ -463,6 +508,13 @@ jobs:
       - id: pins
         run: |
           set -a; . playwright/alpine-browsers/versions.env; set +a
+          # workflow_dispatch override: if `pw_version` input was set, it wins
+          # over versions.env's PW_VERSION default. Powers the on-demand path
+          # where a different PW pin (e.g. 1.59.1) needs its own chs/ff rev.
+          if [ -n "${PW_VERSION_OVERRIDE:-}" ]; then
+            echo "pin override: PW_VERSION=$PW_VERSION → $PW_VERSION_OVERRIDE (workflow_dispatch input)"
+            PW_VERSION="$PW_VERSION_OVERRIDE"
+          fi
           echo "pw_version=$PW_VERSION" >> "$GITHUB_OUTPUT"
           BROWSERS_JSON=$(curl -fsSL "https://unpkg.com/playwright-core@${PW_VERSION}/browsers.json")
           REV=$(jq -r '.browsers[] | select(.name=="chromium-headless-shell") | .revision' <<<"$BROWSERS_JSON")
@@ -495,6 +547,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           target: artifact
+          build-args: |
+            EXPECTED_CHROMIUM_VERSION=${{ steps.pins.outputs.chromium_version }}
 
       - name: Tier-1 smoke (chrome-headless-shell --version)
         run: |
@@ -562,6 +616,13 @@ jobs:
       - id: pins
         run: |
           set -a; . playwright/alpine-browsers/versions.env; set +a
+          # workflow_dispatch override: if `pw_version` input was set, it wins
+          # over versions.env's PW_VERSION default. Powers the on-demand path
+          # where a different PW pin (e.g. 1.59.1) needs its own chs/ff rev.
+          if [ -n "${PW_VERSION_OVERRIDE:-}" ]; then
+            echo "pin override: PW_VERSION=$PW_VERSION → $PW_VERSION_OVERRIDE (workflow_dispatch input)"
+            PW_VERSION="$PW_VERSION_OVERRIDE"
+          fi
           echo "pw_version=$PW_VERSION" >> "$GITHUB_OUTPUT"
           BROWSERS_JSON=$(curl -fsSL "https://unpkg.com/playwright-core@${PW_VERSION}/browsers.json")
           REV=$(jq -r '.browsers[] | select(.name=="chromium-headless-shell") | .revision' <<<"$BROWSERS_JSON")
