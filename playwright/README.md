@@ -22,13 +22,16 @@ jobs:
       - run: pnpm exec playwright test
 ```
 
-**Ubuntu vs Alpine**: pick **Ubuntu** for the full three-engine matrix
-(Chromium + Firefox + WebKit, Playwright-bundled browsers). Pick **Alpine**
-for a smaller image — Alpine ships **musl-native chromium-headless-shell**
-via the [`playwright-alpine-browsers`](https://github.com/jclaveau/github-action-container-images/tree/main/playwright/alpine-browsers)
-producer image. Firefox and WebKit on Alpine are deferred (see below); the
-alpine `playwright.config.ts` skips them automatically so `playwright test`
-(no `--project`) stays green.
+**Ubuntu vs Alpine**:
+
+- **Pick Ubuntu** for the full three-engine matrix (Chromium + Firefox + WebKit,
+  Playwright-bundled browsers).
+- **Pick Alpine** for a smaller image — ships **musl-native chromium-headless-shell**
+  via the [`playwright-alpine-browsers`](https://github.com/jclaveau/github-action-container-images/tree/main/playwright/alpine-browsers)
+  producer image.
+- Firefox and WebKit on Alpine are deferred ([see below](#musl-native-browsers-on-alpine));
+  the alpine `playwright.config.ts` skips them automatically so `playwright test`
+  (no `--project`) stays green.
 
 ## What it adds
 - **Playwright** (pinned by `PLAYWRIGHT_VERSION`) installed globally.
@@ -40,12 +43,16 @@ alpine `playwright.config.ts` skips them automatically so `playwright test`
 
 ## musl-native browsers on Alpine
 
-Playwright doesn't drive off-the-shelf browsers — it builds and pins
-**patched** ones. [Firefox](https://github.com/microsoft/playwright/tree/main/browser_patches/firefox)
-carries the *Juggler* automation protocol, [WebKit](https://github.com/microsoft/playwright/tree/main/browser_patches/webkit)
-is a patched build, and `chromium-headless-shell` is a deterministic
-headless variant Google ships via Chrome-for-Testing. Upstream PW publishes
-those compiled against **glibc** only — no musl artifacts.
+Playwright doesn't drive off-the-shelf browsers — it builds and pins **patched** ones:
+
+- [Firefox](https://github.com/microsoft/playwright/tree/main/browser_patches/firefox) carries
+  the *Juggler* automation protocol.
+- [WebKit](https://github.com/microsoft/playwright/tree/main/browser_patches/webkit) is a
+  patched build.
+- `chromium-headless-shell` is a deterministic headless variant Google ships via
+  Chrome-for-Testing.
+
+Upstream PW publishes those compiled against **glibc** only — no musl artifacts.
 
 The `playwright-alpine-browsers` sub-project produces musl-native equivalents:
 

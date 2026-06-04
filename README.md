@@ -23,10 +23,25 @@ jobs:
 ```
 
 That's it — `pnpm`, `node`, `git`, `docker`, the `runner` user, and the `ubuntu-latest` env are all
-already there. For `docker compose` see [dood](dood/README.md) (shared host daemon, lighter) or
-[dind](dind/README.md) (isolated daemon, no port/name clashes). For browser tests pick
-[playwright](playwright/README.md). For native-addon builds (`node-gyp`) pick the
-[`-gyp`](pnpm-gyp/README.md) twin.
+already there. Heavier layers when you need:
+
+- **`docker compose`** — [dood](dood/README.md) (shared host daemon, lighter) or
+  [dind](dind/README.md) (isolated daemon, no port/name clashes).
+- **Browser tests** — [playwright](playwright/README.md) (example below).
+- **Native-addon builds** (`node-gyp`) — the [`-gyp`](pnpm-gyp/README.md) twin.
+
+For browser tests, swap the image for the playwright layer:
+
+```yaml
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    container: jclaveau/ubuntu-dood-playwright:latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright test
+```
 
 ## Pick your image
 
@@ -77,11 +92,15 @@ ubuntu-gha-tools            GitHub ubuntu-latest mimic (users, env, OS tools; sl
                          └─ pnpm-gyp ─── playwright-gyp       (+ node-gyp toolchain, for native addons)
 ```
 
-Variant images are named `<os>-<mode>[-<layer>]` (`os` ∈ {`ubuntu`,`alpine`}, `mode` ∈ {`dood`,`dind`}).
-Every layer ships in both OS flavors (e.g. `ubuntu-dood-pnpm` and `alpine-dood-pnpm`); the Alpine images
-mirror the Ubuntu dev environment (same accounts, tooling, and bash sugar like `ll`) on musl. The one
-exception is **Playwright on Alpine**, which is **Chromium-only** (via the system Chromium package —
-Playwright's bundled browsers and Firefox/WebKit have no musl builds). Each layer is documented on its own:
+Variant images are named `<os>-<mode>[-<layer>]` (`os` ∈ {`ubuntu`,`alpine`}, `mode` ∈ {`dood`,`dind`}):
+
+- Every layer ships in both OS flavors (e.g. `ubuntu-dood-pnpm` and `alpine-dood-pnpm`).
+- The Alpine images mirror the Ubuntu dev environment on musl — same accounts, tooling, and
+  bash sugar like `ll`.
+- **One exception**: Playwright on Alpine is **Chromium-only** (via the system Chromium
+  package — Playwright's bundled browsers and Firefox/WebKit have no musl builds).
+
+Each layer is documented on its own:
 
 | Image | What it adds | Docs |
 | --- | --- | --- |
