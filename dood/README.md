@@ -80,6 +80,11 @@ The `test-dood-dind-act` CI job pins this recipe against both `ubuntu-dood` and
 `alpine-dood` (workspace ownership + `sudo true` + `$HOME` write + `$RUNNER_TOOL_CACHE`
 subdir write asserted) so a future act/base-image change can't silently break it.
 
+> On a pnpm-bearing image (`*-pnpm`, `*-pnpm-gyp`, `*-playwright[-gyp]`), `pnpm install -g <pkg>`
+> under this recipe hits an upstream EPERM — see
+> [pnpm's known limit](../pnpm/README.md#known-limit-pnpm-install--g-under-act---bind---user-non-1001)
+> for the gated `sudo chown` workaround (requires `-sudoer`).
+
 ### Host UIDs without a passwd entry (advanced)
 
 `sudo`, `whoami`, and tools using `getpwuid()` refuse / warn when the host UID has no

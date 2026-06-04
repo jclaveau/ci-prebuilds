@@ -27,9 +27,8 @@ jobs:
 better-sqlite3, bcrypt, canvas, …) it needs the compiler this layer adds.
 
 ## Why it exists
-The base [`gha-tools`](../ubuntu-gha-tools/README.md) deliberately drops the C/C++ compiler to keep
-every image slim (see its README). Most CI never compiles native code, but some `npm`/`pnpm install`
-runs build native addons via **node-gyp** — those use this variant.
+Adds back the compiler that [`gha-tools` deliberately omits](../ubuntu-gha-tools/README.md#whats-deliberately-omitted-and-why),
+for the minority of CI runs whose `npm`/`pnpm install` compiles native addons via **node-gyp**.
 
 ## What it adds
 - **Ubuntu**: `build-essential` (gcc/g++/make) via `apt`.
@@ -44,3 +43,4 @@ runs build native addons via **node-gyp** — those use this variant.
 - The version-pinned tag carries a `-gyp` suffix: `…-pnpmX.Y-gyp`.
 - For Playwright **and** native builds in one image, use [`…-playwright-gyp`](../playwright/README.md)
   (the same Playwright layer built on this base).
+- Inherits the [pnpm `install -g` under `act --bind` limit](../pnpm/README.md#known-limit-pnpm-install--g-under-act---bind---user-non-1001).

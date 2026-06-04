@@ -86,6 +86,8 @@ Useful upstream references:
 - **Slim — no compiler.** Built on the slim [`pnpm`](../pnpm/README.md) layer. If your tests' deps
   compile native addons, use the **`…-playwright-gyp`** twin (the same layer built on
   [`pnpm-gyp`](../pnpm-gyp/README.md)); its tag carries a `-gyp` suffix.
+- Inherits the [pnpm `install -g` under `act --bind` limit](../pnpm/README.md#known-limit-pnpm-install--g-under-act---bind---user-non-1001).
+  Acute here: any `pnpm add -g <pkg>` during the job re-`chmod`s the pre-baked `playwright` bin → EPERM.
 - The **heaviest** layer (browsers + runtime deps); Alpine now switches from
   the full Alpine Chromium apk to musl-native `chromium-headless-shell`
   (deterministic timing for tests).

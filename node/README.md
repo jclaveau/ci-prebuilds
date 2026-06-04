@@ -33,7 +33,6 @@ For `pnpm` use [`-pnpm`](../pnpm/README.md); for native-addon builds use
 - Built for **both modes and both OSes**: `ubuntu-dood-node`, `alpine-dind-node`, etc.
 - The installed Node **minor floats** (NodeSource/apk serve the latest in that line); the version-pinned
   tag (`…-nodeXX.YY`) reflects what's actually installed.
-- **No node-gyp toolchain here.** The base [`gha-tools`](../ubuntu-gha-tools/README.md) no longer ships a
-  compiler, so this layer can't build native addons. If your `npm`/`pnpm install` compiles native
-  modules, use the [`-gyp` variant](../pnpm-gyp/README.md) (`{os}-{mode}-pnpm-gyp`), which adds
-  `build-essential`/`build-base` back.
+- **No node-gyp toolchain here** — inherits the [`gha-tools` compiler omission](../ubuntu-gha-tools/README.md#whats-deliberately-omitted-and-why).
+  For `npm`/`pnpm install` runs that compile native modules, use the
+  [`-gyp` variant](../pnpm-gyp/README.md) (`{os}-{mode}-pnpm-gyp`).
