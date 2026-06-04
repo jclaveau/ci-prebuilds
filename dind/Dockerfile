@@ -7,6 +7,10 @@ FROM ${BASE_IMAGE}
 LABEL org.opencontainers.image.description="True DinD variant (boots an inner dockerd) of the *-dood images"
 
 ENV DOCKER_MODE=dind
+# DinD's inner dockerd publishes services on the runner container's loopback.
+# Literal 127.0.0.1 (not "localhost") forces ipv4 — connection-refused errors
+# have historically surfaced when stacks resolved localhost to ::1.
+ENV HOST_ADDRESS=127.0.0.1
 
 COPY start-dockerd.sh /usr/local/bin/start-dockerd
 RUN sudo chmod 0755 /usr/local/bin/start-dockerd

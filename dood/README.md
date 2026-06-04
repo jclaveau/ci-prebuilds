@@ -21,6 +21,9 @@ Published as `jclaveau/<os>-dood` on Docker Hub. Tags: `:latest` and version-pin
 - Reuses the host's **layer cache** (fast pulls). Socket access ≈ **root on the host**.
 - **`DOCKER_MODE=dood`** baked into the image (sibling [`-dind`](../dind/README.md) ships `=dind`) so
   portable workflow steps can branch on `$DOCKER_MODE` without socket / `pgrep` probing.
+- **`HOST_ADDRESS=host.docker.internal`** baked in (sibling [`-dind`](../dind/README.md) ships `=127.0.0.1`)
+  — the address where compose-published services are reachable from inside the runner. Consumers read
+  `$HOST_ADDRESS` instead of hard-coding the per-mode value.
 - With **`act`** (local): uses your local Docker, so test containers mix with your own (possible
   name/port clashes).
 

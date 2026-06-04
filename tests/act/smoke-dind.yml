@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: DOCKER_MODE baked in
         run: test "$DOCKER_MODE" = "dind"
+      - name: HOST_ADDRESS baked in
+        run: test "$HOST_ADDRESS" = "127.0.0.1"
       - run: start-dockerd
       - run: docker info
       # Pull the smoke image from Google's transparent Docker Hub

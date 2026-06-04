@@ -8,3 +8,7 @@ FROM ${BASE_IMAGE}
 LABEL org.opencontainers.image.description="Docker-outside-of-Docker variant (uses a shared host daemon via the mounted socket)"
 
 ENV DOCKER_MODE=dood
+# DooD shares the host docker daemon; compose services published on the host
+# network reach the runner container via host.docker.internal (host-gateway
+# alias). Consumers read $HOST_ADDRESS instead of branching on $DOCKER_MODE.
+ENV HOST_ADDRESS=host.docker.internal

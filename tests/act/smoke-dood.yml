@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: DOCKER_MODE baked in
         run: test "$DOCKER_MODE" = "dood"
+      - name: HOST_ADDRESS baked in
+        run: test "$HOST_ADDRESS" = "host.docker.internal"
       - name: docker daemon reachable
         run: docker info
       - name: docker daemon is a real daemon, not a fake/embedded shim

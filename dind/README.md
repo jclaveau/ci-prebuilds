@@ -37,6 +37,10 @@ jobs:
   daemon automatically under `docker run` / `act`.
 - `DOCKER_MODE=dind` env var (sibling [`-dood`](../dood/README.md) ships `=dood`) so portable workflow
   steps can branch on `$DOCKER_MODE` without socket / `pgrep` probing.
+- `HOST_ADDRESS=127.0.0.1` env var (sibling [`-dood`](../dood/README.md) ships `=host.docker.internal`)
+  — the address where compose-published services are reachable from inside the runner. Literal
+  `127.0.0.1` (not `localhost`) forces ipv4 to dodge connection-refused on stacks that resolve
+  `localhost` to `::1`.
 
 ## What it implies
 - **Runtime**: `--privileged`. In GHA the image `ENTRYPOINT` is overridden, so run `start-dockerd` as the
