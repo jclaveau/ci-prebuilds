@@ -475,3 +475,57 @@ echo "===== Staging dist to /work/firefox-dist ====="
 mkdir -p /work/firefox-dist
 cp -aL "$DIST"/. /work/firefox-dist/ 2>/dev/null || cp -a "$DIST"/. /work/firefox-dist/
 echo "Staged: $(du -sh /work/firefox-dist | cut -f1)"
+
+# Bundle transitive .so deps via ldd-walk + RPATH=$ORIGIN. Aports' Firefox
+# LDFLAGS hardcodes RUNPATH=/usr/lib/firefox; the artifact ships at any path
+# the consumer chooses (/ms-playwright/firefox-{rev}/firefox in PW SDK
+# auto-discovery), so the loader can't find peer/system libs. Mirror the
+# chromium-headless-shell treatment: bundle system .so deps into the dist
+# tree and patchelf RPATH=$ORIGIN on every binary + .so. Result: a fully
+# self-contained artifact that works on any musl base regardless of ICU/
+# NSPR/NSS/libstdc++ version drift.
+echo "===== Bundling .so deps + patchelf RPATH=\$ORIGIN ====="
+DST=/work/firefox-dist
+FF_BINS="$DST/firefox $DST/firefox-bin $DST/glxtest $DST/vaapitest $DST/pingsender"
+
+# Walk ldd on a target, copy system .so deps into $DST (top level only —
+# nested gmp-clearkey/ etc. dlopen explicitly and inherit firefox's RPATH).
+ldd_walk() {
+  local target="$1"
+  [ -e "$target" ] || return 0
+  for so in $(ldd "$target" 2>/dev/null | awk '{print $3}' | grep '^/' || true); do
+    [ -f "$so" ] && [ ! -f "$DST/$(basename "$so")" ] && cp -aL "$so" "$DST"/ || true
+  done
+}
+
+# Pass 1: walk binaries + already-bundled .so files.
+for t in $FF_BINS; do ldd_walk "$t"; done
+for so in "$DST"/*.so*; do [ -L "$so" ] || ldd_walk "$so"; done
+# Pass 2: deps-of-deps for second-order resolution (libicui18n -> libicuuc, etc.)
+for so in "$DST"/*.so*; do [ -L "$so" ] || ldd_walk "$so"; done
+# Pass 3: rare third-order (libstdc++ -> libgcc_s, etc.)
+for so in "$DST"/*.so*; do [ -L "$so" ] || ldd_walk "$so"; done
+
+# Patchelf RPATH=$ORIGIN on every binary + top-level .so. The loader uses
+# RPATH of the LOADING module, so libxul.so needs $ORIGIN to find peer libs
+# in the same dir.
+for t in $FF_BINS; do
+  [ -f "$t" ] && patchelf --set-rpath '$ORIGIN' "$t" 2>/dev/null || true
+done
+for so in "$DST"/*.so*; do
+  [ -L "$so" ] && continue
+  patchelf --set-rpath '$ORIGIN' "$so" 2>/dev/null || true
+done
+
+# Sanity check: no "not found" in libxul ldd. Fail loud at producer time,
+# not silently at consumer runtime. (firefox-bin is small; libxul.so is the
+# fat one and most likely to surface missing deps.)
+missing=$(ldd "$DST/libxul.so" 2>/dev/null | grep 'not found' || true)
+if [ -n "$missing" ]; then
+  echo "ERROR: libxul.so still has unresolved deps after bundle:" >&2
+  echo "$missing" >&2
+  echo "---firefox binary ldd:" >&2
+  ldd "$DST/firefox" 2>&1 | head -30 >&2
+  exit 1
+fi
+echo "===== Self-contained artifact: $(du -sh "$DST" | cut -f1) ====="
