@@ -14,18 +14,17 @@ import { existsSync } from 'node:fs';
  */
 
 // On the Alpine flavor, the alpine-...-playwright Dockerfile COPYs the
-// musl-native `chromium-headless-shell` from the `playwright-alpine-browsers`
-// producer image (self-contained via RPATH=$ORIGIN) and stages it at PW SDK's
-// auto-discovery cache path. No executablePath override needed. Firefox and
-// WebKit are not shipped yet on alpine (FF segfaults under cross-musl-version
-// ABI when the producer's edge-built artifact runs on the alpine 3.21 base —
-// follow-up; WebKit sub-project deferred). Drop the alpine branch once both
-// producers land.
+// musl-native `chromium-headless-shell` AND the patched Firefox dist from the
+// `playwright-alpine-browsers` producer image and stages them at PW SDK's
+// auto-discovery cache path. No executablePath override needed. WebKit is
+// not shipped yet on alpine (sub-project deferred). Drop the alpine branch
+// once WebKit lands too.
 const isAlpine = existsSync('/etc/alpine-release');
 
 const projects = isAlpine
   ? [
       { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+      { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
     ]
   : [
       {
