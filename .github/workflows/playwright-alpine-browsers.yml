@@ -1,4 +1,4 @@
-name: Playwright Alpine Browsers (musl Firefox build)
+name: Playwright Alpine Browsers
 
 # Producer workflow for the patched-on-musl browser artifact image. Runs on its
 # own cadence — the build is ~1.5–2.5h and only needs to rerun when Playwright
