@@ -46,17 +46,24 @@ const section = async (name, fn) => {
   // Tiny in-process HTTP server for sections that need real responses
   // (response observation needs a status code; can't observe data: URLs).
   const server = http.createServer((req, res) => {
+    res.setHeader('content-type', 'text/html');
     if (req.url === '/iframe') {
-      res.setHeader('content-type', 'text/html');
       res.end('<div id=inner>inside</div>');
       return;
     }
+    if (req.url === '/with-iframe') {
+      // Section 4 needs same-origin parent+child or Juggler's evaluate hits
+      // "Permission denied to access property 'windowUtils' on cross-origin
+      // object". setContent gives an about:blank parent which is always
+      // cross-origin to anything we serve, so route the wrapper through the
+      // same server instead.
+      res.end('<iframe src="/iframe"></iframe>');
+      return;
+    }
     if (req.url === '/dialog') {
-      res.setHeader('content-type', 'text/html');
       res.end('<script>window.lastDialog = prompt("name?", "default")</script>');
       return;
     }
-    res.setHeader('content-type', 'text/html');
     res.end(`<h1 id=h>${req.url}</h1>`);
   });
   // listen() is async — server.address() returns null until the 'listening'
@@ -97,7 +104,7 @@ const section = async (name, fn) => {
   await section('4.frames', async () => {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
-    await page.setContent(`<iframe src="${base}/iframe"></iframe>`);
+    await page.goto(base + '/with-iframe');
     await page.waitForLoadState('networkidle');
     const frames = page.frames();
     ok('4.frames', frames.length === 2, `frames.length=${frames.length}`);
