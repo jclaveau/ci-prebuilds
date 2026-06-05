@@ -123,7 +123,7 @@ env:
   PW_VERSION_OVERRIDE: ${{ inputs.pw_version || '' }}
 
 jobs:
-  build:
+  build-firefox:
     # FF gate. Runs on:
     # - push to main: always (canonical promotion path)
     # - workflow_dispatch: only when build_firefox=true (default off — see
@@ -293,11 +293,11 @@ jobs:
           echo "$OUT" | grep -E "Mozilla Firefox [0-9]+\\." \
             || { echo "Tier-1: firefox didn't self-identify"; exit 1; }
 
-  smoke-pw-tests:
+  smoke-firefox:
     # Tier-2: drive Firefox through the Playwright SDK enough to exercise
     # Juggler (launch, navigate, route, screenshot). If patches are broken,
     # newContext() or goto() hangs/throws.
-    needs: build
+    needs: build-firefox
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -325,7 +325,7 @@ jobs:
           ENV PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH=/opt/playwright/firefox/firefox
           ENV LD_LIBRARY_PATH=/opt/playwright/firefox
           WORKDIR /smoke
-          RUN npm install -g playwright@${{ needs.build.outputs.pw_version }}
+          RUN npm install -g playwright@${{ needs.build-firefox.outputs.pw_version }}
           EOF
           docker build -t candidate-runner:${{ github.sha }} -f /tmp/Dockerfile.runner /tmp
 
@@ -346,11 +346,11 @@ jobs:
             candidate-runner:${{ github.sha }} \
             node launch.cjs 2>&1 | tail -200
 
-  diagnostic:
+  diagnostic-firefox:
     # Tier-3 diagnostic: dump symbols + manifests + JS Juggler load trace from
     # the just-built artifact. Gated on workflow_dispatch with diagnostic=true
     # so normal PRs don't pay the extra ~5 min.
-    needs: build
+    needs: build-firefox
     if: github.event_name == 'workflow_dispatch' && inputs.diagnostic == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -432,10 +432,10 @@ jobs:
               cat /tmp/moz.log* 2>/dev/null | grep -iE "juggler|m-remote|command-line" | head -50 || echo "(no moz.log juggler entries)"
             '
 
-  promote:
+  promote-firefox:
     # Only on main pushes: copy the GHCR sha tag to Docker Hub under
     # version-pinned + moving tags. Imagetools server-side copy — no rebuild.
-    needs: [build, smoke-pw-tests]
+    needs: [build-firefox, smoke-firefox]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -452,8 +452,8 @@ jobs:
       - name: Promote FF → GHCR + Docker Hub
         env:
           SRC: ghcr.io/jclaveau/playwright-alpine-browsers:sha-${{ github.sha }}
-          REV: ${{ needs.build.outputs.firefox_revision }}
-          VER: ${{ needs.build.outputs.firefox_version }}
+          REV: ${{ needs.build-firefox.outputs.firefox_revision }}
+          VER: ${{ needs.build-firefox.outputs.firefox_version }}
         # Dual-target imagetools push: same digest tagged to both GHCR and
         # Docker Hub in one server-side copy. CI (playwright/Dockerfile.alpine
         # COPY --from) consumes the GHCR ref to avoid DH's anonymous-pull
@@ -790,7 +790,7 @@ jobs:
   # `if: false` to the gate below to revive. juggler_order_first and
   # juggler_category_rename inputs are already on the workflow_dispatch block
   # (shared with the musl FF build).
-  build-glibc:
+  build-firefox-glibc-debug:
     if: false
     # Gate retained from the standalone workflow so re-enabling = just flip if to true.
     # if: |
