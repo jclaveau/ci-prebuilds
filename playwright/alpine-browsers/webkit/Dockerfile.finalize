@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1
+#
+# Final artifact stage. Pulls the WPE final-resume image, the GTK
+# final-resume image, and the source-prep image (for pw_run.sh), composes
+# them into a single FROM-scratch artifact at /webkit.
+#
+# The result matches PW's published webkit-*.zip layout:
+#   /webkit/
+#     minibrowser-wpe/   (from WPE chain)
+#     minibrowser-gtk/   (from GTK chain)
+#     pw_run.sh          (from source-prep, copied verbatim from PW)
+
+ARG BASE_WPE
+ARG BASE_SOURCE
+# When the GTK chain re-enables (see the workflow's build-webkit-gtk-* jobs),
+# add `ARG BASE_GTK`, the `FROM ${BASE_GTK} AS gtk` line, and the
+# `COPY --from=gtk /work/minibrowser-gtk-dist /webkit/minibrowser-gtk` line.
+
+FROM ${BASE_WPE} AS wpe
+FROM ${BASE_SOURCE} AS source
+
+FROM scratch AS artifact
+COPY --from=wpe /work/minibrowser-wpe-dist /webkit/minibrowser-wpe
+COPY --from=source /work/pw-webkit/pw_run.sh /webkit/pw_run.sh

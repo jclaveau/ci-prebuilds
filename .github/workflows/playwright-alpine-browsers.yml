@@ -109,6 +109,23 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
+      # WebKit gate. Default off because cold cold-build is multi-hour (WPE
+      # then GTK, sccache-shared); this is dispatch- and label-gated only.
+      # No push/main trigger and no schedule — too expensive to run by
+      # accident. Promote runs only on main pushes that flip this on
+      # explicitly (or via the `build-webkit` PR label).
+      build_webkit:
+        description: 'Build WebKit (musl, PW-patched WPE+GTK) — default off; multi-hour cold build'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      webkit_enable_jit:
+        description: 'WebKit ENABLE_JIT (default ON; flip OFF if JSC+musl JIT blocks)'
+        required: false
+        default: 'ON'
+        type: choice
+        options: ['ON', 'OFF']
 
 # Never abort an in-flight 2h build — the cost of restarting outweighs the cost
 # of finishing a stale one.
@@ -1024,3 +1041,424 @@ jobs:
               ls -la /tmp/moz.log* 2>/dev/null
               cat /tmp/moz.log* 2>/dev/null | grep -iE "juggler|m-remote|command-line" | head -50 || echo "(no juggler entries in moz.log)"
             '
+
+  # ── WebKit — parallel WPE + GTK checkpointed cold build (default off) ─────
+  # WebKit's full WPE+GTK cold build exceeds GHA's 6h job cap. We split into
+  # parallel per-port chains, each producing its own image lineage. Total
+  # wall time ≈ max(WPE chain, GTK chain) + source-prep + finalize, vs
+  # sequential ≈ sum. Sccache is per-port (not shared) so the second port
+  # doesn't benefit from the first — but parallelism more than makes up for
+  # it. PW's bootstrap.diff also patches the two ports' Options*.cmake
+  # independently, so the parallel structure aligns with PW's source layout.
+  #
+  #   build-webkit-source-prep:
+  #     - clones WebKit at PW SHA, applies PW patches, OptionsWPE.cmake
+  #       feature-parity append, strips .git
+  #     - publishes wk-src-sha-<sha>
+  #
+  #   build-webkit-wpe-{1..4} (each FROM previous; wpe-1 FROM source-prep):
+  #     - cmake configure WPE (first stage only; subsequent stages skip)
+  #     - ninja MiniBrowser WPE with hard 4.5h timeout, idempotent + progressive
+  #     - stage + bundle into /work/minibrowser-wpe-dist when ninja completes
+  #
+  #   build-webkit-gtk-{1..4}: same shape, in parallel with the WPE chain.
+  #
+  #   build-webkit-finalize (needs both port chains' final stage + source-prep):
+  #     - FROM-scratch artifact COPYing both ports' dists + pw_run.sh
+  #     - publishes wk-sha-<sha>, runs Tier-1 smoke
+  #
+  # No push/main trigger; explicit dispatch or PR-label only. promote-webkit
+  # gates on finalize success.
+  build-webkit-source-prep:
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_webkit == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-webkit'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      tag: wk-src-sha-${{ github.sha }}
+      pw_version: ${{ steps.pins.outputs.pw_version }}
+      webkit_revision: ${{ steps.pins.outputs.webkit_revision }}
+      webkit_version: ${{ steps.pins.outputs.webkit_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: pins
+        run: |
+          set -a; . playwright/alpine-browsers/versions.env; set +a
+          if [ -n "${PW_VERSION_OVERRIDE:-}" ]; then
+            echo "pin override: PW_VERSION=$PW_VERSION → $PW_VERSION_OVERRIDE"
+            PW_VERSION="$PW_VERSION_OVERRIDE"
+          fi
+          echo "pw_version=$PW_VERSION" >> "$GITHUB_OUTPUT"
+          BROWSERS_JSON=$(curl -fsSL "https://unpkg.com/playwright-core@${PW_VERSION}/browsers.json")
+          REV=$(jq -r '.browsers[] | select(.name=="webkit") | .revision' <<<"$BROWSERS_JSON")
+          VER=$(jq -r '.browsers[] | select(.name=="webkit") | .browserVersion' <<<"$BROWSERS_JSON")
+          echo "webkit_revision=$REV" >> "$GITHUB_OUTPUT"
+          echo "webkit_version=$VER" >> "$GITHUB_OUTPUT"
+          echo "PW v${PW_VERSION} → webkit revision=${REV} browserVersion=${VER}"
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build source-prep image
+        uses: docker/build-push-action@v5
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/webkit/Dockerfile.source-prep
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:wk-src-sha-${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-wk-src
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-wk-src,mode=max
+          secrets: |
+            github-token=${{ secrets.GITHUB_TOKEN }}
+
+  build-webkit-wpe-1:
+    needs: [build-webkit-source-prep]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      tag: wk-wpe-1-sha-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free up runner disk
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/webkit/Dockerfile.port
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:wk-wpe-1-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-source-prep.outputs.tag }}
+            PORT=WPE
+            ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
+
+  build-webkit-wpe-2:
+    needs: [build-webkit-wpe-1]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      tag: wk-wpe-2-sha-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free up runner disk
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/webkit/Dockerfile.port
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:wk-wpe-2-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-wpe-1.outputs.tag }}
+            PORT=WPE
+            ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
+
+  build-webkit-wpe-3:
+    needs: [build-webkit-wpe-2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      tag: wk-wpe-3-sha-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free up runner disk
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/webkit/Dockerfile.port
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:wk-wpe-3-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-wpe-2.outputs.tag }}
+            PORT=WPE
+            ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
+
+  build-webkit-wpe-4:
+    needs: [build-webkit-wpe-3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      tag: wk-wpe-4-sha-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free up runner disk
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/webkit/Dockerfile.port
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:wk-wpe-4-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-wpe-3.outputs.tag }}
+            PORT=WPE
+            ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
+
+  # GTK chain is `if: false` for now. PW only uses the GTK port for headed
+  # mode; `pw_run.sh` dispatches `--headless` → WPE. Our typical CI/Alpine
+  # use case is always headless, so GTK is dead code at runtime — building
+  # it doubles wall time for no immediate benefit. PW's `registry/index.ts`
+  # ldd-validates `minibrowser-gtk/` at install time, so consumer images
+  # need a small post-install patch to bypass that check (tracked
+  # separately). Re-enable: flip these `if: false`s to the dispatch gate
+  # used by build-webkit-source-prep, add `build-webkit-gtk-4` to
+  # build-webkit-finalize's `needs:`, and uncomment the BASE_GTK build-arg.
+  build-webkit-gtk-1:
+    if: false
+    needs: [build-webkit-source-prep]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      tag: wk-gtk-1-sha-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free up runner disk
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/webkit/Dockerfile.port
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:wk-gtk-1-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-source-prep.outputs.tag }}
+            PORT=GTK
+            ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
+
+  build-webkit-gtk-2:
+    if: false   # see build-webkit-gtk-1 comment
+    needs: [build-webkit-gtk-1]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      tag: wk-gtk-2-sha-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free up runner disk
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/webkit/Dockerfile.port
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:wk-gtk-2-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-gtk-1.outputs.tag }}
+            PORT=GTK
+            ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
+
+  build-webkit-gtk-3:
+    if: false   # see build-webkit-gtk-1 comment
+    needs: [build-webkit-gtk-2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      tag: wk-gtk-3-sha-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free up runner disk
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/webkit/Dockerfile.port
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:wk-gtk-3-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-gtk-2.outputs.tag }}
+            PORT=GTK
+            ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
+
+  build-webkit-gtk-4:
+    if: false   # see build-webkit-gtk-1 comment
+    needs: [build-webkit-gtk-3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      tag: wk-gtk-4-sha-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free up runner disk
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/webkit/Dockerfile.port
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:wk-gtk-4-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-gtk-3.outputs.tag }}
+            PORT=GTK
+            ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
+
+  build-webkit-finalize:
+    # While GTK chain is `if: false`, finalize only needs WPE + source-prep.
+    # Re-add build-webkit-gtk-4 here when GTK comes back.
+    needs: [build-webkit-source-prep, build-webkit-wpe-4]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      build_tag: wk-sha-${{ github.sha }}
+      pw_version: ${{ needs.build-webkit-source-prep.outputs.pw_version }}
+      webkit_revision: ${{ needs.build-webkit-source-prep.outputs.webkit_revision }}
+      webkit_version: ${{ needs.build-webkit-source-prep.outputs.webkit_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free up runner disk
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/jclaveau/playwright-alpine-browsers
+          tags: |
+            type=raw,value=wk-sha-${{ github.sha }}
+            type=raw,value=wk-edge,enable=${{ github.event_name != 'pull_request' }}
+      - name: Build final artifact image (compose WPE + GTK)
+        uses: docker/build-push-action@v5
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/webkit/Dockerfile.finalize
+          target: artifact
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BASE_WPE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-wpe-4.outputs.tag }}
+            BASE_SOURCE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-source-prep.outputs.tag }}
+            # When GTK chain re-enables, uncomment:
+            # BASE_GTK=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-gtk-4.outputs.tag }}
+
+      # WPE-only Tier-1 while the GTK chain is `if: false`. When GTK
+      # re-enables, change `for port in wpe;` to `for port in wpe gtk;` and
+      # restore the gtk4.0/at-spi2-core apk packages.
+      - name: Tier-1 smoke (ELF + ldd integrity for MiniBrowser-wpe)
+        run: |
+          set -o pipefail
+          cat > /tmp/Dockerfile.wk-t1 <<EOF
+          FROM alpine:edge
+          RUN apk update && apk add --no-cache \\
+              file binutils ca-certificates ttf-freefont \\
+              libwpe libwpebackend-fdo \\
+              libgcc libstdc++
+          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:wk-sha-${{ github.sha }} /webkit /opt/webkit
+          EOF
+          docker build -t wk-t1:${{ github.sha }} -f /tmp/Dockerfile.wk-t1 /tmp
+          docker run --rm wk-t1:${{ github.sha }} sh -c '
+            set -e
+            echo "===== /opt/webkit layout ====="
+            ls -la /opt/webkit/ /opt/webkit/minibrowser-wpe/bin
+            for port in wpe; do
+              BIN=/opt/webkit/minibrowser-$port/bin/MiniBrowser
+              file "$BIN"
+              file "$BIN" | grep -q "ELF.*executable" \
+                || { echo "FAIL: $BIN is not an ELF executable"; exit 1; }
+              [ -s "$BIN" ] || { echo "FAIL: $BIN is empty"; exit 1; }
+              ldd "$BIN" || true
+              MISSING=$(ldd "$BIN" 2>&1 | grep -c "not found" || true)
+              if [ "$MISSING" -gt 0 ]; then
+                echo "FAIL: $BIN has $MISSING unresolved deps"
+                ldd "$BIN" 2>&1 | grep "not found"
+                exit 1
+              fi
+              echo "OK: $port MiniBrowser is $(stat -c %s "$BIN") bytes, all deps resolved"
+            done
+            echo "Tier-1: MiniBrowser-wpe is intact and self-contained."
+          '
+
+  promote-webkit:
+    # Promote the artifact to wk-${REV} / wk-${VER} / wk-latest on both
+    # registries (GHCR for CI consumption; Docker Hub for external catalog).
+    needs: [build-webkit-finalize]
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_webkit == 'true')
+      || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Promote WebKit → GHCR + Docker Hub
+        env:
+          SRC: ghcr.io/jclaveau/playwright-alpine-browsers:wk-sha-${{ github.sha }}
+          REV: ${{ needs.build-webkit-finalize.outputs.webkit_revision }}
+          VER: ${{ needs.build-webkit-finalize.outputs.webkit_version }}
+        run: |
+          docker buildx imagetools create \
+            -t "ghcr.io/jclaveau/playwright-alpine-browsers:wk-${REV}" \
+            -t "ghcr.io/jclaveau/playwright-alpine-browsers:wk-${VER}" \
+            -t ghcr.io/jclaveau/playwright-alpine-browsers:wk-latest \
+            -t "jclaveau/playwright-alpine-browsers:wk-${REV}" \
+            -t "jclaveau/playwright-alpine-browsers:wk-${VER}" \
+            -t jclaveau/playwright-alpine-browsers:wk-latest \
+            -t "jclaveau/playwright-alpine-browsers:wk-sha-${{ github.sha }}" \
+            "$SRC"

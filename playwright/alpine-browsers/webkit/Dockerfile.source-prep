@@ -1,0 +1,59 @@
+# syntax=docker/dockerfile:1
+#
+# Source-prep stage. Shared base for the WPE and GTK parallel build chains.
+# Produces an image with:
+#   - apk deps installed (cribbed from aports webkit2gtk-6.0 makedepends)
+#   - PW patches fetched at /work/pw-webkit
+#   - WebKit cloned at PW's pinned SHA into /work/webkit-src, PW patches
+#     applied, OptionsWPE.cmake feature-parity additions appended
+#   - .git stripped from webkit-src to save image size
+#
+# Tagged as wk-source-sha-<sha>; both checkpoint-wpe and checkpoint-gtk
+# FROM this image and run cmake configure + ninja for their respective port.
+
+ARG ALPINE_VERSION=edge
+
+FROM alpine:${ALPINE_VERSION} AS webkit-builder
+
+# Build deps (same set as the single-port checkpoint design).
+RUN apk add --no-cache \
+        bash curl git patch patchutils tar xz gzip jq sccache \
+        build-base \
+        clang clang-dev lld llvm-dev compiler-rt \
+        cmake samurai pkgconf perl ruby ruby-getoptlong python3 \
+        gperf bison flex nodejs patchelf binutils unifdef \
+        \
+        icu-dev libxml2-dev libxslt-dev sqlite-dev \
+        libwebp-dev libjpeg-turbo-dev libpng-dev libavif-dev openjpeg-dev libjxl-dev \
+        harfbuzz-dev fontconfig-dev freetype-dev woff2-dev pango-dev \
+        libsoup3-dev libsecret-dev \
+        gstreamer-dev gst-plugins-base-dev gst-plugins-bad-dev \
+        libgcrypt-dev libtasn1-dev gnutls-dev \
+        enchant2-dev hyphen-dev lcms2-dev \
+        mesa-dev libdrm-dev libepoxy-dev libxkbcommon-dev \
+        libxcomposite-dev libxt-dev \
+        libseccomp-dev libmanette-dev \
+        flite-dev geoclue-dev \
+        \
+        libwpe-dev libwpebackend-fdo-dev \
+        bubblewrap xdg-dbus-proxy \
+        \
+        gtk4.0-dev gobject-introspection-dev
+
+WORKDIR /work
+
+COPY versions.env /work/versions.env
+COPY webkit/scripts /work/webkit/scripts
+COPY webkit/cmake-flags.overlay /work/webkit/cmake-flags.overlay
+
+# Fetch PW patches.
+RUN --mount=type=secret,id=github-token,env=GITHUB_TOKEN \
+    set -a && . /work/versions.env && set +a \
+    && bash /work/webkit/scripts/fetch-pw-patches.sh /work/pw-webkit
+
+# Clone WebKit, apply PW patches, OptionsWPE.cmake feature-parity append,
+# strip .git. Output: /work/webkit-src ready for cmake configure.
+RUN set -a && . /work/versions.env && set +a \
+    && bash /work/webkit/scripts/prep-source.sh /work
+
+# No artifact stage — this image IS the source-prep deliverable.
