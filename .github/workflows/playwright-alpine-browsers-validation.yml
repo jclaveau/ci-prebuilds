@@ -146,6 +146,7 @@ jobs:
           mkdir -p /tmp/ff-dist/firefox
           docker cp ext:/work/firefox-dist/. /tmp/ff-dist/firefox/
           docker rm ext
+          # shellcheck disable=SC2012  # debug listing of build artifacts; ls is fine here
           ls /tmp/ff-dist/firefox/ | head -10
 
           cat > /tmp/Dockerfile.pwrunner <<EOF

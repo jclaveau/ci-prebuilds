@@ -68,7 +68,7 @@ jobs:
           start-dockerd
           export DOCKER_HOST=unix:///var/run/dind.sock
           # record the dockerd PID + session so step 2 can check the exact process
-          for c in /proc/[0-9]*/comm; do n=$(cat "$c" 2>/dev/null) || continue; case "$n" in dockerd) basename "$(dirname "$c")" > /tmp/step1-dockerd.pid; awk '{print $6}' /proc/$(cat /tmp/step1-dockerd.pid)/stat > /tmp/step1-dockerd.sess;; esac; done
+          for c in /proc/[0-9]*/comm; do n=$(cat "$c" 2>/dev/null) || continue; case "$n" in dockerd) basename "$(dirname "$c")" > /tmp/step1-dockerd.pid; awk '{print $6}' "/proc/$(cat /tmp/step1-dockerd.pid)/stat" > /tmp/step1-dockerd.sess;; esac; done
           echo "### STEP 1 recorded dockerd pid=$(cat /tmp/step1-dockerd.pid 2>/dev/null) session=$(cat /tmp/step1-dockerd.sess 2>/dev/null)"
           DOCKER_HOST=unix:///var/run/dind.sock bash /tmp/diag.sh
           echo "### END OF STEP 1"
@@ -81,8 +81,8 @@ jobs:
           echo "### START OF STEP 2"
           PID1=$(cat /tmp/step1-dockerd.pid 2>/dev/null)
           echo "recorded step-1 dockerd pid=$PID1 session=$(cat /tmp/step1-dockerd.sess 2>/dev/null)"
-          if [ -n "$PID1" ] && [ -e /proc/$PID1 ]; then
-            echo ">>> VERDICT: dockerd pid=$PID1 STILL EXISTS (state=$(awk '{print $3}' /proc/$PID1/stat 2>/dev/null), ppid=$(awk '{print $4}' /proc/$PID1/stat 2>/dev/null))"
+          if [ -n "$PID1" ] && [ -e "/proc/$PID1" ]; then
+            echo ">>> VERDICT: dockerd pid=$PID1 STILL EXISTS (state=$(awk '{print $3}' "/proc/$PID1/stat" 2>/dev/null), ppid=$(awk '{print $4}' "/proc/$PID1/stat" 2>/dev/null))"
           else
             echo ">>> VERDICT: dockerd pid=$PID1 is GONE across the step boundary"
           fi

@@ -122,8 +122,11 @@ jobs:
         run: |
           # --only-shell installs the slim headless shell (no X11/Mesa/full font set) — matches what
           # OUR *-playwright images bake in, so this is an apples-to-apples comparison.
-          [ "${{ matrix.browsers }}" = "all" ] && B="" || B="chromium"
-          pnpm exec playwright install --with-deps --only-shell $B
+          if [ "${{ matrix.browsers }}" = "all" ]; then
+            pnpm exec playwright install --with-deps --only-shell
+          else
+            pnpm exec playwright install --with-deps --only-shell chromium
+          fi
       - name: Compute install download size
         run: |
           NA=$(awk '/^[ \t]*eth0:/{print $2}' /proc/net/dev)
@@ -134,11 +137,11 @@ jobs:
         working-directory: playwright
         run: |
           if [ "${{ matrix.browsers }}" = "all" ]; then
-            P="--project=chromium --project=firefox --project=webkit"
+            P=(--project=chromium --project=firefox --project=webkit)
           else
-            P="--project=chromium"
+            P=(--project=chromium)
           fi
-          pnpm exec playwright test $P
+          pnpm exec playwright test "${P[@]}"
       - name: Upload install download size
         if: always()
         uses: actions/upload-artifact@v4
@@ -193,14 +196,16 @@ jobs:
         run: |
           # The official MS image runs as root, but GHA forces HOME=/github/home (owned by pwuser);
           # Firefox/WebKit refuse to launch unless $HOME is owned by the current user, so point root at /root.
-          [[ "${{ matrix.scenario }}" == official* ]] && export HOME=/root
+          SCENARIO="${{ matrix.scenario }}"
+          BROWSERS="${{ matrix.browsers }}"
+          [[ "$SCENARIO" == official* ]] && export HOME=/root
           # Alpine's config only defines the chromium project, so never ask it for firefox/webkit.
-          if [[ "${{ matrix.scenario }}" == alpine-* ]] || [ "${{ matrix.browsers }}" != "all" ]; then
-            P="--project=chromium"
+          if [[ "$SCENARIO" == alpine-* ]] || [ "$BROWSERS" != "all" ]; then
+            P=(--project=chromium)
           else
-            P="--project=chromium --project=firefox --project=webkit"
+            P=(--project=chromium --project=firefox --project=webkit)
           fi
-          pnpm exec playwright test $P
+          pnpm exec playwright test "${P[@]}"
       - name: Upload install download size
         if: always()
         uses: actions/upload-artifact@v4
