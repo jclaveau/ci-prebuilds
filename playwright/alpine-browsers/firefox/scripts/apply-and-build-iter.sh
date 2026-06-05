@@ -211,5 +211,14 @@ ls -la "$DIST/" | head -20
 echo "===== Staging dist to /work/firefox-dist ====="
 rm -rf /work/firefox-dist
 mkdir -p /work/firefox-dist
-cp -a "$DIST"/. /work/firefox-dist/
+# Mozilla's obj/dist/bin/ is a tree of SYMLINKS pointing back into obj/...
+# cp -aL dereferences so the staged tree survives even when the underlying
+# obj/ tree changes between iterations. Matches apply-and-build.sh.
+cp -aL "$DIST"/. /work/firefox-dist/ 2>/dev/null || cp -a "$DIST"/. /work/firefox-dist/
 echo "Staged: $(du -sh /work/firefox-dist | cut -f1)"
+
+# 7. Self-contained-bundle step (ldd-walk + RPATH=$ORIGIN + ICU data). Shared
+# with apply-and-build.sh so the iter path produces a correctly-bundled
+# artifact, not one that relies on the consumer base shipping matching
+# ICU/NSS/etc. See bundle-dist.sh for rationale.
+bash "$WORK/firefox/scripts/bundle-dist.sh" /work/firefox-dist
