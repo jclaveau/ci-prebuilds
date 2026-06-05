@@ -408,21 +408,24 @@ jobs:
             node library-smoke.cjs
 
   test-firefox-library-upstream:
-    # Phase B (opt-in, ~15-25min) — clone microsoft/playwright at the matching
+    # Phase B (DISABLED, see #60) — clone microsoft/playwright at the matching
     # PW_VERSION tag, set FFPATH to our artifact, run a curated subset of
-    # tests/library/. Authoritative signal: same harness PW maintainers use.
-    # smoke-firefox-library covers Juggler RPC surfaces with our own assertions;
-    # this layer adds PW's own regression suite as a second opinion.
+    # tests/library/. Intent: PW maintainers' own harness as a second opinion
+    # next to our smoke-firefox-library.
     #
-    # Gated tightly because of cost — only runs when:
-    #   - PR carries the `test-firefox-upstream` label, OR
-    #   - workflow_dispatch toggles test_firefox_library_upstream=true
-    # NOT on push to main — Phase A's smoke is the gate that protects main;
-    # this is for deeper investigation when a build is suspicious.
+    # Why disabled: PW's runner hangs at Juggler handshake on our musl FF —
+    # every test launches FF, sits idle 3min (PW's default testTimeout),
+    # SIGKILL, repeat. No reporter output ever emitted. smoke-firefox-library
+    # passes in 22s with the SAME binary, so the divergence is in PW's
+    # fixture layer (tests/library/playwright.config.ts), not the binary.
+    # See #60 for evidence + investigation pointers.
+    #
+    # Re-enable: drop `if: false`, restore the label/workflow_dispatch gate:
+    #   if: |
+    #     (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'test-firefox-upstream'))
+    #     || (github.event_name == 'workflow_dispatch' && inputs.test_firefox_library_upstream == 'true')
     needs: build-firefox
-    if: |
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'test-firefox-upstream'))
-      || (github.event_name == 'workflow_dispatch' && inputs.test_firefox_library_upstream == 'true')
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
