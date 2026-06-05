@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     container: jclaveau/ubuntu-dood-playwright-gyp:latest
     steps:
-      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@main  # DOCKER_MODE/HOST_ADDRESS defaults + start-dockerd under dind
+      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0  # DOCKER_MODE/HOST_ADDRESS defaults + start-dockerd under dind
       - uses: actions/checkout@v4
       - run: pnpm install --frozen-lockfile
       - run: docker compose up -d --wait  # no docker mcr.microsoft.com/playwright
@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     container: jclaveau/ubuntu-dood-pnpm-gyp:latest
     steps:
-      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@main
+      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0
       - uses: actions/checkout@v4
       - run: pnpm install --frozen-lockfile
       - run: docker compose up -d --wait
@@ -132,7 +132,7 @@ jobs:
       image: ${{ matrix.image }}
       options: ${{ matrix.options }}
     steps:
-      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@main  # DOCKER_MODE/HOST_ADDRESS defaults + start-dockerd under dind
+      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0  # DOCKER_MODE/HOST_ADDRESS defaults + start-dockerd under dind
       - uses: actions/checkout@v4
 
       - if: env.DOCKER_MODE == 'vm'
@@ -152,7 +152,11 @@ jobs:
       - run: pnpm exec playwright test
 ```
 
-See [the action](.github/actions/prepare/action.yml). Pin to a commit SHA (or future `@v1` tag) for production use; `@main` is shown here for readability.
+See [the action](.github/actions/prepare/action.yml). Versioning:
+
+- `@v0` — moving tag, advanced manually on compatible action updates
+- `@v0.1.0` (immutable) or a commit SHA — full reproducibility
+- `@v1` will exist once the repo reaches v1
 
 
 ## Roadmap
