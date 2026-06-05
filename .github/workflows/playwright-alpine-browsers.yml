@@ -97,6 +97,12 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
+      test_firefox_library_upstream:
+        description: 'Run microsoft/playwright tests/library/ (curated subset, ~15-25min) against the just-built FF artifact'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
       chromium_enable_debug:
         description: 'PW_CHROMIUM_ENABLE_DEBUG: is_debug=true + dcheck_always_on=true (validation track)'
         required: false
@@ -403,6 +409,67 @@ jobs:
             -e DEBUG=pw:browser \
             candidate-runner-library:${{ github.sha }} \
             node library-smoke.cjs 2>&1 | tail -200
+
+  test-firefox-library-upstream:
+    # Phase B (opt-in, ~15-25min) — clone microsoft/playwright at the matching
+    # PW_VERSION tag, set FFPATH to our artifact, run a curated subset of
+    # tests/library/. Authoritative signal: same harness PW maintainers use.
+    # smoke-firefox-library covers Juggler RPC surfaces with our own assertions;
+    # this layer adds PW's own regression suite as a second opinion.
+    #
+    # Gated tightly because of cost — only runs when:
+    #   - PR carries the `test-firefox-upstream` label, OR
+    #   - workflow_dispatch toggles test_firefox_library_upstream=true
+    # NOT on push to main — Phase A's smoke is the gate that protects main;
+    # this is for deeper investigation when a build is suspicious.
+    needs: build-firefox
+    if: |
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'test-firefox-upstream'))
+      || (github.event_name == 'workflow_dispatch' && inputs.test_firefox_library_upstream == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build a candidate Alpine runner consuming the artifact
+        run: |
+          # Runner needs: nodejs+npm for PW dev install, git for the clone,
+          # build-base + python3 for any node-gyp deps that compile native,
+          # plus the same FF runtime apk list as smoke-firefox.
+          cat > /tmp/Dockerfile.runner <<EOF
+          FROM alpine:edge
+          RUN apk add --no-cache \\
+              nodejs npm bash git build-base python3 \\
+              alsa-lib dbus-libs fontconfig freetype glib gtk+3.0 harfbuzz \\
+              icu-libs libevent libffi libjpeg-turbo libnotify libogg \\
+              libtheora libvorbis libvpx libwebp libwebp-tools libxcomposite \\
+              libxt mesa-gl mesa-dri-gallium nspr nss pipewire-libs libpulse \\
+              ttf-freefont
+          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:sha-${{ github.sha }} /firefox /opt/playwright/firefox
+          ENV LD_LIBRARY_PATH=/opt/playwright/firefox
+          EOF
+          docker build -t ff-upstream-runner:${{ github.sha }} -f /tmp/Dockerfile.runner /tmp
+
+      - name: Run upstream library subset (curated, ~15-25min)
+        run: |
+          set -o pipefail
+          # --security-opt seccomp=unconfined: FF renderer sandbox needs
+          # clone(CLONE_NEWUSER), same as smoke-firefox.
+          docker run --rm \
+            --security-opt seccomp=unconfined \
+            -v "$PWD/playwright/alpine-browsers/firefox/library-upstream:/runner" \
+            -w /runner \
+            -e PW_VERSION=${{ needs.build-firefox.outputs.pw_version }} \
+            -e FFPATH=/opt/playwright/firefox/firefox \
+            -e DEBUG=pw:browser \
+            ff-upstream-runner:${{ github.sha }} \
+            sh /runner/run.sh 2>&1 | tail -400
 
   diagnostic-firefox:
     # Tier-3 diagnostic: dump symbols + manifests + JS Juggler load trace from
