@@ -346,6 +346,64 @@ jobs:
             candidate-runner:${{ github.sha }} \
             node launch.cjs 2>&1 | tail -200
 
+  smoke-firefox-library:
+    # Tier-2.5 — exercises Juggler RPCs that surface PW library features
+    # (multi-context isolation, frames, evaluate boundary, dialogs, response
+    # observation, ...). smoke-firefox covers the launch path; this catches
+    # protocol-level regressions in the library surface above it.
+    #
+    # Reuses the same candidate-runner image as smoke-firefox would build,
+    # so the only added wall-clock is the script itself (~30-45s for one
+    # browser launch + 8 context-scoped sections).
+    needs: build-firefox
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build a candidate Alpine runner consuming the artifact
+        run: |
+          cat > /tmp/Dockerfile.runner <<EOF
+          FROM alpine:edge
+          RUN apk add --no-cache \\
+              nodejs npm bash \\
+              alsa-lib dbus-libs fontconfig freetype glib gtk+3.0 harfbuzz \\
+              icu-libs libevent libffi libjpeg-turbo libnotify libogg \\
+              libtheora libvorbis libvpx libwebp libwebp-tools libxcomposite \\
+              libxt mesa-gl mesa-dri-gallium nspr nss pipewire-libs libpulse \\
+              ttf-freefont
+          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:sha-${{ github.sha }} /firefox /opt/playwright/firefox
+          ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+          ENV PLAYWRIGHT_FIREFOX_EXECUTABLE_PATH=/opt/playwright/firefox/firefox
+          ENV LD_LIBRARY_PATH=/opt/playwright/firefox
+          WORKDIR /smoke
+          RUN npm install -g playwright@${{ needs.build-firefox.outputs.pw_version }}
+          EOF
+          docker build -t candidate-runner-library:${{ github.sha }} -f /tmp/Dockerfile.runner /tmp
+
+      - name: Run library-surface smoke (8 Juggler RPCs)
+        run: |
+          # --security-opt seccomp=unconfined: same reason as smoke-firefox —
+          # Docker's default seccomp blocks clone(CLONE_NEWUSER) which FF
+          # needs for its renderer sandbox.
+          # set -o pipefail so a non-zero exit from node propagates through
+          # the tail (memory: pipefail with docker run pipes).
+          set -o pipefail
+          docker run --rm \
+            --security-opt seccomp=unconfined \
+            -v "$PWD/playwright/alpine-browsers/firefox/library-smoke:/smoke" \
+            -w /smoke \
+            -e NODE_PATH=/usr/local/lib/node_modules \
+            -e DEBUG=pw:browser \
+            candidate-runner-library:${{ github.sha }} \
+            node library-smoke.cjs 2>&1 | tail -200
+
   diagnostic-firefox:
     # Tier-3 diagnostic: dump symbols + manifests + JS Juggler load trace from
     # the just-built artifact. Gated on workflow_dispatch with diagnostic=true
@@ -435,7 +493,7 @@ jobs:
   promote-firefox:
     # Only on main pushes: copy the GHCR sha tag to Docker Hub under
     # version-pinned + moving tags. Imagetools server-side copy — no rebuild.
-    needs: [build-firefox, smoke-firefox]
+    needs: [build-firefox, smoke-firefox, smoke-firefox-library]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
