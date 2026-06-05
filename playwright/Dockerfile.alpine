@@ -4,18 +4,13 @@
 # expansion in `COPY --from=` URLs, so we alias the producer-image refs as
 # named build stages and COPY --from that name later.
 ARG CHS_REV=1223
-# Pinned to the producer sha-tag temporarily (PR #44 not yet promoted to
-# ff-${FF_REV}). Flip to ghcr.io/jclaveau/playwright-alpine-browsers:ff-${FF_REV}
-# once PR #44 lands and the promote job tags the canonical ff-1522 with the
-# fixed artifact.
 ARG FF_REV=1522
-ARG FF_TAG=sha-03f812dcf9d26729bf7abafd35da78a3a15bcc40
 ARG BASE_IMAGE=jclaveau/alpine-dood-pnpm:latest
 
 # Producer-image stage aliases — Renovate's custom manager bumps the tag
 # revision in lockstep with PLAYWRIGHT_VERSION below.
 FROM ghcr.io/jclaveau/playwright-alpine-browsers:chs-${CHS_REV} AS chs-source
-FROM ghcr.io/jclaveau/playwright-alpine-browsers:${FF_TAG} AS ff-source
+FROM ghcr.io/jclaveau/playwright-alpine-browsers:ff-${FF_REV} AS ff-source
 
 FROM ${BASE_IMAGE}
 
