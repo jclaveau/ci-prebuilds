@@ -350,7 +350,7 @@ jobs:
             -e NODE_PATH=/usr/local/lib/node_modules \
             -e DEBUG=pw:browser \
             candidate-runner:${{ github.sha }} \
-            node launch.cjs 2>&1 | tail -200
+            node launch.cjs
 
   smoke-firefox-library:
     # Tier-2.5 — exercises Juggler RPCs that surface PW library features
@@ -398,9 +398,6 @@ jobs:
           # --security-opt seccomp=unconfined: same reason as smoke-firefox —
           # Docker's default seccomp blocks clone(CLONE_NEWUSER) which FF
           # needs for its renderer sandbox.
-          # set -o pipefail so a non-zero exit from node propagates through
-          # the tail (memory: pipefail with docker run pipes).
-          set -o pipefail
           docker run --rm \
             --security-opt seccomp=unconfined \
             -v "$PWD/playwright/alpine-browsers/firefox/library-smoke:/smoke" \
@@ -408,7 +405,7 @@ jobs:
             -e NODE_PATH=/usr/local/lib/node_modules \
             -e DEBUG=pw:browser \
             candidate-runner-library:${{ github.sha }} \
-            node library-smoke.cjs 2>&1 | tail -200
+            node library-smoke.cjs
 
   test-firefox-library-upstream:
     # Phase B (opt-in, ~15-25min) — clone microsoft/playwright at the matching
@@ -458,7 +455,6 @@ jobs:
 
       - name: Run upstream library subset (curated, ~15-25min)
         run: |
-          set -o pipefail
           # --security-opt seccomp=unconfined: FF renderer sandbox needs
           # clone(CLONE_NEWUSER), same as smoke-firefox.
           docker run --rm \
@@ -469,7 +465,7 @@ jobs:
             -e FFPATH=/opt/playwright/firefox/firefox \
             -e DEBUG=pw:browser \
             ff-upstream-runner:${{ github.sha }} \
-            sh /runner/run.sh 2>&1 | tail -400
+            sh /runner/run.sh
 
   diagnostic-firefox:
     # Tier-3 diagnostic: dump symbols + manifests + JS Juggler load trace from
@@ -886,11 +882,6 @@ jobs:
 
       - name: Run Tier-2 smoke (PW SDK auto-discovery)
         run: |
-          # `set -o pipefail` so the docker exit code propagates through tail.
-          # Without it, the earlier iteration showed "success" while the
-          # binary was actually failing relocation — the tail return-0
-          # masked node's exit(1).
-          set -o pipefail
           docker run --rm \
             --security-opt seccomp=unconfined \
             -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/smoke:/smoke" \
@@ -898,7 +889,7 @@ jobs:
             -e NODE_PATH=/usr/local/lib/node_modules \
             -e DEBUG=pw:browser \
             chs-runner:${{ github.sha }} \
-            node launch.cjs 2>&1 | tail -200
+            node launch.cjs
 
   # ── Firefox — glibc debug build (DISABLED) ─────────────────────────────────
   # Diagnostic: builds the SAME PW-patched Firefox on Ubuntu/glibc (not musl)
