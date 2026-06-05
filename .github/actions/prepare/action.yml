@@ -1,0 +1,25 @@
+name: Prepare container/vm mode
+description: >-
+  Universal pre-flight for any GHA job using these images (or none): defaults
+  DOCKER_MODE and HOST_ADDRESS for the no-image / vm case, and boots the inner
+  Docker daemon when running under a dind image. Image-side env vars
+  (DOCKER_MODE=dood/dind, HOST_ADDRESS=host.docker.internal/127.0.0.1) take
+  precedence — this action only fills the gap when the consumer runs on the
+  host VM with no container.
+
+runs:
+  using: composite
+  steps:
+    - name: "'vm' as default DOCKER_MODE"
+      shell: bash
+      run: echo "DOCKER_MODE=${DOCKER_MODE:-vm}" >> "$GITHUB_ENV"
+
+    - name: Boot inner Docker daemon (dind)
+      if: ${{ env.DOCKER_MODE == 'dind' }}
+      shell: bash
+      run: start-dockerd
+
+    - name: Default HOST_ADDRESS
+      shell: bash
+      # 127.0.0.1 not localhost — forcing ipv4 avoids connection refused errors
+      run: echo "HOST_ADDRESS=${HOST_ADDRESS:-127.0.0.1}" >> "$GITHUB_ENV"

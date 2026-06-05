@@ -584,13 +584,13 @@ jobs:
         # rate limit; DH tags are the external catalog entry.
         run: |
           docker buildx imagetools create \
-            -t ghcr.io/jclaveau/playwright-alpine-browsers:ff-${REV} \
-            -t ghcr.io/jclaveau/playwright-alpine-browsers:ff-${VER} \
+            -t "ghcr.io/jclaveau/playwright-alpine-browsers:ff-${REV}" \
+            -t "ghcr.io/jclaveau/playwright-alpine-browsers:ff-${VER}" \
             -t ghcr.io/jclaveau/playwright-alpine-browsers:ff-latest \
-            -t jclaveau/playwright-alpine-browsers:ff-${REV} \
-            -t jclaveau/playwright-alpine-browsers:ff-${VER} \
+            -t "jclaveau/playwright-alpine-browsers:ff-${REV}" \
+            -t "jclaveau/playwright-alpine-browsers:ff-${VER}" \
             -t jclaveau/playwright-alpine-browsers:ff-latest \
-            -t jclaveau/playwright-alpine-browsers:sha-${{ github.sha }} \
+            -t "jclaveau/playwright-alpine-browsers:sha-${{ github.sha }}" \
             "$SRC"
 
   promote-chromium-headless-shell:
@@ -625,13 +625,13 @@ jobs:
           VER: ${{ needs.build-chromium-headless-shell.outputs.chromium_version }}
         run: |
           docker buildx imagetools create \
-            -t ghcr.io/jclaveau/playwright-alpine-browsers:chs-${REV} \
-            -t ghcr.io/jclaveau/playwright-alpine-browsers:chs-${VER} \
+            -t "ghcr.io/jclaveau/playwright-alpine-browsers:chs-${REV}" \
+            -t "ghcr.io/jclaveau/playwright-alpine-browsers:chs-${VER}" \
             -t ghcr.io/jclaveau/playwright-alpine-browsers:chs-latest \
-            -t jclaveau/playwright-alpine-browsers:chs-${REV} \
-            -t jclaveau/playwright-alpine-browsers:chs-${VER} \
+            -t "jclaveau/playwright-alpine-browsers:chs-${REV}" \
+            -t "jclaveau/playwright-alpine-browsers:chs-${VER}" \
             -t jclaveau/playwright-alpine-browsers:chs-latest \
-            -t jclaveau/playwright-alpine-browsers:chs-sha-${{ github.sha }} \
+            -t "jclaveau/playwright-alpine-browsers:chs-sha-${{ github.sha }}" \
             "$SRC"
 
   # ── Chromium-headless-shell — apk fast path ────────────────────────────────

@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     container: jclaveau/ubuntu-dood-playwright-gyp:latest
     steps:
+      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@main  # DOCKER_MODE/HOST_ADDRESS defaults + start-dockerd under dind
       - uses: actions/checkout@v4
       - run: pnpm install --frozen-lockfile
       - run: docker compose up -d --wait  # no docker mcr.microsoft.com/playwright
@@ -32,6 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     container: jclaveau/ubuntu-dood-pnpm-gyp:latest
     steps:
+      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@main
       - uses: actions/checkout@v4
       - run: pnpm install --frozen-lockfile
       - run: docker compose up -d --wait
@@ -104,6 +106,53 @@ current chain (Ubuntu 24.04 / Node 22.12 / pnpm 9.15 / Playwright 1.50):
 ## Gains
 
 See [The last benchmarks](https://github.com/jclaveau/ci-prebuilds/actions/workflows/benchmark-playwright.yml).
+
+
+## Full control usage
+
+```yaml
+jobs:
+  e2e-front:
+    name: ${{ matrix.mode }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: # Switch between ci environments to debug or save time
+          - mode: dood
+            image: jclaveau/ubuntu-dood-playwright-gyp:latest
+            options: --volume /var/run/docker.sock:/var/run/docker.sock
+          # - mode: dind
+          #   image: jclaveau/ubuntu-dind-playwright-gyp:latest
+          #   options: --privileged --env DOCKER_HOST=unix:///var/run/dind.sock
+          # - mode: vm
+          #   image: ""    # empty image → run on the host VM
+          #   options: ""
+    container:
+      image: ${{ matrix.image }}
+      options: ${{ matrix.options }}
+    steps:
+      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@main  # DOCKER_MODE/HOST_ADDRESS defaults + start-dockerd under dind
+      - uses: actions/checkout@v4
+
+      - if: env.DOCKER_MODE == 'vm'
+        uses: actions/setup-node@v4
+      - if: env.DOCKER_MODE == 'vm'
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - run: pnpm install --frozen-lockfile
+      - run: docker compose up -d --wait
+
+      - if: env.DOCKER_MODE == 'vm'
+        name: Install Playwright browsers (vm)
+        run: pnpm exec playwright install --with-deps
+
+      - run: pnpm exec playwright test
+```
+
+See [the action](.github/actions/prepare/action.yml). Pin to a commit SHA (or future `@v1` tag) for production use; `@main` is shown here for readability.
 
 
 ## Roadmap

@@ -1,0 +1,25 @@
+# Smoke workflow for the `prepare` composite action against a dind image.
+# Runs under `act` from test-prepare-act in test-and-publish.yml; the image is
+# injected via `act --var RUNNER_IMAGE=...`.
+#
+# What this proves: the composite preserves image-supplied DOCKER_MODE=dind
+# and HOST_ADDRESS=127.0.0.1 AND fires the conditional `start-dockerd` step
+# (verified by `docker info` reaching the inner daemon).
+name: act smoke prepare (dind)
+on: [push]
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ vars.RUNNER_IMAGE }}
+      # dind: same env as smoke-dind.yml so docker clients reach the inner daemon.
+      options: --privileged --env DOCKER_HOST=unix:///var/run/dind.sock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/prepare
+      - name: DOCKER_MODE preserved from image
+        run: test "$DOCKER_MODE" = "dind"
+      - name: HOST_ADDRESS preserved from image
+        run: test "$HOST_ADDRESS" = "127.0.0.1"
+      - name: inner daemon reachable (proves start-dockerd ran)
+        run: docker info

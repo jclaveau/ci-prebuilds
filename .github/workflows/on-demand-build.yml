@@ -362,6 +362,7 @@ jobs:
             {
               echo ':white_check_mark: Build complete. Published:'
               echo
+              # shellcheck disable=SC2016  # backticks are literal markdown code-formatting, not command substitution
               echo "$TAGS" | sed 's/^/- `/; s/$/`/'
             } >> /tmp/comment.md
           else
