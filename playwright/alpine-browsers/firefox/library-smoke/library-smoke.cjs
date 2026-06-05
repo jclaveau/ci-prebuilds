@@ -58,7 +58,10 @@ const section = async (name, fn) => {
     }
     res.setHeader('content-type', 'text/html');
     res.end(`<h1 id=h>${req.url}</h1>`);
-  }).listen(0, '127.0.0.1');
+  });
+  // listen() is async — server.address() returns null until the 'listening'
+  // event fires. Wrap in a promise so the port is bound before we read it.
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port;
   const base = `http://127.0.0.1:${port}`;
 
