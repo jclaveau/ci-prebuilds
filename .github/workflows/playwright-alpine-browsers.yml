@@ -97,6 +97,12 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
+      test_firefox_library_upstream:
+        description: 'Run microsoft/playwright tests/library/ (curated subset, ~15-25min) against the just-built FF artifact'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
       chromium_enable_debug:
         description: 'PW_CHROMIUM_ENABLE_DEBUG: is_debug=true + dcheck_always_on=true (validation track)'
         required: false
@@ -344,7 +350,7 @@ jobs:
             -e NODE_PATH=/usr/local/lib/node_modules \
             -e DEBUG=pw:browser \
             candidate-runner:${{ github.sha }} \
-            node launch.cjs 2>&1 | tail -200
+            node launch.cjs
 
   smoke-firefox-library:
     # Tier-2.5 — exercises Juggler RPCs that surface PW library features
@@ -392,9 +398,6 @@ jobs:
           # --security-opt seccomp=unconfined: same reason as smoke-firefox —
           # Docker's default seccomp blocks clone(CLONE_NEWUSER) which FF
           # needs for its renderer sandbox.
-          # set -o pipefail so a non-zero exit from node propagates through
-          # the tail (memory: pipefail with docker run pipes).
-          set -o pipefail
           docker run --rm \
             --security-opt seccomp=unconfined \
             -v "$PWD/playwright/alpine-browsers/firefox/library-smoke:/smoke" \
@@ -402,7 +405,70 @@ jobs:
             -e NODE_PATH=/usr/local/lib/node_modules \
             -e DEBUG=pw:browser \
             candidate-runner-library:${{ github.sha }} \
-            node library-smoke.cjs 2>&1 | tail -200
+            node library-smoke.cjs
+
+  test-firefox-library-upstream:
+    # Phase B (DISABLED, see #60) — clone microsoft/playwright at the matching
+    # PW_VERSION tag, set FFPATH to our artifact, run a curated subset of
+    # tests/library/. Intent: PW maintainers' own harness as a second opinion
+    # next to our smoke-firefox-library.
+    #
+    # Why disabled: PW's runner hangs at Juggler handshake on our musl FF —
+    # every test launches FF, sits idle 3min (PW's default testTimeout),
+    # SIGKILL, repeat. No reporter output ever emitted. smoke-firefox-library
+    # passes in 22s with the SAME binary, so the divergence is in PW's
+    # fixture layer (tests/library/playwright.config.ts), not the binary.
+    # See #60 for evidence + investigation pointers.
+    #
+    # Re-enable: drop `if: false`, restore the label/workflow_dispatch gate:
+    #   if: |
+    #     (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'test-firefox-upstream'))
+    #     || (github.event_name == 'workflow_dispatch' && inputs.test_firefox_library_upstream == 'true')
+    needs: build-firefox
+    if: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build a candidate Alpine runner consuming the artifact
+        run: |
+          # Runner needs: nodejs+npm for PW dev install, git for the clone,
+          # build-base + python3 for any node-gyp deps that compile native,
+          # plus the same FF runtime apk list as smoke-firefox.
+          cat > /tmp/Dockerfile.runner <<EOF
+          FROM alpine:edge
+          RUN apk add --no-cache \\
+              nodejs npm bash git build-base python3 \\
+              alsa-lib dbus-libs fontconfig freetype glib gtk+3.0 harfbuzz \\
+              icu-libs libevent libffi libjpeg-turbo libnotify libogg \\
+              libtheora libvorbis libvpx libwebp libwebp-tools libxcomposite \\
+              libxt mesa-gl mesa-dri-gallium nspr nss pipewire-libs libpulse \\
+              ttf-freefont
+          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:sha-${{ github.sha }} /firefox /opt/playwright/firefox
+          ENV LD_LIBRARY_PATH=/opt/playwright/firefox
+          EOF
+          docker build -t ff-upstream-runner:${{ github.sha }} -f /tmp/Dockerfile.runner /tmp
+
+      - name: Run upstream library subset (curated, ~15-25min)
+        run: |
+          # --security-opt seccomp=unconfined: FF renderer sandbox needs
+          # clone(CLONE_NEWUSER), same as smoke-firefox.
+          docker run --rm \
+            --security-opt seccomp=unconfined \
+            -v "$PWD/playwright/alpine-browsers/firefox/library-upstream:/runner" \
+            -w /runner \
+            -e PW_VERSION=${{ needs.build-firefox.outputs.pw_version }} \
+            -e FFPATH=/opt/playwright/firefox/firefox \
+            -e DEBUG=pw:browser \
+            ff-upstream-runner:${{ github.sha }} \
+            sh /runner/run.sh
 
   diagnostic-firefox:
     # Tier-3 diagnostic: dump symbols + manifests + JS Juggler load trace from
@@ -819,11 +885,6 @@ jobs:
 
       - name: Run Tier-2 smoke (PW SDK auto-discovery)
         run: |
-          # `set -o pipefail` so the docker exit code propagates through tail.
-          # Without it, the earlier iteration showed "success" while the
-          # binary was actually failing relocation — the tail return-0
-          # masked node's exit(1).
-          set -o pipefail
           docker run --rm \
             --security-opt seccomp=unconfined \
             -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/smoke:/smoke" \
@@ -831,7 +892,7 @@ jobs:
             -e NODE_PATH=/usr/local/lib/node_modules \
             -e DEBUG=pw:browser \
             chs-runner:${{ github.sha }} \
-            node launch.cjs 2>&1 | tail -200
+            node launch.cjs
 
   # ── Firefox — glibc debug build (DISABLED) ─────────────────────────────────
   # Diagnostic: builds the SAME PW-patched Firefox on Ubuntu/glibc (not musl)
