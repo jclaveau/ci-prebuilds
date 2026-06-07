@@ -48,28 +48,25 @@ if [[ -d "$PW/embedder" ]] && [[ -n "$(ls -A "$PW/embedder" 2>/dev/null)" ]]; th
   cp -aR "$PW/embedder"/. .
 fi
 
-# PW's bootstrap.diff patches Source/cmake/OptionsGTK.cmake to enable several
-# features (DEVICE_ORIENTATION, APPLICATION_MANIFEST, CURSOR_VISIBILITY,
-# GAMEPAD, POINTER_LOCK, SPEECH_SYNTHESIS) but doesn't touch OptionsWPE.cmake.
-# Their source-level patches (e.g. WebPage.cpp adding setOverrideOrientation)
-# reference APIs gated by those flags, so the WPE port fails to compile
-# without these defaults. WEBKIT_OPTION_DEFAULT_PORT_VALUE PRIVATE values
-# aren't user-toggleable from the cmake CLI, so we patch the file directly.
-#
+# PW's bootstrap.diff flips ENABLE_ORIENTATION_EVENTS 0→1 in PlatformEnable.h,
+# but ENABLE_ORIENTATION_EVENTS is a WEBKIT_OPTION_DEFINE'd cmake option, so
+# the generated cmakeconfig.h emits `#define ENABLE_ORIENTATION_EVENTS 0`
+# first — PlatformEnable.h's `#if !defined` guard then skips its own #define.
+# PW's source patch adds an *unguarded* call to Page::setOverrideOrientation
+# in WebPage.cpp's constructor and the method body in WebCore::Page is
+# gated by ENABLE(ORIENTATION_EVENTS), so the WPE port fails to compile.
+# Other port defaults (DEVICE_ORIENTATION, GAMEPAD, POINTER_LOCK, ...) are
+# already set by PW's OptionsWPE.cmake patch in v1.60.0+; only the
+# ORIENTATION_EVENTS port default is missing.
 # WEBKIT_OPTION_DEFAULT_PORT_VALUE asserts (`_ENSURE_OPTION_MODIFICATION_IS_
 # ALLOWED`) that it's called between WEBKIT_OPTION_BEGIN() and
 # WEBKIT_OPTION_END() — so we INSERT before the END line, not append at EOF.
 if ! grep -q "Playwright WPE port parity" Source/cmake/OptionsWPE.cmake; then
-  echo "  insert PW-GTK feature parity defaults into OptionsWPE.cmake"
+  echo "  insert ENABLE_ORIENTATION_EVENTS port default into OptionsWPE.cmake"
   awk '
     /WEBKIT_OPTION_END\(\)/ && !done {
       print "# Playwright WPE port parity (added by prep-source.sh)."
-      print "WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_APPLICATION_MANIFEST PRIVATE ON)"
-      print "WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_CURSOR_VISIBILITY PRIVATE ON)"
-      print "WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_DEVICE_ORIENTATION PRIVATE ON)"
-      print "WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_GAMEPAD PRIVATE ON)"
-      print "WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_POINTER_LOCK PRIVATE ON)"
-      print "WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_SPEECH_SYNTHESIS PRIVATE ON)"
+      print "WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_ORIENTATION_EVENTS PRIVATE ON)"
       done = 1
     }
     { print }
