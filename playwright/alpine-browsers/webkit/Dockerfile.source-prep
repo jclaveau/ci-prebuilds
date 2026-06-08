@@ -38,7 +38,9 @@ RUN apk add --no-cache \
         libwpe-dev libwpebackend-fdo-dev \
         bubblewrap xdg-dbus-proxy \
         \
-        gtk4.0-dev gobject-introspection-dev
+        gtk4.0-dev gobject-introspection-dev \
+        \
+        gettext-dev
 
 WORKDIR /work
 
