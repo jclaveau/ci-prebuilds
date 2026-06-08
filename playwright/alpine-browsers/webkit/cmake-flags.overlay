@@ -73,4 +73,11 @@ CMAKE_SHARED_FLAGS=(
   # No layout tests, no API gtests in the shipped artifact.
   -DENABLE_API_TESTS=OFF
   -DENABLE_WEBDRIVER=OFF
+
+  # musl: gettext wrappers (libintl_bindtextdomain, libintl_bind_textdomain_codeset)
+  # live in libintl.so (gettext-dev pkg), NOT libc — unlike glibc where they're
+  # built into libc. WebKit cmake doesn't auto-link Intl on libWPEWebKit; force
+  # -lintl into every C/C++ link via CMAKE_*_STANDARD_LIBRARIES (cmake ≥3.13).
+  -DCMAKE_C_STANDARD_LIBRARIES=-lintl
+  -DCMAKE_CXX_STANDARD_LIBRARIES=-lintl
 )
