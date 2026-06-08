@@ -45,8 +45,11 @@ RUN apk add --no-cache \
 WORKDIR /work
 
 COPY versions.env /work/versions.env
-COPY webkit/scripts /work/webkit/scripts
-COPY webkit/cmake-flags.overlay /work/webkit/cmake-flags.overlay
+# Narrow COPY surface — only the two scripts source-prep actually runs.
+# Editing apply-and-build-port.sh, bundle-dist.sh, or cmake-flags.overlay
+# MUST NOT invalidate this image's layer cache (those re-COPY in Dockerfile.port).
+COPY webkit/scripts/prep-source.sh /work/webkit/scripts/prep-source.sh
+COPY webkit/scripts/fetch-pw-patches.sh /work/webkit/scripts/fetch-pw-patches.sh
 
 # Fetch PW patches.
 RUN --mount=type=secret,id=github-token,env=GITHUB_TOKEN \
