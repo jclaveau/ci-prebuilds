@@ -11,14 +11,14 @@
 #     pw_run.sh          (from source-prep, copied verbatim from PW)
 
 ARG BASE_WPE
+ARG BASE_GTK
 ARG BASE_SOURCE
-# When the GTK chain re-enables (see the workflow's build-webkit-gtk-* jobs),
-# add `ARG BASE_GTK`, the `FROM ${BASE_GTK} AS gtk` line, and the
-# `COPY --from=gtk /work/minibrowser-gtk-dist /webkit/minibrowser-gtk` line.
 
 FROM ${BASE_WPE} AS wpe
+FROM ${BASE_GTK} AS gtk
 FROM ${BASE_SOURCE} AS source
 
 FROM scratch AS artifact
 COPY --from=wpe /work/minibrowser-wpe-dist /webkit/minibrowser-wpe
+COPY --from=gtk /work/minibrowser-gtk-dist /webkit/minibrowser-gtk
 COPY --from=source /work/pw-webkit/pw_run.sh /webkit/pw_run.sh

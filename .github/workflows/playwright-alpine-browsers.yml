@@ -1227,17 +1227,13 @@ jobs:
             PORT=WPE
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
 
-  # GTK chain is `if: false` for now. PW only uses the GTK port for headed
-  # mode; `pw_run.sh` dispatches `--headless` → WPE. Our typical CI/Alpine
-  # use case is always headless, so GTK is dead code at runtime — building
-  # it doubles wall time for no immediate benefit. PW's `registry/index.ts`
-  # ldd-validates `minibrowser-gtk/` at install time, so consumer images
-  # need a small post-install patch to bypass that check (tracked
-  # separately). Re-enable: flip these `if: false`s to the dispatch gate
-  # used by build-webkit-source-prep, add `build-webkit-gtk-4` to
-  # build-webkit-finalize's `needs:`, and uncomment the BASE_GTK build-arg.
+  # GTK chain re-enabled iter #21 — PW's `registry/index.ts` ldd-validates
+  # `minibrowser-gtk/` at install time, so the consumer image needs the GTK
+  # port shipped even though headless CI only ever invokes WPE. Builds in
+  # parallel with the WPE chain off the shared source-prep image; sccache
+  # mount id is per-port (`wk-sccache-GTK`) so the two chains don't deadlock
+  # the locked mount on overlapping clang invocations.
   build-webkit-gtk-1:
-    if: false
     needs: [build-webkit-source-prep]
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -1265,7 +1261,6 @@ jobs:
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
 
   build-webkit-gtk-2:
-    if: false   # see build-webkit-gtk-1 comment
     needs: [build-webkit-gtk-1]
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -1293,7 +1288,6 @@ jobs:
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
 
   build-webkit-gtk-3:
-    if: false   # see build-webkit-gtk-1 comment
     needs: [build-webkit-gtk-2]
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -1321,7 +1315,6 @@ jobs:
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
 
   build-webkit-gtk-4:
-    if: false   # see build-webkit-gtk-1 comment
     needs: [build-webkit-gtk-3]
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -1349,9 +1342,7 @@ jobs:
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
 
   build-webkit-finalize:
-    # While GTK chain is `if: false`, finalize only needs WPE + source-prep.
-    # Re-add build-webkit-gtk-4 here when GTK comes back.
-    needs: [build-webkit-source-prep, build-webkit-wpe-4]
+    needs: [build-webkit-source-prep, build-webkit-wpe-4, build-webkit-gtk-4]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
@@ -1387,14 +1378,10 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             BASE_WPE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-wpe-4.outputs.tag }}
+            BASE_GTK=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-gtk-4.outputs.tag }}
             BASE_SOURCE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-source-prep.outputs.tag }}
-            # When GTK chain re-enables, uncomment:
-            # BASE_GTK=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-gtk-4.outputs.tag }}
 
-      # WPE-only Tier-1 while the GTK chain is `if: false`. When GTK
-      # re-enables, change `for port in wpe;` to `for port in wpe gtk;` and
-      # restore the gtk4.0/at-spi2-core apk packages.
-      - name: Tier-1 smoke (ELF + ldd integrity for MiniBrowser-wpe)
+      - name: Tier-1 smoke (ELF + ldd integrity for MiniBrowser-wpe + MiniBrowser-gtk)
         run: |
           set -o pipefail
           cat > /tmp/Dockerfile.wk-t1 <<EOF
@@ -1402,6 +1389,7 @@ jobs:
           RUN apk update && apk add --no-cache \\
               file binutils ca-certificates ttf-freefont \\
               libwpe libwpebackend-fdo \\
+              gtk4.0 at-spi2-core \\
               libgcc libstdc++
           COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:wk-sha-${{ github.sha }} /webkit /opt/webkit
           EOF
@@ -1409,8 +1397,8 @@ jobs:
           docker run --rm wk-t1:${{ github.sha }} sh -c '
             set -e
             echo "===== /opt/webkit layout ====="
-            ls -la /opt/webkit/ /opt/webkit/minibrowser-wpe/bin
-            for port in wpe; do
+            ls -la /opt/webkit/ /opt/webkit/minibrowser-wpe/bin /opt/webkit/minibrowser-gtk/bin
+            for port in wpe gtk; do
               BIN=/opt/webkit/minibrowser-$port/bin/MiniBrowser
               file "$BIN"
               file "$BIN" | grep -q "ELF.*executable" \
@@ -1425,7 +1413,7 @@ jobs:
               fi
               echo "OK: $port MiniBrowser is $(stat -c %s "$BIN") bytes, all deps resolved"
             done
-            echo "Tier-1: MiniBrowser-wpe is intact and self-contained."
+            echo "Tier-1: MiniBrowser-wpe + MiniBrowser-gtk intact and self-contained."
           '
 
   promote-webkit:
