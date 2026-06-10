@@ -40,7 +40,8 @@ RUN apk add --no-cache \
         \
         gtk4.0-dev gobject-introspection-dev \
         \
-        gettext-dev
+        gettext-dev \
+        sysprof-dev
 
 WORKDIR /work
 

@@ -54,28 +54,55 @@ fi
 # first — PlatformEnable.h's `#if !defined` guard then skips its own #define.
 # PW's source patch adds an *unguarded* call to Page::setOverrideOrientation
 # in WebPage.cpp's constructor and the method body in WebCore::Page is
-# gated by ENABLE(ORIENTATION_EVENTS), so the WPE port fails to compile.
-# Other port defaults (DEVICE_ORIENTATION, GAMEPAD, POINTER_LOCK, ...) are
-# already set by PW's OptionsWPE.cmake patch in v1.60.0+; only the
-# ORIENTATION_EVENTS port default is missing.
-# WEBKIT_OPTION_DEFAULT_PORT_VALUE asserts (`_ENSURE_OPTION_MODIFICATION_IS_
-# ALLOWED`) that it's called between WEBKIT_OPTION_BEGIN() and
-# WEBKIT_OPTION_END() — so we INSERT before the END line, not append at EOF.
-if ! grep -q "Playwright WPE port parity" Source/cmake/OptionsWPE.cmake; then
-  echo "  insert ENABLE_ORIENTATION_EVENTS port default into OptionsWPE.cmake"
+# gated by ENABLE(ORIENTATION_EVENTS), so BOTH ports fail to compile without
+# this port default. WEBKIT_OPTION_DEFAULT_PORT_VALUE asserts
+# (`_ENSURE_OPTION_MODIFICATION_IS_ALLOWED`) that it's called between
+# WEBKIT_OPTION_BEGIN() and WEBKIT_OPTION_END() — so we INSERT before the END
+# line, not append at EOF.
+patch_orientation_events() {
+  local cmake_file="$1"
+  local port_tag="$2"
+  if ! grep -q "Playwright ${port_tag} port parity" "$cmake_file"; then
+    echo "  insert ENABLE_ORIENTATION_EVENTS port default into $(basename "$cmake_file")"
+    awk -v tag="$port_tag" '
+      /WEBKIT_OPTION_END\(\)/ && !done {
+        print "# Playwright " tag " port parity (added by prep-source.sh)."
+        print "WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_ORIENTATION_EVENTS PRIVATE ON)"
+        done = 1
+      }
+      { print }
+    ' "$cmake_file" > "${cmake_file}.new"
+    mv "${cmake_file}.new" "$cmake_file"
+    if ! grep -q "Playwright ${port_tag} port parity" "$cmake_file"; then
+      echo "ERROR: failed to insert ${port_tag} parity options (no WEBKIT_OPTION_END found?)" >&2
+      exit 1
+    fi
+  fi
+}
+patch_orientation_events Source/cmake/OptionsWPE.cmake WPE
+patch_orientation_events Source/cmake/OptionsGTK.cmake GTK
+
+# DrawingAreaCoordinatedGraphicsGLib.cpp (GTK port only) calls tracePoint()
+# and WTFEmitSignpost() without explicitly including <wtf/SystemTracing.h>;
+# upstream relies on it coming via transitive includes. On Alpine/musl with
+# clang's unified-source bucketing here, the transitive chain is broken and
+# both `tracePoint` and the `RenderingUpdateRunLoopObserver*` enum members
+# resolve as undeclared. Patch the .cpp to add the include directly — keeps
+# the fix scoped to this one file (other tracePoint call sites in WebKit/GTK
+# code paths are inside .cpps that DO include SystemTracing.h transitively).
+DACG_FILE="Source/WebKit/WebProcess/WebPage/CoordinatedGraphics/DrawingAreaCoordinatedGraphicsGLib.cpp"
+if [[ -f "$DACG_FILE" ]] && ! grep -q '<wtf/SystemTracing.h>' "$DACG_FILE"; then
+  echo "  inject <wtf/SystemTracing.h> include into $(basename "$DACG_FILE")"
   awk '
-    /WEBKIT_OPTION_END\(\)/ && !done {
-      print "# Playwright WPE port parity (added by prep-source.sh)."
-      print "WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_ORIENTATION_EVENTS PRIVATE ON)"
+    !done && /^#include "WebProcess.h"/ {
+      print
+      print "#include <wtf/SystemTracing.h>"
       done = 1
+      next
     }
     { print }
-  ' Source/cmake/OptionsWPE.cmake > Source/cmake/OptionsWPE.cmake.new
-  mv Source/cmake/OptionsWPE.cmake.new Source/cmake/OptionsWPE.cmake
-  if ! grep -q "Playwright WPE port parity" Source/cmake/OptionsWPE.cmake; then
-    echo "ERROR: failed to insert WPE parity options (no WEBKIT_OPTION_END found?)" >&2
-    exit 1
-  fi
+  ' "$DACG_FILE" > "${DACG_FILE}.new"
+  mv "${DACG_FILE}.new" "$DACG_FILE"
 fi
 
 # Strip .git — ~1GB saved in the source-prep image which both port chains FROM.
