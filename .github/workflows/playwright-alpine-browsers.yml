@@ -1445,7 +1445,8 @@ jobs:
               file binutils ca-certificates ttf-freefont \\
               libwpe libwpebackend-fdo \\
               gtk4.0 at-spi2-core \\
-              libgcc libstdc++
+              libgcc libstdc++ \\
+              mesa-gles gst-libav
           # PW expects /\${PLAYWRIGHT_BROWSERS_PATH}/webkit-\${REV}/ with
           # pw_run.sh + minibrowser-{wpe,gtk}/ + INSTALLATION_COMPLETE.
           COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:wk-sha-${{ github.sha }} /webkit /opt/playwright/webkit-${WEBKIT_REV}
