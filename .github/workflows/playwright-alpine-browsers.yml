@@ -1397,9 +1397,9 @@ jobs:
           docker run --rm wk-t1:${{ github.sha }} sh -c '
             set -e
             echo "===== /opt/webkit layout ====="
-            ls -la /opt/webkit/ /opt/webkit/minibrowser-wpe/bin /opt/webkit/minibrowser-gtk/bin
+            ls -la /opt/webkit/ /opt/webkit/minibrowser-wpe /opt/webkit/minibrowser-gtk
             for port in wpe gtk; do
-              BIN=/opt/webkit/minibrowser-$port/bin/MiniBrowser
+              BIN=/opt/webkit/minibrowser-$port/MiniBrowser
               file "$BIN"
               file "$BIN" | grep -q "ELF.*executable" \
                 || { echo "FAIL: $BIN is not an ELF executable"; exit 1; }
@@ -1457,35 +1457,6 @@ jobs:
           RUN npm install -g playwright@${PW_VERSION}
           EOF
           docker build -t wk-candidate-runner:${{ github.sha }} -f /tmp/Dockerfile.runner /tmp
-
-      - name: Diagnostic — ldd-dump bundled .so libs (find PW host-dep mismatch)
-        env:
-          WEBKIT_REV: ${{ needs.build-webkit-finalize.outputs.webkit_revision }}
-        run: |
-          # PW's validateDependenciesLinux ldds the bundled .so set, not just the
-          # MiniBrowser binary (Tier-1 missed this). Surface what's "not found"
-          # to map the Debian-pkg suggestion to actual missing libs.
-          docker run --rm \
-            wk-candidate-runner:${{ github.sha }} \
-            sh -c "
-              set -e
-              for port in wpe gtk; do
-                echo '===== ldd not-found scan: minibrowser-'\$port' ====='
-                LIB=/opt/playwright/webkit-${WEBKIT_REV}/minibrowser-\$port/lib
-                find \$LIB -maxdepth 1 -name '*.so*' -type f | while read so; do
-                  MISSING=\$(ldd \"\$so\" 2>&1 | grep 'not found' || true)
-                  if [ -n \"\$MISSING\" ]; then
-                    echo \"--- \$(basename \$so) ---\"
-                    echo \"\$MISSING\"
-                  fi
-                done
-              done
-              echo '===== summary: unique not-found sonames ====='
-              for port in wpe gtk; do
-                LIB=/opt/playwright/webkit-${WEBKIT_REV}/minibrowser-\$port/lib
-                find \$LIB -maxdepth 1 -name '*.so*' -type f -exec ldd {} \; 2>&1
-              done | grep 'not found' | awk '{print \$1}' | sort -u
-            "
 
       - name: Run Tier-2 smoke (PW SDK → MiniBrowser-wpe)
         run: |

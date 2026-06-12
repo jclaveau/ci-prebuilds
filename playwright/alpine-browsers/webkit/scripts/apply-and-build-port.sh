@@ -119,11 +119,13 @@ else
   echo "===== Phase 2 already done: $BUILD_DIR/bin/MiniBrowser exists ====="
 fi
 
-# Phase 3 — stage + bundle. Layout: <dist>/bin/MiniBrowser + <dist>/lib/*.so
-# matching PW's published artifact contract for minibrowser-${port_lower}/.
-if [[ ! -f "$DIST/bin/MiniBrowser" ]]; then
+# Phase 3 — stage + bundle. Layout: <dist>/MiniBrowser + <dist>/*.so (FLAT)
+# matching PW's published artifact contract. pw_run.sh resolves
+# `$SCRIPT_PATH/$MINIBROWSER_FOLDER/MiniBrowser` — no bin/ subdir.
+# Keep sys/lib/ (PW's contract; system lib override path, normally empty here).
+if [[ ! -f "$DIST/MiniBrowser" ]]; then
   echo "===== Phase 3: stage + bundle PORT=$PORT ====="
-  mkdir -p "$DIST/bin" "$DIST/lib" "$DIST/sys/lib"
+  mkdir -p "$DIST/sys/lib"
 
   bin=$(find "$BUILD_DIR/bin" -maxdepth 1 -type f -name 'MiniBrowser' 2>/dev/null | head -1)
   if [[ -z "$bin" ]]; then
@@ -134,12 +136,12 @@ if [[ ! -f "$DIST/bin/MiniBrowser" ]]; then
     find "$BUILD_DIR" -maxdepth 3 -type d 2>/dev/null | head -20 >&2
     exit 1
   fi
-  cp -aL "$bin" "$DIST/bin/MiniBrowser"
+  cp -aL "$bin" "$DIST/MiniBrowser"
 
   if [[ -d "$BUILD_DIR/lib" ]]; then
     find "$BUILD_DIR/lib" -maxdepth 1 -type f \( -name '*.so' -o -name '*.so.*' \) \
-      -exec cp -aL {} "$DIST/lib/" \;
-    find "$BUILD_DIR/lib" -maxdepth 1 -type l -name '*.so*' -exec cp -aL {} "$DIST/lib/" \; 2>/dev/null || true
+      -exec cp -aL {} "$DIST/" \;
+    find "$BUILD_DIR/lib" -maxdepth 1 -type l -name '*.so*' -exec cp -aL {} "$DIST/" \; 2>/dev/null || true
   fi
 
   echo "Staged: $(du -sh "$DIST" | cut -f1)"
@@ -148,7 +150,7 @@ if [[ ! -f "$DIST/bin/MiniBrowser" ]]; then
 
   echo "===== Phase 3 complete: $PORT staged + bundled at $DIST ====="
 else
-  echo "===== Phase 3 already done: $DIST has bin/MiniBrowser ====="
+  echo "===== Phase 3 already done: $DIST has MiniBrowser ====="
 fi
 
 echo "===== apply-and-build-port: PORT=$PORT all phases satisfied ====="
