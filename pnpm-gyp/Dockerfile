@@ -21,3 +21,12 @@ RUN echo "Install the node-gyp toolchain (build-essential) for native addon comp
     && sudo apt-get update \
     && sudo apt-get install -y --no-install-recommends build-essential \
     && sudo rm -rf /var/lib/apt/lists/*
+
+# TEMP: python3-setuptools provides a vendored distutils shim (setuptools >=60)
+# so legacy node-gyp <10 (which imports `distutils.version.StrictVersion`) keeps
+# working under Python 3.12, which dropped stdlib distutils (PEP 632). Remove
+# once downstream consumers (Planner) bump node-gyp to >=10.
+RUN echo "TEMP: distutils shim for legacy node-gyp <10 on Python 3.12" \
+    && sudo apt-get update \
+    && sudo apt-get install -y --no-install-recommends python3-setuptools \
+    && sudo rm -rf /var/lib/apt/lists/*
