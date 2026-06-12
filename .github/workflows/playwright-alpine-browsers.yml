@@ -1458,6 +1458,35 @@ jobs:
           EOF
           docker build -t wk-candidate-runner:${{ github.sha }} -f /tmp/Dockerfile.runner /tmp
 
+      - name: Diagnostic — ldd-dump bundled .so libs (find PW host-dep mismatch)
+        env:
+          WEBKIT_REV: ${{ needs.build-webkit-finalize.outputs.webkit_revision }}
+        run: |
+          # PW's validateDependenciesLinux ldds the bundled .so set, not just the
+          # MiniBrowser binary (Tier-1 missed this). Surface what's "not found"
+          # to map the Debian-pkg suggestion to actual missing libs.
+          docker run --rm \
+            wk-candidate-runner:${{ github.sha }} \
+            sh -c "
+              set -e
+              for port in wpe gtk; do
+                echo '===== ldd not-found scan: minibrowser-'\$port' ====='
+                LIB=/opt/playwright/webkit-${WEBKIT_REV}/minibrowser-\$port/lib
+                find \$LIB -maxdepth 1 -name '*.so*' -type f | while read so; do
+                  MISSING=\$(ldd \"\$so\" 2>&1 | grep 'not found' || true)
+                  if [ -n \"\$MISSING\" ]; then
+                    echo \"--- \$(basename \$so) ---\"
+                    echo \"\$MISSING\"
+                  fi
+                done
+              done
+              echo '===== summary: unique not-found sonames ====='
+              for port in wpe gtk; do
+                LIB=/opt/playwright/webkit-${WEBKIT_REV}/minibrowser-\$port/lib
+                find \$LIB -maxdepth 1 -name '*.so*' -type f -exec ldd {} \; 2>&1
+              done | grep 'not found' | awk '{print \$1}' | sort -u
+            "
+
       - name: Run Tier-2 smoke (PW SDK → MiniBrowser-wpe)
         run: |
           # DEBUG=pw:browser surfaces stderr from the MiniBrowser child process,
