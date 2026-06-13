@@ -34,16 +34,23 @@ ldd_walk() {
   done
 }
 
-ldd_walk "$DST/MiniBrowser"
-for so in "$DST"/*.so*; do [ -L "$so" ] || ldd_walk "$so"; done
-for so in "$DST"/*.so*; do [ -L "$so" ] || ldd_walk "$so"; done
-for so in "$DST"/*.so*; do [ -L "$so" ] || ldd_walk "$so"; done
+# Walk every ELF in $DST (MiniBrowser + aux processes + bundled .so).
+walk_pass() {
+  for f in "$DST"/*; do
+    [ -L "$f" ] && continue
+    [ -f "$f" ] || continue
+    ldd_walk "$f"
+  done
+}
+walk_pass
+walk_pass
+walk_pass
 
-# Flat layout: MiniBrowser + libs side-by-side → RPATH=$ORIGIN for everything.
-patchelf --set-rpath '$ORIGIN' "$DST/MiniBrowser" 2>/dev/null || true
-for so in "$DST"/*.so*; do
-  [ -L "$so" ] && continue
-  patchelf --set-rpath '$ORIGIN' "$so" 2>/dev/null || true
+# Flat layout: every ELF gets RPATH=$ORIGIN so it finds bundled peers.
+for f in "$DST"/*; do
+  [ -L "$f" ] && continue
+  [ -f "$f" ] || continue
+  patchelf --set-rpath '$ORIGIN' "$f" 2>/dev/null || true
 done
 
 missing=$(ldd "$DST/MiniBrowser" 2>/dev/null | grep 'not found' || true)

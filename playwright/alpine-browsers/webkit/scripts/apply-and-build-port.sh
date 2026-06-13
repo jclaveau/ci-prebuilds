@@ -138,6 +138,19 @@ if [[ ! -f "$DIST/MiniBrowser" ]]; then
   fi
   cp -aL "$bin" "$DIST/MiniBrowser"
 
+  # Auxiliary processes — WebKit spawns these for network/web/database/etc.
+  # Without them MiniBrowser fails at runtime: "Failed to spawn ... WPENetworkProcess".
+  # WPE: WPENetworkProcess, WPEWebProcess, WPEDatabaseProcess, ...
+  # GTK: WebKitNetworkProcess, WebKitWebProcess, ...
+  # Copy every non-MiniBrowser ELF in $BUILD_DIR/bin.
+  if [[ -d "$BUILD_DIR/bin" ]]; then
+    while IFS= read -r aux; do
+      base=$(basename "$aux")
+      [[ "$base" == "MiniBrowser" ]] && continue
+      cp -aL "$aux" "$DIST/$base"
+    done < <(find "$BUILD_DIR/bin" -maxdepth 1 -type f -executable 2>/dev/null)
+  fi
+
   if [[ -d "$BUILD_DIR/lib" ]]; then
     find "$BUILD_DIR/lib" -maxdepth 1 -type f \( -name '*.so' -o -name '*.so.*' \) \
       -exec cp -aL {} "$DIST/" \;

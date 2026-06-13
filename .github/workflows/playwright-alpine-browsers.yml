@@ -1453,6 +1453,11 @@ jobs:
           RUN touch /opt/playwright/webkit-${WEBKIT_REV}/INSTALLATION_COMPLETE
           ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
           ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+          # PW upstream bug on Alpine/musl: validator runs /sbin/ldconfig -p,
+          # musl ldconfig rejects -p with "Illegal option" but exits 0 with
+          # empty stdout. PW then flags dlOpenLibraries (libGLESv2.so.2 +
+          # libx264.so) as missing → false positive. Bypass on Alpine.
+          ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
           WORKDIR /smoke
           RUN npm install -g playwright@${PW_VERSION}
           EOF
