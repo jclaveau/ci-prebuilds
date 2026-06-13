@@ -1465,9 +1465,15 @@ jobs:
 
       - name: Run Tier-2 smoke (PW SDK → MiniBrowser-wpe)
         run: |
+          # --security-opt seccomp=unconfined: Docker default seccomp blocks
+          # clone(CLONE_NEWUSER) which WebKit's bwrap sandbox needs. Without
+          # it, bwrap errors "Creating new namespace failed: Operation not
+          # permitted" and the libwpe init aborts. Same shape as the Firefox
+          # smoke (same flag, same reason).
           # DEBUG=pw:browser surfaces stderr from the MiniBrowser child process,
           # including RemoteInspector handshake traces.
           docker run --rm \
+            --security-opt seccomp=unconfined \
             -v "$PWD/playwright/alpine-browsers/webkit/smoke:/smoke" \
             -w /smoke \
             -e NODE_PATH=/usr/local/lib/node_modules \
