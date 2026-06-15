@@ -3,7 +3,7 @@
 # limit in CI: the rest of the pipeline builds/pulls via GHCR, so CI does zero Docker Hub pulls.
 # Renovate keeps the default pinned; the workflow_call path overrides OS_VERSION for on-demand
 # requests targeting a different Alpine (e.g. 3.20). Default = current consumer pin.
-ARG OS_VERSION=3.23
+ARG OS_VERSION=3.24
 FROM public.ecr.aws/docker/library/alpine:${OS_VERSION}
 
 # Alpine/musl counterpart of ubuntu-gha-tools: the same accounts, env, curated OS tooling and the
