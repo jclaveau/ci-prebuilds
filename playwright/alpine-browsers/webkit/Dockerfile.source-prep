@@ -41,7 +41,29 @@ RUN apk add --no-cache \
         gtk4.0-dev gobject-introspection-dev \
         \
         gettext-dev \
-        sysprof-dev
+        sysprof-dev \
+        \
+        meson py3-pip wayland-dev wayland-protocols
+
+# Build libwpe + libwpebackend-fdo from upstream master. Alpine apk versions
+# (libwpe 1.16.3 / libwpebackend-fdo 1.16.1) hit an ABI/static-init wall on
+# musl when WebKit calls wpe_loader_init: libwpe's s_impl_loader->load_object
+# reads NULL despite the bundled lib exposing it correctly in isolation.
+# Master may carry fixes; this overwrites apk's lib at /usr/lib so WebKit's
+# cmake configure picks up the new headers + ABI at build time.
+RUN cd /tmp && git clone --depth=1 https://github.com/WebPlatformForEmbedded/libwpe.git \
+    && cd libwpe \
+    && meson setup build --prefix=/usr --libdir=lib --buildtype=release \
+    && meson compile -C build \
+    && meson install -C build \
+    && cd /tmp && rm -rf libwpe
+
+RUN cd /tmp && git clone --depth=1 https://github.com/Igalia/WPEBackend-fdo.git \
+    && cd WPEBackend-fdo \
+    && meson setup build --prefix=/usr --libdir=lib --buildtype=release \
+    && meson compile -C build \
+    && meson install -C build \
+    && cd /tmp && rm -rf WPEBackend-fdo
 
 WORKDIR /work
 
