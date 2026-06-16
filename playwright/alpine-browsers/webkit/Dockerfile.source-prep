@@ -84,8 +84,7 @@ RUN cd /tmp && git clone --depth=1 https://github.com/WebPlatformForEmbedded/WPE
     && cmake --install build \
     && cd /tmp && rm -rf WPEBackend-rdk \
     && cd /usr/lib \
-    && ln -sf $(ls libWPEBackend-rdk*.so* | head -1) libWPEBackend-fdo-1.0.so.1 \
-    && ln -sf libWPEBackend-fdo-1.0.so.1 libWPEBackend-fdo-1.0.so
+    && ln -sf $(ls libWPEBackend-rdk*.so* | head -1) libWPEBackend-default.so
 
 WORKDIR /work
 
