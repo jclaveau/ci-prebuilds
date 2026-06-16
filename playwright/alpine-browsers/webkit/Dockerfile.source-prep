@@ -74,6 +74,7 @@ RUN cd /tmp && git clone --depth=1 https://github.com/Igalia/WPEBackend-fdo.git 
 RUN cd /tmp && git clone --depth=1 https://github.com/WebPlatformForEmbedded/WPEBackend-rdk.git \
     && cd WPEBackend-rdk \
     && cmake -B build -S . \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
         -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib \
         -DCMAKE_BUILD_TYPE=Release \
         -DUSE_BACKEND_HEADLESS=ON \
