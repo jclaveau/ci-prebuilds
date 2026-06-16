@@ -78,6 +78,8 @@ RUN cd /tmp && git clone --depth=1 https://github.com/WebPlatformForEmbedded/WPE
         -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib \
         -DCMAKE_BUILD_TYPE=Release \
         -DUSE_BACKEND_HEADLESS=ON \
+        -DUSE_INPUT_LIBINPUT=OFF \
+        -DUSE_INPUT_UDEV=OFF \
     && cmake --build build -j$(nproc) \
     && cmake --install build \
     && cd /tmp && rm -rf WPEBackend-rdk \
