@@ -1474,6 +1474,8 @@ jobs:
           # including RemoteInspector handshake traces.
           docker run --rm \
             --security-opt seccomp=unconfined \
+            --security-opt apparmor=unconfined \
+            --cap-add SYS_ADMIN \
             -v "$PWD/playwright/alpine-browsers/webkit/smoke:/smoke" \
             -w /smoke \
             -e NODE_PATH=/usr/local/lib/node_modules \
