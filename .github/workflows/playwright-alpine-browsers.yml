@@ -1480,6 +1480,7 @@ jobs:
             -w /smoke \
             -e NODE_PATH=/usr/local/lib/node_modules \
             -e DEBUG=pw:browser \
+            -e WEBKIT_FORCE_SANDBOX=0 \
             wk-candidate-runner:${{ github.sha }} \
             node launch.cjs
 
