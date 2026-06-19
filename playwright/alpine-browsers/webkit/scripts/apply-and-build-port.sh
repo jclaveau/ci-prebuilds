@@ -119,6 +119,28 @@ else
   echo "===== Phase 2 already done: $BUILD_DIR/bin/MiniBrowser exists ====="
 fi
 
+# Phase 2.5 — injected bundle (MODULE library loaded by WPEWebProcess at runtime).
+# Not a transitive dep of MiniBrowser, so `ninja MiniBrowser` skips it. Build
+# explicitly; per-port target names. Idempotent via marker file.
+case "$PORT" in
+  WPE)  BUNDLE_TARGETS="WPEInjectedBundle" ;;
+  GTK)  BUNDLE_TARGETS="webkitgtkinjectedbundle webkit2gtkinjectedbundle" ;;
+  *)    BUNDLE_TARGETS="" ;;
+esac
+BUNDLE_MARKER="$BUILD_DIR/.injected-bundle-built"
+if [[ -n "$BUNDLE_TARGETS" && ! -f "$BUNDLE_MARKER" ]]; then
+  echo "===== Phase 2.5: ninja injected bundle PORT=$PORT ====="
+  for tgt in $BUNDLE_TARGETS; do
+    echo "--- ninja --target $tgt ---"
+    cmake --build "$BUILD_DIR" --target "$tgt" 2>&1 || \
+      echo "ninja target $tgt: skipped (not present in this WebKit revision)"
+  done
+  touch "$BUNDLE_MARKER"
+  echo "===== Phase 2.5 complete ====="
+else
+  echo "===== Phase 2.5 already done or no targets ====="
+fi
+
 # Phase 3 — stage + bundle. Layout: <dist>/MiniBrowser + <dist>/*.so (FLAT)
 # matching PW's published artifact contract. pw_run.sh resolves
 # `$SCRIPT_PATH/$MINIBROWSER_FOLDER/MiniBrowser` — no bin/ subdir.
@@ -155,6 +177,12 @@ if [[ ! -f "$DIST/MiniBrowser" ]]; then
     find "$BUILD_DIR/lib" -maxdepth 1 -type f \( -name '*.so' -o -name '*.so.*' \) \
       -exec cp -aL {} "$DIST/" \;
     find "$BUILD_DIR/lib" -maxdepth 1 -type l -name '*.so*' -exec cp -aL {} "$DIST/" \; 2>/dev/null || true
+    # MODULE libraries (injected bundle) may land in nested subdirs mirroring
+    # install layout (lib/wpe-webkit-2.0/injected-bundle/, lib/webkitgtk-X/...).
+    # Flatten them so the bundle dir is self-contained (WEBKIT_INJECTED_BUNDLE_PATH
+    # points at the flat dir).
+    find "$BUILD_DIR/lib" -mindepth 2 -type f -name 'lib*njected*ndle*.so*' \
+      -exec cp -aL {} "$DIST/" \; 2>/dev/null || true
   fi
 
   echo "Staged: $(du -sh "$DIST" | cut -f1)"
