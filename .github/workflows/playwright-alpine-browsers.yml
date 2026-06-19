@@ -1482,6 +1482,7 @@ jobs:
             -e NODE_PATH=/usr/local/lib/node_modules \
             -e DEBUG=pw:browser \
             -e WEBKIT_FORCE_SANDBOX=0 \
+            -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
             wk-candidate-runner:${{ github.sha }} \
             node launch.cjs
 
