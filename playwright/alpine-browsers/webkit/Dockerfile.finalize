@@ -18,12 +18,16 @@ FROM ${BASE_WPE} AS wpe
 FROM ${BASE_GTK} AS gtk
 FROM ${BASE_SOURCE} AS source
 
-# Patch pw_run.sh to export WEBKIT_EXEC_PATH so WebKit's ProcessLauncher
-# finds aux processes (WPENetworkProcess, etc) alongside MiniBrowser instead
-# of the compile-time PKGLIBEXECDIR (/usr/libexec/wpe-webkit-2.0/) which we
-# don't ship.
+# Patch pw_run.sh to export WebKit path overrides for the flat-bundle layout:
+#   WEBKIT_EXEC_PATH              — aux procs (WPENetworkProcess, etc) — compile
+#                                   default is PKGLIBEXECDIR (/usr/libexec/wpe-webkit-2.0/)
+#   WEBKIT_INJECTED_BUNDLE_PATH   — libWPEInjectedBundle.so directory — compile
+#                                   default is /usr/lib/wpe-webkit-2.0/injected-bundle/
+#   WEBKIT_INSPECTOR_RESOURCES_PATH — inspector UI assets — compile default is
+#                                     /usr/share/webkitwpe-X.X/inspector/
+# All three point to the flat bundle dir; we ship every artifact alongside MiniBrowser.
 FROM ${BASE_SOURCE} AS pw_run_patched
-RUN sed -i 's|WEBKIT_FORCE_COMPLEX_TEXT="1" "$MINIBROWSER"|WEBKIT_EXEC_PATH="$SCRIPT_PATH/$MINIBROWSER_FOLDER" WEBKIT_FORCE_COMPLEX_TEXT="1" "$MINIBROWSER"|' \
+RUN sed -i 's|WEBKIT_FORCE_COMPLEX_TEXT="1" "$MINIBROWSER"|WEBKIT_EXEC_PATH="$SCRIPT_PATH/$MINIBROWSER_FOLDER" WEBKIT_INJECTED_BUNDLE_PATH="$SCRIPT_PATH/$MINIBROWSER_FOLDER" WEBKIT_INSPECTOR_RESOURCES_PATH="$SCRIPT_PATH/$MINIBROWSER_FOLDER" WEBKIT_FORCE_COMPLEX_TEXT="1" "$MINIBROWSER"|' \
     /work/pw-webkit/pw_run.sh
 
 FROM scratch AS artifact
