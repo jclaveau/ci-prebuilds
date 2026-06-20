@@ -80,4 +80,15 @@ CMAKE_SHARED_FLAGS=(
   # -lintl into every C/C++ link via CMAKE_*_STANDARD_LIBRARIES (cmake ≥3.13).
   -DCMAKE_C_STANDARD_LIBRARIES=-lintl
   -DCMAKE_CXX_STANDARD_LIBRARIES=-lintl
+
+  # Disable SIMDUTF's ICELAKE (AVX-512) impl. The amalgamated header uses
+  # `#pragma GCC target("avx512f,...")` to enable AVX-512 codegen per function
+  # regardless of compile flags, baking ~22k AVX-512 instructions into
+  # libWPEWebKit. Runtime dispatch is supposed to gate them on CPUID, but in
+  # practice WPEWebProcess SIGILL ILL_ILLOPN on Intel CPUs without AVX-512
+  # (i5-8350U Kaby Lake-R, many GHA hosted runners). Pre-define the gate
+  # macro to 0 so the header excludes the impl entirely; dispatch falls back
+  # to HASWELL (AVX2) which all x86_64 PW targets support.
+  -DCMAKE_C_FLAGS=-DSIMDUTF_IMPLEMENTATION_ICELAKE=0
+  -DCMAKE_CXX_FLAGS=-DSIMDUTF_IMPLEMENTATION_ICELAKE=0
 )
