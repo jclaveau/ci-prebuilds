@@ -1440,13 +1440,18 @@ jobs:
         run: |
           cat > /tmp/Dockerfile.runner <<EOF
           FROM alpine:edge
+          # mesa-dri-gallium + mesa-gbm + mesa-vulkan-swrast: software fallback
+          # for OpenGL/EGL/Vulkan on a headless runner (no GPU device). Without
+          # these, WPEWebProcess crashes during page creation when WebKit tries
+          # to init EGL — ZINK falls back to lavapipe which needs Vulkan
+          # swrast; libgallium needs DRI fallback to llvmpipe.
           RUN apk add --no-cache \\
               nodejs npm bash \\
               file binutils ca-certificates ttf-freefont \\
               libwpe libwpebackend-fdo \\
               gtk4.0 at-spi2-core \\
               libgcc libstdc++ \\
-              mesa-gles gst-libav
+              mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast gst-libav
           # PW expects /\${PLAYWRIGHT_BROWSERS_PATH}/webkit-\${REV}/ with
           # pw_run.sh + minibrowser-{wpe,gtk}/ + INSTALLATION_COMPLETE.
           COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:wk-sha-${{ github.sha }} /webkit /opt/playwright/webkit-${WEBKIT_REV}
@@ -1480,9 +1485,12 @@ jobs:
             -v "$PWD/playwright/alpine-browsers/webkit/smoke:/smoke" \
             -w /smoke \
             -e NODE_PATH=/usr/local/lib/node_modules \
-            -e DEBUG=pw:browser \
+            -e DEBUG=pw:browser,pw:protocol \
             -e WEBKIT_FORCE_SANDBOX=0 \
             -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
+            -e LIBGL_ALWAYS_SOFTWARE=1 \
+            -e GALLIUM_DRIVER=llvmpipe \
+            -e MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
             wk-candidate-runner:${{ github.sha }} \
             node launch.cjs
 
