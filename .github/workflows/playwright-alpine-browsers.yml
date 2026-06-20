@@ -1445,13 +1445,19 @@ jobs:
           # these, WPEWebProcess crashes during page creation when WebKit tries
           # to init EGL — ZINK falls back to lavapipe which needs Vulkan
           # swrast; libgallium needs DRI fallback to llvmpipe.
+          # GStreamer plugins-base/good/bad: PW's nativeDeps.ts lists these as
+          # webkitLinuxLibraryDeps; WebKit init scans them during page setup,
+          # missing → page-7 'crashed:true' at +14s.
+          # cairo/pango/gdk-pixbuf/libnotify/dbus/opus: same source.
           RUN apk add --no-cache \\
               nodejs npm bash \\
               file binutils ca-certificates ttf-freefont \\
               libwpe libwpebackend-fdo \\
               gtk4.0 at-spi2-core \\
               libgcc libstdc++ \\
-              mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast gst-libav
+              mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \\
+              gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \\
+              cairo pango gdk-pixbuf libnotify dbus-libs opus libsecret
           # PW expects /\${PLAYWRIGHT_BROWSERS_PATH}/webkit-\${REV}/ with
           # pw_run.sh + minibrowser-{wpe,gtk}/ + INSTALLATION_COMPLETE.
           COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:wk-sha-${{ github.sha }} /webkit /opt/playwright/webkit-${WEBKIT_REV}
