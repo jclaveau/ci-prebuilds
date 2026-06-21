@@ -1477,12 +1477,13 @@ jobs:
       - name: Tier-2 diagnostic — MiniBrowser-wpe with --automation (no PW SDK)
         timeout-minutes: 2
         run: |
+          set -o pipefail
           # Iters #15-18 had Tier-2 (PW SDK → --inspector-pipe) crash WPEWebProcess
           # at +14s during page creation. Diagnostic: drop --inspector-pipe and
-          # PW SDK, drive MiniBrowser directly with --automation + a real URL.
-          # If MiniBrowser runs about:blank to exit without WPEWebProcess crash,
-          # the bug is in PW's --inspector-pipe pipe-handshake path. If it
-          # crashes anyway, the bug is in WebProcess init regardless of flag.
+          # PW SDK, drive MiniBrowser directly with --automation + about:blank.
+          # If MiniBrowser runs to exit without WPEWebProcess crash, the bug is
+          # in PW's --inspector-pipe pipe-handshake path. If it crashes anyway,
+          # the bug is in WebProcess init regardless of flag.
           docker run --rm \
             --security-opt seccomp=unconfined \
             --security-opt apparmor=unconfined \
@@ -1495,8 +1496,7 @@ jobs:
             -e MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
             wk-candidate-runner:${{ github.sha }} \
             timeout 60 /opt/playwright/webkit-2287/pw_run.sh \
-              --automation --headless --no-startup-window \
-              data:text/html,<h1>ok</h1> 2>&1 | tail -50
+              --automation --headless --no-startup-window about:blank 2>&1
 
       - name: Run Tier-2 smoke (PW SDK → MiniBrowser-wpe)
         if: false  # tracked in issue — page-7 'crashed:true' at +14s via inspector-pipe
