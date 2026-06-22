@@ -1486,9 +1486,10 @@ jobs:
           #   - MiniBrowser --automation path does NOT crash, runs idle
           # Iter #21: capture proof. `timeout -k 10 30` ensures the
           # MiniBrowser actually dies (busybox timeout: -k SECS, not
-          # --kill-after=). `stdbuf -oL -eL` line-buffers stdout/err
-          # so we see output before the kill. Wrap whole docker invocation in
-          # GHA-friendly `set +e` to allow non-zero (expected) exit from kill.
+          # --kill-after=). stdbuf is GNU coreutils, not in Alpine
+          # busybox — dropped. Output flushes on exit/kill regardless.
+          # Wrap docker invocation in GHA-friendly `set +e` to allow
+          # non-zero (expected) exit from kill.
           set +e
           docker run --rm \
             --security-opt seccomp=unconfined \
@@ -1501,7 +1502,7 @@ jobs:
             -e GALLIUM_DRIVER=llvmpipe \
             -e MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
             wk-candidate-runner:${{ github.sha }} \
-            timeout -k 10 30 stdbuf -oL -eL \
+            timeout -k 10 30 \
               /opt/playwright/webkit-2287/pw_run.sh \
               --automation --headless --no-startup-window about:blank 2>&1
           RC=$?
