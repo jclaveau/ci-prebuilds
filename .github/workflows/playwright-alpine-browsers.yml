@@ -147,7 +147,7 @@ jobs:
       firefox_revision: ${{ steps.pins.outputs.firefox_revision }}
       firefox_version: ${{ steps.pins.outputs.firefox_version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Read versions.env into both step env (for shell expansions) and job
       # outputs (for downstream jobs / publish tags).
@@ -307,7 +307,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: docker/login-action@v3
         with:
@@ -365,7 +365,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: docker/login-action@v3
         with:
@@ -429,7 +429,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: docker/login-action@v3
         with:
@@ -653,7 +653,7 @@ jobs:
       chromium_revision: ${{ steps.pins.outputs.chromium_revision }}
       chromium_version: ${{ steps.pins.outputs.chromium_version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - id: pins
         run: |
@@ -761,7 +761,7 @@ jobs:
       chromium_revision: ${{ steps.pins.outputs.chromium_revision }}
       chromium_version: ${{ steps.pins.outputs.chromium_version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - id: pins
         run: |
@@ -855,7 +855,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: docker/login-action@v3
         with:
@@ -918,7 +918,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Free up runner disk
         run: |

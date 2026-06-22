@@ -40,7 +40,7 @@ jobs:
       firefox_revision: ${{ steps.pins.outputs.firefox_revision }}
       firefox_version: ${{ steps.pins.outputs.firefox_version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Read versions.env into both step env (for shell expansions) and job
       # outputs (for downstream jobs / publish tags).

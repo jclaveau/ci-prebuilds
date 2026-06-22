@@ -106,7 +106,7 @@ jobs:
       - run: ls -l /home/runner
       - run: env
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Static lint for every workflow under .github/workflows AND every composite
       # action under .github/actions. Catches misspelled keys, bad expressions
@@ -279,7 +279,7 @@ jobs:
     outputs:
       map: ${{ steps.compute.outputs.map }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # need history to diff before..after
       - id: compute
@@ -389,7 +389,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/build-layer
         with:
           image: ${{ matrix.os }}-gha-tools
@@ -413,7 +413,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/build-layer
         with:
           image: ${{ matrix.os }}-docker
@@ -436,7 +436,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/build-layer
         with:
           image: ${{ matrix.os }}-dood
@@ -457,7 +457,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/build-layer
         with:
           image: ${{ matrix.os }}-dind
@@ -480,7 +480,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/build-layer
         with:
           image: ${{ matrix.os }}-dood-node
@@ -504,7 +504,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/build-layer
         with:
           image: ${{ matrix.os }}-dind-node
@@ -529,7 +529,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/build-layer
         with:
           image: ${{ matrix.os }}-dood-pnpm
@@ -552,7 +552,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/build-layer
         with:
           image: ${{ matrix.os }}-dind-pnpm
@@ -578,7 +578,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/build-layer
         with:
           image: ${{ matrix.os }}-dood-pnpm-gyp
@@ -602,7 +602,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/build-layer
         with:
           image: ${{ matrix.os }}-dind-pnpm-gyp
@@ -627,7 +627,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/build-layer
         with:
           image: ${{ matrix.os }}-dood-playwright
@@ -652,7 +652,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/build-layer
         with:
           image: ${{ matrix.os }}-dind-playwright
@@ -680,7 +680,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/build-layer
         with:
           image: ${{ matrix.os }}-dood-playwright-gyp
@@ -705,7 +705,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/build-layer
         with:
           image: ${{ matrix.os }}-dind-playwright-gyp
@@ -759,7 +759,7 @@ jobs:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
         image: ${{ fromJSON(needs.github-context.outputs.image_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/build-layer
         with:
           image: ${{ matrix.os }}-${{ matrix.image }}-hardened
@@ -996,7 +996,7 @@ jobs:
 
       - run: docker info
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Creating DB volume (as locally)
         run: |
@@ -1037,7 +1037,7 @@ jobs:
         if: matrix.mode == 'dind'
         run: start-dockerd
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Creating DB volume (as locally)
         run: |
@@ -1181,7 +1181,7 @@ jobs:
       options: >-
         --env "HOME=/home/runner"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - run: node --version
       - run: docker --version
@@ -1258,7 +1258,7 @@ jobs:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
         mode: [dood, dind]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -1362,7 +1362,7 @@ jobs:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
         mode: [dood, dind]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -1393,7 +1393,7 @@ jobs:
     needs: [github-context]
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install act
         run: curl -sSL "https://raw.githubusercontent.com/nektos/act/v${ACT_VERSION}/install.sh" | sudo bash -s -- -b /usr/local/bin
       - name: Run the prepare-vm smoke through act
@@ -1470,7 +1470,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
