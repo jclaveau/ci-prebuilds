@@ -94,7 +94,7 @@ jobs:
         browsers: [chromium, all]
         run: [1, 2, 3, 4, 5]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Network rx baseline — every install step that follows downloads bytes (pnpm tarballs, apt debs,
       # PW browser CDN); we delta /proc/net/dev:eth0 here vs just-before-tests for the "full dl size".
       - name: Capture pre-install rx bytes
@@ -164,7 +164,7 @@ jobs:
       options: ${{ matrix.options }}
       # DEV MODE: all images public (Docker Hub jclaveau/... + MCR official); no credentials needed.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Capture pre-install rx bytes
         # Inside the container's netns — counts only bytes the container's install steps fetch.
         run: awk '/^[ \t]*eth0:/{print $2}' /proc/net/dev > /tmp/nb_rx
@@ -242,7 +242,7 @@ jobs:
         # act+DinD pays >15 min for the apt unpack of ~70 GUI/Mesa libs. The act tables show the row with
         # a hardcoded `> 15mn` placeholder and compare every other scenario to the `official` PW image.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # DEV MODE: Docker Hub public images — no registry login needed.
       - name: Install act
         run: |
