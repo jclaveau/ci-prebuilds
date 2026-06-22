@@ -99,7 +99,7 @@ jobs:
       # PW browser CDN); we delta /proc/net/dev:eth0 here vs just-before-tests for the "full dl size".
       - name: Capture pre-install rx bytes
         run: awk '/^[ \t]*eth0:/{print $2}' /proc/net/dev > /tmp/nb_rx
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'   # no cache: we measure the cold install on purpose
       - name: Ensure pnpm
