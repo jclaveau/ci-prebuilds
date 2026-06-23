@@ -1474,53 +1474,18 @@ jobs:
           EOF
           docker build -t wk-candidate-runner:${{ github.sha }} -f /tmp/Dockerfile.runner /tmp
 
-      - name: Tier-2 diagnostic — MiniBrowser-wpe with --automation (no PW SDK)
-        timeout-minutes: 4
-        run: |
-          set -o pipefail
-          # Iter #20 (546dca2) result: MiniBrowser-wpe --automation didn't crash
-          # WPEWebProcess and didn't exit either — `timeout 60` SIGTERM was
-          # ignored (no --kill-after), GHA timeout-minutes:2 killed it at 2min
-          # with zero captured stdout. So we know:
-          #   - PW SDK → --inspector-pipe path crashes WPEWebProcess at +14s
-          #   - MiniBrowser --automation path does NOT crash, runs idle
-          # Iter #21: capture proof. `timeout -k 10 30` ensures the
-          # MiniBrowser actually dies (busybox timeout: -k SECS, not
-          # --kill-after=). stdbuf is GNU coreutils, not in Alpine
-          # busybox — dropped. Output flushes on exit/kill regardless.
-          # Wrap docker invocation in GHA-friendly `set +e` to allow
-          # non-zero (expected) exit from kill.
-          set +e
-          docker run --rm \
-            --security-opt seccomp=unconfined \
-            --security-opt apparmor=unconfined \
-            --cap-add SYS_ADMIN \
-            --cap-add NET_ADMIN \
-            -e WEBKIT_FORCE_SANDBOX=0 \
-            -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
-            -e LIBGL_ALWAYS_SOFTWARE=1 \
-            -e GALLIUM_DRIVER=llvmpipe \
-            -e MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
-            wk-candidate-runner:${{ github.sha }} \
-            timeout -k 10 30 \
-              /opt/playwright/webkit-2287/pw_run.sh \
-              --automation --headless --no-startup-window about:blank 2>&1
-          RC=$?
-          echo "=== docker run rc=$RC ==="
-          # rc=124 → timeout fired (process didn't exit on its own → hang)
-          # rc=137 → --kill-after fired (process ignored SIGTERM → real hang)
-          # rc=0 → MiniBrowser exited cleanly (success path)
-          # any other → real error in pw_run.sh / WebProcess crash
-          if [ $RC -eq 0 ]; then
-            echo "DIAGNOSTIC: MiniBrowser exited cleanly — about:blank load OK"
-          elif [ $RC -eq 124 ] || [ $RC -eq 137 ]; then
-            echo "DIAGNOSTIC: MiniBrowser hung (rc=$RC) — no crash detected"
-          else
-            echo "DIAGNOSTIC: WebProcess/MiniBrowser error (rc=$RC)"
-          fi
-
       - name: Run Tier-2 smoke (PW SDK → MiniBrowser-wpe)
-        if: false  # tracked in issue — page-7 'crashed:true' at +14s via inspector-pipe
+        if: false  # tracked in issue — PW SDK '--inspector-pipe' handshake
+                   # crashes WPEWebProcess at +14s during page creation.
+                   # MiniBrowser-wpe binary itself is fine (Tier-1 ✓), so
+                   # the build pipeline ships. Mirror of Firefox #60 pattern.
+                   # Iters #20-23 attempted a no-PW-SDK diagnostic via
+                   # MiniBrowser-wpe --automation but ran into successive
+                   # busybox/Alpine shim quirks (GNU timeout opts, missing
+                   # stdbuf, signal-passthrough hangs through pw_run.sh).
+                   # Reverted per feedback_revert_over_iterate; further
+                   # diagnosis belongs in the PW inspector-pipe code path,
+                   # not a CI shim.
         run: |
           # --security-opt seccomp=unconfined: Docker default seccomp blocks
           # clone(CLONE_NEWUSER) which WebKit's bwrap sandbox needs. Without
