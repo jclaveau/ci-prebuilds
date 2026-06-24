@@ -1,0 +1,255 @@
+name: smoke-webkit-iter (diagnose)
+
+# Standalone fast-iter smoke for WebKit-WPE. Bypasses the full producer
+# chain — consumes an already-published `wk-*` image from GHCR. Lets us
+# iterate gdb-wrapped diagnosis cycles in ~5 min vs ~9-12 h cold rebuilds.
+#
+# Default: probe `wk-edge` (last main-branch publish).
+# Use case: WPEWebProcess crashes at +14s during page creation under PW
+# SDK `--inspector-pipe`. We wrap WPEWebProcess in a gdb script so the
+# subprocess crash dumps `bt full` + `thread apply all bt` to stdout +
+# uploads as an artifact.
+#
+# Once the root cause is identified and a source patch lands, the full
+# producer (playwright-alpine-browsers.yml build-webkit-*) reruns with
+# the fix and the standard smoke-webkit job exercises the patched image.
+
+on:
+  workflow_dispatch:
+    inputs:
+      wk_image_tag:
+        description: 'wk-* tag on ghcr.io/jclaveau/playwright-alpine-browsers to smoke (default: wk-edge)'
+        type: string
+        default: 'wk-edge'
+      pw_version:
+        description: 'Playwright version to install in the consumer image (must match the wk tag PW pin)'
+        type: string
+        default: '1.60.0'
+      webkit_rev:
+        description: 'webkit_revision (revision in browsers.json) to place under PLAYWRIGHT_BROWSERS_PATH'
+        type: string
+        default: '2302'
+      use_gdb_wrapper:
+        description: 'Wrap WPEWebProcess in gdb to capture backtrace on SIGSEGV (slows startup by ~3-5s)'
+        type: boolean
+        default: true
+      tier:
+        description: 'tier-1 = MiniBrowser --version only; tier-2 = full PW SDK launch+newPage'
+        type: choice
+        options: ['tier-1', 'tier-2', 'tier-2-direct']
+        default: 'tier-2'
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Inspect target image
+        run: |
+          docker manifest inspect ghcr.io/jclaveau/playwright-alpine-browsers:${{ inputs.wk_image_tag }} >/dev/null \
+            || { echo "::error::Image tag '${{ inputs.wk_image_tag }}' not found on GHCR"; exit 1; }
+          echo "::notice::Target image: ghcr.io/jclaveau/playwright-alpine-browsers:${{ inputs.wk_image_tag }}"
+
+      - name: Build candidate Alpine runner
+        env:
+          PW_VERSION: ${{ inputs.pw_version }}
+          WEBKIT_REV: ${{ inputs.webkit_rev }}
+          WK_TAG: ${{ inputs.wk_image_tag }}
+        run: |
+          # Same runtime deps as smoke-webkit + gdb (+ binutils + musl-dbg
+          # for backtrace symbols on libc frames).
+          cat > /tmp/Dockerfile.runner <<EOF
+          FROM alpine:edge
+          RUN apk add --no-cache \\
+              nodejs npm bash gdb procps coreutils \\
+              file binutils ca-certificates ttf-freefont \\
+              libwpe libwpebackend-fdo \\
+              gtk4.0 at-spi2-core \\
+              libgcc libstdc++ musl-dbg \\
+              mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \\
+              gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \\
+              cairo pango gdk-pixbuf libnotify dbus-libs opus libsecret strace
+          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:${WK_TAG} /webkit /opt/playwright/webkit-${WEBKIT_REV}
+          RUN touch /opt/playwright/webkit-${WEBKIT_REV}/INSTALLATION_COMPLETE
+          ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+          ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+          ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
+          RUN npm install -g playwright@${PW_VERSION}
+          EOF
+          docker build -t wk-iter:${{ github.sha }} -f /tmp/Dockerfile.runner /tmp
+
+      - name: Stage gdb-wrapper for WPEWebProcess
+        if: ${{ inputs.use_gdb_wrapper }}
+        run: |
+          # The wrapper renames WPEWebProcess → WPEWebProcess.real and
+          # replaces the binary with a script that exec's gdb. gdb runs
+          # the real binary, prints `bt full` + `thread apply all bt`
+          # on SIGSEGV / SIGABRT, then exits with the child rc.
+          #
+          # WPEWebProcess is launched by WebKit's UIProcess via posix_spawn
+          # with its arg-list intact — gdb's `--args` passes them through.
+          # PR_SET_PTRACER_ANY (set in /proc) lets gdb attach inside a
+          # container without --cap-add SYS_PTRACE. We add SYS_PTRACE
+          # belt-and-braces.
+          mkdir -p /tmp/wrapper
+          cat > /tmp/wrapper/wpewebprocess-wrapper.sh <<'WRAPPER'
+          #!/bin/sh
+          set -u
+          REAL="${0}.real"
+          [ -x "$REAL" ] || { echo "wrapper: $REAL missing" >&2; exit 127; }
+          # gdb: set pagination off so output doesn't block on (more);
+          # handle SIGSEGV stop print pass = print on receive + pass to
+          # process so the real handler still runs;
+          # `bt full` then `thread apply all bt` after the inferior dies.
+          # --return-child-result: propagate the real exit code.
+          exec gdb --batch --return-child-result --quiet \
+            -ex 'set pagination off' \
+            -ex 'set print pretty on' \
+            -ex 'set print thread-events off' \
+            -ex 'handle SIGPIPE nostop noprint pass' \
+            -ex 'handle SIGSEGV stop print pass' \
+            -ex 'handle SIGABRT stop print pass' \
+            -ex 'handle SIGBUS stop print pass' \
+            -ex 'handle SIGILL stop print pass' \
+            -ex run \
+            -ex 'echo \n===== bt full =====\n' \
+            -ex 'bt full' \
+            -ex 'echo \n===== thread apply all bt =====\n' \
+            -ex 'thread apply all bt' \
+            -ex 'echo \n===== info registers =====\n' \
+            -ex 'info registers' \
+            --args "$REAL" "$@"
+          WRAPPER
+          chmod +x /tmp/wrapper/wpewebprocess-wrapper.sh
+          cat /tmp/wrapper/wpewebprocess-wrapper.sh
+
+      - name: Tier-1 — MiniBrowser-wpe --version
+        if: ${{ inputs.tier == 'tier-1' }}
+        run: |
+          docker run --rm \
+            --security-opt seccomp=unconfined \
+            --security-opt apparmor=unconfined \
+            --cap-add SYS_ADMIN \
+            --cap-add SYS_PTRACE \
+            -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
+            wk-iter:${{ github.sha }} \
+            sh -c '
+              set -e
+              WK=/opt/playwright/webkit-${{ inputs.webkit_rev }}
+              file $WK/minibrowser-wpe/MiniBrowser
+              ldd $WK/minibrowser-wpe/MiniBrowser | head -30
+              $WK/minibrowser-wpe/MiniBrowser --version || echo "exit rc=$?"
+            '
+
+      - name: Tier-2 direct — MiniBrowser-wpe --automation (no PW SDK)
+        if: ${{ inputs.tier == 'tier-2-direct' }}
+        run: |
+          # Bypass PW SDK entirely. Drives MiniBrowser-wpe with --automation
+          # which spawns WPEWebProcess via the standard non-inspector-pipe
+          # path. If THIS still crashes, the bug is in WebKit's page setup
+          # (libwpe / libwpebackend-fdo init), not PW's inspector wire.
+          # If THIS works, the bug IS in the inspector-pipe handshake.
+          WRAPPER_VOL=""
+          if [ "${{ inputs.use_gdb_wrapper }}" = "true" ]; then
+            WRAPPER_VOL="-v /tmp/wrapper:/wrapper:ro"
+          fi
+          docker run --rm \
+            --security-opt seccomp=unconfined \
+            --security-opt apparmor=unconfined \
+            --cap-add SYS_ADMIN \
+            --cap-add SYS_PTRACE \
+            --cap-add NET_ADMIN \
+            $WRAPPER_VOL \
+            -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
+            -e WEBKIT_FORCE_SANDBOX=0 \
+            -e LIBGL_ALWAYS_SOFTWARE=1 \
+            -e GALLIUM_DRIVER=llvmpipe \
+            -e MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
+            wk-iter:${{ github.sha }} \
+            sh -c '
+              set -u
+              WK=/opt/playwright/webkit-${{ inputs.webkit_rev }}/minibrowser-wpe
+              if [ -d /wrapper ]; then
+                echo "===== installing gdb wrapper ====="
+                mv $WK/WPEWebProcess $WK/WPEWebProcess.real
+                cp /wrapper/wpewebprocess-wrapper.sh $WK/WPEWebProcess
+                chmod +x $WK/WPEWebProcess
+                ls -la $WK/WPEWebProcess*
+              fi
+              # No pw_run.sh in tier-2-direct → set WEBKIT_EXEC_PATH manually
+              # so MiniBrowser finds WPEWebProcess (our wrapper) in the same
+              # flat dir as itself. Same for injected-bundle + inspector.
+              export WEBKIT_EXEC_PATH=$WK
+              export WEBKIT_INJECTED_BUNDLE_PATH=$WK
+              export WEBKIT_INSPECTOR_RESOURCES_PATH=$WK
+              ulimit -c unlimited 2>/dev/null || true
+              echo "===== MiniBrowser --automation about:blank (timeout 30s) ====="
+              cd $WK
+              # BusyBox timeout syntax: -k SECS SECS PROG.
+              timeout -k 5 30 ./MiniBrowser --automation about:blank
+              echo "rc=$?"
+            ' 2>&1 | tee /tmp/tier2-direct.log
+
+      - name: Tier-2 — PW SDK launch + newPage (with gdb wrapper)
+        if: ${{ inputs.tier == 'tier-2' }}
+        run: |
+          WRAPPER_VOL=""
+          if [ "${{ inputs.use_gdb_wrapper }}" = "true" ]; then
+            WRAPPER_VOL="-v /tmp/wrapper:/wrapper:ro"
+          fi
+          docker run --rm \
+            --security-opt seccomp=unconfined \
+            --security-opt apparmor=unconfined \
+            --cap-add SYS_ADMIN \
+            --cap-add SYS_PTRACE \
+            --cap-add NET_ADMIN \
+            $WRAPPER_VOL \
+            -v "$PWD/playwright/alpine-browsers/webkit/smoke:/smoke:ro" \
+            -w /smoke \
+            -e NODE_PATH=/usr/local/lib/node_modules \
+            -e DEBUG=pw:browser,pw:protocol \
+            -e WEBKIT_FORCE_SANDBOX=0 \
+            -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
+            -e LIBGL_ALWAYS_SOFTWARE=1 \
+            -e GALLIUM_DRIVER=llvmpipe \
+            -e MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
+            wk-iter:${{ github.sha }} \
+            sh -c '
+              set -u
+              WK=/opt/playwright/webkit-${{ inputs.webkit_rev }}/minibrowser-wpe
+              if [ -d /wrapper ]; then
+                echo "===== installing gdb wrapper on WPEWebProcess ====="
+                mv $WK/WPEWebProcess $WK/WPEWebProcess.real
+                cp /wrapper/wpewebprocess-wrapper.sh $WK/WPEWebProcess
+                chmod +x $WK/WPEWebProcess
+              fi
+              # Lift ptrace gate inside container so gdb attach works.
+              echo 0 > /proc/sys/kernel/yama/ptrace_scope 2>/dev/null || true
+              ulimit -c unlimited
+              cd /smoke
+              node launch.cjs
+              echo "launch.cjs rc=$?"
+            ' 2>&1 | tee /tmp/tier2-pw-sdk.log
+
+      - name: Upload backtrace artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: webkit-iter-${{ inputs.tier }}-${{ github.run_number }}
+          path: |
+            /tmp/tier2-direct.log
+            /tmp/tier2-pw-sdk.log
+          if-no-files-found: warn
+          retention-days: 14
