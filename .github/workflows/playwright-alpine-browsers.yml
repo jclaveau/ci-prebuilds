@@ -1227,13 +1227,17 @@ jobs:
             PORT=WPE
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
 
-  # GTK chain re-enabled iter #21 — PW's `registry/index.ts` ldd-validates
-  # `minibrowser-gtk/` at install time, so the consumer image needs the GTK
-  # port shipped even though headless CI only ever invokes WPE. Builds in
-  # parallel with the WPE chain off the shared source-prep image; sccache
-  # mount id is per-port (`wk-sccache-GTK`) so the two chains don't deadlock
-  # the locked mount on overlapping clang invocations.
+  # GTK chain GATED OFF (iter #25): re-disabled while we diagnose the
+  # WPEWebProcess SIGILL (Skia + _FORTIFY_SOURCE trap; see
+  # project_webkit_fortify_source_skia_trap.md). Once WPE-only PW SDK
+  # smoke passes, re-enable the GTK chain (drop `if: false`) and restore
+  # finalize's BASE_GTK build-arg + Dockerfile.finalize gtk COPY.
+  # Until then: Dockerfile.finalize COPYs the WPE artifact into BOTH
+  # minibrowser-wpe/ and minibrowser-gtk/ so PW's registry/index.ts
+  # ldd-walk passes (headed launches would still error but headless WPE
+  # is what we care about for the diagnosis loop).
   build-webkit-gtk-1:
+    if: false
     needs: [build-webkit-source-prep]
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -1261,6 +1265,7 @@ jobs:
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
 
   build-webkit-gtk-2:
+    if: false
     needs: [build-webkit-gtk-1]
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -1288,6 +1293,7 @@ jobs:
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
 
   build-webkit-gtk-3:
+    if: false
     needs: [build-webkit-gtk-2]
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -1315,6 +1321,7 @@ jobs:
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
 
   build-webkit-gtk-4:
+    if: false
     needs: [build-webkit-gtk-3]
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -1342,7 +1349,9 @@ jobs:
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
 
   build-webkit-finalize:
-    needs: [build-webkit-source-prep, build-webkit-wpe-4, build-webkit-gtk-4]
+    # GTK chain gated off (see build-webkit-gtk-1 comment). Only need WPE +
+    # source-prep until Tier-2 SDK passes.
+    needs: [build-webkit-source-prep, build-webkit-wpe-4]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
@@ -1378,7 +1387,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             BASE_WPE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-wpe-4.outputs.tag }}
-            BASE_GTK=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-gtk-4.outputs.tag }}
+            BASE_GTK=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-wpe-4.outputs.tag }}
             BASE_SOURCE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-source-prep.outputs.tag }}
 
       - name: Tier-1 smoke (ELF + ldd integrity for MiniBrowser-wpe + MiniBrowser-gtk)
@@ -1474,31 +1483,27 @@ jobs:
           EOF
           docker build -t wk-candidate-runner:${{ github.sha }} -f /tmp/Dockerfile.runner /tmp
 
-      - name: Run Tier-2 smoke (PW SDK → MiniBrowser-wpe)
-        if: false  # tracked in issue — PW SDK '--inspector-pipe' handshake
-                   # crashes WPEWebProcess at +14s during page creation.
-                   # MiniBrowser-wpe binary itself is fine (Tier-1 ✓), so
-                   # the build pipeline ships. Mirror of Firefox #60 pattern.
-                   # Iters #20-23 attempted a no-PW-SDK diagnostic via
-                   # MiniBrowser-wpe --automation but ran into successive
-                   # busybox/Alpine shim quirks (GNU timeout opts, missing
-                   # stdbuf, signal-passthrough hangs through pw_run.sh).
-                   # Reverted per feedback_revert_over_iterate; further
-                   # diagnosis belongs in the PW inspector-pipe code path,
-                   # not a CI shim.
+      - name: Configure host for core dumps (Tier-2 diagnostic safety net)
         run: |
-          # --security-opt seccomp=unconfined: Docker default seccomp blocks
-          # clone(CLONE_NEWUSER) which WebKit's bwrap sandbox needs. Without
-          # it, bwrap errors "Creating new namespace failed: Operation not
-          # permitted" and the libwpe init aborts. Same shape as the Firefox
-          # smoke (same flag, same reason).
-          # DEBUG=pw:browser surfaces stderr from the MiniBrowser child process,
-          # including RemoteInspector handshake traces.
+          sudo mkdir -p /tmp/cores
+          sudo chmod 1777 /tmp/cores
+          sudo sh -c 'echo "/tmp/cores/core.%e.%p.%s" > /proc/sys/kernel/core_pattern'
+
+      - name: Run Tier-2 smoke (PW SDK → MiniBrowser-wpe)
+        timeout-minutes: 5
+        run: |
+          # Re-enabled after disabling _FORTIFY_SOURCE in cmake-flags.overlay
+          # (see project_webkit_fortify_source_skia_trap.md). If the rebuild
+          # fixed the SIGILL, launch.cjs runs the full Tier-2 sequence
+          # (launch, page, route, screenshot). If something else still
+          # crashes WPEWebProcess, the core-dump step below captures bt.
           docker run --rm \
             --security-opt seccomp=unconfined \
             --security-opt apparmor=unconfined \
             --cap-add SYS_ADMIN \
             --cap-add NET_ADMIN \
+            --ulimit core=-1 \
+            -v /tmp/cores:/tmp/cores:rw \
             -v "$PWD/playwright/alpine-browsers/webkit/smoke:/smoke" \
             -w /smoke \
             -e NODE_PATH=/usr/local/lib/node_modules \
@@ -1509,7 +1514,45 @@ jobs:
             -e GALLIUM_DRIVER=llvmpipe \
             -e MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
             wk-candidate-runner:${{ github.sha }} \
-            node launch.cjs
+            sh -c '
+              ulimit -c unlimited 2>/dev/null || true
+              cd /smoke
+              timeout -k 5 90 node launch.cjs
+            '
+
+      - name: Post-mortem on any cores
+        if: failure()
+        run: |
+          shopt -s nullglob
+          CORES=(/tmp/cores/core.*)
+          if [ ${#CORES[@]} -eq 0 ]; then
+            echo "::notice::No core files captured."
+            exit 0
+          fi
+          echo "::warning::${#CORES[@]} core(s) captured — see logs for bt"
+          for c in "${CORES[@]}"; do
+            base=$(basename "$c")
+            EXE=$(echo "$base" | awk -F. '{print $2}')
+            echo "::group::core: $base"
+            docker run --rm -v /tmp/cores:/cores:ro wk-candidate-runner:${{ github.sha }} \
+              sh -c "
+                BIN=\$(find /opt/playwright -name '$EXE' -type f -executable 2>/dev/null | head -1)
+                echo binary: \$BIN
+                gdb --batch --quiet -ex 'set pagination off' -ex 'set print pretty on' \
+                  -ex 'bt full' -ex 'thread apply all bt' -ex 'info registers' \
+                  \"\$BIN\" /cores/$base
+              "
+            echo "::endgroup::"
+          done
+
+      - name: Upload cores + bt as artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: webkit-smoke-cores-${{ github.run_number }}
+          path: /tmp/cores/core.*
+          if-no-files-found: ignore
+          retention-days: 7
 
   promote-webkit:
     # Promote the artifact to wk-${REV} / wk-${VER} / wk-latest on both

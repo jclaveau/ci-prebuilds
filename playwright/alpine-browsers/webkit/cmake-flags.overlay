@@ -89,6 +89,19 @@ CMAKE_SHARED_FLAGS=(
   # (i5-8350U Kaby Lake-R, many GHA hosted runners). Pre-define the gate
   # macro to 0 so the header excludes the impl entirely; dispatch falls back
   # to HASWELL (AVX2) which all x86_64 PW targets support.
-  -DCMAKE_C_FLAGS=-DSIMDUTF_IMPLEMENTATION_ICELAKE=0
-  -DCMAKE_CXX_FLAGS=-DSIMDUTF_IMPLEMENTATION_ICELAKE=0
+  # Compiler flags string: SIMDUTF macro + _FORTIFY_SOURCE disable.
+  # Why _FORTIFY_SOURCE off:
+  #   Alpine's gcc/clang spec sets =2/=3 by default at -O2 which inserts
+  #   __memcpy_chk(dst, src, n, __builtin_dynamic_object_size(dst)) for
+  #   every memcpy. In Skia's SkAutoDescriptor::reset(const SkDescriptor&)
+  #   the destination is `this->fDesc` of static type SkDescriptor* (12 B
+  #   = checksum:4 + length:4 + count:4). Real backing storage is fStorage
+  #   (~212 B), but the compiler can't see through the typed pointer. For
+  #   any descriptor with getLength()>12 (= every realistic case with at
+  #   least one Entry) the runtime check `n > 12` fires __builtin_trap()
+  #   = UD2. Manifest: WPEWebProcess SIGILL at +14s during page creation
+  #   in SkAutoDescriptor move ctor → SkFont::getMetrics → Font::platformInit.
+  #   See: project_webkit_fortify_source_skia_trap.md
+  "-DCMAKE_C_FLAGS=-DSIMDUTF_IMPLEMENTATION_ICELAKE=0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+  "-DCMAKE_CXX_FLAGS=-DSIMDUTF_IMPLEMENTATION_ICELAKE=0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
 )
