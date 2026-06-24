@@ -29,8 +29,8 @@ on:
         description: 'webkit_revision (browsers.json). Leave blank to auto-detect from pw_version (preferred).'
         type: string
         default: ''
-      use_gdb_wrapper:
-        description: 'Wrap WPEWebProcess in gdb to capture backtrace on SIGSEGV (slows startup by ~3-5s)'
+      capture_cores:
+        description: 'Configure host core_pattern + ulimit core=-1; post-mortem gdb on any cores. Off-by-default until iter #5 stabilises.'
         type: boolean
         default: true
       tier:
@@ -98,50 +98,19 @@ jobs:
           EOF
           docker build -t wk-iter:${{ github.sha }} -f /tmp/Dockerfile.runner /tmp
 
-      - name: Stage gdb-wrapper for WPEWebProcess
-        if: ${{ inputs.use_gdb_wrapper }}
+      - name: Configure host for core dumps
+        if: ${{ inputs.capture_cores }}
         run: |
-          # The wrapper renames WPEWebProcess → WPEWebProcess.real and
-          # replaces the binary with a script that exec's gdb. gdb runs
-          # the real binary, prints `bt full` + `thread apply all bt`
-          # on SIGSEGV / SIGABRT, then exits with the child rc.
-          #
-          # WPEWebProcess is launched by WebKit's UIProcess via posix_spawn
-          # with its arg-list intact — gdb's `--args` passes them through.
-          # PR_SET_PTRACER_ANY (set in /proc) lets gdb attach inside a
-          # container without --cap-add SYS_PTRACE. We add SYS_PTRACE
-          # belt-and-braces.
-          mkdir -p /tmp/wrapper
-          cat > /tmp/wrapper/wpewebprocess-wrapper.sh <<'WRAPPER'
-          #!/bin/sh
-          set -u
-          REAL="${0}.real"
-          [ -x "$REAL" ] || { echo "wrapper: $REAL missing" >&2; exit 127; }
-          # gdb: set pagination off so output doesn't block on (more);
-          # handle SIGSEGV stop print pass = print on receive + pass to
-          # process so the real handler still runs;
-          # `bt full` then `thread apply all bt` after the inferior dies.
-          # --return-child-result: propagate the real exit code.
-          exec gdb --batch --return-child-result --quiet \
-            -ex 'set pagination off' \
-            -ex 'set print pretty on' \
-            -ex 'set print thread-events off' \
-            -ex 'handle SIGPIPE nostop noprint pass' \
-            -ex 'handle SIGSEGV stop print pass' \
-            -ex 'handle SIGABRT stop print pass' \
-            -ex 'handle SIGBUS stop print pass' \
-            -ex 'handle SIGILL stop print pass' \
-            -ex run \
-            -ex 'echo \n===== bt full =====\n' \
-            -ex 'bt full' \
-            -ex 'echo \n===== thread apply all bt =====\n' \
-            -ex 'thread apply all bt' \
-            -ex 'echo \n===== info registers =====\n' \
-            -ex 'info registers' \
-            --args "$REAL" "$@"
-          WRAPPER
-          chmod +x /tmp/wrapper/wpewebprocess-wrapper.sh
-          cat /tmp/wrapper/wpewebprocess-wrapper.sh
+          # Kernel-wide core_pattern affects every container on this host.
+          # %e = exe basename, %p = pid. Write target must exist + be world-writable
+          # (cores write as the crashing process's UID; container runs as root
+          # by default but post-mortem gdb runs as the runner uid 1001).
+          sudo mkdir -p /tmp/cores
+          sudo chmod 1777 /tmp/cores
+          sudo sh -c 'echo "/tmp/cores/core.%e.%p.%s" > /proc/sys/kernel/core_pattern'
+          sudo sysctl -w fs.suid_dumpable=2 >/dev/null
+          echo "core_pattern: $(cat /proc/sys/kernel/core_pattern)"
+          echo "suid_dumpable: $(cat /proc/sys/fs/suid_dumpable)"
 
       - name: Tier-1 — MiniBrowser-wpe --version
         if: ${{ inputs.tier == 'tier-1' }}
@@ -163,23 +132,20 @@ jobs:
 
       - name: Tier-2 direct — MiniBrowser-wpe --automation (no PW SDK)
         if: ${{ inputs.tier == 'tier-2-direct' }}
+        timeout-minutes: 4
         run: |
           # Bypass PW SDK entirely. Drives MiniBrowser-wpe with --automation
           # which spawns WPEWebProcess via the standard non-inspector-pipe
           # path. If THIS still crashes, the bug is in WebKit's page setup
           # (libwpe / libwpebackend-fdo init), not PW's inspector wire.
           # If THIS works, the bug IS in the inspector-pipe handshake.
-          WRAPPER_VOL=""
-          if [ "${{ inputs.use_gdb_wrapper }}" = "true" ]; then
-            WRAPPER_VOL="-v /tmp/wrapper:/wrapper:ro"
-          fi
           docker run --rm \
             --security-opt seccomp=unconfined \
             --security-opt apparmor=unconfined \
             --cap-add SYS_ADMIN \
-            --cap-add SYS_PTRACE \
             --cap-add NET_ADMIN \
-            $WRAPPER_VOL \
+            --ulimit core=-1 \
+            -v /tmp/cores:/tmp/cores:rw \
             -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
             -e WEBKIT_FORCE_SANDBOX=0 \
             -e LIBGL_ALWAYS_SOFTWARE=1 \
@@ -189,41 +155,29 @@ jobs:
             sh -c '
               set -u
               WK=/opt/playwright/webkit-${{ steps.pins.outputs.webkit_rev }}/minibrowser-wpe
-              if [ -d /wrapper ]; then
-                echo "===== installing gdb wrapper ====="
-                mv $WK/WPEWebProcess $WK/WPEWebProcess.real
-                cp /wrapper/wpewebprocess-wrapper.sh $WK/WPEWebProcess
-                chmod +x $WK/WPEWebProcess
-                ls -la $WK/WPEWebProcess*
-              fi
-              # No pw_run.sh in tier-2-direct → set WEBKIT_EXEC_PATH manually
-              # so MiniBrowser finds WPEWebProcess (our wrapper) in the same
-              # flat dir as itself. Same for injected-bundle + inspector.
               export WEBKIT_EXEC_PATH=$WK
               export WEBKIT_INJECTED_BUNDLE_PATH=$WK
               export WEBKIT_INSPECTOR_RESOURCES_PATH=$WK
               ulimit -c unlimited 2>/dev/null || true
               echo "===== MiniBrowser --automation about:blank (timeout 30s) ====="
               cd $WK
-              # BusyBox timeout syntax: -k SECS SECS PROG.
               timeout -k 5 30 ./MiniBrowser --automation about:blank
-              echo "rc=$?"
+              echo "MiniBrowser exit rc=$?"
+              echo "===== cores dir ====="
+              ls -la /tmp/cores/ || true
             ' 2>&1 | tee /tmp/tier2-direct.log
 
-      - name: Tier-2 — PW SDK launch + newPage (with gdb wrapper)
+      - name: Tier-2 — PW SDK launch + newPage
         if: ${{ inputs.tier == 'tier-2' }}
+        timeout-minutes: 5
         run: |
-          WRAPPER_VOL=""
-          if [ "${{ inputs.use_gdb_wrapper }}" = "true" ]; then
-            WRAPPER_VOL="-v /tmp/wrapper:/wrapper:ro"
-          fi
           docker run --rm \
             --security-opt seccomp=unconfined \
             --security-opt apparmor=unconfined \
             --cap-add SYS_ADMIN \
-            --cap-add SYS_PTRACE \
             --cap-add NET_ADMIN \
-            $WRAPPER_VOL \
+            --ulimit core=-1 \
+            -v /tmp/cores:/tmp/cores:rw \
             -v "$PWD/playwright/alpine-browsers/webkit/smoke:/smoke:ro" \
             -w /smoke \
             -e NODE_PATH=/usr/local/lib/node_modules \
@@ -236,20 +190,67 @@ jobs:
             wk-iter:${{ github.sha }} \
             sh -c '
               set -u
-              WK=/opt/playwright/webkit-${{ steps.pins.outputs.webkit_rev }}/minibrowser-wpe
-              if [ -d /wrapper ]; then
-                echo "===== installing gdb wrapper on WPEWebProcess ====="
-                mv $WK/WPEWebProcess $WK/WPEWebProcess.real
-                cp /wrapper/wpewebprocess-wrapper.sh $WK/WPEWebProcess
-                chmod +x $WK/WPEWebProcess
-              fi
-              # Lift ptrace gate inside container so gdb attach works.
-              echo 0 > /proc/sys/kernel/yama/ptrace_scope 2>/dev/null || true
-              ulimit -c unlimited
+              ulimit -c unlimited 2>/dev/null || true
               cd /smoke
-              node launch.cjs
-              echo "launch.cjs rc=$?"
-            ' 2>&1 | tee /tmp/tier2-pw-sdk.log
+              timeout -k 5 90 node launch.cjs
+              RC=$?
+              echo "launch.cjs rc=$RC"
+              echo "===== cores dir ====="
+              ls -la /tmp/cores/ || true
+              exit $RC
+            ' 2>&1 | tee /tmp/tier2-pw-sdk.log || true
+          echo "::group::host-side cores dir"
+          ls -la /tmp/cores/ || true
+          echo "::endgroup::"
+
+      - name: Post-mortem gdb on cores
+        if: ${{ always() && inputs.capture_cores }}
+        run: |
+          shopt -s nullglob
+          CORES=(/tmp/cores/core.*)
+          if [ ${#CORES[@]} -eq 0 ]; then
+            echo "::notice::No core files captured under /tmp/cores"
+            exit 0
+          fi
+          echo "::notice::Captured ${#CORES[@]} core file(s)"
+          mkdir -p /tmp/bt
+          for c in "${CORES[@]}"; do
+            base=$(basename "$c")
+            EXE=$(echo "$base" | awk -F. '{print $2}')
+            SIG=$(echo "$base" | awk -F. '{print $NF}')
+            echo
+            echo "::group::core: $base (exe=$EXE sig=$SIG)"
+            ls -lh "$c"
+            file "$c" || true
+            # Run gdb inside the runner container which has the binary + libs.
+            # Mount the host's core dir read-only into the container for gdb.
+            BT="/tmp/bt/${base}.bt"
+            docker run --rm \
+              -v /tmp/cores:/cores:ro \
+              wk-iter:${{ github.sha }} \
+              sh -c "
+                WK=/opt/playwright/webkit-${{ steps.pins.outputs.webkit_rev }}/minibrowser-wpe
+                BIN=\"\$WK/$EXE\"
+                if [ ! -x \"\$BIN\" ]; then
+                  BIN=\$(find /opt/playwright -name '$EXE' -type f -executable 2>/dev/null | head -1)
+                fi
+                echo \"binary: \$BIN\"
+                gdb --batch --quiet \
+                  -ex 'set pagination off' \
+                  -ex 'set print pretty on' \
+                  -ex 'set sysroot /' \
+                  -ex 'echo \n===== bt full =====\n' \
+                  -ex 'bt full' \
+                  -ex 'echo \n===== thread apply all bt =====\n' \
+                  -ex 'thread apply all bt' \
+                  -ex 'echo \n===== info registers =====\n' \
+                  -ex 'info registers' \
+                  -ex 'echo \n===== info sharedlibrary =====\n' \
+                  -ex 'info sharedlibrary' \
+                  \"\$BIN\" /cores/$base
+              " 2>&1 | tee "$BT"
+            echo "::endgroup::"
+          done
 
       - name: Upload backtrace artifact
         if: always()
@@ -259,5 +260,7 @@ jobs:
           path: |
             /tmp/tier2-direct.log
             /tmp/tier2-pw-sdk.log
+            /tmp/bt/*.bt
+            /tmp/cores/core.*
           if-no-files-found: warn
           retention-days: 14
