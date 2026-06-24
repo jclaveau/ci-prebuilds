@@ -22,13 +22,13 @@ on:
         type: string
         default: 'wk-edge'
       pw_version:
-        description: 'Playwright version to install in the consumer image (must match the wk tag PW pin)'
+        description: 'Playwright version to install (must match wk-tag PW pin; PW@1.60.0 → wk-edge → rev 2287)'
         type: string
         default: '1.60.0'
       webkit_rev:
-        description: 'webkit_revision (revision in browsers.json) to place under PLAYWRIGHT_BROWSERS_PATH'
+        description: 'webkit_revision (browsers.json). Leave blank to auto-detect from pw_version (preferred).'
         type: string
-        default: '2302'
+        default: ''
       use_gdb_wrapper:
         description: 'Wrap WPEWebProcess in gdb to capture backtrace on SIGSEGV (slows startup by ~3-5s)'
         type: boolean
@@ -56,16 +56,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Inspect target image
+      - name: Inspect target image + resolve webkit_rev
+        id: pins
         run: |
           docker manifest inspect ghcr.io/jclaveau/playwright-alpine-browsers:${{ inputs.wk_image_tag }} >/dev/null \
             || { echo "::error::Image tag '${{ inputs.wk_image_tag }}' not found on GHCR"; exit 1; }
           echo "::notice::Target image: ghcr.io/jclaveau/playwright-alpine-browsers:${{ inputs.wk_image_tag }}"
+          REV='${{ inputs.webkit_rev }}'
+          if [ -z "$REV" ]; then
+            REV=$(curl -fsSL https://unpkg.com/playwright-core@${{ inputs.pw_version }}/browsers.json \
+              | jq -r '.browsers[] | select(.name=="webkit") | .revision')
+            echo "::notice::auto-detected webkit_revision=$REV for PW ${{ inputs.pw_version }}"
+          fi
+          echo "webkit_rev=$REV" >> "$GITHUB_OUTPUT"
 
       - name: Build candidate Alpine runner
         env:
           PW_VERSION: ${{ inputs.pw_version }}
-          WEBKIT_REV: ${{ inputs.webkit_rev }}
+          WEBKIT_REV: ${{ steps.pins.outputs.webkit_rev }}
           WK_TAG: ${{ inputs.wk_image_tag }}
         run: |
           # Same runtime deps as smoke-webkit + gdb (+ binutils + musl-dbg
@@ -147,7 +155,7 @@ jobs:
             wk-iter:${{ github.sha }} \
             sh -c '
               set -e
-              WK=/opt/playwright/webkit-${{ inputs.webkit_rev }}
+              WK=/opt/playwright/webkit-${{ steps.pins.outputs.webkit_rev }}
               file $WK/minibrowser-wpe/MiniBrowser
               ldd $WK/minibrowser-wpe/MiniBrowser | head -30
               $WK/minibrowser-wpe/MiniBrowser --version || echo "exit rc=$?"
@@ -180,7 +188,7 @@ jobs:
             wk-iter:${{ github.sha }} \
             sh -c '
               set -u
-              WK=/opt/playwright/webkit-${{ inputs.webkit_rev }}/minibrowser-wpe
+              WK=/opt/playwright/webkit-${{ steps.pins.outputs.webkit_rev }}/minibrowser-wpe
               if [ -d /wrapper ]; then
                 echo "===== installing gdb wrapper ====="
                 mv $WK/WPEWebProcess $WK/WPEWebProcess.real
@@ -228,7 +236,7 @@ jobs:
             wk-iter:${{ github.sha }} \
             sh -c '
               set -u
-              WK=/opt/playwright/webkit-${{ inputs.webkit_rev }}/minibrowser-wpe
+              WK=/opt/playwright/webkit-${{ steps.pins.outputs.webkit_rev }}/minibrowser-wpe
               if [ -d /wrapper ]; then
                 echo "===== installing gdb wrapper on WPEWebProcess ====="
                 mv $WK/WPEWebProcess $WK/WPEWebProcess.real
