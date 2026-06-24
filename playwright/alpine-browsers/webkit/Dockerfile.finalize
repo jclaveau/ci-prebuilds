@@ -32,10 +32,5 @@ RUN sed -i 's|WEBKIT_FORCE_COMPLEX_TEXT="1" "$MINIBROWSER"|WEBKIT_EXEC_PATH="$SC
 
 FROM scratch AS artifact
 COPY --from=wpe /work/minibrowser-wpe-dist /webkit/minibrowser-wpe
-# GTK chain temporarily gated off in the producer (see workflow comment +
-# project_webkit_fortify_source_skia_trap.md). Stub GTK with the WPE dist
-# so PW's registry/index.ts ldd-walk passes on install. Headed launches
-# under headed-WebKit would invoke WPE binaries (misnamed) and fail, but
-# headless (--headless → WPE) works which is all the smoke loop needs.
-COPY --from=gtk /work/minibrowser-wpe-dist /webkit/minibrowser-gtk
+COPY --from=gtk /work/minibrowser-gtk-dist /webkit/minibrowser-gtk
 COPY --from=pw_run_patched /work/pw-webkit/pw_run.sh /webkit/pw_run.sh
