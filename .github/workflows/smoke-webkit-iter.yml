@@ -274,7 +274,7 @@ jobs:
                 # from the core's ELF header — 'file core' prints
                 # \"...from '/opt/playwright/webkit-2287/minibrowser-gtk/MiniBrowser'...\"
                 # which tells us the correct port without guessing.
-                CORE_EXE=\$(file /cores/$base | sed -nE \"s/.*from '([^']+)'.*/\1/p\")
+                CORE_EXE=\$(file /cores/$base | sed -nE \"s/.*from '([^' ]+).*/\1/p\")
                 if [ -x \"\$CORE_EXE\" ]; then
                   BIN=\"\$CORE_EXE\"
                 else
