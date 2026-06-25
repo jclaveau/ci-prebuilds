@@ -1460,7 +1460,8 @@ jobs:
               libgcc libstdc++ \\
               mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \\
               gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \\
-              cairo pango gdk-pixbuf libnotify dbus-libs opus libsecret
+              cairo pango gdk-pixbuf libnotify dbus-libs opus libsecret \\
+              xvfb xvfb-run gdb
           # PW expects /\${PLAYWRIGHT_BROWSERS_PATH}/webkit-\${REV}/ with
           # pw_run.sh + minibrowser-{wpe,gtk}/ + INSTALLATION_COMPLETE.
           COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:wk-sha-${{ github.sha }} /webkit /opt/playwright/webkit-${WEBKIT_REV}
@@ -1512,6 +1513,50 @@ jobs:
               ulimit -c unlimited 2>/dev/null || true
               cd /smoke
               timeout -k 5 90 node launch.cjs
+            '
+
+      - name: Run Tier-2 headed smoke (PW SDK → MiniBrowser-gtk via Xvfb)
+        if: false  # Tier-2 headed disabled: GTK4 internal infinite recursion
+                   # on Alpine/musl. Iter against wk-edge (smoke-webkit-iter
+                   # run 28155027218): launch.cjs OK, newContext OK, then
+                   # MiniBrowser-gtk SIGSEGV during newPage. gdb bt shows
+                   # libgtk-4.so.1 at +0x257 recursing into itself (~30
+                   # frames identical PC) until stack overflow. WebKit
+                   # itself never reached. Headless WPE Tier-2 passes —
+                   # the diagnostic frontier is GTK4-on-musl event/layout
+                   # plumbing, separate from the build pipeline.
+                   # See: project_webkit_gtk_headed_recursion.md
+                   # Re-enable by dropping `if: false` once root cause
+                   # identified (likely a GTK4 event/layout loop triggered
+                   # by Xvfb without a compositor, or musl-specific glib
+                   # main loop behavior).
+        timeout-minutes: 5
+        run: |
+          # Headed launches dispatch through pw_run.sh → MiniBrowser-gtk
+          # (the GTK4 widget toolkit needs an X display). Xvfb provides a
+          # display server with no GPU; we drive launch-headed.cjs which
+          # mirrors launch.cjs but passes headless: false.
+          docker run --rm \
+            --security-opt seccomp=unconfined \
+            --security-opt apparmor=unconfined \
+            --cap-add SYS_ADMIN \
+            --cap-add NET_ADMIN \
+            --ulimit core=-1 \
+            -v /tmp/cores:/tmp/cores:rw \
+            -v "$PWD/playwright/alpine-browsers/webkit/smoke:/smoke" \
+            -w /smoke \
+            -e NODE_PATH=/usr/local/lib/node_modules \
+            -e DEBUG=pw:browser,pw:protocol \
+            -e WEBKIT_FORCE_SANDBOX=0 \
+            -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
+            -e LIBGL_ALWAYS_SOFTWARE=1 \
+            -e GALLIUM_DRIVER=llvmpipe \
+            -e MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
+            wk-candidate-runner:${{ github.sha }} \
+            sh -c '
+              ulimit -c unlimited 2>/dev/null || true
+              cd /smoke
+              timeout -k 5 90 xvfb-run -a -s "-screen 0 1280x720x24" node launch-headed.cjs
             '
 
       - name: Post-mortem on any cores
