@@ -269,16 +269,23 @@ jobs:
               -v /tmp/cores:/cores:ro \
               wk-iter:${{ github.sha }} \
               sh -c "
-                WK=/opt/playwright/webkit-${{ steps.pins.outputs.webkit_rev }}/minibrowser-wpe
-                BIN=\"\$WK/$EXE\"
-                if [ ! -x \"\$BIN\" ]; then
+                # MiniBrowser exists in BOTH minibrowser-wpe and minibrowser-gtk
+                # (WPEWebProcess only in wpe). Extract the original exe path
+                # from the core's ELF header — 'file core' prints
+                # \"...from '/opt/playwright/webkit-2287/minibrowser-gtk/MiniBrowser'...\"
+                # which tells us the correct port without guessing.
+                CORE_EXE=\$(file /cores/$base | sed -nE \"s/.*from '([^']+)'.*/\1/p\")
+                if [ -x \"\$CORE_EXE\" ]; then
+                  BIN=\"\$CORE_EXE\"
+                else
                   BIN=\$(find /opt/playwright -name '$EXE' -type f -executable 2>/dev/null | head -1)
                 fi
-                echo \"binary: \$BIN\"
+                echo \"binary: \$BIN  (core's recorded exe: \$CORE_EXE)\"
                 gdb --batch --quiet \
                   -ex 'set pagination off' \
                   -ex 'set print pretty on' \
                   -ex 'set sysroot /' \
+                  -ex 'set solib-search-path /opt/playwright/webkit-${{ steps.pins.outputs.webkit_rev }}/minibrowser-wpe:/opt/playwright/webkit-${{ steps.pins.outputs.webkit_rev }}/minibrowser-gtk' \
                   -ex 'echo \n===== bt full =====\n' \
                   -ex 'bt full' \
                   -ex 'echo \n===== thread apply all bt =====\n' \
@@ -291,6 +298,14 @@ jobs:
               " 2>&1 | tee "$BT"
             echo "::endgroup::"
           done
+
+      - name: Chown cores for artifact upload
+        if: always()
+        run: |
+          # Cores write as root inside container; runner is uid 1001 and
+          # actions/upload-artifact runs as that uid → EACCES on the read.
+          sudo chmod -R a+rX /tmp/cores 2>/dev/null || true
+          sudo chmod -R a+rX /tmp/bt 2>/dev/null || true
 
       - name: Upload backtrace artifact
         if: always()
