@@ -34,9 +34,9 @@ on:
         type: boolean
         default: true
       tier:
-        description: 'tier-1 = MiniBrowser --version only; tier-2 = full PW SDK launch+newPage'
+        description: 'tier-1 = MiniBrowser --version only; tier-2 = headless WPE; tier-2-headed = GTK via Xvfb'
         type: choice
-        options: ['tier-1', 'tier-2', 'tier-2-direct']
+        options: ['tier-1', 'tier-2', 'tier-2-direct', 'tier-2-headed']
         default: 'tier-2'
 
 permissions:
@@ -88,7 +88,8 @@ jobs:
               libgcc libstdc++ musl-dbg \\
               mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \\
               gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \\
-              cairo pango gdk-pixbuf libnotify dbus-libs opus libsecret strace
+              cairo pango gdk-pixbuf libnotify dbus-libs opus libsecret strace \\
+              xvfb xvfb-run
           COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:${WK_TAG} /webkit /opt/playwright/webkit-${WEBKIT_REV}
           RUN touch /opt/playwright/webkit-${WEBKIT_REV}/INSTALLATION_COMPLETE
           ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
@@ -203,6 +204,45 @@ jobs:
           ls -la /tmp/cores/ || true
           echo "::endgroup::"
 
+      - name: Tier-2 headed — PW SDK launch (headless:false) via Xvfb → MiniBrowser-gtk
+        if: ${{ inputs.tier == 'tier-2-headed' }}
+        timeout-minutes: 5
+        run: |
+          # Headed launch dispatches through pw_run.sh to MiniBrowser-gtk
+          # (GTK4 widget toolkit needs X display). xvfb-run wraps the node
+          # call with an ephemeral display server.
+          docker run --rm \
+            --security-opt seccomp=unconfined \
+            --security-opt apparmor=unconfined \
+            --cap-add SYS_ADMIN \
+            --cap-add NET_ADMIN \
+            --ulimit core=-1 \
+            -v /tmp/cores:/tmp/cores:rw \
+            -v "$PWD/playwright/alpine-browsers/webkit/smoke:/smoke:ro" \
+            -w /smoke \
+            -e NODE_PATH=/usr/local/lib/node_modules \
+            -e DEBUG=pw:browser,pw:protocol \
+            -e WEBKIT_FORCE_SANDBOX=0 \
+            -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
+            -e LIBGL_ALWAYS_SOFTWARE=1 \
+            -e GALLIUM_DRIVER=llvmpipe \
+            -e MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
+            wk-iter:${{ github.sha }} \
+            sh -c '
+              set -u
+              ulimit -c unlimited 2>/dev/null || true
+              cd /smoke
+              timeout -k 5 90 xvfb-run -a -s "-screen 0 1280x720x24" node launch-headed.cjs
+              RC=$?
+              echo "launch-headed.cjs rc=$RC"
+              echo "===== cores dir ====="
+              ls -la /tmp/cores/ || true
+              exit $RC
+            ' 2>&1 | tee /tmp/tier2-headed.log || true
+          echo "::group::host-side cores dir"
+          ls -la /tmp/cores/ || true
+          echo "::endgroup::"
+
       - name: Post-mortem gdb on cores
         if: ${{ always() && inputs.capture_cores }}
         run: |
@@ -260,6 +300,7 @@ jobs:
           path: |
             /tmp/tier2-direct.log
             /tmp/tier2-pw-sdk.log
+            /tmp/tier2-headed.log
             /tmp/bt/*.bt
             /tmp/cores/core.*
           if-no-files-found: warn
