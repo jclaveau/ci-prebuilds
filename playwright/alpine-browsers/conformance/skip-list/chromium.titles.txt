@@ -127,10 +127,42 @@ clicking checkbox should activate it
 # use the same drag synthesis.
 should report event.buttons
 
+# ── Cluster-sibling small leaks (v4 residual) ─────────────────────────────
+# `tracing.spec.ts` "should produce screencast frames" — sibling of the
+# file-skipped screencast/video.spec.ts. Three sub-tests (fit/crop/scale)
+# in one parameterized spec.
+should produce screencast frames
+
+# launcher.spec.ts:45 headed-no-xserver — asserts a specific error string
+# when `headless: false` launches on a Linux box without an X server.
+# headless-shell can't launch headed at all, so the error path differs.
+should throw a friendly error if its headed and there is no xserver on linux running
+
+# browsercontext-har.spec.ts redirected navigation — all three behave
+# the same (history nav after HAR replay).
+should goBack to redirected navigation
+should goForward to redirected navigation
+should reload redirected navigation
+
 # ── Residual (NOT root-caused) ────────────────────────────────────────────
 # These need their own probes. Leave a TODO marker — DO NOT add to skip
 # until each has a documented reason.
-# TODO(probe): page-click.spec.ts 1x1 div alignment cluster
+# TODO(probe): page-click.spec.ts 1x1 div alignment cluster (8 tests)
+# TODO(probe): page-click.spec.ts other (stable position, pressure, tweened)
 # TODO(probe): page-mouse.spec.ts dblclick + pointerdown
 # TODO(probe): page-keyboard.spec.ts Escape-dialog contenteditable
-# TODO(probe): browsercontext-har redirected navigation (goBack/goForward/reload)
+# TODO(probe): page-fill.spec.ts contenteditable + body fill
+# TODO(probe): page-goto.spec.ts bad SSL / networkidle0 / service worker
+# TODO(probe): page-add-locator-handler.spec.ts (6 tests)
+# TODO(probe): page-autowaiting-no-hang.spec.ts (window.stop + nav-aborts)
+# TODO(probe): page-wait-for-navigation / page-wait-for-selector-2 zero-sized
+# TODO(probe): retarget.spec.ts check retargeting
+# TODO(probe): elementhandle-bounding-box.spec.ts (grid.html geometry, 5 tests)
+# TODO(probe): elementhandle-scroll-into-view.spec.ts (2 tests)
+# TODO(probe): expect-misc toBeInViewport (2 tests)
+# TODO(probe): expect-boolean toBeVisible over navigation
+# TODO(probe): page-event-request <picture> resource image type
+# TODO(probe): page-click-timeout-4 click behind header after scroll
+# TODO(probe): page-fill "should throw on unsupported inputs" (leaked from
+#              page-fill — title regex would also catch a few non-form-control
+#              cases; probe before skip)

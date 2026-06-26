@@ -37,8 +37,11 @@ tests/library/chromium/oopif\.spec\.ts$
 # Debugger / page.pause — pause launches a UI inspector window
 tests/library/debugger\.spec\.ts$
 
-# Selector generator — relies on codegen recorder fixtures
+# Selector generator + locator generator — both rely on codegen recorder
+# fixtures (same root cause as inspector/codegen UI). locator-generator
+# was a v4 residual leak; file-skip alongside its sibling.
 tests/library/selector-generator\.spec\.ts$
+tests/library/locator-generator\.spec\.ts$
 
 # Client certificates — requires curl+openssl trust chain headless-shell
 # doesn't have. 18 tests, all in one spec.
@@ -69,6 +72,10 @@ tests/page/page-drag\.spec\.ts$
 # in chromium-headless-shell on Alpine. Probed locally — scrollTop stays
 # zero after wheel(0, 100). Same root-cause family as drag.
 tests/page/wheel\.spec\.ts$
+
+# Drop (page-drop) — drag-and-drop target side; same family as page-drag
+# above (HTML5 drag events not synthesized).
+tests/page/page-drop\.spec\.ts$
 
 # ── Snapshot-comparison subcluster ────────────────────────────────────────
 # PW tests that assert against pixel-stored reference PNGs (toMatchSnapshot
