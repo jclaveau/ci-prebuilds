@@ -615,7 +615,7 @@ jobs:
     # built chromium artifact. Runs on every producer publish path (push to
     # main, schedule, label-gated PR, workflow_dispatch). Sharded 10-way to
     # match microsoft/playwright's CI lower-bound; ~30-45 min wall-clock.
-    # Skip-list at playwright/alpine-browsers/conformance/skip-list/chromium.txt
+    # Skip-list at playwright/alpine-browsers/conformance/skip-list/chromium.{files,titles}.txt
     # carves out known Alpine/musl divergences (allow-all default).
     needs: [build-chromium-headless-shell, smoke-chromium-headless-shell]
     uses: ./.github/workflows/pw-conformance.yml
@@ -624,6 +624,50 @@ jobs:
       image_ref: ghcr.io/jclaveau/playwright-alpine-browsers:chs-sha-${{ github.sha }}
       pw_version: ${{ needs.build-chromium-headless-shell.outputs.pw_version }}
       artifact_rev: ${{ needs.build-chromium-headless-shell.outputs.chromium_revision }}
+    secrets: inherit
+
+  conformance-firefox:
+    # PW upstream conformance against the just-built firefox artifact.
+    # GATED OFF until #60 (Juggler handshake hang in PW's tests/library
+    # fixture against musl FF) is root-caused — until then every test
+    # times out at 30s, the 10-shard run hits the 6h GHA job cap, and no
+    # signal is produced. Re-enable by flipping `if: false` and uncommenting
+    # the gate below. smoke-firefox-library is the proxy gate that validates
+    # the binary can be driven by PW SDK at all.
+    needs: [build-firefox, smoke-firefox-library]
+    if: false
+    # if: |
+    #   github.event_name == 'push'
+    #   || (github.event_name == 'workflow_dispatch' && inputs.build_firefox == 'true')
+    #   || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-firefox'))
+    uses: ./.github/workflows/pw-conformance.yml
+    with:
+      browser: firefox
+      image_ref: ghcr.io/jclaveau/playwright-alpine-browsers:sha-${{ github.sha }}
+      pw_version: ${{ needs.build-firefox.outputs.pw_version }}
+      artifact_rev: ${{ needs.build-firefox.outputs.firefox_revision }}
+    secrets: inherit
+
+  conformance-webkit:
+    # PW upstream conformance against the just-built WebKit artifact
+    # (WPE + GTK from Branch C). GATED OFF until Tier-2 PW SDK launch
+    # against WPE is stable — the FORTIFY_SOURCE Skia trap is fixed in
+    # source-prep but the producer's Tier-2 headed gate (libgtk-4
+    # recursion) + the smoke-webkit Tier-1 inspector-pipe crash both
+    # need to settle first. Re-enable by flipping `if: false` and
+    # uncommenting the gate. Same shape as chromium / firefox.
+    needs: [build-webkit-finalize, smoke-webkit]
+    if: false
+    # if: |
+    #   (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    #   || (github.event_name == 'workflow_dispatch' && inputs.build_webkit == 'true')
+    #   || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-webkit'))
+    uses: ./.github/workflows/pw-conformance.yml
+    with:
+      browser: webkit
+      image_ref: ghcr.io/jclaveau/playwright-alpine-browsers:wk-sha-${{ github.sha }}
+      pw_version: ${{ needs.build-webkit-finalize.outputs.pw_version }}
+      artifact_rev: ${{ needs.build-webkit-finalize.outputs.webkit_revision }}
     secrets: inherit
 
   promote-chromium-headless-shell:
