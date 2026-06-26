@@ -31,6 +31,30 @@ on:
         description: 'Browser revision (chs CHS_REV / ff revision / wk revision) for PW cache-path layout'
         required: true
         type: string
+  workflow_dispatch:
+    # Standalone dispatch — useful when re-running conformance against an
+    # already-published artifact without re-firing the producer's smoke
+    # gate. Same inputs as workflow_call.
+    inputs:
+      browser:
+        description: 'Browser key: chromium | firefox | webkit'
+        required: true
+        default: 'chromium'
+        type: choice
+        options: ['chromium', 'firefox', 'webkit']
+      image_ref:
+        description: 'Full artifact image ref to COPY --from (e.g. ghcr.io/jclaveau/playwright-alpine-browsers:wk-sha-<SHA>)'
+        required: true
+        type: string
+      pw_version:
+        description: 'PW version (e.g. 1.60.0)'
+        required: true
+        default: '1.60.0'
+        type: string
+      artifact_rev:
+        description: 'Browser revision (CHS_REV / firefox_revision / webkit_revision)'
+        required: true
+        type: string
 
 permissions:
   contents: read
