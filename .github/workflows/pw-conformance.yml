@@ -78,8 +78,14 @@ jobs:
           # adds CAP_SYS_ADMIN demands — see project_webkit_smoke_sandbox_strip_layers.
           # Keep the surface minimal: only strip what the smoke jobs already strip.
           SECURITY_FLAGS="--security-opt seccomp=unconfined"
+          EXTRA_ENV=""
           if [ "$BROWSER" = "webkit" ]; then
+            # Peel-by-error layers per project_webkit_smoke_sandbox_strip_layers
+            # memory: WebKit's bwrap on Alpine needs both seccomp +
+            # apparmor unconfined AND SYS_ADMIN + NET_ADMIN caps AND the
+            # WEBKIT_DISABLE_SANDBOX=1 escape hatch.
             SECURITY_FLAGS="$SECURITY_FLAGS --security-opt apparmor=unconfined --cap-add SYS_ADMIN --cap-add NET_ADMIN"
+            EXTRA_ENV="-e WEBKIT_DISABLE_SANDBOX=1"
           fi
 
           docker run --rm $SECURITY_FLAGS \
@@ -88,6 +94,7 @@ jobs:
             -e PW_VERSION \
             -e SHARD \
             -e SHARD_TOTAL \
+            $EXTRA_ENV \
             pw-conformance-runner-${{ inputs.browser }}:${{ github.sha }} \
             sh /conformance/run.sh
 

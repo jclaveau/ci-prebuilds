@@ -61,18 +61,31 @@ EOF
     ;;
 
   webkit)
+    # Runtime apk list + path layout mirror smoke-webkit (Tier-2) since
+    # PW SDK launches MiniBrowser-wpe the same way for both. Without the
+    # GStreamer + mesa + WPE deps, WPEWebProcess crashes at +14s during
+    # page creation. PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1 works
+    # around the upstream PW musl-ldconfig false-positive (musl rejects
+    # /sbin/ldconfig -p so PW thinks libGLESv2/libx264 are missing).
+    # `/webkit` artifact maps directly to `webkit-${REV}/` (no nested
+    # subdir) and contains `pw_run.sh` + `minibrowser-{wpe,gtk}/`.
     cat > "$TMPDIR/Dockerfile" <<EOF
 FROM alpine:edge
 RUN apk update && apk add --no-cache \\
-    nodejs npm bash git build-base python3 \\
-    glib gst-plugins-base libdrm libsoup3 libtasn1 libxslt libwebp \\
-    enchant2 libsecret libnotify woff2 fontconfig freetype \\
-    icu-libs harfbuzz mesa-gl mesa-dri-gallium \\
-    libgcrypt nettle libxkbcommon libepoxy gtk4.0 \\
-    ttf-freefont
-COPY --from=${IMAGE_REF} /webkit /ms-playwright/webkit-${ARTIFACT_REV}/webkit
+    nodejs npm bash git \\
+    file binutils ca-certificates ttf-freefont \\
+    libwpe libwpebackend-fdo \\
+    gtk4.0 at-spi2-core \\
+    libgcc libstdc++ \\
+    mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \\
+    gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \\
+    cairo pango gdk-pixbuf libnotify dbus-libs opus libsecret \\
+    xvfb xvfb-run
+COPY --from=${IMAGE_REF} /webkit /ms-playwright/webkit-${ARTIFACT_REV}
 RUN touch /ms-playwright/webkit-${ARTIFACT_REV}/INSTALLATION_COMPLETE
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
 RUN npm install -g playwright@${PW_VERSION}
 EOF
     ;;
