@@ -14,8 +14,22 @@ tests/library/inspector/.*\.spec\.ts$
 tests/library/trace-viewer\.spec\.ts$
 
 # Screencast / recordVideo — chromium-headless-shell ships without the
-# video encoding pipeline
+# video encoding pipeline. `screencast.spec.ts` is the launch-options test;
+# `video.spec.ts` is the recordVideo flow; `tracing.spec.ts` "screencast frames"
+# uses the same encoder path (caught earlier via title regex; whole file
+# skipped is cleaner).
 tests/library/screencast\.spec\.ts$
+tests/library/video\.spec\.ts$
+
+# slowMo — relies on per-action 1000ms input timing that headless-shell's
+# event loop pacing doesn't match (every assert times out).
+tests/library/slowmo\.spec\.ts$
+
+# Touch / tap — touch event source not in headless-shell.
+tests/library/tap\.spec\.ts$
+
+# Trace viewer scrubber — same trace-viewer UI dependency as the sibling.
+tests/library/trace-viewer-scrub\.spec\.ts$
 
 # OOPIF (out-of-process iframes) — needs full chromium with extra flags
 tests/library/chromium/oopif\.spec\.ts$
