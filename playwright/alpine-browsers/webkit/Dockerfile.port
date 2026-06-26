@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1
+#
+# Per-port checkpoint/resume stage. Used by both build-webkit-wpe-* and
+# build-webkit-gtk-* job chains. PORT build-arg selects the cmake -DPORT=
+# value (WPE or GTK). BASE_IMAGE is either the source-prep image (for the
+# first stage / "checkpoint") or the previous resume image in the chain.
+#
+# The apply-and-build-port.sh script is idempotent and progressive — it
+# detects which phase is unfinished (cmake configure, ninja, stage+bundle)
+# and runs as much as fits in STAGE_NINJA_TIMEOUT (default 4.5h).
+
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE} AS webkit-builder
+
+# Refresh scripts and overlay each stage (they may have been tweaked).
+COPY webkit/scripts /work/webkit/scripts
+COPY webkit/cmake-flags.overlay /work/webkit/cmake-flags.overlay
+
+ARG PORT=WPE
+ARG ENABLE_JIT=ON
+
+# sccache mount id is per-port so WPE and GTK don't compete on shared cache
+# locks when they run in parallel. (cmake's compile-launcher sccache wraps
+# every clang invocation; concurrent ports would deadlock the locked mount.)
+RUN --mount=type=cache,target=/root/.cache/sccache,id=wk-sccache-${PORT},sharing=locked \
+    set -a && . /work/versions.env && set +a \
+    && ENABLE_JIT="$ENABLE_JIT" \
+       PORT="$PORT" \
+       bash /work/webkit/scripts/apply-and-build-port.sh /work

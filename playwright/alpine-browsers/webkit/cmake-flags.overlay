@@ -1,0 +1,107 @@
+# Shared cmake flags for both WPE and GTK ports of WebKit, sourced by
+# apply-and-build.sh. The per-port flag (-DPORT=WPE / -DPORT=GTK) is set
+# inline by the build script — everything else lives here.
+#
+# Cribbed conservatively from aports community/webkit2gtk-6.0's APKBUILD
+# (which builds 2.48.1 on musl today). PW pins a 2.50+ revision so we are
+# past the execinfo.h wall guarded in 2.50.2 — but USE_LIBBACKTRACE=OFF is
+# still load-bearing because libbacktrace is a glibc-flavored upstream
+# library that breaks under musl independently.
+#
+# Bash array form so apply-and-build.sh can splice this into a single
+# cmake invocation per port.
+
+CMAKE_SHARED_FLAGS=(
+  -DCMAKE_BUILD_TYPE=Release
+  -DCMAKE_C_COMPILER_LAUNCHER=sccache
+  -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+
+  # Distro-style install layout (aports defaults). We don't actually run
+  # `cmake --install` — we cherry-pick the binaries + libs out of the build
+  # tree in apply-and-build.sh's stage_port — but several WebKit build steps
+  # bake these paths into generated headers/configs.
+  -DCMAKE_INSTALL_PREFIX=/usr
+  -DCMAKE_INSTALL_LIBDIR=lib
+
+  # No build-time RPATH. bundle-dist.sh sets RPATH=$ORIGIN with patchelf
+  # post-build for the relocated artifact layout.
+  -DCMAKE_SKIP_RPATH=ON
+
+  # JIT: PW expects it on. Flippable at build time via the ENABLE_JIT build-arg.
+  -DENABLE_JIT="${ENABLE_JIT:-ON}"
+
+  # Silence the WTF stacktrace path that pulls libbacktrace — same trick aports
+  # uses on 2.48 to dodge a musl-incompatible upstream lib.
+  -DUSE_LIBBACKTRACE=OFF
+
+  # Sampling profiler relies on glibc-ish signal/timer plumbing; aports turns it off.
+  -DENABLE_SAMPLING_PROFILER=OFF
+
+  # Docs need gi-docgen which isn't a CI dep; we don't ship them anyway.
+  -DENABLE_DOCUMENTATION=OFF
+
+  # Alpine/musl has no journald; libsystemd journal hooks fail to link.
+  -DENABLE_JOURNALD_LOG=OFF
+
+  # Speech synthesis — PW's bootstrap.diff already turns this ON for both ports
+  # via WEBKIT_OPTION_DEFAULT_PORT_VALUE; the explicit flag is belt-and-braces.
+  # SPELLCHECK is NOT enabled: the WPE port's TextChecker doesn't implement
+  # loadedSpellCheckingLanguages/setSpellCheckingLanguages (gated by
+  # `#if PLATFORM(GTK)` in TextChecker.h), but WebKitWebContext.cpp's call
+  # site is gated only by `#if ENABLE(SPELLCHECK)`, so enabling SPELLCHECK on
+  # WPE breaks the build. PW doesn't need spellcheck for headless automation.
+  -DENABLE_SPEECH_SYNTHESIS=ON
+
+  # PW's bootstrap.diff sets these GTK-port defaults via WEBKIT_OPTION_DEFAULT_
+  # PORT_VALUE(... PRIVATE ON) — PRIVATE makes them non-user-toggleable, so
+  # CLI -D... here doesn't override. The WPE-port equivalents are appended to
+  # Source/cmake/OptionsWPE.cmake in apply-and-build-checkpoint.sh after PW
+  # patches are applied. See the comment block there.
+
+  # GTK port: pin to GTK4 (matches webkit2gtk-6.0 in aports + our gtk4.0-dev install).
+  -DUSE_GTK4=ON
+
+  # PW drives WebKit over the RemoteInspector socket — required.
+  -DENABLE_REMOTE_INSPECTOR=ON
+
+  # Strip dev-only assertions + GtkLauncher dev paths.
+  -DENABLE_DEVELOPER_MODE=OFF
+
+  # We ship the MiniBrowser binary per PW's artifact layout (minibrowser-<port>/).
+  -DENABLE_MINIBROWSER=ON
+
+  # No layout tests, no API gtests in the shipped artifact.
+  -DENABLE_API_TESTS=OFF
+  -DENABLE_WEBDRIVER=OFF
+
+  # musl: gettext wrappers (libintl_bindtextdomain, libintl_bind_textdomain_codeset)
+  # live in libintl.so (gettext-dev pkg), NOT libc — unlike glibc where they're
+  # built into libc. WebKit cmake doesn't auto-link Intl on libWPEWebKit; force
+  # -lintl into every C/C++ link via CMAKE_*_STANDARD_LIBRARIES (cmake ≥3.13).
+  -DCMAKE_C_STANDARD_LIBRARIES=-lintl
+  -DCMAKE_CXX_STANDARD_LIBRARIES=-lintl
+
+  # Disable SIMDUTF's ICELAKE (AVX-512) impl. The amalgamated header uses
+  # `#pragma GCC target("avx512f,...")` to enable AVX-512 codegen per function
+  # regardless of compile flags, baking ~22k AVX-512 instructions into
+  # libWPEWebKit. Runtime dispatch is supposed to gate them on CPUID, but in
+  # practice WPEWebProcess SIGILL ILL_ILLOPN on Intel CPUs without AVX-512
+  # (i5-8350U Kaby Lake-R, many GHA hosted runners). Pre-define the gate
+  # macro to 0 so the header excludes the impl entirely; dispatch falls back
+  # to HASWELL (AVX2) which all x86_64 PW targets support.
+  # Compiler flags string: SIMDUTF macro + _FORTIFY_SOURCE disable.
+  # Why _FORTIFY_SOURCE off:
+  #   Alpine's gcc/clang spec sets =2/=3 by default at -O2 which inserts
+  #   __memcpy_chk(dst, src, n, __builtin_dynamic_object_size(dst)) for
+  #   every memcpy. In Skia's SkAutoDescriptor::reset(const SkDescriptor&)
+  #   the destination is `this->fDesc` of static type SkDescriptor* (12 B
+  #   = checksum:4 + length:4 + count:4). Real backing storage is fStorage
+  #   (~212 B), but the compiler can't see through the typed pointer. For
+  #   any descriptor with getLength()>12 (= every realistic case with at
+  #   least one Entry) the runtime check `n > 12` fires __builtin_trap()
+  #   = UD2. Manifest: WPEWebProcess SIGILL at +14s during page creation
+  #   in SkAutoDescriptor move ctor → SkFont::getMetrics → Font::platformInit.
+  #   See: project_webkit_fortify_source_skia_trap.md
+  "-DCMAKE_C_FLAGS=-DSIMDUTF_IMPLEMENTATION_ICELAKE=0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+  "-DCMAKE_CXX_FLAGS=-DSIMDUTF_IMPLEMENTATION_ICELAKE=0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+)

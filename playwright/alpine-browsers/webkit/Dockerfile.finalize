@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1
+#
+# Final artifact stage. Pulls the WPE final-resume image, the GTK
+# final-resume image, and the source-prep image (for pw_run.sh), composes
+# them into a single FROM-scratch artifact at /webkit.
+#
+# The result matches PW's published webkit-*.zip layout:
+#   /webkit/
+#     minibrowser-wpe/   (from WPE chain)
+#     minibrowser-gtk/   (from GTK chain)
+#     pw_run.sh          (from source-prep, copied verbatim from PW)
+
+ARG BASE_WPE
+ARG BASE_GTK
+ARG BASE_SOURCE
+
+FROM ${BASE_WPE} AS wpe
+FROM ${BASE_GTK} AS gtk
+FROM ${BASE_SOURCE} AS source
+
+# Patch pw_run.sh to export WebKit path overrides for the flat-bundle layout:
+#   WEBKIT_EXEC_PATH              — aux procs (WPENetworkProcess, etc) — compile
+#                                   default is PKGLIBEXECDIR (/usr/libexec/wpe-webkit-2.0/)
+#   WEBKIT_INJECTED_BUNDLE_PATH   — libWPEInjectedBundle.so directory — compile
+#                                   default is /usr/lib/wpe-webkit-2.0/injected-bundle/
+#   WEBKIT_INSPECTOR_RESOURCES_PATH — inspector UI assets — compile default is
+#                                     /usr/share/webkitwpe-X.X/inspector/
+# All three point to the flat bundle dir; we ship every artifact alongside MiniBrowser.
+FROM ${BASE_SOURCE} AS pw_run_patched
+RUN sed -i 's|WEBKIT_FORCE_COMPLEX_TEXT="1" "$MINIBROWSER"|WEBKIT_EXEC_PATH="$SCRIPT_PATH/$MINIBROWSER_FOLDER" WEBKIT_INJECTED_BUNDLE_PATH="$SCRIPT_PATH/$MINIBROWSER_FOLDER" WEBKIT_INSPECTOR_RESOURCES_PATH="$SCRIPT_PATH/$MINIBROWSER_FOLDER" WEBKIT_FORCE_COMPLEX_TEXT="1" "$MINIBROWSER"|' \
+    /work/pw-webkit/pw_run.sh
+
+FROM scratch AS artifact
+COPY --from=wpe /work/minibrowser-wpe-dist /webkit/minibrowser-wpe
+COPY --from=gtk /work/minibrowser-gtk-dist /webkit/minibrowser-gtk
+COPY --from=pw_run_patched /work/pw-webkit/pw_run.sh /webkit/pw_run.sh

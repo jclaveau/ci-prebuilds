@@ -1,0 +1,116 @@
+# syntax=docker/dockerfile:1
+#
+# Source-prep stage. Shared base for the WPE and GTK parallel build chains.
+# Produces an image with:
+#   - apk deps installed (cribbed from aports webkit2gtk-6.0 makedepends)
+#   - PW patches fetched at /work/pw-webkit
+#   - WebKit cloned at PW's pinned SHA into /work/webkit-src, PW patches
+#     applied, OptionsWPE.cmake feature-parity additions appended
+#   - .git stripped from webkit-src to save image size
+#
+# Tagged as wk-source-sha-<sha>; both checkpoint-wpe and checkpoint-gtk
+# FROM this image and run cmake configure + ninja for their respective port.
+
+ARG ALPINE_VERSION=edge
+
+FROM alpine:${ALPINE_VERSION} AS webkit-builder
+
+# Build deps (same set as the single-port checkpoint design).
+RUN apk add --no-cache \
+        bash curl git patch patchutils tar xz gzip jq sccache \
+        build-base \
+        clang clang-dev lld llvm-dev compiler-rt \
+        cmake samurai pkgconf perl ruby ruby-getoptlong python3 \
+        gperf bison flex nodejs patchelf binutils unifdef \
+        \
+        icu-dev libxml2-dev libxslt-dev sqlite-dev \
+        libwebp-dev libjpeg-turbo-dev libpng-dev libavif-dev openjpeg-dev libjxl-dev \
+        harfbuzz-dev fontconfig-dev freetype-dev woff2-dev pango-dev \
+        libsoup3-dev libsecret-dev \
+        gstreamer-dev gst-plugins-base-dev gst-plugins-bad-dev \
+        libgcrypt-dev libtasn1-dev gnutls-dev \
+        enchant2-dev hyphen-dev lcms2-dev \
+        mesa-dev libdrm-dev libepoxy-dev libxkbcommon-dev \
+        libxcomposite-dev libxt-dev \
+        libseccomp-dev libmanette-dev \
+        flite-dev geoclue-dev \
+        \
+        libwpe-dev libwpebackend-fdo-dev \
+        bubblewrap xdg-dbus-proxy \
+        \
+        gtk4.0-dev gobject-introspection-dev \
+        \
+        gettext-dev \
+        sysprof-dev \
+        \
+        meson py3-pip wayland-dev wayland-protocols
+
+# Build libwpe + libwpebackend-fdo from upstream master. Alpine apk versions
+# (libwpe 1.16.3 / libwpebackend-fdo 1.16.1) hit an ABI/static-init wall on
+# musl when WebKit calls wpe_loader_init: libwpe's s_impl_loader->load_object
+# reads NULL despite the bundled lib exposing it correctly in isolation.
+# Master may carry fixes; this overwrites apk's lib at /usr/lib so WebKit's
+# cmake configure picks up the new headers + ABI at build time.
+RUN cd /tmp && git clone --depth=1 https://github.com/WebPlatformForEmbedded/libwpe.git \
+    && cd libwpe \
+    && meson setup build --prefix=/usr --libdir=lib --buildtype=release \
+        -Ddefault-backend=libWPEBackend-fdo-1.0.so.1 \
+    && meson compile -C build \
+    && meson install -C build \
+    && cd /tmp && rm -rf libwpe
+
+# Iter #9: COPY in patched fdo.cpp with __attribute__((constructor)) for
+# explicit _wpe_loader_interface init. Original static struct initializer
+# (stateless lambda → fn ptr) lands in BSS on Alpine/musl and reads NULL
+# in WebKit's main process despite working in standalone dlopen tests.
+COPY webkit/scripts/fdo-explicit-ctor.cpp /work/fdo-explicit-ctor.cpp
+
+RUN cd /tmp && git clone --depth=1 https://github.com/Igalia/WPEBackend-fdo.git \
+    && cd WPEBackend-fdo \
+    && cp /work/fdo-explicit-ctor.cpp src/fdo.cpp \
+    && meson setup build --prefix=/usr --libdir=lib --buildtype=release \
+    && meson compile -C build \
+    && meson install -C build \
+    && cd /tmp && rm -rf WPEBackend-fdo
+
+# Iter #7: WPEBackend-rdk HEADLESS backend. Master libwpebackend-fdo's
+# _wpe_loader_interface→load_object reads NULL in WebKit's subprocess
+# context despite being valid in standalone dlopen. Try rdk's headless
+# backend as alternative. Install with fdo-compatible symlinks so
+# WebKit's DT_NEEDED + wpe_loader_init("libWPEBackend-fdo-1.0.so.1")
+# resolves to rdk-headless instead.
+RUN cd /tmp && git clone --depth=1 https://github.com/WebPlatformForEmbedded/WPEBackend-rdk.git \
+    && cd WPEBackend-rdk \
+    && cmake -B build -S . \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DUSE_BACKEND_HEADLESS=ON \
+        -DUSE_INPUT_LIBINPUT=OFF \
+        -DUSE_INPUT_UDEV=OFF \
+    && cmake --build build -j$(nproc) \
+    && cmake --install build \
+    && cd /tmp && rm -rf WPEBackend-rdk \
+    && cd /usr/lib \
+    && ln -sf $(ls libWPEBackend-rdk*.so* | head -1) libWPEBackend-default.so
+
+WORKDIR /work
+
+COPY versions.env /work/versions.env
+# Narrow COPY surface — only the two scripts source-prep actually runs.
+# Editing apply-and-build-port.sh, bundle-dist.sh, or cmake-flags.overlay
+# MUST NOT invalidate this image's layer cache (those re-COPY in Dockerfile.port).
+COPY webkit/scripts/prep-source.sh /work/webkit/scripts/prep-source.sh
+COPY webkit/scripts/fetch-pw-patches.sh /work/webkit/scripts/fetch-pw-patches.sh
+
+# Fetch PW patches.
+RUN --mount=type=secret,id=github-token,env=GITHUB_TOKEN \
+    set -a && . /work/versions.env && set +a \
+    && bash /work/webkit/scripts/fetch-pw-patches.sh /work/pw-webkit
+
+# Clone WebKit, apply PW patches, OptionsWPE.cmake feature-parity append,
+# strip .git. Output: /work/webkit-src ready for cmake configure.
+RUN set -a && . /work/versions.env && set +a \
+    && bash /work/webkit/scripts/prep-source.sh /work
+
+# No artifact stage — this image IS the source-prep deliverable.
