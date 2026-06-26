@@ -1,0 +1,34 @@
+# Spec FILE skip-list for chromium-headless-shell (Alpine/musl).
+# POSIX-extended regex per line. Matched against PW spec paths relative to
+# pw-src (e.g. `tests/library/foo.spec.ts`). Files matching are DELETED
+# before tests run.
+#
+# Use ONLY for whole-file structural divergences. Individual conformance
+# gaps go in chromium.titles.txt.
+
+# ── DIVERGENCE (headless-shell is a SUBSET of chromium) ─────────────────────
+# Inspector / codegen — needs the recorder UI window
+tests/library/inspector/.*\.spec\.ts$
+
+# Trace viewer — needs a UI host browser
+tests/library/trace-viewer\.spec\.ts$
+
+# Screencast / recordVideo — chromium-headless-shell ships without the
+# video encoding pipeline
+tests/library/screencast\.spec\.ts$
+
+# OOPIF (out-of-process iframes) — needs full chromium with extra flags
+tests/library/chromium/oopif\.spec\.ts$
+
+# Debugger / page.pause — pause launches a UI inspector window
+tests/library/debugger\.spec\.ts$
+
+# Selector generator — relies on codegen recorder fixtures
+tests/library/selector-generator\.spec\.ts$
+
+# Client certificates — requires curl+openssl trust chain headless-shell
+# doesn't have. 18 tests, all in one spec.
+tests/library/client-certificates\.spec\.ts$
+
+# ignoreHTTPSErrors — Alpine ca-certificates / libressl cert-trust gap
+tests/library/ignorehttpserrors\.spec\.ts$

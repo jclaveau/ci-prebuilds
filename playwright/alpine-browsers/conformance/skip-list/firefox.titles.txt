@@ -1,0 +1,7 @@
+# Test TITLE skip-list for firefox (Alpine/musl, PW-patched).
+# Per line: JS regex matched against PW's `test.titlePath().join(' › ')`.
+# Joined with `|` into a single regex passed to --grep-invert.
+#
+# Currently empty — firefox conformance is gated off until #60 (Juggler
+# handshake hang) is root-caused. Populate when the runner first emits
+# meaningful failure data.

@@ -1,0 +1,7 @@
+# Spec FILE skip-list for webkit (Alpine/musl, WPE+GTK Branch C).
+# POSIX-extended regex per line. Matched against PW spec paths relative to
+# pw-src. Files matching are DELETED before tests run.
+#
+# Currently empty — webkit conformance is gated off until producer FORTIFY
+# fix lands + Tier-2 PW SDK + Inspector pipe stabilize. Populate from the
+# first real run.

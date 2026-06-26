@@ -1,0 +1,7 @@
+# Spec FILE skip-list for firefox (Alpine/musl, PW-patched).
+# POSIX-extended regex per line. Matched against PW spec paths relative to
+# pw-src. Files matching are DELETED before tests run.
+#
+# Currently empty — firefox conformance is gated off until #60 (Juggler
+# handshake hang) is root-caused. Populate when the runner first emits
+# meaningful failure data.
