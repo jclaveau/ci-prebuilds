@@ -109,6 +109,24 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
+      build_chromium_headless_shell_from_source:
+        description: 'Build chromium-headless-shell FROM SOURCE (bypass Alpine apk UA-stylesheet bug; ~5h cold)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      run_firefox_conformance:
+        description: 'Run firefox PW upstream conformance (NOTE: Juggler hang #60 likely catastrophic)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      run_webkit_conformance:
+        description: 'Run webkit PW upstream conformance (against Branch C build)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
       # WebKit gate. Default off because cold cold-build is multi-hour (WPE
       # then GTK, sccache-shared); this is dispatch- and label-gated only.
       # No push/main trigger and no schedule — too expensive to run by
@@ -628,18 +646,18 @@ jobs:
 
   conformance-firefox:
     # PW upstream conformance against the just-built firefox artifact.
-    # GATED OFF until #60 (Juggler handshake hang in PW's tests/library
-    # fixture against musl FF) is root-caused — until then every test
-    # times out at 30s, the 10-shard run hits the 6h GHA job cap, and no
-    # signal is produced. Re-enable by flipping `if: false` and uncommenting
-    # the gate below. smoke-firefox-library is the proxy gate that validates
-    # the binary can be driven by PW SDK at all.
+    # Triggered by `run_firefox_conformance=true` workflow_dispatch input
+    # or the `run-firefox-conformance` PR label. WARNING: #60 (Juggler
+    # handshake hang in PW's tests/library fixture against musl FF) is
+    # still unresolved — every test will likely time out at 30s and the
+    # 10-shard run will hit the 6h GHA job cap with no useful signal.
+    # We're running it anyway per the parallel-conformance goal to (a)
+    # confirm the hang is still the dominant failure mode and (b)
+    # produce a baseline so any future Juggler fix is measurable.
     needs: [build-firefox, smoke-firefox-library]
-    if: false
-    # if: |
-    #   github.event_name == 'push'
-    #   || (github.event_name == 'workflow_dispatch' && inputs.build_firefox == 'true')
-    #   || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-firefox'))
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.run_firefox_conformance == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-firefox-conformance'))
     uses: ./.github/workflows/pw-conformance.yml
     with:
       browser: firefox
@@ -650,18 +668,16 @@ jobs:
 
   conformance-webkit:
     # PW upstream conformance against the just-built WebKit artifact
-    # (WPE + GTK from Branch C). GATED OFF until Tier-2 PW SDK launch
-    # against WPE is stable — the FORTIFY_SOURCE Skia trap is fixed in
-    # source-prep but the producer's Tier-2 headed gate (libgtk-4
-    # recursion) + the smoke-webkit Tier-1 inspector-pipe crash both
-    # need to settle first. Re-enable by flipping `if: false` and
-    # uncommenting the gate. Same shape as chromium / firefox.
+    # (WPE + GTK from Branch C). Triggered by `run_webkit_conformance=true`
+    # workflow_dispatch input or the `run-webkit-conformance` PR label.
+    # The FORTIFY_SOURCE Skia trap fix has landed in source-prep so the
+    # WPE binary should at least launch under PW SDK; expect the same
+    # form-control / display-block UA-stylesheet class of failures as
+    # chromium plus WebKit-specific divergences.
     needs: [build-webkit-finalize, smoke-webkit]
-    if: false
-    # if: |
-    #   (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    #   || (github.event_name == 'workflow_dispatch' && inputs.build_webkit == 'true')
-    #   || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-webkit'))
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.run_webkit_conformance == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-webkit-conformance'))
     uses: ./.github/workflows/pw-conformance.yml
     with:
       browser: webkit
@@ -824,12 +840,16 @@ jobs:
   # Until then, `build-chromium-headless-shell` above does an apk extract
   # of aports' prebuilt chromium-headless-shell-148.0.7778.178-r0.
   build-chromium-headless-shell-from-source:
-    if: false
-    # Gate retained from the active job so re-enabling = just flip if to true.
-    # if: |
-    #   github.event_name == 'push'
-    #   || (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
-    #   || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+    # Bypass for the Alpine community/chromium apk's broken
+    # chromium-headless-shell UA stylesheet (745KB pak, no resources/
+    # dir; vanilla <div> renders display:inline; form controls render
+    # appearance:none). See
+    # .agents/auto-memory/project_pw_conformance_visibility_cluster.md
+    # for the root-cause analysis. Source build pulls the proper
+    # resource pak so the UA stylesheet applies. ~5h cold.
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
     runs-on: ubuntu-latest
     timeout-minutes: 300   # 5h ceiling — Chromium cold-build is heavier than FF
     outputs:
