@@ -1,0 +1,30 @@
+# PW upstream tests/library + tests/page skip-list for webkit (Alpine/musl,
+# WPE+GTK build from upstream WebKit at the PW SHA — Branch C).
+#
+# Format: one PW test full-title regex per line. Blank lines + lines starting
+# with `#` are ignored. Joined with `|` into a single `--grep-invert` pattern.
+#
+# Policy: allow-all default. Add an entry only when a test is known to fail
+# for an Alpine/musl-specific reason that cannot be fixed in the artifact.
+# Each entry MUST link to an issue (or PR) with reproduction details + a
+# disposition: BLOCKER (track to green), DIVERGENCE (won't-fix, document),
+# UPSTREAM (waiting on microsoft/playwright fix).
+#
+# Umbrella tracking issue: jclaveau/ci-prebuilds#TBD ("webkit Alpine
+# conformance gaps") — fill in once filed.
+#
+# Known blocker — WebKit-WPE inspector-pipe crash:
+# WPEWebProcess crashed at +14s during page creation on Alpine/musl. Fixed
+# by -U_FORTIFY_SOURCE (Skia SkAutoDescriptor::reset typed-pointer trap).
+# See project_pw_webkit_inspector_pipe_crash + project_webkit_fortify_source_skia_trap.
+# Re-test conformance after producer fix lands; populate with named
+# residual failures.
+#
+# Known blocker — WebKit-GTK headed recursion:
+# PW SDK headed launch crashes MiniBrowser-gtk in libgtk-4 with ~30-frame
+# identical-PC infinite recursion. Headed conformance is OUT OF SCOPE until
+# root-caused; the conformance run is headless-only.
+#
+# Note: PW's `webkit-library` / `webkit-page` projects assume the official
+# GTK build's MiniBrowser. Our WPE-default headless backend may surface
+# additional gaps (GUI features only in GTK). Populate per first run.

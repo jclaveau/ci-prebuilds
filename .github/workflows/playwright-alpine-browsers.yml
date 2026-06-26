@@ -610,6 +610,22 @@ jobs:
             -t "jclaveau/playwright-alpine-browsers:sha-${{ github.sha }}" \
             "$SRC"
 
+  conformance-chromium-headless-shell:
+    # PW upstream conformance — tests/library + tests/page against our just-
+    # built chromium artifact. Runs on every producer publish path (push to
+    # main, schedule, label-gated PR, workflow_dispatch). Sharded 10-way to
+    # match microsoft/playwright's CI lower-bound; ~30-45 min wall-clock.
+    # Skip-list at playwright/alpine-browsers/conformance/skip-list/chromium.txt
+    # carves out known Alpine/musl divergences (allow-all default).
+    needs: [build-chromium-headless-shell, smoke-chromium-headless-shell]
+    uses: ./.github/workflows/pw-conformance.yml
+    with:
+      browser: chromium
+      image_ref: ghcr.io/jclaveau/playwright-alpine-browsers:chs-sha-${{ github.sha }}
+      pw_version: ${{ needs.build-chromium-headless-shell.outputs.pw_version }}
+      artifact_rev: ${{ needs.build-chromium-headless-shell.outputs.chromium_revision }}
+    secrets: inherit
+
   promote-chromium-headless-shell:
     # Parallel promote for the apk-fast-path chromium artifact. Same dual-
     # target shape as FF promote: GHCR for CI consumption, DH for external.
@@ -618,7 +634,7 @@ jobs:
     # - workflow_dispatch with build_chromium_headless_shell=true (on-demand
     #   catalog accumulation: dispatcher can pass pw_version to publish the
     #   chs-${rev} tag matching a non-default PW pin)
-    needs: [build-chromium-headless-shell, smoke-chromium-headless-shell]
+    needs: [build-chromium-headless-shell, smoke-chromium-headless-shell, conformance-chromium-headless-shell]
     if: |
       (github.event_name == 'push' && github.ref == 'refs/heads/main')
       || github.event_name == 'schedule'
