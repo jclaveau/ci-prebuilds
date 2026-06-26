@@ -851,7 +851,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
       || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
     runs-on: ubuntu-latest
-    timeout-minutes: 300   # 5h ceiling — Chromium cold-build is heavier than FF
+    timeout-minutes: 600   # 10h ceiling — Chromium cold-build hit the prior 5h cap mid-link (run 28239393075). The full sysroot+ninja chain is ~6-8h cold; cache hits after the first green run will land in <30min.
     outputs:
       build_tag: chs-sha-${{ github.sha }}
       pw_version: ${{ steps.pins.outputs.pw_version }}
