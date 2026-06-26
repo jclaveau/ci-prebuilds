@@ -64,10 +64,11 @@ fi
 
 export PWTEST_UNDER_TEST=1
 
-# tests/library + tests/page each have their own playwright.config.ts; both
-# expose per-browser projects (chromium-library, firefox-library, webkit-library
-# and chromium-page, firefox-page, webkit-page respectively). Run both configs
-# back-to-back with the same shard + grep-invert; collect into one report dir.
+# Upstream PW's tests/library/playwright.config.ts is the single config for
+# BOTH the library suite and the page suite — it declares per-browser projects
+# named `${browser}-library` (specs in tests/library/) AND `${browser}-page`
+# (specs in tests/page/). There is no tests/page/playwright.config.ts in
+# upstream. Run the same config twice, filtered by --project.
 #
 # --reporter=html (config-default) writes to playwright-report/; we move it
 # into REPORT_DIR after each run so both library + page outputs survive.
@@ -104,7 +105,7 @@ run_one() {
 run_one tests/library/playwright.config.ts "${BROWSER}-library" library
 RC_LIB=$?
 
-run_one tests/page/playwright.config.ts "${BROWSER}-page" page
+run_one tests/library/playwright.config.ts "${BROWSER}-page" page
 RC_PAGE=$?
 
 set -e
