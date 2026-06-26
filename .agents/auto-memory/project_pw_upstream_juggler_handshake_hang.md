@@ -58,6 +58,34 @@ if: |
   || (github.event_name == 'workflow_dispatch' && inputs.test_firefox_library_upstream == 'true')
 ```
 
+**Confirmed catastrophic 2026-06-26 against full 10-shard conformance (run 28239393075):**
+
+Dispatched `conformance-firefox` via `run_firefox_conformance=true`
+input. FF artifact built green on the same SHA. All 10 conformance
+shards exhibited identical pattern:
+
+- launched ~20 FF processes with `-juggler-pipe` over 60min
+- every test asserted `Test timeout of 30000ms exceeded.`
+- 0 useful PW assertions emitted (no `--reporter=line` output)
+- all 10 shards hit GHA `timeout-minutes: 60` ceiling → CANCELLED
+- `conformance-firefox / summary` → failure
+
+Juggler-hang dominates: ~20/233 tests *attempted* per shard, all
+fail at 30s. Full PW upstream conformance against musl Firefox is
+not viable until this is root-caused.
+
+Workaround paths considered:
+1. Per-test timeout 5s — same outcome, denser failures.
+2. Patch tests/library/playwright.config.ts to skip the hanging
+   fixture stage — unknown which stage hangs.
+3. Replace upstream config with custom config that launches FF
+   directly via PW SDK (smoke-firefox-library pattern) — bypasses
+   the bug but is no longer "what PW runs for its build".
+
+Decision: `conformance-firefox` stays dispatch-gated and produces
+a catastrophic-timeout signal as the baseline metric. Any future
+Juggler fix is then measurable against this run.
+
 **How to apply:** Do NOT remove the job, run.sh, or related plumbing.
 They're parked, not abandoned — per [[land-disabled-over-revert]]. Any
 future "let's run PW upstream tests" work starts from this job, not
