@@ -103,17 +103,24 @@ export PWTEST_UNDER_TEST=1
 # in the `use:` block so the launch fails fast.
 TIMEOUT_FLAG=""
 if [ "$BROWSER" = "firefox" ]; then
-  TIMEOUT_FLAG="--timeout=15000"
-  echo "==== Inject launchOptions.timeout=15000 into tests/library/playwright.config.ts ===="
-  # PW config uses `use: {` — inject launchOptions on the line after.
-  if grep -qE '^\s+use:\s*\{' tests/library/playwright.config.ts; then
-    sed -i.bak -E '0,/^\s+use:\s*\{/{s/(^\s+use:\s*\{)/\1\n    launchOptions: { timeout: 15000 },/}' \
-      tests/library/playwright.config.ts
-    echo "  injected (backup at playwright.config.ts.bak)"
-    grep -n 'launchOptions: { timeout: 15000 }' tests/library/playwright.config.ts || \
-      echo "  WARN: injection appears missing in patched file" >&2
-  else
-    echo "  WARN: no '  use: {' pattern in tests/library/playwright.config.ts — config shape changed?" >&2
+  # Run 28288708299 confirmed --timeout=15000 IS active (tests fail at 15s) but
+  # PW's default 1 retry on fail × 220 tests × 15s ≈ 110min per shard,
+  # blowing the 60min cap. Force --retries=0 so each test runs once.
+  TIMEOUT_FLAG="--timeout=15000 --retries=0"
+
+  # ALSO patch playwright.config.ts so launchOptions.timeout=15000 fires for
+  # browserType.launch (the actual Juggler-pipe hang point) — BusyBox sed
+  # can't do range-anchored substitution, use perl which is in the image.
+  echo "==== Patch tests/library/playwright.config.ts launchOptions.timeout=15000 ===="
+  if [ -f tests/library/playwright.config.ts ]; then
+    perl -i -pe 's/(\buse\s*:\s*\{)/$1\n    launchOptions: { timeout: 15000 },/ if !$done && /\buse\s*:\s*\{/ && ($done = 1)' \
+      tests/library/playwright.config.ts || \
+      echo "  WARN: perl patch failed" >&2
+    if grep -q 'launchOptions: { timeout: 15000 }' tests/library/playwright.config.ts; then
+      echo "  injected ok"
+    else
+      echo "  WARN: injection missing — running with CLI --timeout fallback only" >&2
+    fi
   fi
 fi
 
