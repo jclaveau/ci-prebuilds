@@ -136,7 +136,42 @@ if [[ -f "$APORTS/APKBUILD" ]]; then
   done
 fi
 
-# 4b. Aports' prepare() does several bootstrap steps Chromium's build expects
+# 4b. Musl/clang22 host-tool link fix — chromium 148 host tools (e.g.
+#     character_data_generator) reference `base::debug::StackTrace::
+#     OutputToStreamWithPrefixImpl` but our libbase.a doesn't carry the
+#     symbol. Most likely a copium patch (cr147-is-musl-libcxx) flips a
+#     build-conditional that excludes the real impl from stack_trace_posix.cc.
+#     Without source access we can't pinpoint the exact #ifdef; append a
+#     weak-symbol stub to base/debug/stack_trace.cc so the link resolves.
+#     The real impl, if compiled, wins over the weak fallback.
+#     See ci-prebuilds run 28255952380 + task #15.
+echo "===== Musl host-tool link fix: append weak StackTrace::OutputToStreamWithPrefixImpl stub ====="
+if grep -q '^// musl-host-tool-link-fix$' base/debug/stack_trace.cc 2>/dev/null; then
+  echo "  already patched (sentinel found)"
+else
+  cat >> base/debug/stack_trace.cc <<'STACK_TRACE_EOF'
+
+// musl-host-tool-link-fix
+// Weak fallback for OutputToStreamWithPrefixImpl. Some musl/clang22 build
+// paths in chromium 148 emit libbase.a without the real impl (compiled out
+// of stack_trace_posix.cc), causing host-tool links to fail with
+// `undefined symbol`. Weak storage class means: if the real impl is
+// present, it wins; if not, this PrintToStream-only stub keeps the link
+// alive. Host tools (character_data_generator, transport_security_state_
+// generator) only call OutputToStreamWithPrefix during crash paths, so a
+// degraded prefix-string is acceptable for them.
+namespace base::debug {
+__attribute__((weak))
+void StackTrace::OutputToStreamWithPrefixImpl(
+    std::ostream* os, base::cstring_view /*prefix_string*/) const {
+  PrintToStream(os);
+}
+}  // namespace base::debug
+STACK_TRACE_EOF
+  echo "  appended weak stub"
+fi
+
+# 4c. Aports' prepare() does several bootstrap steps Chromium's build expects
 #     but our environment doesn't have. Replicate the ones headless_shell
 #     actually needs. Skipping the headless-irrelevant ones (usb.ids sed,
 #     OFFICIAL_BUILD sed, replace_gn_files.py for system libs — we keep
