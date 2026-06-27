@@ -115,18 +115,22 @@ if [ "$BROWSER" = "firefox" ]; then
   echo "==== Patch tests/library/playwright.config.ts launchOptions.timeout=15000 ===="
   if [ -f tests/library/playwright.config.ts ]; then
     # Write patch script to temp file to avoid shell-quoting backslash hell.
+    # Run 28291848806 v4 logs proved: top-level `use:` injection lands BUT
+    # PW project `use:` blocks override it. Patch EVERY `use:` occurrence
+    # (top-level + per-project) — they all need launchOptions.timeout.
     cat > /tmp/patch-pw-config.cjs <<'PATCH_EOF'
 const fs = require('fs');
 const p = 'tests/library/playwright.config.ts';
 let c = fs.readFileSync(p, 'utf8');
-const re = /(\buse\s*:\s*\{)/;
+const re = /(\buse\s*:\s*\{)/g;
 const patched = c.replace(re, '$1\n    launchOptions: { timeout: 15000 },');
+const matches = c.match(re) || [];
 if (patched === c) {
   console.error('  WARN: "use: {" not found in config');
   process.exit(1);
 }
 fs.writeFileSync(p, patched);
-console.log('  injected ok');
+console.log(`  injected ok (${matches.length} use: blocks patched)`);
 PATCH_EOF
     node /tmp/patch-pw-config.cjs || echo "  WARN: node patch failed; CLI --timeout only" >&2
   fi
