@@ -1,0 +1,162 @@
+name: PW Conformance (reusable)
+
+# Run microsoft/playwright's tests/library + tests/page suites against one of
+# our musl-built browser artifacts. Goal: drop-in replacement parity — the
+# Alpine artifact should pass the same conformance bar PW maintainers run
+# against the official builds.
+#
+# Called from a producer workflow once the artifact image is built (post-
+# smoke, pre-promote). Each call fans out 10 shards in parallel, matching
+# upstream PW's CI sharding. Per-test skip-list (playwright/alpine-browsers/
+# conformance/skip-list/${BROWSER}.txt) carves out known Alpine/musl
+# divergences — allow-all default, narrow exceptions tracked to umbrella
+# issues.
+
+on:
+  workflow_call:
+    inputs:
+      browser:
+        description: 'Browser key: chromium | firefox | webkit'
+        required: true
+        type: string
+      image_ref:
+        description: 'Full artifact image ref (registry/repo:tag) the runner COPY --froms'
+        required: true
+        type: string
+      pw_version:
+        description: 'PW version (e.g. 1.59.1) — clone tag + global install version'
+        required: true
+        type: string
+      artifact_rev:
+        description: 'Browser revision (chs CHS_REV / ff revision / wk revision) for PW cache-path layout'
+        required: true
+        type: string
+  workflow_dispatch:
+    # Standalone dispatch — useful when re-running conformance against an
+    # already-published artifact without re-firing the producer's smoke
+    # gate. Same inputs as workflow_call.
+    inputs:
+      browser:
+        description: 'Browser key: chromium | firefox | webkit'
+        required: true
+        default: 'chromium'
+        type: choice
+        options: ['chromium', 'firefox', 'webkit']
+      image_ref:
+        description: 'Full artifact image ref to COPY --from (e.g. ghcr.io/jclaveau/playwright-alpine-browsers:wk-sha-<SHA>)'
+        required: true
+        type: string
+      pw_version:
+        description: 'PW version (e.g. 1.60.0)'
+        required: true
+        default: '1.60.0'
+        type: string
+      artifact_rev:
+        description: 'Browser revision (CHS_REV / firefox_revision / webkit_revision)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  shard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # 10 shards matches microsoft/playwright's CI lower-bound. Wall-clock
+        # ~15-30 min per shard depending on browser; ~30-45 min total per
+        # browser per producer publish.
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build PW-conformance runner for ${{ inputs.browser }}
+        env:
+          BROWSER: ${{ inputs.browser }}
+          IMAGE_REF: ${{ inputs.image_ref }}
+          PW_VERSION: ${{ inputs.pw_version }}
+          ARTIFACT_REV: ${{ inputs.artifact_rev }}
+          IMAGE_TAG_OUT: pw-conformance-runner-${{ inputs.browser }}:${{ github.sha }}
+        run: ./playwright/alpine-browsers/conformance/build-runner.sh
+
+      - name: Run shard ${{ matrix.shard }}/10
+        env:
+          BROWSER: ${{ inputs.browser }}
+          PW_VERSION: ${{ inputs.pw_version }}
+          SHARD: ${{ matrix.shard }}
+          SHARD_TOTAL: 10
+        run: |
+          # --security-opt seccomp=unconfined: PW's browser renderers use
+          # clone(CLONE_NEWUSER) which is blocked by default seccomp on FF,
+          # and chromium's setuid sandbox path tries similar. WebKit's bwrap
+          # adds CAP_SYS_ADMIN demands — see project_webkit_smoke_sandbox_strip_layers.
+          # Keep the surface minimal: only strip what the smoke jobs already strip.
+          SECURITY_FLAGS="--security-opt seccomp=unconfined"
+          EXTRA_ENV=""
+          if [ "$BROWSER" = "webkit" ]; then
+            # Peel-by-error layers per project_webkit_smoke_sandbox_strip_layers
+            # memory: WebKit's bwrap on Alpine needs both seccomp +
+            # apparmor unconfined AND SYS_ADMIN + NET_ADMIN caps AND the
+            # WEBKIT_DISABLE_SANDBOX=1 escape hatch.
+            SECURITY_FLAGS="$SECURITY_FLAGS --security-opt apparmor=unconfined --cap-add SYS_ADMIN --cap-add NET_ADMIN"
+            EXTRA_ENV="-e WEBKIT_DISABLE_SANDBOX=1"
+          fi
+
+          docker run --rm $SECURITY_FLAGS \
+            -v "$PWD/playwright/alpine-browsers/conformance:/conformance" \
+            -e BROWSER \
+            -e PW_VERSION \
+            -e SHARD \
+            -e SHARD_TOTAL \
+            $EXTRA_ENV \
+            pw-conformance-runner-${{ inputs.browser }}:${{ github.sha }} \
+            sh /conformance/run.sh
+
+      - name: Upload shard report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pw-conformance-${{ inputs.browser }}-shard-${{ matrix.shard }}
+          path: playwright/alpine-browsers/conformance/report-*
+          if-no-files-found: ignore
+          retention-days: 14
+
+  summary:
+    # Always runs to surface the aggregate result even when shards red.
+    if: always()
+    needs: shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download all shard reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pw-conformance-${{ inputs.browser }}-shard-*
+          merge-multiple: true
+          path: shards
+
+      - name: Print conformance summary
+        run: |
+          echo "## PW Conformance — ${{ inputs.browser }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Artifact image: \`${{ inputs.image_ref }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "PW version:     \`v${{ inputs.pw_version }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Shard outcomes via the shard job; per-shard html reports uploaded as artifacts." >> "$GITHUB_STEP_SUMMARY"
+          ls -la shards/ || true
+
+      - name: Fail summary if any shard failed
+        if: needs.shard.result != 'success'
+        run: |
+          echo "One or more conformance shards failed (needs.shard.result=${{ needs.shard.result }})." >&2
+          exit 1
