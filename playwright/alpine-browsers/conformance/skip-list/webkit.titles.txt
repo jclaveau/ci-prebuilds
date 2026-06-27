@@ -22,7 +22,7 @@ should saveAs videos from remote browser
 should save videos to artifactsDir
 should name video file after page guid when connecting to remote browser with artifactsDir
 should upload a folder
-setInputFiles should preserve lastModified timestamp
+should preserve lastModified timestamp
 
 # ── Download artifactsDir ──────────────────────────────────────────────────
 should save downloads to artifactsDir
