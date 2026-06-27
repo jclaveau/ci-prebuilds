@@ -94,16 +94,27 @@ fi
 
 export PWTEST_UNDER_TEST=1
 
-# Firefox on Alpine/musl hits a Juggler-handshake hang in PW's tests/library
-# fixture (project_pw_upstream_juggler_handshake_hang / upstream #60).
-# Without a per-test cap, each test times out at PW's default 90s × ~50 tests
-# per shard ≈ 75min, overflowing the 60min job cap and cancelling every shard
-# with zero useful output. Reducing per-test timeout to 15s lets the shard
-# fail fast and surface assertion failures instead of universal cancellation.
-# TODO(#60): drop once PW's fixture is fixed for musl FF.
+# Firefox on Alpine/musl hits a Juggler-handshake hang at browserType.launch()
+# (project_pw_upstream_juggler_handshake_hang / upstream #60). Run 28287099425
+# proved that PW's CLI --timeout flag only caps test runtime — the hang is at
+# `browserType.launch` (default 180s timeout), not in the test itself, so
+# each test pays the full 180s before the per-test cap can fire.
+# Patch tests/library/playwright.config.ts to add launchOptions.timeout=15000
+# in the `use:` block so the launch fails fast.
 TIMEOUT_FLAG=""
 if [ "$BROWSER" = "firefox" ]; then
   TIMEOUT_FLAG="--timeout=15000"
+  echo "==== Inject launchOptions.timeout=15000 into tests/library/playwright.config.ts ===="
+  # PW config uses `use: {` — inject launchOptions on the line after.
+  if grep -qE '^\s+use:\s*\{' tests/library/playwright.config.ts; then
+    sed -i.bak -E '0,/^\s+use:\s*\{/{s/(^\s+use:\s*\{)/\1\n    launchOptions: { timeout: 15000 },/}' \
+      tests/library/playwright.config.ts
+    echo "  injected (backup at playwright.config.ts.bak)"
+    grep -n 'launchOptions: { timeout: 15000 }' tests/library/playwright.config.ts || \
+      echo "  WARN: injection appears missing in patched file" >&2
+  else
+    echo "  WARN: no '  use: {' pattern in tests/library/playwright.config.ts — config shape changed?" >&2
+  fi
 fi
 
 # Upstream PW's tests/library/playwright.config.ts is the single config for
