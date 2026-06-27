@@ -12,6 +12,11 @@ is_debug = false
 symbol_level = 0
 is_official_build = false  # set true if we want PGO + maximum optimization; significantly slower build
 
+# sccache compiler wrapper. Mirrors aports' cc_wrapper=ccache strategy.
+# SCCACHE_GHA_ENABLED env (set in the Dockerfile RUN) picks the GitHub Actions
+# Cache backend so warm-cache rebuilds finish in ~30min instead of cold ~7h.
+cc_wrapper = "sccache"
+
 # musl libc — without this Chromium picks a glibc-only codepath and the build
 # fails at link with undefined refs against glibc-specific symbols (e.g.
 # __libc_dlopen_mode). aports' chromium APKBUILD sets the same flag.

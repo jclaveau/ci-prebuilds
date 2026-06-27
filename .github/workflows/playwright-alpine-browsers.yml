@@ -900,8 +900,27 @@ jobs:
             type=raw,value=chs-sha-${{ github.sha }}
             type=raw,value=chs-edge,enable=${{ github.event_name != 'pull_request' }}
 
+      # GHA-cache env exposure for sccache. ACTIONS_RUNTIME_TOKEN and
+      # ACTIONS_RESULTS_URL are auto-set in the runner process env but NOT
+      # propagated to nested docker invocations. Re-export them via
+      # $GITHUB_ENV so subsequent steps (build-push-action's `env:` scope)
+      # can read them and forward to the Docker build secret mount.
+      # Without persistent sccache, each chromium-from-source iter is a
+      # full ~7h cold rebuild that exceeds the GHA hosted-runner 6h hard
+      # cap (timeout-minutes: 600 is silently clamped). With sccache→GHA
+      # backend, warm builds land in <30min.
+      - name: Expose GHA cache env to docker build
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+
       - name: Build artifact image
         uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
         with:
           context: playwright/alpine-browsers
           file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile
@@ -914,6 +933,9 @@ jobs:
           build-args: |
             PW_CHROMIUM_SKIP_APORTS=${{ inputs.chromium_skip_aports || 'false' }}
             PW_CHROMIUM_ENABLE_DEBUG=${{ inputs.chromium_enable_debug || 'false' }}
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
 
       # Tier-1 smoke: binary self-identifies as the PW-pinned browserVersion.
       - name: Tier-1 smoke (chrome-headless-shell --version)

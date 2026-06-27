@@ -78,13 +78,28 @@ RUN set -a && . /work/versions.env && . /work/derived.env && set +a \
 # pattern is the workaround once cold-build is green.
 ARG PW_CHROMIUM_SKIP_APORTS=false
 ARG PW_CHROMIUM_ENABLE_DEBUG=false
-# Cache mount target is the FIXED path /work/chromium-out — BuildKit evaluates
-# target= at Dockerfile parse time, so we can't templatize the dynamic
-# chromium-<CHS_VER>/ segment. apply-and-build.sh symlinks $SRC/out at runtime
-# to this stable cache mount so ninja's obj tree persists across iterations.
+# sccache GHA backend: BuildKit mount=type=cache is LOCAL to the runner. On
+# fresh GHA runners (the common case) it starts empty, so chromium rebuilds
+# fully every iter (6h cap on hosted runners). Mirror aports' cc_wrapper=ccache
+# strategy with sccache pointed at the GHA Actions Cache backend, which
+# survives across runs and is the only viable persistent-cache target on
+# hosted runners. Token + URL are GHA-provided env vars that we mount as
+# build secrets here. Set SCCACHE_GHA_ENABLED inside the RUN so chromium's
+# cc_wrapper invocation picks the GHA backend.
 RUN --mount=type=cache,target=/work/chromium-out,id=chr-out,sharing=locked \
     --mount=type=cache,target=/root/.cache/sccache,id=chr-sccache,sharing=locked \
+    --mount=type=secret,id=actions_runtime_token \
+    --mount=type=secret,id=actions_results_url \
     set -a && . /work/versions.env && . /work/derived.env && set +a \
+    && export SCCACHE_GHA_ENABLED=true \
+    && export ACTIONS_RUNTIME_TOKEN="$(cat /run/secrets/actions_runtime_token 2>/dev/null || echo)" \
+    && export ACTIONS_RESULTS_URL="$(cat /run/secrets/actions_results_url 2>/dev/null || echo)" \
+    && if [ -z "$ACTIONS_RUNTIME_TOKEN" ] || [ -z "$ACTIONS_RESULTS_URL" ]; then \
+         echo "WARN: GHA cache env not provided — sccache will use local mount only" >&2; \
+         unset SCCACHE_GHA_ENABLED; \
+       else \
+         echo "sccache GHA backend enabled (token len=${#ACTIONS_RUNTIME_TOKEN}, url=$ACTIONS_RESULTS_URL)"; \
+       fi \
     && PW_CHROMIUM_SKIP_APORTS="$PW_CHROMIUM_SKIP_APORTS" \
        PW_CHROMIUM_ENABLE_DEBUG="$PW_CHROMIUM_ENABLE_DEBUG" \
        bash /work/chromium-headless-shell/scripts/apply-and-build.sh /work
