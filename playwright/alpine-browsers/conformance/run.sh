@@ -94,6 +94,18 @@ fi
 
 export PWTEST_UNDER_TEST=1
 
+# Firefox on Alpine/musl hits a Juggler-handshake hang in PW's tests/library
+# fixture (project_pw_upstream_juggler_handshake_hang / upstream #60).
+# Without a per-test cap, each test times out at PW's default 90s × ~50 tests
+# per shard ≈ 75min, overflowing the 60min job cap and cancelling every shard
+# with zero useful output. Reducing per-test timeout to 15s lets the shard
+# fail fast and surface assertion failures instead of universal cancellation.
+# TODO(#60): drop once PW's fixture is fixed for musl FF.
+TIMEOUT_FLAG=""
+if [ "$BROWSER" = "firefox" ]; then
+  TIMEOUT_FLAG="--timeout=15000"
+fi
+
 # Upstream PW's tests/library/playwright.config.ts is the single config for
 # BOTH the library suite and the page suite — it declares per-browser projects
 # named `${browser}-library` (specs in tests/library/) AND `${browser}-page`
@@ -116,13 +128,15 @@ run_one() {
       --project="$PROJECT" \
       --shard="${SHARD}/${SHARD_TOTAL}" \
       --reporter=line,html \
+      $TIMEOUT_FLAG \
       $GREP_INVERT "$TITLE_PATTERNS"
   else
     npx playwright test \
       --config="$CONFIG" \
       --project="$PROJECT" \
       --shard="${SHARD}/${SHARD_TOTAL}" \
-      --reporter=line,html
+      --reporter=line,html \
+      $TIMEOUT_FLAG
   fi
   RC=$?
   # html reporter default output path is playwright-report/; move it.
