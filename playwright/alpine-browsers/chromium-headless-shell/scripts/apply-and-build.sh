@@ -156,16 +156,14 @@ else
 // paths in chromium 148 emit libbase.a without the real impl (compiled out
 // of stack_trace_posix.cc), causing host-tool links to fail with
 // `undefined symbol`. Weak storage class means: if the real impl is
-// present, it wins; if not, this PrintToStream-only stub keeps the link
-// alive. Host tools (character_data_generator, transport_security_state_
-// generator) only call OutputToStreamWithPrefix during crash paths, so a
-// degraded prefix-string is acceptable for them.
+// present, it wins; if not, this no-op stub keeps the link alive. Host
+// tools (character_data_generator, transport_security_state_generator)
+// only call OutputToStreamWithPrefix during crash paths, so silently
+// dropping the prefix-string output is acceptable for them.
 namespace base::debug {
 __attribute__((weak))
 void StackTrace::OutputToStreamWithPrefixImpl(
-    std::ostream* os, base::cstring_view /*prefix_string*/) const {
-  PrintToStream(os);
-}
+    std::ostream* /*os*/, base::cstring_view /*prefix_string*/) const {}
 }  // namespace base::debug
 STACK_TRACE_EOF
   echo "  appended weak stub"
