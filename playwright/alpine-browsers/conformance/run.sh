@@ -109,18 +109,26 @@ if [ "$BROWSER" = "firefox" ]; then
   TIMEOUT_FLAG="--timeout=15000 --retries=0"
 
   # ALSO patch playwright.config.ts so launchOptions.timeout=15000 fires for
-  # browserType.launch (the actual Juggler-pipe hang point) — BusyBox sed
-  # can't do range-anchored substitution, use perl which is in the image.
+  # browserType.launch (the Juggler-pipe hang point). Run 28290251780 proved
+  # BusyBox sed can't do range-anchored substitution AND perl is absent in
+  # the runtime image — fall back to Node.js (always present, it ran npm ci).
   echo "==== Patch tests/library/playwright.config.ts launchOptions.timeout=15000 ===="
   if [ -f tests/library/playwright.config.ts ]; then
-    perl -i -pe 's/(\buse\s*:\s*\{)/$1\n    launchOptions: { timeout: 15000 },/ if !$done && /\buse\s*:\s*\{/ && ($done = 1)' \
-      tests/library/playwright.config.ts || \
-      echo "  WARN: perl patch failed" >&2
-    if grep -q 'launchOptions: { timeout: 15000 }' tests/library/playwright.config.ts; then
-      echo "  injected ok"
-    else
-      echo "  WARN: injection missing — running with CLI --timeout fallback only" >&2
-    fi
+    # Write patch script to temp file to avoid shell-quoting backslash hell.
+    cat > /tmp/patch-pw-config.cjs <<'PATCH_EOF'
+const fs = require('fs');
+const p = 'tests/library/playwright.config.ts';
+let c = fs.readFileSync(p, 'utf8');
+const re = /(\buse\s*:\s*\{)/;
+const patched = c.replace(re, '$1\n    launchOptions: { timeout: 15000 },');
+if (patched === c) {
+  console.error('  WARN: "use: {" not found in config');
+  process.exit(1);
+}
+fs.writeFileSync(p, patched);
+console.log('  injected ok');
+PATCH_EOF
+    node /tmp/patch-pw-config.cjs || echo "  WARN: node patch failed; CLI --timeout only" >&2
   fi
 fi
 
