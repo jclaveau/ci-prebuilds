@@ -2,6 +2,37 @@
 # POSIX-extended regex per line. Matched against PW spec paths relative to
 # pw-src. Files matching are DELETED before tests run.
 #
-# Currently empty — webkit conformance is gated off until producer FORTIFY
-# fix lands + Tier-2 PW SDK + Inspector pipe stabilize. Populate from the
-# first real run.
+# Use ONLY for whole-file structural divergences. Individual conformance
+# gaps go in webkit.titles.txt.
+
+# ── DIVERGENCE (UI subsystem missing in headless WPE backend) ───────────────
+# Same root cause as chromium-headless-shell's inspector/codegen file-skip
+# (run 28285531191 shard 5+6 showed file-wide cli-codegen failures): the
+# recorder UI window needs a headed backend; WPE in PW SDK launches
+# headless by default.
+tests/library/inspector/.*\.spec\.ts$
+
+# Trace viewer — needs a UI host browser
+tests/library/trace-viewer\.spec\.ts$
+tests/library/trace-viewer-scrub\.spec\.ts$
+
+# Screencast / recordVideo — video encoding pipeline absent (run 28285531191
+# shard 7 surfaced screencast file-wide failure).
+tests/library/screencast\.spec\.ts$
+tests/library/video\.spec\.ts$
+
+# slowMo — input timing assumption doesn't match WPE's event-loop pacing.
+tests/library/slowmo\.spec\.ts$
+
+# Touch / tap — touch event source not exposed by MiniBrowser-wpe.
+tests/library/tap\.spec\.ts$
+
+# Selector generator + locator generator — codegen recorder fixtures
+tests/library/selector-generator\.spec\.ts$
+tests/library/locator-generator\.spec\.ts$
+
+# Debugger / page.pause — pause needs UI inspector window
+tests/library/debugger\.spec\.ts$
+
+# OOPIF (out-of-process iframes) — chromium-specific test directory
+tests/library/chromium/oopif\.spec\.ts$

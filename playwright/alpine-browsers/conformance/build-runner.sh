@@ -39,6 +39,9 @@ COPY --from=${IMAGE_REF} \\
 RUN touch /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/INSTALLATION_COMPLETE
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN npm install -g playwright@${PW_VERSION}
+# ffmpeg-1011 is bundled by PW's recordVideo / screencast paths; install via
+# the PW SDK so the cache layout matches what tests fixture-expect.
+RUN playwright install ffmpeg
 EOF
     ;;
 
@@ -57,6 +60,7 @@ RUN touch /ms-playwright/firefox-${ARTIFACT_REV}/INSTALLATION_COMPLETE
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \\
     LD_LIBRARY_PATH=/ms-playwright/firefox-${ARTIFACT_REV}/firefox
 RUN npm install -g playwright@${PW_VERSION}
+RUN playwright install ffmpeg
 EOF
     ;;
 
@@ -87,6 +91,9 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
 RUN npm install -g playwright@${PW_VERSION}
+# ffmpeg-1011 needed by recordVideo + screencast fixtures; skip-list narrows the
+# affected suite, but downloading lets the rest of tests/library boot cleanly.
+RUN playwright install ffmpeg
 EOF
     ;;
 

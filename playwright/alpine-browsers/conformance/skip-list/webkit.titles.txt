@@ -1,7 +1,32 @@
 # Test TITLE skip-list for webkit (Alpine/musl, WPE+GTK Branch C).
 # Per line: JS regex matched against PW's `test.titlePath().join(' › ')`.
 # Joined with `|` into a single regex passed to --grep-invert.
-#
-# Currently empty — webkit conformance is gated off until producer FORTIFY
-# fix lands + Tier-2 PW SDK + Inspector pipe stabilize. Populate from the
-# first real run.
+
+# ── Locale formatting (Alpine musl + WPE ICU differs from glibc + GTK) ──────
+# Run 28285531191 shard 2 surfaced these. Alpine ships icu-libs but the
+# default locale set may not cover all the regions PW's tests exercise.
+should format number
+should format date
+should format number in popups
+should be isolated between contexts
+
+# ── Capabilities — media codecs (Alpine WebKit ships limited GStreamer plugins) ──
+should play video
+should play webm video
+should play audio
+should not crash on page with mp4
+
+# ── browsertype-connect — same headed/video subcluster as chromium ──────────
+should ignore page.pause when headed
+should saveAs videos from remote browser
+should save videos to artifactsDir
+should name video file after page guid when connecting to remote browser with artifactsDir
+should upload a folder
+setInputFiles should preserve lastModified timestamp
+
+# ── Download artifactsDir ──────────────────────────────────────────────────
+should save downloads to artifactsDir
+
+# ── Cluster-sibling small leaks (TODO probes) ──────────────────────────────
+# Track each pending its own investigation. Don't expand prematurely.
+# TODO(probe): webkit-page suite full sweep once skip-list stabilizes
