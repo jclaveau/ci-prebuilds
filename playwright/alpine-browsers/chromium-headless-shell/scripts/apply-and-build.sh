@@ -121,11 +121,19 @@ if [[ -f "$APORTS/APKBUILD" ]]; then
   if [[ ! -d "$COPIUM_DIR" ]]; then
     mkdir -p "$COPIUM_DIR"
     echo "  fetch copium-${COPIUM_TAG}.tar.gz from codeberg"
-    # Codeberg occasionally 503s under load (runs 28305464435, 28306163932 both
-    # crashed here). Retry up to 5 times with backoff before propagating.
-    curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
-      "https://codeberg.org/selfisekai/copium/archive/${COPIUM_TAG}.tar.gz" \
-      | tar -xz -C "$COPIUM_DIR" --strip-components=1
+    # Codeberg 503s seen sustained across multiple builds (28305464435,
+    # 28306163932, 28306825928). 10 retries × 30s = ~5min recovery window.
+    # If that still fails, try GitHub mirror fallback (selfisekai/copium has
+    # an unofficial mirror at https://github.com/selfisekai/copium for some
+    # tags — best-effort only).
+    if ! curl -fsSL --retry 10 --retry-delay 30 --retry-all-errors \
+         "https://codeberg.org/selfisekai/copium/archive/${COPIUM_TAG}.tar.gz" \
+         | tar -xz -C "$COPIUM_DIR" --strip-components=1; then
+      echo "  codeberg unreachable; trying github mirror" >&2
+      curl -fsSL --retry 5 --retry-delay 15 --retry-all-errors \
+        "https://github.com/selfisekai/copium/archive/refs/tags/${COPIUM_TAG}.tar.gz" \
+        | tar -xz -C "$COPIUM_DIR" --strip-components=1
+    fi
   fi
   for p in $COPIUM_PATCHES; do
     if [[ -f "$COPIUM_DIR/$p" ]]; then
