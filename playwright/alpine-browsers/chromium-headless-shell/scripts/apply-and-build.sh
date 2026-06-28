@@ -121,7 +121,10 @@ if [[ -f "$APORTS/APKBUILD" ]]; then
   if [[ ! -d "$COPIUM_DIR" ]]; then
     mkdir -p "$COPIUM_DIR"
     echo "  fetch copium-${COPIUM_TAG}.tar.gz from codeberg"
-    curl -fsSL "https://codeberg.org/selfisekai/copium/archive/${COPIUM_TAG}.tar.gz" \
+    # Codeberg occasionally 503s under load (runs 28305464435, 28306163932 both
+    # crashed here). Retry up to 5 times with backoff before propagating.
+    curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+      "https://codeberg.org/selfisekai/copium/archive/${COPIUM_TAG}.tar.gz" \
       | tar -xz -C "$COPIUM_DIR" --strip-components=1
   fi
   for p in $COPIUM_PATCHES; do
@@ -222,7 +225,8 @@ if [[ -d third_party/devtools-frontend/src/node_modules ]] && [[ -f "$APORTS/APK
     ROLLUP_TGZ="$WORK/rollup-wasm-${ROLLUP_VER}.tgz"
     if [[ ! -f "$ROLLUP_TGZ" ]]; then
       echo "  fetch @rollup/wasm-node@${ROLLUP_VER} from npm"
-      curl -fsSL "https://registry.npmjs.org/@rollup/wasm-node/-/wasm-node-${ROLLUP_VER}.tgz" -o "$ROLLUP_TGZ"
+      curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+        "https://registry.npmjs.org/@rollup/wasm-node/-/wasm-node-${ROLLUP_VER}.tgz" -o "$ROLLUP_TGZ"
     fi
     rm -rf third_party/devtools-frontend/src/node_modules/rollup
     mkdir third_party/devtools-frontend/src/node_modules/rollup
