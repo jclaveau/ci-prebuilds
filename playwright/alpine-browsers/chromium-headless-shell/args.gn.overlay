@@ -87,6 +87,14 @@ enable_print_preview = false
 # via this GN arg.
 node_version_check = false
 
+# SwiftShader (software Vulkan) links libvk_swiftshader.so which needs
+# libffi_pic.a — Chromium expects to find it in third_party/libffi when
+# use_system_libffi=false, but it's not shipped. Alpine has libffi-dev (system).
+# Aports sets use_system_libffi=true gated on is_official_build=true; setting
+# it standalone here. v12 (run 28366063015) failed at SOLINK libvk_swiftshader.so
+# with `ld.lld: error: unable to find library -lffi_pic`.
+use_system_libffi = true
+
 # More aports-aligned defaults that headless_shell doesn't conflict with:
 chrome_pgo_phase = 0                       # no PGO (build wall-clock); aports same
 enable_vr = false                          # no VR/XR
