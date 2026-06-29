@@ -25,6 +25,12 @@ FINAL="${3:-}"
 
 set -a; . "$WORK/versions.env"; . "$WORK/derived.env"; set +a
 
+# derived.env exposes CHROMIUM_HEADLESS_SHELL_{REVISION,VERSION}; apply-and-build.sh
+# renames them to CHS_REV/CHS_VER internally. Mirror that rename here so the
+# `chromium-${CHS_VER}` source path resolves.
+CHS_REV="${CHROMIUM_HEADLESS_SHELL_REVISION:?derived.env missing CHROMIUM_HEADLESS_SHELL_REVISION}"
+CHS_VER="${CHROMIUM_HEADLESS_SHELL_VERSION:?derived.env missing CHROMIUM_HEADLESS_SHELL_VERSION}"
+
 # sccache GHA backend pickup
 export SCCACHE_GHA_ENABLED=true
 ACTIONS_RUNTIME_TOKEN="$(cat /run/secrets/actions_runtime_token 2>/dev/null || echo)"
