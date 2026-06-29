@@ -146,9 +146,12 @@ on:
         options: ['ON', 'OFF']
 
 # Never abort an in-flight 2h build — the cost of restarting outweighs the cost
-# of finishing a stale one.
+# of finishing a stale one. Group suffix distinguishes from-source dispatches
+# from FF/WK/prebuilt paths so they can run in parallel: they touch different
+# image stages and ship to different GHCR tags, no artifact races. Without the
+# suffix, parallel dispatches on the same ref blocked each other for hours.
 concurrency:
-  group: playwright-alpine-browsers-${{ github.ref }}
+  group: playwright-alpine-browsers-${{ github.ref }}-${{ inputs.build_chromium_headless_shell_from_source == 'true' && 'from-source' || 'main' }}
   cancel-in-progress: false
 
 permissions:
