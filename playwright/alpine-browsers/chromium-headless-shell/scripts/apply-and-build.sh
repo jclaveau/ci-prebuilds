@@ -374,6 +374,15 @@ echo "  using gn at: $GN"
 
 # 6. Build. headless_shell is the canonical chrome-headless-shell binary
 #    target. ninja parallelism caps to the runner's CPU count automatically.
+#
+# PW_CHROMIUM_SKIP_NINJA=1 splits ninja into its own Dockerfile RUN(s) so each
+# partial-build layer caches independently (GHA hosted runner 6h cap exceeds a
+# single-RUN cold build; multi-RUN with cache-to=registry lets later iters
+# resume from the last completed layer). When set, this script ends here.
+if [[ "${PW_CHROMIUM_SKIP_NINJA:-0}" == "1" ]]; then
+  echo "===== SKIP ninja (PW_CHROMIUM_SKIP_NINJA=1; Dockerfile owns ninja) ====="
+  exit 0
+fi
 echo "===== START ninja headless_shell ====="
 ninja_rc=0
 ninja -C "$OUT_DIR" -j "${NINJA_JOBS:-$(nproc)}" headless_shell || ninja_rc=$?
