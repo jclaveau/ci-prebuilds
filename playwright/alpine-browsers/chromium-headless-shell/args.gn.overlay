@@ -95,6 +95,21 @@ node_version_check = false
 # with `ld.lld: error: unable to find library -lffi_pic`.
 use_system_libffi = true
 
+# Aggressive feature cuts to fit chrome-headless-shell build under GHA's 6h
+# hosted-runner cap. v9-v15 all hit the cap mid-compile (37k uncached compiles
+# in v15 round-1 → ~35% in 5h). cache-to=registry only commits when buildx
+# build exits normally, so cap-cancelled iters never publish their layers →
+# each iter starts cold. Cutting headless-shell-irrelevant features below
+# (WebRTC, WebGPU/Dawn, ML/XNNPACK, ANGLE GL backends, Vulkan validation)
+# trims the compile graph enough for one iter to complete and seed the cache.
+# Drops biggest compile-count subdirs by [obj/third_party/X] grep on v15 logs:
+#   xnnpack=1093  webrtc=875  dawn=720  angle=467  vulkan-vl=231  swiftshader=185
+enable_webrtc = false
+skia_use_dawn = false
+skia_use_vulkan = false
+use_dawn = false
+angle_enable_vulkan = false
+
 # More aports-aligned defaults that headless_shell doesn't conflict with:
 chrome_pgo_phase = 0                       # no PGO (build wall-clock); aports same
 enable_vr = false                          # no VR/XR
