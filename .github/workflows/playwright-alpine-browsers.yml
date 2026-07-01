@@ -842,19 +842,207 @@ jobs:
   #
   # Until then, `build-chromium-headless-shell` above does an apk extract
   # of aports' prebuilt chromium-headless-shell-148.0.7778.178-r0.
-  build-chromium-headless-shell-from-source:
-    # Bypass for the Alpine community/chromium apk's broken
-    # chromium-headless-shell UA stylesheet (745KB pak, no resources/
-    # dir; vanilla <div> renders display:inline; form controls render
-    # appearance:none). See
-    # .agents/auto-memory/project_pw_conformance_visibility_cluster.md
-    # for the root-cause analysis. Source build pulls the proper
-    # resource pak so the UA stylesheet applies. ~5h cold.
+  # ── chromium-from-source: multi-JOB refactor ─────────────────────────────────
+  # Bypass for the Alpine community/chromium apk's broken chromium-headless-shell
+  # UA stylesheet (745KB pak, no resources/ dir; see
+  # .agents/auto-memory/project_pw_conformance_visibility_cluster.md).
+  #
+  # The build is ~13h cold on a 4-vCPU GHA hosted runner. GHA caps each job at
+  # 6h hard. A single job hits the cap mid-build. BuildKit's cache-to=registry
+  # only pushes cache when buildx exits normally — a cap-cancelled buildx
+  # publishes NOTHING (see .agents/auto-memory/
+  # project_buildkit_cacheto_commit_semantics.md), so every "resumable RUN"
+  # split iter starts cold.
+  #
+  # Multi-JOB refactor: setup → r1 → r2 → r3 → finalize. Each job runs ONE
+  # `docker build` that exits normally (ninja rounds use `timeout 18000 ninja ||
+  # true`), pushing an intermediate tagged image. Next job pulls that tag as
+  # BASE_IMAGE. Docker layer holds obj/ state across jobs. Final job runs
+  # `ninja headless_shell` without timeout — if incomplete, the layer fails and
+  # a follow-up dispatch adds another round.
+
+  build-chromium-headless-shell-from-source-setup:
     if: |
       (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
       || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
     runs-on: ubuntu-latest
-    timeout-minutes: 600   # 10h ceiling — Chromium cold-build hit the prior 5h cap mid-link (run 28239393075). The full sysroot+ninja chain is ~6-8h cold; cache hits after the first green run will land in <30min.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk (chromium source is ~15 GB)
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build setup image (apt + fetch source + gn gen)
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.setup
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-setup-sha-${{ github.sha }}
+          build-args: |
+            PW_CHROMIUM_SKIP_APORTS=${{ inputs.chromium_skip_aports || 'false' }}
+            PW_CHROMIUM_ENABLE_DEBUG=${{ inputs.chromium_enable_debug || 'false' }}
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headless-shell-from-source-r1:
+    needs: build-chromium-headless-shell-from-source-setup
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build round-1 image (5h ninja timeout, commits partial obj/)
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r1-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-setup-sha-${{ github.sha }}
+            ROUND_LABEL=round-1
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headless-shell-from-source-r2:
+    needs: build-chromium-headless-shell-from-source-r1
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build round-2 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r2-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r1-sha-${{ github.sha }}
+            ROUND_LABEL=round-2
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headless-shell-from-source-r3:
+    needs: build-chromium-headless-shell-from-source-r2
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build round-3 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r3-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r2-sha-${{ github.sha }}
+            ROUND_LABEL=round-3
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headless-shell-from-source:
+    # Final job — runs `ninja headless_shell` without timeout. If ninja is still
+    # incomplete after 3 timeout-rounds, this job fails and the next dispatch
+    # re-runs it (r1-r3 layers restore from cache-from since Dockerfile.round
+    # rounds are content-addressable on their input image).
+    needs: build-chromium-headless-shell-from-source-r3
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
     outputs:
       build_tag: chs-sha-${{ github.sha }}
       pw_version: ${{ steps.pins.outputs.pw_version }}
@@ -866,9 +1054,6 @@ jobs:
       - id: pins
         run: |
           set -a; . playwright/alpine-browsers/versions.env; set +a
-          # workflow_dispatch override: if `pw_version` input was set, it wins
-          # over versions.env's PW_VERSION default. Powers the on-demand path
-          # where a different PW pin (e.g. 1.59.1) needs its own chs/ff rev.
           if [ -n "${PW_VERSION_OVERRIDE:-}" ]; then
             echo "pin override: PW_VERSION=$PW_VERSION → $PW_VERSION_OVERRIDE (workflow_dispatch input)"
             PW_VERSION="$PW_VERSION_OVERRIDE"
@@ -881,7 +1066,7 @@ jobs:
           echo "chromium_version=$VER" >> "$GITHUB_OUTPUT"
           echo "PW v${PW_VERSION} → chromium-headless-shell revision=${REV} browserVersion=${VER}"
 
-      - name: Free up runner disk (chromium source + out dir is ~30 GB)
+      - name: Free up runner disk
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
@@ -903,44 +1088,31 @@ jobs:
             type=raw,value=chs-sha-${{ github.sha }}
             type=raw,value=chs-edge,enable=${{ github.event_name != 'pull_request' }}
 
-      # GHA-cache env exposure for sccache. ACTIONS_RUNTIME_TOKEN and
-      # ACTIONS_RESULTS_URL are auto-set in the runner process env but NOT
-      # propagated to nested docker invocations. Re-export them via
-      # $GITHUB_ENV so subsequent steps (build-push-action's `env:` scope)
-      # can read them and forward to the Docker build secret mount.
-      # Without persistent sccache, each chromium-from-source iter is a
-      # full ~7h cold rebuild that exceeds the GHA hosted-runner 6h hard
-      # cap (timeout-minutes: 600 is silently clamped). With sccache→GHA
-      # backend, warm builds land in <30min.
-      - name: Expose GHA cache env to docker build
+      - name: Expose GHA cache env
         uses: actions/github-script@v7
         with:
           script: |
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
 
-      - name: Build artifact image
+      - name: Build final artifact image (ninja must complete)
         uses: docker/build-push-action@v5
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
         with:
           context: playwright/alpine-browsers
-          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.finalize
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           target: artifact
-          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs
-          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs,mode=max
           build-args: |
-            PW_CHROMIUM_SKIP_APORTS=${{ inputs.chromium_skip_aports || 'false' }}
-            PW_CHROMIUM_ENABLE_DEBUG=${{ inputs.chromium_enable_debug || 'false' }}
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r3-sha-${{ github.sha }}
           secrets: |
             actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
             actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
 
-      # Tier-1 smoke: binary self-identifies as the PW-pinned browserVersion.
       - name: Tier-1 smoke (chrome-headless-shell --version)
         run: |
           cat > /tmp/Dockerfile.chs-t1 <<EOF
@@ -959,15 +1131,6 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "${{ steps.pins.outputs.chromium_version }}" \
             || { echo "Tier-1: chrome-headless-shell didn't report expected ${{ steps.pins.outputs.chromium_version }}"; exit 1; }
-
-      # (Removed) The earlier `Cancel run on chromium failure` step muddied the
-      # job status — chromium-fail → self-cancel → final conclusion becomes
-      # "cancelled" instead of "failure", obscuring real failures. The step
-      # mattered when FF + chromium ran unconditionally in parallel; now FF is
-      # label-gated (default off) so chromium-fail wastes nothing. Drop it.
-      # If you ever enable both browsers via labels and chromium fails first,
-      # the FF build will still continue to completion — that's an accepted
-      # trade for clear status semantics.
 
   smoke-chromium-headless-shell:
     # Tier-2: drive chromium via the Playwright SDK using auto-discovery (NO

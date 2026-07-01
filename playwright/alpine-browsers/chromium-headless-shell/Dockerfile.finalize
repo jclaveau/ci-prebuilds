@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1
+#
+# chromium-from-source multi-job STAGE N: final ninja + artifact staging.
+#
+# Consumes the last round's image (BASE_IMAGE) and runs `ninja headless_shell`
+# WITHOUT a timeout — this call MUST complete or the job (rightly) fails.
+# Then stages the binary/pak tree via stage-cache-layout.sh and copies the
+# result into a FROM scratch artifact stage matching the pre-refactor layout.
+
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE} AS chromium-builder
+
+RUN --mount=type=cache,target=/root/.cache/sccache,id=chr-sccache,sharing=locked \
+    --mount=type=secret,id=actions_runtime_token \
+    --mount=type=secret,id=actions_results_url \
+    bash /work/chromium-headless-shell/scripts/ninja-resume.sh /work final final
+
+RUN bash /work/chromium-headless-shell/scripts/stage-cache-layout.sh /work
+
+FROM scratch AS artifact
+COPY --from=chromium-builder /work/chrome-headless-shell-linux64 /chrome-headless-shell-linux64
