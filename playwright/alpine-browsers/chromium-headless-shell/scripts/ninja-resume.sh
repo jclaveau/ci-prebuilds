@@ -31,15 +31,14 @@ set -a; . "$WORK/versions.env"; . "$WORK/derived.env"; set +a
 CHS_REV="${CHROMIUM_HEADLESS_SHELL_REVISION:?derived.env missing CHROMIUM_HEADLESS_SHELL_REVISION}"
 CHS_VER="${CHROMIUM_HEADLESS_SHELL_VERSION:?derived.env missing CHROMIUM_HEADLESS_SHELL_VERSION}"
 
-# sccache GHA backend pickup
+# sccache GHA backend pickup.
+# ACTIONS_CACHE_SERVICE_V2=1 flips opendal's ghac backend to v2 Twirp API
+# (endpoint `/twirp/github.actions.results.api.v1.CacheService/*`). Without
+# it opendal targets the deprecated v1 path `/_apis/artifactcache/cache`
+# which GitHub returns 404 for — every write fails with the misleading
+# "Cannot write to read-only storage" opendal error. See project_sccache_ghac_readonly_v18.
 export SCCACHE_GHA_ENABLED=true
-# v17 (28502278987) round-2 stats: 2285/2285 cache writes FAILED with
-# ACTIONS_RESULTS_URL set + 2443-char token. Enable SCCACHE_LOG=debug to
-# surface actual write errors so we can diagnose (permission? quota? size?).
-# Log goes to /tmp/sccache.log inside container; ninja-resume dumps its
-# tail into build output at end-of-round.
-export SCCACHE_LOG=debug
-export SCCACHE_ERROR_LOG=/tmp/sccache.log
+export ACTIONS_CACHE_SERVICE_V2=1
 ACTIONS_RUNTIME_TOKEN="$(cat /run/secrets/actions_runtime_token 2>/dev/null || echo)"
 ACTIONS_RESULTS_URL="$(cat /run/secrets/actions_results_url 2>/dev/null || echo)"
 if [[ -z "$ACTIONS_RUNTIME_TOKEN" || -z "$ACTIONS_RESULTS_URL" ]]; then
@@ -82,12 +81,6 @@ fi
 POST_OBJ_COUNT=$(find "$OUT" -name '*.o' 2>/dev/null | wc -l)
 DELTA=$((POST_OBJ_COUNT - PRE_OBJ_COUNT))
 echo "===== ninja $LABEL — ended with $POST_OBJ_COUNT .o files (+$DELTA this round) ====="
-
-# Dump sccache debug log tail (write-error root cause investigation).
-if [[ -f /tmp/sccache.log ]]; then
-  echo "===== sccache debug log (last 40 lines) ====="
-  tail -40 /tmp/sccache.log | sed 's/^/  sccache-log: /'
-fi
 
 # sccache stats (best-effort — log even if unavailable)
 sccache --show-stats 2>&1 | sed 's/^/  sccache: /' || true
