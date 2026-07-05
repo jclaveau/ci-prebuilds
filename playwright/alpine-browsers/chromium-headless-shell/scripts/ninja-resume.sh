@@ -85,4 +85,28 @@ echo "===== ninja $LABEL — ended with $POST_OBJ_COUNT .o files (+$DELTA this r
 # sccache stats (best-effort — log even if unavailable)
 sccache --show-stats 2>&1 | sed 's/^/  sccache: /' || true
 
+# On final round with rc=0, do the dist copy that apply-and-build.sh normally
+# does post-ninja (it exited early via PW_CHROMIUM_SKIP_NINJA=1 in setup).
+# Mirrors apply-and-build.sh section 9 verbatim so stage-cache-layout.sh finds
+# /work/chromium-dist/ populated.
+if [[ "$FINAL" == "final" && $rc -eq 0 ]]; then
+  BIN="$OUT/headless_shell"
+  if [[ ! -x "$BIN" ]]; then
+    echo "ERROR: expected $BIN after final ninja" >&2
+    ls -la "$OUT" | head -20
+    exit 6
+  fi
+  DIST="$WORK/chromium-dist"
+  mkdir -p "$DIST"
+  cp -a "$BIN" "$DIST/"
+  for f in icudtl.dat snapshot_blob.bin v8_context_snapshot.bin chrome_100_percent.pak chrome_200_percent.pak resources.pak; do
+    [[ -f "$OUT/$f" ]] && cp -a "$OUT/$f" "$DIST/"
+  done
+  [[ -d "$OUT/locales" ]] && cp -a "$OUT/locales" "$DIST/"
+  [[ -d "$OUT/headless_lib_data" ]] && cp -a "$OUT/headless_lib_data" "$DIST/"
+  find "$OUT" -maxdepth 1 -name '*.so' -exec cp -a {} "$DIST/" \;
+  echo "===== DIST staged at $DIST ====="
+  ls -lh "$DIST" | head -20
+fi
+
 exit $rc
