@@ -689,6 +689,73 @@ jobs:
       artifact_rev: ${{ needs.build-webkit-finalize.outputs.webkit_revision }}
     secrets: inherit
 
+  # ────────────────────────────────────────────────────────────────────
+  # UBUNTU BASELINE CONFORMANCE (reference)
+  # ────────────────────────────────────────────────────────────────────
+  # PW's own tests/library + tests/page against PW's OFFICIAL Ubuntu-based
+  # browsers (mcr.microsoft.com/playwright:v<PW>-noble). These runs form
+  # the reference bar: green here = PW-maintainer-certified. Divergence
+  # between an Ubuntu-baseline shard and its Alpine counterpart above is
+  # Alpine/musl-side evidence for task #13 (community/chromium apk bug)
+  # and task #17 (toBeInViewport regression cluster).
+  #
+  # Runs on the same triggers as the corresponding Alpine conformance so
+  # the two sit side-by-side in the run's job list for A/B comparison.
+
+  conformance-ubuntu-chromium:
+    needs: [build-chromium-headless-shell]
+    uses: ./.github/workflows/pw-conformance-ubuntu.yml
+    with:
+      browser: chromium
+      pw_version: ${{ needs.build-chromium-headless-shell.outputs.pw_version }}
+    secrets: inherit
+
+  conformance-ubuntu-firefox:
+    needs: [build-firefox]
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.run_firefox_conformance == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-firefox-conformance'))
+    uses: ./.github/workflows/pw-conformance-ubuntu.yml
+    with:
+      browser: firefox
+      pw_version: ${{ needs.build-firefox.outputs.pw_version }}
+    secrets: inherit
+
+  conformance-ubuntu-webkit:
+    needs: [build-webkit-finalize]
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.run_webkit_conformance == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-webkit-conformance'))
+    uses: ./.github/workflows/pw-conformance-ubuntu.yml
+    with:
+      browser: webkit
+      pw_version: ${{ needs.build-webkit-finalize.outputs.pw_version }}
+    secrets: inherit
+
+  # ────────────────────────────────────────────────────────────────────
+  # FROM-SOURCE CHROMIUM CONFORMANCE
+  # ────────────────────────────────────────────────────────────────────
+  # PW conformance against our from-source-built chromium (v26 pipeline
+  # output at chs-sha-<SHA>). Runs alongside conformance-chromium-
+  # headless-shell (apk variant) — if the apk variant fails toBeInViewport
+  # cluster but the from-source variant PASSES, task #13 bug is proven
+  # Alpine-apk-specific. If both fail, the bug is deeper (Alpine musl
+  # itself or PW's chromium build recipe) and task #17 investigation
+  # widens.
+
+  conformance-chromium-headless-shell-from-source:
+    needs: [build-chromium-headless-shell-from-source]
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+    uses: ./.github/workflows/pw-conformance.yml
+    with:
+      browser: chromium
+      image_ref: ghcr.io/jclaveau/playwright-alpine-browsers:chs-fs-sha-${{ github.sha }}
+      pw_version: ${{ needs.build-chromium-headless-shell-from-source.outputs.pw_version }}
+      artifact_rev: ${{ needs.build-chromium-headless-shell-from-source.outputs.chromium_revision }}
+    secrets: inherit
+
   promote-chromium-headless-shell:
     # Parallel promote for the apk-fast-path chromium artifact. Same dual-
     # target shape as FF promote: GHCR for CI consumption, DH for external.
@@ -1300,8 +1367,8 @@ jobs:
         with:
           images: ghcr.io/jclaveau/playwright-alpine-browsers
           tags: |
-            type=raw,value=chs-sha-${{ github.sha }}
-            type=raw,value=chs-edge,enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=chs-fs-sha-${{ github.sha }}
+            type=raw,value=chs-fs-edge,enable=${{ github.event_name != 'pull_request' }}
 
       - name: Expose GHA cache env
         uses: actions/github-script@v7
@@ -1342,7 +1409,7 @@ jobs:
               libatk-1.0 libatk-bridge-2.0 at-spi2-core minizip \\
               double-conversion crc32c libxkbcommon mesa-gbm eudev-libs flac \\
               harfbuzz-subset
-          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:chs-sha-${{ github.sha }} \\
+          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:chs-fs-sha-${{ github.sha }} \\
                /chrome-headless-shell-linux64 \\
                /opt/chs
           EOF

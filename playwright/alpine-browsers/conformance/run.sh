@@ -102,7 +102,7 @@ export PWTEST_UNDER_TEST=1
 # Patch tests/library/playwright.config.ts to add launchOptions.timeout=15000
 # in the `use:` block so the launch fails fast.
 TIMEOUT_FLAG=""
-if [ "$BROWSER" = "firefox" ]; then
+if [ "$BROWSER" = "firefox" ] && [ "${DISABLE_MUSL_FF_SKIP:-0}" != "1" ]; then
   # FFX conformance is upstream-blocked at microsoft/playwright #60 (Juggler
   # handshake hang on musl). Five iterations (runs 28287099425, 28288708299,
   # 28290251780, 28291848806, 28293473363) all cancelled at the 60min cap:
