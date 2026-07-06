@@ -1338,7 +1338,8 @@ jobs:
               nss freetype harfbuzz ca-certificates ttf-freefont libdrm mesa-gl \\
               libwebp libwebpdemux libxcomposite libxdamage libxrandr libxscrnsaver libxtst \\
               libx11 libxcb libxext libxi cups-libs alsa-lib dbus-libs pango cairo \\
-              opus dav1d ffmpeg-libavformat libjpeg-turbo libxslt
+              opus dav1d ffmpeg-libavformat libjpeg-turbo libxslt \\
+              atk at-spi2-core minizip
           COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:chs-sha-${{ github.sha }} \\
                /chrome-headless-shell-linux64 \\
                /opt/chs
