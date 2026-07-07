@@ -28,11 +28,23 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 case "$BROWSER" in
   chromium)
+    # The apk-based chromium bundles most .so files inside the artifact tree so
+    # a minimal Alpine runner sufficed. From-source chromium (chs-fs-sha-*) is
+    # dynamically linked against system libs — full runtime-dep list per
+    # project_chromium_from_source_runtime_deps. Both variants safely accept
+    # the wider list; extra apks don't hurt the apk path.
     cat > "$TMPDIR/Dockerfile" <<EOF
 FROM alpine:edge
 RUN apk update && apk add --no-cache \\
     nodejs npm bash git \\
-    ca-certificates font-opensans ttf-freefont
+    ca-certificates font-opensans ttf-freefont \\
+    nss freetype harfbuzz libdrm mesa-gl \\
+    libwebp libwebpdemux libxcomposite libxdamage libxrandr libxscrnsaver libxtst \\
+    libx11 libxcb libxext libxi cups-libs alsa-lib dbus-libs pango cairo \\
+    opus dav1d ffmpeg-libavformat libjpeg-turbo libxslt \\
+    libatk-1.0 libatk-bridge-2.0 at-spi2-core minizip \\
+    double-conversion crc32c libxkbcommon mesa-gbm eudev-libs flac \\
+    harfbuzz-subset
 COPY --from=${IMAGE_REF} \\
      /chrome-headless-shell-linux64 \\
      /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/chrome-headless-shell-linux64
