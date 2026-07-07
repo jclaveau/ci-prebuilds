@@ -414,20 +414,29 @@ fi
 echo "  version matches PW's pinned $CHS_VER ✓"
 
 # 9. Stage to /work/chromium-dist/ for the artifact stage.
+# File list mirrors what PW's official chromium-headless-shell-linux64
+# ships under mcr.microsoft.com/playwright — verified by ls against
+# v1.60.0-noble. Missing any of these produces:
+#   - headless_lib_data.pak absent → UA stylesheet not applied → every
+#     <div>/<p>/<input> reports display:inline + rect.width=0 → PW auto-wait
+#     fails "element is not visible" (see project_pw_conformance_visibility_cluster).
+#   - locales/ absent → i18n init warning + a few tests skip.
+#   - libvulkan.so.1 + vk_swiftshader_icd.json absent → GPU fallback broken.
 DIST="$WORK/chromium-dist"
 mkdir -p "$DIST"
-# Files chrome-headless-shell needs at runtime. From Chromium's
-# install_headless_shell_*.txt manifests / aports' chromium-headless.post-install.
-# Copy the binary plus its data dependencies.
 cp -a "$BIN" "$DIST/"
-for f in icudtl.dat snapshot_blob.bin v8_context_snapshot.bin chrome_100_percent.pak chrome_200_percent.pak resources.pak; do
+for f in icudtl.dat snapshot_blob.bin v8_context_snapshot.bin \
+         headless_command_resources.pak headless_lib_data.pak headless_lib_strings.pak \
+         vk_swiftshader_icd.json; do
   [[ -f "$OUT_DIR/$f" ]] && cp -a "$OUT_DIR/$f" "$DIST/"
 done
-[[ -d "$OUT_DIR/locales" ]] && cp -a "$OUT_DIR/locales" "$DIST/"
-[[ -d "$OUT_DIR/headless_lib_data" ]] && cp -a "$OUT_DIR/headless_lib_data" "$DIST/"
+for d in locales hyphen-data; do
+  [[ -d "$OUT_DIR/$d" ]] && cp -a "$OUT_DIR/$d" "$DIST/"
+done
 
-# Also any .so it links to (locally-bundled libs Chromium produces).
-find "$OUT_DIR" -maxdepth 1 -name '*.so' -exec cp -a {} "$DIST/" \;
+# Bundled .so + .so.N shared libs (libEGL.so, libGLESv2.so, libvk_swiftshader.so,
+# libvulkan.so.1). Match .so and .so.<any> — glob *.so does NOT match libvulkan.so.1.
+find "$OUT_DIR" -maxdepth 1 \( -name '*.so' -o -name '*.so.*' \) -exec cp -a {} "$DIST/" \;
 
 echo "===== DIST staged at $DIST ====="
 ls -lh "$DIST" | head -20
