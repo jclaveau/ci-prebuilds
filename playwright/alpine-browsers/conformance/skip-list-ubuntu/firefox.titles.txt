@@ -1,0 +1,8 @@
+# PW-known upstream fails on the Ubuntu-FF baseline (mcr.microsoft.com/
+# playwright:v<PW>-noble image). Same tests fail identically on Alpine-FF
+# so they're also present in skip-list/firefox.titles.txt.
+#
+# Seeded from run 28952021038 (2026-07-08):
+should support webgl @smoke$
+should support webgl 2 @smoke$
+page screenshot › should work for webgl$

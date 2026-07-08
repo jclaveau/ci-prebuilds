@@ -2,6 +2,24 @@
 # POSIX-extended regex per line. Matched against PW spec paths relative to
 # pw-src. Files matching are DELETED before tests run.
 #
-# Currently empty — firefox conformance is gated off until #60 (Juggler
-# handshake hang) is root-caused. Populate when the runner first emits
-# meaningful failure data.
+# Seeded from run 28952021038 (2026-07-08): first FF conformance run after
+# --remote-debugging-port=0 workaround landed in run.sh. Alpine-only fails
+# vs Ubuntu-FF baseline.
+#
+# These entire spec files fail structurally on our musl FF build because
+# they depend on `browserContext._enableRecorder()` — the Juggler bindings
+# for the PW recorder/inspector API return an empty-message error. Root
+# cause pending; skipping whole-file until then.
+tests/library/inspector/cli-codegen-.*\.spec\.ts
+tests/library/selector-generator\.spec\.ts
+tests/library/trace-viewer.*\.spec\.ts
+tests/library/debug-controller\.spec\.ts
+tests/library/slowmo\.spec\.ts
+
+# Client-certificates / proxy stack — need NSS OCSP + proxy features that
+# our musl build doesn't fully wire. Ubuntu-FF passes; Alpine-FF 100% red.
+tests/library/client-certificates\.spec\.ts
+tests/library/proxy\.spec\.ts
+tests/library/browsercontext-proxy\.spec\.ts
+tests/library/browsercontext-cookies-third-party\.spec\.ts
+tests/library/browsercontext-reuse\.spec\.ts

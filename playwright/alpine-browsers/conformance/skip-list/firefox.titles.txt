@@ -2,6 +2,80 @@
 # Per line: JS regex matched against PW's `test.titlePath().join(' › ')`.
 # Joined with `|` into a single regex passed to --grep-invert.
 #
-# Currently empty — firefox conformance is gated off until #60 (Juggler
-# handshake hang) is root-caused. Populate when the runner first emits
-# meaningful failure data.
+# Seeded from run 28952021038 (2026-07-08): first FF conformance run after
+# --remote-debugging-port=0 workaround landed. Long-tail Alpine-only fails
+# not covered by whole-file skips in firefox.files.txt.
+#
+# Clusters:
+#   - cross-process iframe / docShell access (Juggler cross-origin gap)
+#   - file:// subframes / bfcache (musl file:// resolver)
+#   - locale (Alpine ICU package differs from Ubuntu)
+#   - detached frame handling (Juggler frame lifecycle timing)
+#   - CORS / CSP throw messages (FF error-string variance on musl)
+#   - one-offs: har round-trip, PDF download, weberror event
+#
+# See also skip-list-ubuntu/firefox.titles.txt for the 3 PW-known webgl
+# fails shared with the Ubuntu-FF baseline.
+frame\.press should work$
+goBack/goForward should work with bfcache-able pages$
+init script should run only once in iframe$
+insertText should only emit input event$
+page screenshot › mask option › should mask in parallel$
+page screenshot › should work with device scale factor$
+page screenshot › should work with device scale factor and clip$
+page\.frame should respect url$
+page\.goBack should work for file urls$
+should auto-wait for blocking CSS$
+should be able to download a inline PDF file via navigation$
+should be isolated between contexts$
+should click the button with deviceScaleFactor set$
+should click the button with fixed position inside an iframe$
+should dispose$
+should emit close upon frame detach$
+should emulate media in cross-process iframe$
+should fail with ReferenceError on wrong page$
+should fail with predicate throwing on first call$
+should fail with predicate throwing sometimes$
+should fetch hidpi assets$
+should format date$
+should format number$
+should format number in popups$
+should gracefully fallback when child frame cant be captured$
+should have different hars for concurrent contexts$
+should not be called after finishing unsuccessfully$
+should not change default locale in another context$
+should not construct a new URL when valid URLs are passed$
+should not hang when frame is detached$
+should not throw if request was cancelled by the page$
+should play video @smoke$
+should reject cors with disallowed credentials$
+should report errors$
+should respect CSP @smoke$
+should respect cors overrides$
+should round-trip har with postData$
+should run in specified frame$
+should run in specified frame xpath$
+should scroll into view element in iframe$
+should support cors with GET$
+should support custom firefox policies$
+should support hasTouch option$
+should support requestStorageAccess$
+should throw a nice error when the request fails$
+should throw an error if loading from url fail$
+should throw when added with URL to the CSP page$
+should throw when frame is detached$
+should throw when frame is detached xpath$
+should upload a folder$
+should wait for networkidle to succeed navigation with request from previous navigation$
+should work for cross-process iframes$
+should work for frame$
+should work with file URL with subframes$
+should work with mixed content$
+weberror event should include location$
+weberror event should work$
+
+# PW-upstream fails shared with the Ubuntu-FF baseline (see
+# skip-list-ubuntu/firefox.titles.txt):
+should support webgl @smoke$
+should support webgl 2 @smoke$
+page screenshot › should work for webgl$
