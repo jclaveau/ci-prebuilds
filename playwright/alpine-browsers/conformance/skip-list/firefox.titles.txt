@@ -36,6 +36,7 @@ should click the button with fixed position inside an iframe$
 should connect over wss$
 should delete downloads when persistent context closes$
 should detach child frames on navigation$
+should disable memory cache when intercepting$
 should dispose context on cross-origin navigation$
 should dispose$
 should emit close upon frame detach$
@@ -50,6 +51,7 @@ should format number$
 should goForward to redirected navigation$
 should gracefully fallback when child frame cant be captured$
 should have different hars for concurrent contexts$
+should have pages$
 should ignore page.pause when headed$
 should mask in parallel$
 should navigate subframes @smoke$
@@ -76,6 +78,7 @@ should set local storage in third-party context$
 should support cors with GET$
 should support custom firefox policies$
 should support hasTouch option$
+should support framesets$
 should support requestStorageAccess$
 should support touch with null viewport$
 should support webgl 2 @smoke$
