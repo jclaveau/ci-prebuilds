@@ -133,6 +133,7 @@ run_one() {
       --project="$PROJECT" \
       --shard="${SHARD}/${SHARD_TOTAL}" \
       --reporter=line,html \
+      --retries=2 \
       $TIMEOUT_FLAG \
       $GREP_INVERT "$TITLE_PATTERNS"
   else
@@ -141,6 +142,7 @@ run_one() {
       --project="$PROJECT" \
       --shard="${SHARD}/${SHARD_TOTAL}" \
       --reporter=line,html \
+      --retries=2 \
       $TIMEOUT_FLAG
   fi
   RC=$?

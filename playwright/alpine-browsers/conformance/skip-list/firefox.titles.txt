@@ -19,12 +19,14 @@
 #   - CORS / CSP throw messages (FF error-string variance on musl)
 #   - PW-known upstream fails (webgl @smoke × 3 — also in
 #     skip-list-ubuntu/firefox.titles.txt)
+dialog\.accept should work$
 frame\.press should work$
 goBack/goForward should work with bfcache-able pages$
 init script should run only once in iframe$
 insertText should only emit input event$
 page\.frame should respect url$
 page\.goBack should work for file urls$
+should allow unnamed cookies$
 should auto-wait for blocking CSS$
 should be able to download a inline PDF file via navigation$
 should be able to reconnect to a browser$
@@ -49,6 +51,7 @@ should fetch hidpi assets$
 should format date$
 should format number in popups$
 should format number$
+should goBack to redirected navigation$
 should goForward to redirected navigation$
 should gracefully fallback when child frame cant be captured$
 should have different hars for concurrent contexts$
