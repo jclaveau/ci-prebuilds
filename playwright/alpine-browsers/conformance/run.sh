@@ -57,6 +57,14 @@ git clone --depth 1 --branch "$PW_TAG" \
 
 cd "$PW_SRC"
 
+# Patch DEFAULT_PLAYWRIGHT_LAUNCH_TIMEOUT 3min → 15s so any launch that hangs
+# on this host (e.g. Firefox IPC channel error on musl) fails within one
+# shard's cap. Would otherwise burn 6h per shard on 220 × 180s hung launches.
+# Applies BEFORE `npm run build` so the transpiled .js inherits it.
+sed -i 's/DEFAULT_PLAYWRIGHT_LAUNCH_TIMEOUT = 3 \* 60 \* 1000/DEFAULT_PLAYWRIGHT_LAUNCH_TIMEOUT = 15 * 1000/' \
+  packages/isomorphic/time.ts
+grep DEFAULT_PLAYWRIGHT_LAUNCH_TIMEOUT packages/isomorphic/time.ts
+
 echo "==== npm ci (cold install, ~3-5min) ===="
 npm ci --no-audit --no-fund --prefer-offline
 
