@@ -3,6 +3,6 @@
 # so they're also present in skip-list/firefox.titles.txt.
 #
 # Seeded from run 28952021038 (2026-07-08):
-should support webgl @smoke$
-should support webgl 2 @smoke$
-should work for webgl$
+should support webgl @smoke\s*$
+should support webgl 2 @smoke\s*$
+should work for webgl\s*$
