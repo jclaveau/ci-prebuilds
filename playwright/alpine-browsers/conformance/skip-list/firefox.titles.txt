@@ -93,6 +93,7 @@ should report requests and responses handled by service worker with routing\s*$
 should report requests and responses handled by service worker\s*$
 should respect CSP @smoke\s*$
 should respect cors overrides\s*$
+should resolve responses after a navigation\s*$
 should respect selectors\s*$
 should round-trip har with postData\s*$
 should roundtrip local storage in third-party context\s*$
