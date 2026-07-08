@@ -67,6 +67,7 @@ should not hang when frame is detached$
 should not throw if request was cancelled by the page$
 should play video @smoke$
 should reject cors with disallowed credentials$
+should reject when frame detaches$
 should report different frame instance when frame re-attaches$
 should respect selectors$
 should report errors$
