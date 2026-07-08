@@ -31,10 +31,6 @@ jobs:
       - uses: actions/checkout@v7
       - name: Assert Alpine skip-lists ⊇ Ubuntu baseline skip-lists
         run: |
-          {
-            echo "## Skip-list parity"
-            echo ""
-            echo '```'
-            ./scripts/check-skip-parity.sh
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          # Script emits markdown directly (table + optional failure section);
+          # append raw to the step summary so GitHub renders it.
+          ./scripts/check-skip-parity.sh | tee -a "$GITHUB_STEP_SUMMARY"
