@@ -100,15 +100,19 @@ use_system_libffi = true
 # in v15 round-1 → ~35% in 5h). cache-to=registry only commits when buildx
 # build exits normally, so cap-cancelled iters never publish their layers →
 # each iter starts cold. Cutting headless-shell-irrelevant features below
-# (WebRTC, WebGPU/Dawn, ML/XNNPACK, ANGLE GL backends, Vulkan validation)
-# trims the compile graph enough for one iter to complete and seed the cache.
+# (WebRTC, WebGPU/Dawn, ML/XNNPACK) trims the compile graph.
 # Drops biggest compile-count subdirs by [obj/third_party/X] grep on v15 logs:
 #   xnnpack=1093  webrtc=875  dawn=720  angle=467  vulkan-vl=231  swiftshader=185
+#
+# WebGL requires Vulkan-backed rendering — v29 shipped without it and
+# chromium reported "Initialization of all (0) EGL display types failed" at
+# runtime, breaking capabilities.spec.ts::should support webgl(2). Left
+# skia_use_vulkan / angle_enable_vulkan at their DEFAULT true so SwiftShader
+# has a Vulkan target to render on. Adds ~416 compiles (vulkan-vl + swiftshader)
+# = ~5-8 min once sccache is warm; single-digit MB image bloat.
 enable_webrtc = false
 skia_use_dawn = false
-skia_use_vulkan = false
 use_dawn = false
-angle_enable_vulkan = false
 
 # More aports-aligned defaults that headless_shell doesn't conflict with:
 chrome_pgo_phase = 0                       # no PGO (build wall-clock); aports same
