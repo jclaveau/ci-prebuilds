@@ -650,13 +650,14 @@ jobs:
   conformance-firefox:
     # PW upstream conformance against the just-built firefox artifact.
     # Triggered by `run_firefox_conformance=true` workflow_dispatch input
-    # or the `run-firefox-conformance` PR label. WARNING: #60 (Juggler
-    # handshake hang in PW's tests/library fixture against musl FF) is
-    # still unresolved — every test will likely time out at 30s and the
-    # 10-shard run will hit the 6h GHA job cap with no useful signal.
-    # We're running it anyway per the parallel-conformance goal to (a)
-    # confirm the hang is still the dominant failure mode and (b)
-    # produce a baseline so any future Juggler fix is measurable.
+    # or the `run-firefox-conformance` PR label. The Juggler-m-remote
+    # collision (JugglerFactory dormant until RemoteAgent activates) is
+    # worked around in conformance/run.sh by sed-injecting
+    # `--remote-debugging-port=0` into tests/library/playwright.config.ts
+    # firefox launchOptions. Local 1-spec verify: 26 pass / 1 real fail
+    # / 2 skip in 17.7s (was 11h before). Source-side fix (renaming
+    # juggler/components/components.conf's m-remote category) is the
+    # follow-up; requires FF rebuild.
     needs: [build-firefox, smoke-firefox-library]
     if: |
       (github.event_name == 'workflow_dispatch' && inputs.run_firefox_conformance == 'true')

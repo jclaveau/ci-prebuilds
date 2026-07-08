@@ -57,13 +57,20 @@ git clone --depth 1 --branch "$PW_TAG" \
 
 cd "$PW_SRC"
 
-# Patch DEFAULT_PLAYWRIGHT_LAUNCH_TIMEOUT 3min → 15s so any launch that hangs
-# on this host (e.g. Firefox IPC channel error on musl) fails within one
-# shard's cap. Would otherwise burn 6h per shard on 220 × 180s hung launches.
-# Applies BEFORE `npm run build` so the transpiled .js inherits it.
-sed -i 's/DEFAULT_PLAYWRIGHT_LAUNCH_TIMEOUT = 3 \* 60 \* 1000/DEFAULT_PLAYWRIGHT_LAUNCH_TIMEOUT = 15 * 1000/' \
-  packages/isomorphic/time.ts
-grep DEFAULT_PLAYWRIGHT_LAUNCH_TIMEOUT packages/isomorphic/time.ts
+# Firefox on musl: Juggler's XPCOM component-line-handler registers under
+# category name `m-remote`, which collides with Mozilla's own RemoteAgent
+# (same category). JugglerFactory only instantiates as a side-effect of
+# RemoteAgent activating — so `firefox.launch()` with only `-juggler-pipe`
+# hangs at handshake (fd4 never writes "Juggler listening to the pipe").
+#
+# The published smoke workaround (playwright/alpine-browsers/firefox/smoke/
+# launch.cjs:23-25) is to pass `--remote-debugging-port=0`, which wakes
+# RemoteAgent → Juggler activates. Inject the same arg into the upstream
+# tests/library/playwright.config.ts firefox launchOptions so every project
+# picks it up.
+sed -i 's|executablePath,|executablePath,\n        args: browserName === "firefox" ? ["--remote-debugging-port=0"] : undefined,|' \
+  tests/library/playwright.config.ts
+grep -A3 "launchOptions:" tests/library/playwright.config.ts | head -6
 
 echo "==== npm ci (cold install, ~3-5min) ===="
 npm ci --no-audit --no-fund --prefer-offline
@@ -102,36 +109,7 @@ fi
 
 export PWTEST_UNDER_TEST=1
 
-# Firefox on Alpine/musl hits a Juggler-handshake hang at browserType.launch()
-# (project_pw_upstream_juggler_handshake_hang / upstream #60). Run 28287099425
-# proved that PW's CLI --timeout flag only caps test runtime — the hang is at
-# `browserType.launch` (default 180s timeout), not in the test itself, so
-# each test pays the full 180s before the per-test cap can fire.
-# Patch tests/library/playwright.config.ts to add launchOptions.timeout=15000
-# in the `use:` block so the launch fails fast.
 TIMEOUT_FLAG=""
-if [ "$BROWSER" = "firefox" ] && [ "${DISABLE_MUSL_FF_SKIP:-0}" != "1" ]; then
-  # FFX conformance is upstream-blocked at microsoft/playwright #60 (Juggler
-  # handshake hang on musl). Five iterations (runs 28287099425, 28288708299,
-  # 28290251780, 28291848806, 28293473363) all cancelled at the 60min cap.
-  # PW fixture hardcodes 180s browserType.launch timeout that ignores config
-  # overrides. 220 tests × 180s = 11h per shard until upstream lands a fix.
-  #
-  # Exit NON-ZERO so this fires as a real red — no zero-run fake green.
-  # The workflow's summary job requires all shards succeed; FF conformance
-  # will remain red until PW #60 is resolved AND we can run it end-to-end.
-  # Track in project_pw_upstream_juggler_handshake_hang.
-  echo "==== Firefox conformance BLOCKED — upstream PW #60 Juggler handshake hang ===="
-  echo "    Reporting FAIL (not skip) so nobody mistakes this for real coverage."
-  echo "    See .agents/auto-memory/project_pw_upstream_juggler_handshake_hang.md"
-  echo "    Upstream: https://github.com/microsoft/playwright/issues/60"
-  mkdir -p "$REPORT_DIR/firefox-blocked-on-pw-issue-60"
-  cat > "$REPORT_DIR/firefox-blocked-on-pw-issue-60/README.txt" <<'BLOCKED'
-Firefox conformance is BLOCKED on Alpine musl.
-Zero tests were actually run. Upstream: https://github.com/microsoft/playwright/issues/60
-BLOCKED
-  exit 1
-fi
 
 # Upstream PW's tests/library/playwright.config.ts is the single config for
 # BOTH the library suite and the page suite — it declares per-browser projects
