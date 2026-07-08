@@ -5,4 +5,4 @@
 # Seeded from run 28952021038 (2026-07-08):
 should support webgl @smoke$
 should support webgl 2 @smoke$
-page screenshot › should work for webgl$
+should work for webgl$

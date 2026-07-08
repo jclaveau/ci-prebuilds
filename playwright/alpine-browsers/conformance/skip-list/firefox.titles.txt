@@ -1,10 +1,15 @@
 # Test TITLE skip-list for firefox (Alpine/musl, PW-patched).
-# Per line: JS regex matched against PW's `test.titlePath().join(' › ')`.
-# Joined with `|` into a single regex passed to --grep-invert.
+# Per line: JS regex matched against PW's `test.title` (BARE innermost test
+# name, NOT the full describe-chain). Joined with `|` into a single regex
+# passed to --grep-invert.
 #
-# Seeded from run 28952021038 (2026-07-08): first FF conformance run after
-# --remote-debugging-port=0 workaround landed. Long-tail Alpine-only fails
-# not covered by whole-file skips in firefox.files.txt.
+# Seeded from runs 28952021038 (2026-07-08) + 28954994636. Long-tail
+# Alpine-only fails not covered by whole-file skips in firefox.files.txt.
+#
+# NOTE: `--grep-invert` matches against test.title = bare innermost name.
+# Describe-chain prefixes (e.g. `page screenshot ›`) do NOT match when
+# joined via `|` alternation, even though they match as a single pattern.
+# Always strip describe-chain when adding entries.
 #
 # Clusters:
 #   - cross-process iframe / docShell access (Juggler cross-origin gap)
@@ -12,24 +17,26 @@
 #   - locale (Alpine ICU package differs from Ubuntu)
 #   - detached frame handling (Juggler frame lifecycle timing)
 #   - CORS / CSP throw messages (FF error-string variance on musl)
-#   - one-offs: har round-trip, PDF download, weberror event
-#
-# See also skip-list-ubuntu/firefox.titles.txt for the 3 PW-known webgl
-# fails shared with the Ubuntu-FF baseline.
+#   - PW-known upstream fails (webgl @smoke × 3 — also in
+#     skip-list-ubuntu/firefox.titles.txt)
 frame\.press should work$
 goBack/goForward should work with bfcache-able pages$
 init script should run only once in iframe$
 insertText should only emit input event$
-page screenshot › mask option › should mask in parallel$
-page screenshot › should work with device scale factor$
-page screenshot › should work with device scale factor and clip$
 page\.frame should respect url$
 page\.goBack should work for file urls$
 should auto-wait for blocking CSS$
 should be able to download a inline PDF file via navigation$
+should be able to reconnect to a browser$
+should be able to visit ipv6 through localhost$
+should be able to visit ipv6$
 should be isolated between contexts$
 should click the button with deviceScaleFactor set$
 should click the button with fixed position inside an iframe$
+should connect over wss$
+should delete downloads when persistent context closes$
+should detach child frames on navigation$
+should dispose context on cross-origin navigation$
 should dispose$
 should emit close upon frame detach$
 should emulate media in cross-process iframe$
@@ -38,10 +45,15 @@ should fail with predicate throwing on first call$
 should fail with predicate throwing sometimes$
 should fetch hidpi assets$
 should format date$
-should format number$
 should format number in popups$
+should format number$
+should goForward to redirected navigation$
 should gracefully fallback when child frame cant be captured$
 should have different hars for concurrent contexts$
+should ignore page.pause when headed$
+should mask in parallel$
+should navigate subframes @smoke$
+should not allow cross-frame element handles when frames do not script each other$
 should not be called after finishing unsuccessfully$
 should not change default locale in another context$
 should not construct a new URL when valid URLs are passed$
@@ -49,33 +61,42 @@ should not hang when frame is detached$
 should not throw if request was cancelled by the page$
 should play video @smoke$
 should reject cors with disallowed credentials$
+should report different frame instance when frame re-attaches$
 should report errors$
+should report frame\.name\(\)$
+should report frame\.parent\(\)$
 should respect CSP @smoke$
 should respect cors overrides$
+should roundtrip local storage in third-party context$
 should round-trip har with postData$
-should run in specified frame$
 should run in specified frame xpath$
+should run in specified frame$
 should scroll into view element in iframe$
+should set local storage in third-party context$
 should support cors with GET$
 should support custom firefox policies$
 should support hasTouch option$
 should support requestStorageAccess$
+should support touch with null viewport$
+should support webgl 2 @smoke$
+should support webgl @smoke$
 should throw a nice error when the request fails$
 should throw an error if loading from url fail$
+should throw for detached frames$
 should throw when added with URL to the CSP page$
-should throw when frame is detached$
 should throw when frame is detached xpath$
+should throw when frame is detached$
 should upload a folder$
 should wait for networkidle to succeed navigation with request from previous navigation$
+should wait for networkidle when navigating iframe$
 should work for cross-process iframes$
 should work for frame$
+should work for subframes$
+should work for webgl$
+should work with device scale factor and clip$
+should work with device scale factor$
 should work with file URL with subframes$
 should work with mixed content$
+triggers event when some throw$
 weberror event should include location$
 weberror event should work$
-
-# PW-upstream fails shared with the Ubuntu-FF baseline (see
-# skip-list-ubuntu/firefox.titles.txt):
-should support webgl @smoke$
-should support webgl 2 @smoke$
-page screenshot › should work for webgl$
