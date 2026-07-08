@@ -105,24 +105,24 @@ TIMEOUT_FLAG=""
 if [ "$BROWSER" = "firefox" ] && [ "${DISABLE_MUSL_FF_SKIP:-0}" != "1" ]; then
   # FFX conformance is upstream-blocked at microsoft/playwright #60 (Juggler
   # handshake hang on musl). Five iterations (runs 28287099425, 28288708299,
-  # 28290251780, 28291848806, 28293473363) all cancelled at the 60min cap:
-  #   - CLI --timeout=15000 caps test runtime but NOT fixture browserType.launch
-  #     (hardcoded 180s in PW core, not exposed via launchOptions)
-  #   - Patching tests/library/playwright.config.ts use.launchOptions.timeout
-  #     across all `use:` blocks DOES land in the file but PW's fixture wraps
-  #     the launch call with its own 180s timeout that ignores the override
-  # Until upstream #60 lands a musl-side fix, FFX produces 220 × 180s = 11h of
-  # hung launches per shard. Exit early with a documented skip signal so the
-  # shard reports success without burning 60min of compute every dispatch.
+  # 28290251780, 28291848806, 28293473363) all cancelled at the 60min cap.
+  # PW fixture hardcodes 180s browserType.launch timeout that ignores config
+  # overrides. 220 tests × 180s = 11h per shard until upstream lands a fix.
+  #
+  # Exit NON-ZERO so this fires as a real red — no zero-run fake green.
+  # The workflow's summary job requires all shards succeed; FF conformance
+  # will remain red until PW #60 is resolved AND we can run it end-to-end.
   # Track in project_pw_upstream_juggler_handshake_hang.
-  echo "==== Firefox conformance SKIPPED — upstream PW #60 Juggler handshake hang ===="
+  echo "==== Firefox conformance BLOCKED — upstream PW #60 Juggler handshake hang ===="
+  echo "    Reporting FAIL (not skip) so nobody mistakes this for real coverage."
   echo "    See .agents/auto-memory/project_pw_upstream_juggler_handshake_hang.md"
-  echo "    Five run.sh iterations (28287099425 → 28293473363) exhausted; PW fixture"
-  echo "    hardcodes 180s browserType.launch timeout that ignores config overrides."
+  echo "    Upstream: https://github.com/microsoft/playwright/issues/60"
   mkdir -p "$REPORT_DIR/firefox-blocked-on-pw-issue-60"
-  echo "Upstream PW issue: https://github.com/microsoft/playwright/issues/60" \
-    > "$REPORT_DIR/firefox-blocked-on-pw-issue-60/README.txt"
-  exit 0
+  cat > "$REPORT_DIR/firefox-blocked-on-pw-issue-60/README.txt" <<'BLOCKED'
+Firefox conformance is BLOCKED on Alpine musl.
+Zero tests were actually run. Upstream: https://github.com/microsoft/playwright/issues/60
+BLOCKED
+  exit 1
 fi
 
 # Upstream PW's tests/library/playwright.config.ts is the single config for
