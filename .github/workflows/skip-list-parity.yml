@@ -1,0 +1,41 @@
+name: Skip-list parity
+
+# Gate: Alpine conformance skip-lists must be a superset of the Ubuntu-baseline
+# skip-lists per browser. Prevents fake-green regressions where Alpine silently
+# skips more than Ubuntu — the "same-or-better than PW's official baseline"
+# invariant this repo commits to.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'playwright/alpine-browsers/conformance/skip-list/**'
+      - 'playwright/alpine-browsers/conformance/skip-list-ubuntu/**'
+      - 'scripts/check-skip-parity.sh'
+      - '.github/workflows/skip-list-parity.yml'
+  pull_request:
+    paths:
+      - 'playwright/alpine-browsers/conformance/skip-list/**'
+      - 'playwright/alpine-browsers/conformance/skip-list-ubuntu/**'
+      - 'scripts/check-skip-parity.sh'
+      - '.github/workflows/skip-list-parity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7
+      - name: Assert Alpine skip-lists ⊇ Ubuntu baseline skip-lists
+        run: |
+          {
+            echo "## Skip-list parity"
+            echo ""
+            echo '```'
+            ./scripts/check-skip-parity.sh
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
