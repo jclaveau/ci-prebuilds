@@ -19,13 +19,18 @@
 #   - CORS / CSP throw messages (FF error-string variance on musl)
 #   - PW-known upstream fails (webgl @smoke × 3 — also in
 #     skip-list-ubuntu/firefox.titles.txt)
+clearPageErrors should work$
 dialog\.accept should work$
+do not update console count on unhandled rejections$
 frame\.press should work$
 goBack/goForward should work with bfcache-able pages$
 init script should run only once in iframe$
 insertText should only emit input event$
+pageErrors should work$
+pageErrors since-navigation filter should work$
 page\.frame should respect url$
 page\.goBack should work for file urls$
+reverse engineer internal:has-text locators$
 should allow unnamed cookies$
 should auto-wait for blocking CSS$
 should be able to download a inline PDF file via navigation$
@@ -36,6 +41,8 @@ should be isolated between contexts$
 should click the button with deviceScaleFactor set$
 should click the button with fixed position inside an iframe$
 should connect over wss$
+should contain sourceURL$
+should contain the Error\.name property$
 should delete downloads when persistent context closes$
 should detach child frames on navigation$
 should disable memory cache when intercepting$
@@ -43,17 +50,25 @@ should dispose context on cross-origin navigation$
 should dispose context on navigation$
 should dispose$
 should emit close upon frame detach$
+should emit error from unhandled rejects$
+should emit event for iframe$
 should emulate media in cross-process iframe$
 should fail with ReferenceError on wrong page$
+should fail with busted Array\.prototype\.toJSON$
 should fail with predicate throwing on first call$
 should fail with predicate throwing sometimes$
 should fetch hidpi assets$
+should fire illegal character error$
+should fire$
 should format date$
 should format number in popups$
 should format number$
 should goBack to redirected navigation$
 should goForward to redirected navigation$
 should gracefully fallback when child frame cant be captured$
+should handle object$
+should handle odd values$
+should handle window$
 should have different hars for concurrent contexts$
 should have pages$
 should ignore page.pause when headed$
@@ -64,33 +79,40 @@ should not be called after finishing unsuccessfully$
 should not change default locale in another context$
 should not construct a new URL when valid URLs are passed$
 should not hang when frame is detached$
+should not receive console message for pageError$
 should not throw if request was cancelled by the page$
 should play video @smoke$
 should reject cors with disallowed credentials$
 should reject when frame detaches$
 should report different frame instance when frame re-attaches$
-should respect selectors$
 should report errors$
 should report frame\.name\(\)$
 should report frame\.parent\(\)$
+should report hover and fine pointer for desktop$
+should report requests and responses handled by service worker with routing$
+should report requests and responses handled by service worker$
 should respect CSP @smoke$
 should respect cors overrides$
-should roundtrip local storage in third-party context$
+should respect selectors$
 should round-trip har with postData$
+should roundtrip local storage in third-party context$
 should run in specified frame xpath$
 should run in specified frame$
 should scroll into view element in iframe$
 should set local storage in third-party context$
+should support an empty Error\.name property$
 should support cors with GET$
 should support custom firefox policies$
-should support hasTouch option$
 should support framesets$
+should support hasTouch option$
 should support requestStorageAccess$
+should support touch points in touch event arguments$
 should support touch with null viewport$
 should support webgl 2 @smoke$
 should support webgl @smoke$
 should throw a nice error when the request fails$
 should throw an error if loading from url fail$
+should throw error with detailed information on exception inside promise$
 should throw for detached frames$
 should throw when added with URL to the CSP page$
 should throw when frame is detached xpath$
