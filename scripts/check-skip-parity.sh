@@ -37,9 +37,9 @@ for b in "${BROWSERS[@]}"; do
     [ -f "$a_file" ] || { echo "MISSING $a_file" >&2; rc=1; continue; }
     [ -f "$u_file" ] || { echo "MISSING $u_file" >&2; rc=1; continue; }
 
-    # Strip comments + blanks
-    a_entries=$(grep -vE '^\s*(#|$)' "$a_file" || true)
-    u_entries=$(grep -vE '^\s*(#|$)' "$u_file" || true)
+    # Strip comments + blanks; normalize CRLF → LF in case checkout added them
+    a_entries=$(sed 's/\r$//' "$a_file" | grep -vE '^\s*(#|$)' || true)
+    u_entries=$(sed 's/\r$//' "$u_file" | grep -vE '^\s*(#|$)' || true)
 
     a_count=$([ -z "$a_entries" ] && echo 0 || printf '%s\n' "$a_entries" | wc -l)
     u_count=$([ -z "$u_entries" ] && echo 0 || printf '%s\n' "$u_entries" | wc -l)
@@ -55,6 +55,10 @@ for b in "${BROWSERS[@]}"; do
 === $b.$t.txt — MISSING BASELINE SKIPS (Alpine must include these Ubuntu skips) ==="
       report="$report
 $missing"
+      # Duplicate to stderr so it surfaces in CI job logs even when stdout is
+      # redirected to $GITHUB_STEP_SUMMARY.
+      echo "MISSING in $b.$t.txt (Alpine must include Ubuntu-baseline skips):" >&2
+      echo "$missing" >&2
       rc=1
     fi
 
