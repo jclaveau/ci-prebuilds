@@ -82,6 +82,18 @@ RUN apk update && apk add --no-cache \\
  && ln -sf /usr/bin/chromium /opt/google/chrome/chrome
 COPY --from=${IMAGE_REF} /firefox /ms-playwright/firefox-${ARTIFACT_REV}/firefox
 RUN touch /ms-playwright/firefox-${ARTIFACT_REV}/INSTALLATION_COMPLETE
+# PW SDK prefs — Alpine FF build (apply-and-build.sh:175) writes these to the
+# wrong path (browser/app/profile/); Ubuntu FF ships them at these exact
+# locations. Missing them means `dom.security.https_first` stays true, PW's
+# proxy filter never attaches, and every proxy / client-cert test fails.
+# Root cause diagnosed 2026-07-09; drop-in fetch here recovers ~56 tests
+# (client-certs + proxy.spec.ts + siblings) without rebuilding FF.
+RUN apk add --no-cache curl \\
+ && mkdir -p /ms-playwright/firefox-${ARTIFACT_REV}/firefox/browser/defaults/preferences \\
+ && curl -fsSL "https://raw.githubusercontent.com/microsoft/playwright/v${PW_VERSION}/browser_patches/firefox/preferences/00-playwright-prefs.js" \\
+      -o /ms-playwright/firefox-${ARTIFACT_REV}/firefox/browser/defaults/preferences/00-playwright-prefs.js \\
+ && curl -fsSL "https://raw.githubusercontent.com/microsoft/playwright/v${PW_VERSION}/browser_patches/firefox/preferences/playwright.cfg" \\
+      -o /ms-playwright/firefox-${ARTIFACT_REV}/firefox/playwright.cfg
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \\
     LD_LIBRARY_PATH=/ms-playwright/firefox-${ARTIFACT_REV}/firefox
 RUN npm install -g playwright@${PW_VERSION}

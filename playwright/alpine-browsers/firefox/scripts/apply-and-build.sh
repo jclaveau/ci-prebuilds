@@ -476,6 +476,22 @@ mkdir -p /work/firefox-dist
 cp -aL "$DIST"/. /work/firefox-dist/ 2>/dev/null || cp -a "$DIST"/. /work/firefox-dist/
 echo "Staged: $(du -sh /work/firefox-dist | cut -f1)"
 
+# PW SDK prefs — Ubuntu FF ships them at these exact paths inside the
+# packaged dist tree. The earlier `cp -a "$PW/preferences/." browser/app/profile/`
+# at line 175 puts them in the SOURCE tree where they get dropped during
+# packaging. Copy into the packaged DIST here so they survive to the artifact.
+# Missing these means `dom.security.https_first=false` never applies, PW's
+# proxy filter never attaches, and every proxy / client-cert / third-party
+# cookie test fails. Diagnosed 2026-07-09 via agent-3 investigation.
+if [[ -d "$PW/preferences" ]]; then
+  echo "===== Copying PW prefs into DIST (client-cert + proxy fix) ====="
+  mkdir -p /work/firefox-dist/browser/defaults/preferences
+  [[ -f "$PW/preferences/00-playwright-prefs.js" ]] && \
+    cp "$PW/preferences/00-playwright-prefs.js" /work/firefox-dist/browser/defaults/preferences/
+  [[ -f "$PW/preferences/playwright.cfg" ]] && \
+    cp "$PW/preferences/playwright.cfg" /work/firefox-dist/
+fi
+
 # Self-contained-bundle step (ldd-walk + RPATH=$ORIGIN + ICU data). Shared
 # with apply-and-build-iter.sh so the iter path also produces a correctly-
 # bundled artifact. See bundle-dist.sh for the rationale per excluded lib.

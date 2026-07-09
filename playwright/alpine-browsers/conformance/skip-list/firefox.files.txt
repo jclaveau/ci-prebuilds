@@ -10,13 +10,16 @@
 # and the `xvfb-run -a` wrap in run.sh gives the harness an X server —
 # ~453 tests recovered.
 
-# Client-certificates / proxy stack — need NSS OCSP + proxy features that
-# our musl build doesn't fully wire. Ubuntu-FF passes; Alpine-FF 100% red.
-tests/library/client-certificates\.spec\.ts
-tests/library/proxy\.spec\.ts
-tests/library/browsercontext-proxy\.spec\.ts
-tests/library/browsercontext-cookies-third-party\.spec\.ts
-tests/library/browsercontext-reuse\.spec\.ts
+# Prior client-certificates + proxy stack file-skips REMOVED after diagnosing
+# the root cause (agent 3, 2026-07-09): Alpine FF build was missing PW's
+# `00-playwright-prefs.js` + `playwright.cfg` at the correct dist paths
+# (Ubuntu FF ships them there). Missing prefs meant `dom.security.https_first`
+# stayed on, PW's proxy filter never attached, and every proxied navigation
+# broke. Fixed both at BUILD time (`firefox/scripts/apply-and-build.sh` post-
+# build DIST copy) AND at RUNNER-image time (`conformance/build-runner.sh`
+# curls the prefs into the FF dist) so pre-built artifacts also benefit.
+# Recovers ~56 tests: client-certs (45) + proxy.spec.ts (11) + likely
+# browsercontext-proxy / -cookies-third-party / -reuse siblings.
 
 # browsertype-connect: 6 fails clustered under `run-server` + `launchServer`
 # describe blocks — connect-over-WS launcher path our musl build doesn't
