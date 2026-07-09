@@ -44,7 +44,10 @@ RUN apk update && apk add --no-cache \\
     opus dav1d ffmpeg-libavformat libjpeg-turbo libxslt \\
     libatk-1.0 libatk-bridge-2.0 at-spi2-core minizip \\
     double-conversion crc32c libxkbcommon mesa-gbm eudev-libs flac \\
-    harfbuzz-subset
+    harfbuzz-subset \\
+    chromium xvfb-run \\
+ && mkdir -p /opt/google/chrome \\
+ && ln -sf /usr/bin/chromium /opt/google/chrome/chrome
 COPY --from=${IMAGE_REF} \\
      /chrome-headless-shell-linux64 \\
      /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/chrome-headless-shell-linux64
@@ -58,6 +61,13 @@ EOF
     ;;
 
   firefox)
+    # `chromium` + `xvfb` + chrome symlink: PW's inspector / recorder / trace-
+    # viewer / selector-generator / slowmo / debug-controller subsystems all
+    # launch an INTERNAL headed chromium as the recorder UI harness, decoupled
+    # from the browser under test. Without them PW throws "No chromium-based
+    # browser found on the system" and every recorder-touching spec is
+    # unrunnable. Adding them recovers ~453 FF tests (see FF-675 gap diag).
+    # The symlink fools PW's `chrome` channel probe into finding /usr/bin/chromium.
     cat > "$TMPDIR/Dockerfile" <<EOF
 FROM alpine:edge
 RUN apk update && apk add --no-cache \\
@@ -66,7 +76,10 @@ RUN apk update && apk add --no-cache \\
     icu-libs libevent libffi libjpeg-turbo libnotify libogg \\
     libtheora libvorbis libvpx libwebp libwebp-tools libxcomposite \\
     libxt mesa-gl mesa-dri-gallium nspr nss pipewire-libs libpulse \\
-    ttf-freefont
+    ttf-freefont \\
+    chromium xvfb-run \\
+ && mkdir -p /opt/google/chrome \\
+ && ln -sf /usr/bin/chromium /opt/google/chrome/chrome
 COPY --from=${IMAGE_REF} /firefox /ms-playwright/firefox-${ARTIFACT_REV}/firefox
 RUN touch /ms-playwright/firefox-${ARTIFACT_REV}/INSTALLATION_COMPLETE
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \\
@@ -96,7 +109,10 @@ RUN apk update && apk add --no-cache \\
     mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \\
     gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \\
     cairo pango gdk-pixbuf libnotify dbus-libs opus libsecret \\
-    xvfb xvfb-run
+    xvfb xvfb-run \\
+    chromium \\
+ && mkdir -p /opt/google/chrome \\
+ && ln -sf /usr/bin/chromium /opt/google/chrome/chrome
 COPY --from=${IMAGE_REF} /webkit /ms-playwright/webkit-${ARTIFACT_REV}
 RUN touch /ms-playwright/webkit-${ARTIFACT_REV}/INSTALLATION_COMPLETE
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1

@@ -7,11 +7,11 @@
 # gaps go in chromium.titles.txt.
 
 # ── DIVERGENCE (headless-shell is a SUBSET of chromium) ─────────────────────
-# Inspector / codegen — needs the recorder UI window
-tests/library/inspector/.*\.spec\.ts$
-
-# Trace viewer — needs a UI host browser
-tests/library/trace-viewer\.spec\.ts$
+# Prior recorder-UI file skips (inspector/*, trace-viewer*, slowmo, debugger,
+# selector-generator, locator-generator) REMOVED — runner image now bundles
+# `chromium` + `xvfb-run` (see conformance/build-runner.sh) and the
+# `xvfb-run -a` wrap in run.sh gives the internal recorder-UI harness an X
+# server. Same fix as the FF leg.
 
 # Screencast / recordVideo — chromium-headless-shell ships without the
 # video encoding pipeline. `screencast.spec.ts` is the launch-options test;
@@ -21,27 +21,11 @@ tests/library/trace-viewer\.spec\.ts$
 tests/library/screencast\.spec\.ts$
 tests/library/video\.spec\.ts$
 
-# slowMo — relies on per-action 1000ms input timing that headless-shell's
-# event loop pacing doesn't match (every assert times out).
-tests/library/slowmo\.spec\.ts$
-
 # Touch / tap — touch event source not in headless-shell.
 tests/library/tap\.spec\.ts$
 
-# Trace viewer scrubber — same trace-viewer UI dependency as the sibling.
-tests/library/trace-viewer-scrub\.spec\.ts$
-
 # OOPIF (out-of-process iframes) — needs full chromium with extra flags
 tests/library/chromium/oopif\.spec\.ts$
-
-# Debugger / page.pause — pause launches a UI inspector window
-tests/library/debugger\.spec\.ts$
-
-# Selector generator + locator generator — both rely on codegen recorder
-# fixtures (same root cause as inspector/codegen UI). locator-generator
-# was a v4 residual leak; file-skip alongside its sibling.
-tests/library/selector-generator\.spec\.ts$
-tests/library/locator-generator\.spec\.ts$
 
 # Client certificates — requires curl+openssl trust chain headless-shell
 # doesn't have. 18 tests, all in one spec.

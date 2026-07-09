@@ -2,19 +2,13 @@
 # POSIX-extended regex per line. Matched against PW spec paths relative to
 # pw-src. Files matching are DELETED before tests run.
 #
-# Seeded from run 28952021038 (2026-07-08): first FF conformance run after
-# --remote-debugging-port=0 workaround landed in run.sh. Alpine-only fails
-# vs Ubuntu-FF baseline.
-#
-# These entire spec files fail structurally on our musl FF build because
-# they depend on `browserContext._enableRecorder()` — the Juggler bindings
-# for the PW recorder/inspector API return an empty-message error. Root
-# cause pending; skipping whole-file until then.
-tests/library/inspector/.*\.spec\.ts
-tests/library/selector-generator\.spec\.ts
-tests/library/trace-viewer.*\.spec\.ts
-tests/library/debug-controller\.spec\.ts
-tests/library/slowmo\.spec\.ts
+# Prior "recorder-dependent" file skips (inspector/*, selector-generator,
+# trace-viewer*, debug-controller, slowmo) were REMOVED after diagnosing the
+# root cause: PW's recorder subsystem launches an INTERNAL headed chromium
+# as its UI harness, decoupled from the browser under test. The runner
+# image now bundles `chromium` + `xvfb-run` (see conformance/build-runner.sh)
+# and the `xvfb-run -a` wrap in run.sh gives the harness an X server —
+# ~453 tests recovered.
 
 # Client-certificates / proxy stack — need NSS OCSP + proxy features that
 # our musl build doesn't fully wire. Ubuntu-FF passes; Alpine-FF 100% red.

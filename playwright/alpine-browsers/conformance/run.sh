@@ -131,9 +131,15 @@ run_one() {
   # /fail/skip counts without pulling GH logs by API. `pipefail` propagates
   # the playwright exit code past `tee`.
   LOG="$REPORT_DIR/${LABEL}.log"
+  # PW's inspector / recorder / trace-viewer / selector-generator / slowmo /
+  # debug-controller subsystems launch an INTERNAL headed chromium as the
+  # recorder UI harness (independent of the browser under test). It fails
+  # under headless Alpine without X. Wrap with `xvfb-run -a` so those specs
+  # can run — the browser-under-test still runs headless via its own launcher.
+  # `xvfb-run` is a no-op cost when a DISPLAY is already set.
   set -o pipefail
   if [ -n "$GREP_INVERT" ]; then
-    npx playwright test \
+    xvfb-run -a npx playwright test \
       --config="$CONFIG" \
       --project="$PROJECT" \
       --shard="${SHARD}/${SHARD_TOTAL}" \
@@ -142,7 +148,7 @@ run_one() {
       $TIMEOUT_FLAG \
       $GREP_INVERT "$TITLE_PATTERNS" 2>&1 | tee "$LOG"
   else
-    npx playwright test \
+    xvfb-run -a npx playwright test \
       --config="$CONFIG" \
       --project="$PROJECT" \
       --shard="${SHARD}/${SHARD_TOTAL}" \
