@@ -167,6 +167,24 @@ env:
   PW_VERSION_OVERRIDE: ${{ inputs.pw_version || '' }}
 
 jobs:
+  # Lightweight version resolver so Ubuntu-baseline conformance jobs don't
+  # need to wait for our expensive Alpine builds — the mcr image ships PW's
+  # own browsers preinstalled, decoupled from anything we compile.
+  resolve-pins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      pw_version: ${{ steps.pins.outputs.pw_version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: pins
+        run: |
+          set -a; . playwright/alpine-browsers/versions.env; set +a
+          if [ -n "${PW_VERSION_OVERRIDE:-}" ]; then
+            PW_VERSION="$PW_VERSION_OVERRIDE"
+          fi
+          echo "pw_version=$PW_VERSION" >> "$GITHUB_OUTPUT"
+
   build-firefox:
     # FF gate. Runs on:
     # - push to main: always (canonical promotion path)
@@ -703,34 +721,40 @@ jobs:
   # Runs on the same triggers as the corresponding Alpine conformance so
   # the two sit side-by-side in the run's job list for A/B comparison.
 
+  # Ubuntu-baseline conformance jobs use PW's OFFICIAL Ubuntu image (mcr.
+  # microsoft.com/playwright:v<PW>-noble) which already ships browsers at
+  # /ms-playwright/. They have zero dependency on anything we build — decouple
+  # from build jobs so they can run alongside (or without) an Alpine build.
+  # The `resolve-pins` job supplies PW_VERSION from versions.env in ~15s.
+
   conformance-ubuntu-chromium:
-    needs: [build-chromium-headless-shell]
+    needs: [resolve-pins]
     uses: ./.github/workflows/pw-conformance-ubuntu.yml
     with:
       browser: chromium
-      pw_version: ${{ needs.build-chromium-headless-shell.outputs.pw_version }}
+      pw_version: ${{ needs.resolve-pins.outputs.pw_version }}
     secrets: inherit
 
   conformance-ubuntu-firefox:
-    needs: [build-firefox]
+    needs: [resolve-pins]
     if: |
       (github.event_name == 'workflow_dispatch' && inputs.run_firefox_conformance == 'true')
       || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-firefox-conformance'))
     uses: ./.github/workflows/pw-conformance-ubuntu.yml
     with:
       browser: firefox
-      pw_version: ${{ needs.build-firefox.outputs.pw_version }}
+      pw_version: ${{ needs.resolve-pins.outputs.pw_version }}
     secrets: inherit
 
   conformance-ubuntu-webkit:
-    needs: [build-webkit-finalize]
+    needs: [resolve-pins]
     if: |
       (github.event_name == 'workflow_dispatch' && inputs.run_webkit_conformance == 'true')
       || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-webkit-conformance'))
     uses: ./.github/workflows/pw-conformance-ubuntu.yml
     with:
       browser: webkit
-      pw_version: ${{ needs.build-webkit-finalize.outputs.pw_version }}
+      pw_version: ${{ needs.resolve-pins.outputs.pw_version }}
     secrets: inherit
 
   # ────────────────────────────────────────────────────────────────────
