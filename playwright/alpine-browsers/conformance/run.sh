@@ -127,6 +127,11 @@ RC_PAGE=0
 run_one() {
   CONFIG="$1"; PROJECT="$2"; LABEL="$3"
   echo "==== ${LABEL} — shard ${SHARD}/${SHARD_TOTAL} ===="
+  # Tee stdout to a per-suite log so the runtime-parity gate can grep pass
+  # /fail/skip counts without pulling GH logs by API. `pipefail` propagates
+  # the playwright exit code past `tee`.
+  LOG="$REPORT_DIR/${LABEL}.log"
+  set -o pipefail
   if [ -n "$GREP_INVERT" ]; then
     npx playwright test \
       --config="$CONFIG" \
@@ -135,7 +140,7 @@ run_one() {
       --reporter=line,html \
       --retries=2 \
       $TIMEOUT_FLAG \
-      $GREP_INVERT "$TITLE_PATTERNS"
+      $GREP_INVERT "$TITLE_PATTERNS" 2>&1 | tee "$LOG"
   else
     npx playwright test \
       --config="$CONFIG" \
@@ -143,9 +148,20 @@ run_one() {
       --shard="${SHARD}/${SHARD_TOTAL}" \
       --reporter=line,html \
       --retries=2 \
-      $TIMEOUT_FLAG
+      $TIMEOUT_FLAG 2>&1 | tee "$LOG"
   fi
   RC=$?
+  set +o pipefail
+
+  # Distill the tail of the line reporter into a stable `stats.txt` line
+  # for the runtime-parity aggregator. Matches PW's summary format:
+  #   `  <N> passed (<time>)` | `  <N> failed` | `  <N> skipped`
+  passed=$(grep -oE '^\s+[0-9]+ passed' "$LOG" | tail -1 | grep -oE '[0-9]+' || echo 0)
+  failed=$(grep -oE '^\s+[0-9]+ failed' "$LOG" | tail -1 | grep -oE '[0-9]+' || echo 0)
+  skipped=$(grep -oE '^\s+[0-9]+ skipped' "$LOG" | tail -1 | grep -oE '[0-9]+' || echo 0)
+  echo "browser=${BROWSER} shard=${SHARD}/${SHARD_TOTAL} suite=${LABEL} passed=${passed} failed=${failed} skipped=${skipped}" \
+    >> "$REPORT_DIR/stats.txt"
+
   # html reporter default output path is playwright-report/; move it.
   if [ -d "$PW_SRC/playwright-report" ]; then
     mv "$PW_SRC/playwright-report" "$REPORT_DIR/${LABEL}-report"

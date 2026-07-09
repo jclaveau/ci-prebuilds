@@ -757,6 +757,47 @@ jobs:
       pw_version: ${{ needs.resolve-pins.outputs.pw_version }}
     secrets: inherit
 
+  # Runtime-parity gate — closes the loop that skip-list parity leaves open.
+  # skip-list parity: Alpine ⊇ Ubuntu skip-lists (static, prevents fake-green
+  #   from silent Alpine-only skips).
+  # runtime parity: Alpine PASS count ≥ Ubuntu PASS count per browser (dynamic,
+  #   prevents fake-green from PW upstream fixing tests we still fail).
+  #
+  # `if: always()` so the gate reports even when some conformance jobs red;
+  # aggregation still surfaces the delta and lets us diagnose which side is
+  # actually behind.
+  conformance-runtime-parity:
+    needs:
+      - conformance-chromium-headless-shell
+      - conformance-ubuntu-chromium
+      - conformance-firefox
+      - conformance-ubuntu-firefox
+      - conformance-webkit
+      - conformance-ubuntu-webkit
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pw-conformance-*
+          merge-multiple: false
+          path: artifacts
+      - name: Aggregate + assert Alpine ≥ Ubuntu passes per browser
+        run: |
+          # Alpine shard artifacts: pw-conformance-<browser>-shard-<N>
+          # Ubuntu shard artifacts: pw-conformance-ubuntu-<browser>-shard-<N>
+          mkdir -p /tmp/alp /tmp/ubu
+          for d in artifacts/pw-conformance-*; do
+            base=$(basename "$d")
+            case "$base" in
+              pw-conformance-ubuntu-*) cp -r "$d" /tmp/ubu/ ;;
+              pw-conformance-*)        cp -r "$d" /tmp/alp/ ;;
+            esac
+          done
+          ./scripts/check-runtime-parity.sh /tmp/alp /tmp/ubu | tee -a "$GITHUB_STEP_SUMMARY"
+
   # ────────────────────────────────────────────────────────────────────
   # FROM-SOURCE CHROMIUM CONFORMANCE
   # ────────────────────────────────────────────────────────────────────
