@@ -1,0 +1,9 @@
+# PW-known upstream fails on the Ubuntu-chromium baseline (mcr.microsoft.com/
+# playwright:v<PW>-noble image). Same tests are also skipped on Alpine — the
+# parity gate (`scripts/check-skip-parity.sh`) asserts every entry here
+# appears in `skip-list/chromium.titles.txt` too.
+#
+# Seeded from runs 28952021038 + 28910402853 (2026-07-08):
+should ignore page.pause when headed$
+should capture full viewport on hidpi$
+should report google.com frame with headed$

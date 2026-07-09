@@ -69,7 +69,7 @@ should block all events when hit target is wrong
 should click the button again after document.write
 
 # browsertype-connect — launchServer / run-server video + headed page.pause
-should ignore page.pause when headed
+should ignore page.pause when headed$
 should saveAs videos from remote browser
 should save videos to artifactsDir
 should name video file after page guid when connecting to remote browser with artifactsDir
@@ -166,3 +166,9 @@ should reload redirected navigation
 # TODO(probe): page-fill "should throw on unsupported inputs" (leaked from
 #              page-fill — title regex would also catch a few non-form-control
 #              cases; probe before skip)
+
+# PW-known upstream fails shared with the Ubuntu-chromium baseline (see
+# skip-list-ubuntu/chromium.titles.txt). The parity gate enforces both
+# sides carry these entries.
+should capture full viewport on hidpi$
+should report google.com frame with headed$
