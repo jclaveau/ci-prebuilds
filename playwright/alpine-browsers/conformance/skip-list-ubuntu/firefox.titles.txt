@@ -6,3 +6,4 @@
 should support webgl @smoke\s*$
 should support webgl 2 @smoke\s*$
 should work for webgl\s*$
+should ignore page.pause when headed\s*$
