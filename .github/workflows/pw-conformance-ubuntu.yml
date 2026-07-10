@@ -56,17 +56,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     steps:
       - uses: actions/checkout@v7
 
-      - name: Run shard ${{ matrix.shard }}/10 in mcr.microsoft.com/playwright:v${{ inputs.pw_version }}-${{ inputs.ubuntu_release }}
+      - name: Run shard ${{ matrix.shard }}/20 in mcr.microsoft.com/playwright:v${{ inputs.pw_version }}-${{ inputs.ubuntu_release }}
         env:
           BROWSER: ${{ inputs.browser }}
           PW_VERSION: ${{ inputs.pw_version }}
           UBUNTU_RELEASE: ${{ inputs.ubuntu_release }}
           SHARD: ${{ matrix.shard }}
-          SHARD_TOTAL: 10
+          SHARD_TOTAL: 20
         run: |
           # The mcr image ships browsers at /ms-playwright/. PW SDK
           # auto-discovers them via PLAYWRIGHT_BROWSERS_PATH inheritance.
