@@ -63,7 +63,11 @@ permissions:
 jobs:
   shard:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Bumped from 60 → 90 after landing recorder-UI (xvfb-run) + PW-prefs
+    # fixes recovered ~450 previously-skipped tests, which pushed some shards
+    # past the 60min cap when combined with `--retries=2`. Real completion
+    # time on the fully-populated suite is 45-70min per shard.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:

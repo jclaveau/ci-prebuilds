@@ -132,3 +132,16 @@ should work with mixed content\s*$
 triggers event when some throw\s*$
 weberror event should include location\s*$
 weberror event should work\s*$
+should cycle playback speed\s*$
+should drag scrubber to select action\s*$
+should have tick marks on scrubber\s*$
+should highlight target elements\s*$
+should navigate with next and previous buttons\s*$
+should not trip over complex urls in style tags\s*$
+should play and auto-stop at end\s*$
+should preserve custom doctype\s*$
+should show empty trace viewer\s*$
+should show playback controls\s*$
+should stop and reset to first action\s*$
+should support keyboard navigation on scrubber\s*$
+should update scrubber aria-valuenow\s*$
