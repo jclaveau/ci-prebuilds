@@ -1,5 +1,5 @@
 # Test TITLE skip-list for chromium-headless-shell (Alpine/musl).
-# Per line: a JS regex matched against PW's `test.titlePath().join(' › ')`
+# Per line: a JS regex matched against PW's `test.titlePath().join(' ')`
 # — describe-chain + test name. NO file path or line number in this string.
 # Joined with `|` into a single regex passed to `--grep-invert`.
 #
@@ -192,18 +192,18 @@ should not consider visible when zero-sized\s*$
 check retargeting\s*$
 
 # expect-misc toBeInViewport + expect-boolean toBeVisible
-toBeInViewport › should work\s*$
-toBeInViewport › should respect ratio option\s*$
-toBeVisible › over navigation\s*$
+toBeInViewport should work\s*$
+toBeInViewport should respect ratio option\s*$
+toBeVisible over navigation\s*$
 
 # inspector/cli-codegen-1 partials (kept as title-skips; file has many
 # passing tests)
 should fill \[contentEditable\]\s*$
-cli codegen › should check\s*$
+cli codegen should check\s*$
 should check a radio button\s*$
 should check with keyboard\s*$
 should uncheck\s*$
-cli codegen › should select\s*$
+cli codegen should select\s*$
 should select with size attribute\s*$
 should record slider\s*$
 
@@ -219,7 +219,7 @@ should record when manual popover with fullscreen backdrop is open\s*$
 should generate valid javascript with multiline snapshot assertion\s*$
 
 # inspector/pause partial
-pause › should record from debugger\s*$
+pause should record from debugger\s*$
 
 # PW-known upstream fails shared with the Ubuntu-chromium baseline (see
 # skip-list-ubuntu/chromium.titles.txt). The parity gate enforces both
