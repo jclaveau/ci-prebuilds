@@ -116,3 +116,11 @@ tests/page/page-add-locator-handler\.spec\.ts$
 # to fail per `elementhandle-screenshot` / `page-screenshot` file skips.
 # Track umbrella once bounded.
 tests/library/trace-viewer\.spec\.ts$
+tests/library/trace-viewer-scrub\.spec\.ts$
+
+# ── slowMo checkbox subcluster ────────────────────────────────────────────
+# `slowmo.spec.ts` — 6 fails on shard 16/17: `Page/Frame/ElementHandle
+# SlowMo check + uncheck`. All exercise vanilla checkbox click under
+# slowMo timing. Same family as file-skipped page-check.spec.ts (Alpine
+# chromium-headless-shell UA stylesheet renders checkbox 0px wide).
+tests/library/slowmo\.spec\.ts$
