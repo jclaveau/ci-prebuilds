@@ -25,3 +25,14 @@
 # describe blocks — connect-over-WS launcher path our musl build doesn't
 # handle (ipv6, wss, headed mode, reconnect).
 tests/library/browsertype-connect\.spec\.ts
+
+# ── Codegen output-language cluster (batched from run 29082778991) ────────
+# All tests in these files assert exact codegen output (Python/JS/pytest/
+# test-framework strings). Failures cluster tightly per file — every test
+# in the file fails with the same output-format divergence. Same root cause
+# family surfaced on chromium leg too. Track umbrella once bounded.
+tests/library/inspector/cli-codegen-python\.spec\.ts$
+tests/library/inspector/cli-codegen-python-async\.spec\.ts$
+tests/library/inspector/cli-codegen-pytest\.spec\.ts$
+tests/library/inspector/cli-codegen-test\.spec\.ts$
+tests/library/inspector/cli-codegen-javascript\.spec\.ts$

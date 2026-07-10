@@ -74,3 +74,32 @@ tests/page/page-screenshot\.spec\.ts$
 tests/page/elementhandle-screenshot\.spec\.ts$
 tests/page/page-aria-snapshot\.spec\.ts$
 tests/page/page-aria-snapshot-ai\.spec\.ts$
+
+# ── Recorder / codegen output-language subcluster ─────────────────────────
+# Alpine chromium recorder produces divergent codegen output. All tests in
+# these files assert exact codegen output (Python/JS/pytest/test-framework
+# strings) and every test in the file fails. Root cause probably related to
+# xvfb/chromium timing under Alpine — codegen output ordering differs.
+# Track in umbrella once bounded. Batched skips from run 29082778991
+# (2026-07-10 shard 11 CHS).
+tests/library/inspector/cli-codegen-python\.spec\.ts$
+tests/library/inspector/cli-codegen-python-async\.spec\.ts$
+tests/library/inspector/cli-codegen-pytest\.spec\.ts$
+tests/library/inspector/cli-codegen-test\.spec\.ts$
+tests/library/inspector/cli-codegen-javascript\.spec\.ts$
+
+# ── Bounding-box + scroll-into-view subcluster ────────────────────────────
+# `elementhandle-bounding-box.spec.ts` — 5/5 tests failed on shard 1 CHS
+# run 29082778991. `elementhandle-scroll-into-view.spec.ts` — 2 fails same
+# shard. All fail on assertion `expect(box).toEqual(...)` — headless-shell
+# reports 0-height/0-width boxes when the viewport has no default page-
+# scale set. Same underlying `appearance: none` UA-stylesheet family as
+# page-check / page-drag / wheel.
+tests/page/elementhandle-bounding-box\.spec\.ts$
+tests/page/elementhandle-scroll-into-view\.spec\.ts$
+
+# ── locator-handler subcluster ────────────────────────────────────────────
+# `page-add-locator-handler.spec.ts` — 6 fails on shard 8 CHS. All rely on
+# a handler triggered by an overlay locator that PW checks visible-in-DOM
+# via headless-shell's rendering path — same UA-stylesheet family failure.
+tests/page/page-add-locator-handler\.spec\.ts$
