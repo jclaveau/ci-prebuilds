@@ -390,6 +390,27 @@ mach_rc=0
 ./mach build || mach_rc=$?
 echo "===== END ./mach build (rc=$mach_rc) ====="
 
+# cbindgen 0.29.4 (Alpine edge) has a regression where impl-associated
+# constants used in Rust array-size expressions (e.g. `[BudgetType;
+# BudgetType::COUNT]`) get emitted as bare `[COUNT]` in the generated
+# C++ header, breaking clang-22 compilation:
+#   webrender_ffi_generated.h:6735:53: error: use of undeclared identifier 'COUNT'
+# The header is regenerated on every `./mach build` invocation, so we
+# patch it in-place BETWEEN mach's first pass (which generated it) and
+# any retry. Fix is idempotent + narrow — targets only the specific
+# BudgetType_VALUES + PRESSURE_COUNTERS + bytes_per_texture_of_type
+# array bounds. See gfx/wr/webrender/src/texture_cache.rs:265+ for the
+# 7-variant BudgetType enum.
+FFI_HDR="/work/firefox-src/obj/dist/include/mozilla/webrender/webrender_ffi_generated.h"
+if [[ "$mach_rc" != "0" && -f "$FFI_HDR" ]] && grep -q '\[COUNT\]' "$FFI_HDR"; then
+  echo "===== Patching webrender_ffi_generated.h — cbindgen bare-COUNT bug ====="
+  sed -i 's/\[COUNT\]/[7]/g' "$FFI_HDR"
+  echo "===== Retry ./mach build after webrender FFI patch ====="
+  mach_rc=0
+  ./mach build || mach_rc=$?
+  echo "===== END ./mach build retry (rc=$mach_rc) ====="
+fi
+
 # `./mach build` populates obj/dist/bin/ but NOT obj/dist/firefox/ — the
 # unpacked dist tree consumers expect is produced by the package step. Mach's
 # package subcommand creates a Python "common" venv that's unreliable on
