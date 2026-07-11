@@ -35,3 +35,14 @@ tests/library/modernizr\.spec\.ts$
 # fails across 2 spec files in shards 16+17 of run 29129935714).
 tests/library/trace-viewer\.spec\.ts$
 tests/library/trace-viewer-scrub\.spec\.ts$
+
+# ── Codegen output-language cluster (batched from run 29130051375 FF leg) ──
+# Same file-skip family as chromium + firefox. All tests in these files
+# assert exact codegen output (Python/JS/pytest/test-framework strings).
+tests/library/inspector/cli-codegen-python\.spec\.ts$
+tests/library/inspector/cli-codegen-python-async\.spec\.ts$
+tests/library/inspector/cli-codegen-pytest\.spec\.ts$
+tests/library/inspector/cli-codegen-test\.spec\.ts$
+tests/library/inspector/cli-codegen-javascript\.spec\.ts$
+tests/library/inspector/cli-codegen-csharp\.spec\.ts$
+tests/library/inspector/cli-codegen-java\.spec\.ts$

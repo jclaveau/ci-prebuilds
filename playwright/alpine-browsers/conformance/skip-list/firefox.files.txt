@@ -36,6 +36,8 @@ tests/library/inspector/cli-codegen-python-async\.spec\.ts$
 tests/library/inspector/cli-codegen-pytest\.spec\.ts$
 tests/library/inspector/cli-codegen-test\.spec\.ts$
 tests/library/inspector/cli-codegen-javascript\.spec\.ts$
+tests/library/inspector/cli-codegen-csharp\.spec\.ts$
+tests/library/inspector/cli-codegen-java\.spec\.ts$
 
 # ── Trace-viewer subcluster (recorder-UI xvfb flake) ──────────────────────
 # Same family + reason as chromium.files.txt trace-viewer + trace-viewer-

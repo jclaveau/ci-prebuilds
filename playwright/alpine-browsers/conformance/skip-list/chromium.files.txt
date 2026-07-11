@@ -87,6 +87,8 @@ tests/library/inspector/cli-codegen-python-async\.spec\.ts$
 tests/library/inspector/cli-codegen-pytest\.spec\.ts$
 tests/library/inspector/cli-codegen-test\.spec\.ts$
 tests/library/inspector/cli-codegen-javascript\.spec\.ts$
+tests/library/inspector/cli-codegen-csharp\.spec\.ts$
+tests/library/inspector/cli-codegen-java\.spec\.ts$
 
 # ── Bounding-box + scroll-into-view subcluster ────────────────────────────
 # `elementhandle-bounding-box.spec.ts` — 5/5 tests failed on shard 1 CHS
