@@ -43,7 +43,7 @@ RUN apk add --no-cache \
         libffi-dev libgcrypt-dev libjpeg-turbo-dev libpng-dev libusb-dev \
         libva-dev libwebp-dev libxml2-dev libxslt-dev mesa-dev minizip-dev \
         nspr-dev nss-dev openh264-dev opus-dev pango-dev pciutils-dev \
-        re2-dev simdutf-dev snappy-dev speex-dev sqlite-dev wayland-dev \
+        simdutf-dev snappy-dev speex-dev sqlite-dev wayland-dev \
         libxcomposite-dev libxcursor-dev libxdamage-dev libxi-dev \
         libxinerama-dev libxrandr-dev libxscrnsaver-dev libxt-dev libxtst-dev
 
