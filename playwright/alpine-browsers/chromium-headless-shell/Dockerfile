@@ -47,6 +47,15 @@ RUN apk add --no-cache \
         libxcomposite-dev libxcursor-dev libxdamage-dev libxi-dev \
         libxinerama-dev libxrandr-dev libxscrnsaver-dev libxt-dev libxtst-dev
 
+# Alpine edge ships sccache 0.15.0-r0 with broken GHA v1 cache backend
+# (see project_sccache_ghac_readonly_v18). Override with upstream musl 0.16.0
+# which uses v2 backend. /usr/local/bin PATH precedence overrides apk's copy.
+RUN curl -sSL "https://github.com/mozilla/sccache/releases/download/v0.16.0/sccache-v0.16.0-x86_64-unknown-linux-musl.tar.gz" \
+      | tar xz -C /tmp \
+ && install -m755 /tmp/sccache-v0.16.0-x86_64-unknown-linux-musl/sccache /usr/local/bin/sccache \
+ && rm -rf /tmp/sccache-v0.16.0-x86_64-unknown-linux-musl \
+ && sccache --version
+
 WORKDIR /work
 
 # Stage the build artifacts: versions.env (PW_VERSION + aports refs) + scripts

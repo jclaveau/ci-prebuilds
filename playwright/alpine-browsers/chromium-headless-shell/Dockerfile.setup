@@ -35,6 +35,18 @@ RUN apk add --no-cache \
         libxcomposite-dev libxcursor-dev libxdamage-dev libxi-dev \
         libxinerama-dev libxrandr-dev libxscrnsaver-dev libxt-dev libxtst-dev
 
+# Alpine edge ships sccache 0.15.0-r0 which has a broken GHA v1 cache backend
+# under GHA runners v18 (writes to deprecated /_apis/artifactcache path, 100%
+# 404s → opendal flips to RO, "Cannot write to read-only storage"). Override
+# with upstream prebuilt musl binary sccache 0.16.0 which uses v2 backend.
+# See project_sccache_ghac_readonly_v18. /usr/local/bin takes priority over
+# apk's /usr/bin/sccache in PATH so the upgrade is transparent.
+RUN curl -sSL "https://github.com/mozilla/sccache/releases/download/v0.16.0/sccache-v0.16.0-x86_64-unknown-linux-musl.tar.gz" \
+      | tar xz -C /tmp \
+ && install -m755 /tmp/sccache-v0.16.0-x86_64-unknown-linux-musl/sccache /usr/local/bin/sccache \
+ && rm -rf /tmp/sccache-v0.16.0-x86_64-unknown-linux-musl \
+ && sccache --version
+
 WORKDIR /work
 
 COPY versions.env /work/versions.env
