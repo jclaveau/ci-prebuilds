@@ -36,3 +36,11 @@ tests/library/inspector/cli-codegen-python-async\.spec\.ts$
 tests/library/inspector/cli-codegen-pytest\.spec\.ts$
 tests/library/inspector/cli-codegen-test\.spec\.ts$
 tests/library/inspector/cli-codegen-javascript\.spec\.ts$
+
+# ── Trace-viewer subcluster (recorder-UI xvfb flake) ──────────────────────
+# Same family + reason as chromium.files.txt trace-viewer + trace-viewer-
+# scrub file-skips (100+ fails on chromium leg; 4 fails per shard 16/17 on
+# FF leg — including trace-viewer already-title-skipped `should open two
+# trace viewers`, `should handle file URIs`). Cleaner to whole-file skip.
+tests/library/trace-viewer\.spec\.ts$
+tests/library/trace-viewer-scrub\.spec\.ts$
