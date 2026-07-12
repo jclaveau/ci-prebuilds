@@ -145,13 +145,30 @@ on:
         type: choice
         options: ['ON', 'OFF']
 
-# Never abort an in-flight 2h build — the cost of restarting outweighs the cost
-# of finishing a stale one. Group suffix distinguishes from-source dispatches
-# from FF/WK/prebuilt paths so they can run in parallel: they touch different
-# image stages and ship to different GHCR tags, no artifact races. Without the
-# suffix, parallel dispatches on the same ref blocked each other for hours.
+# Never abort an in-flight 2h build — the cost of restarting outweighs the
+# cost of finishing a stale one. Group suffix uses an ordered fallback of the
+# dispatch flags so per-browser dispatches get their OWN concurrency channel
+# and can run fully in parallel:
+#
+#   - chs-source (chromium-from-source, ~20h)
+#   - wk (webkit build+conformance, ~6h)
+#   - ff (firefox build+conformance, ~2h)
+#   - chs-apk (chromium apk-based build+conformance, ~40m)
+#   - main (push / schedule / label-gated PR: bundled build path)
+#
+# Priority order matters: dispatching a combined FF+CHS iter picks `ff` so
+# the FF conformance leg doesn't clash with a separately-dispatched CHS-apk
+# iter. Push/schedule events always resolve to `main` (all inputs empty),
+# preserving the single-channel bundled behavior for the canonical path.
+# Without per-browser suffixes, parallel dispatches on the same ref blocked
+# each other for hours.
 concurrency:
-  group: playwright-alpine-browsers-${{ github.ref }}-${{ inputs.build_chromium_headless_shell_from_source == 'true' && 'from-source' || 'main' }}
+  group: pab-${{ github.ref }}-${{
+    inputs.build_chromium_headless_shell_from_source == 'true' && 'chs-source' ||
+    inputs.build_webkit == 'true' && 'wk' ||
+    inputs.build_firefox == 'true' && 'ff' ||
+    inputs.build_chromium_headless_shell == 'true' && 'chs-apk' ||
+    'main' }}
   cancel-in-progress: false
 
 permissions:
