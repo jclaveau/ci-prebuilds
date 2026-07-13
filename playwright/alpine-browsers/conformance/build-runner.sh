@@ -34,7 +34,7 @@ case "$BROWSER" in
     # project_chromium_from_source_runtime_deps. Both variants safely accept
     # the wider list; extra apks don't hurt the apk path.
     cat > "$TMPDIR/Dockerfile" <<EOF
-FROM alpine:edge
+FROM alpine:3.22
 RUN apk update && apk add --no-cache \\
     nodejs npm bash git \\
     ca-certificates font-opensans ttf-freefont \\
@@ -69,7 +69,7 @@ EOF
     # unrunnable. Adding them recovers ~453 FF tests (see FF-675 gap diag).
     # The symlink fools PW's `chrome` channel probe into finding /usr/bin/chromium.
     cat > "$TMPDIR/Dockerfile" <<EOF
-FROM alpine:edge
+FROM alpine:3.22
 RUN apk update && apk add --no-cache \\
     nodejs npm bash git build-base python3 \\
     alsa-lib dbus-libs fontconfig freetype glib gtk+3.0 harfbuzz \\
@@ -111,7 +111,7 @@ EOF
     # `/webkit` artifact maps directly to `webkit-${REV}/` (no nested
     # subdir) and contains `pw_run.sh` + `minibrowser-{wpe,gtk}/`.
     cat > "$TMPDIR/Dockerfile" <<EOF
-FROM alpine:edge
+FROM alpine:3.22
 RUN apk update && apk add --no-cache \\
     nodejs npm bash git \\
     file binutils ca-certificates ttf-freefont \\
