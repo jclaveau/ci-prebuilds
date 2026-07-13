@@ -267,14 +267,18 @@ USE_SYSTEM_LIBS=(
   crc32c
   dav1d
   double-conversion
-  ffmpeg
-  # flac REMOVED from system-libs 2026-07-13: Alpine :edge shipped flac 1.5.0
-  # which drops the `FLAC__stream_encoder_get_{sample_rate,bits_per_sample}`
-  # public exports (readelf --dyn-syms shows 0 encoder_get_ symbols). Chromium
-  # 148 links against these — ld.so at runtime: "Error relocating
-  # /opt/chs/chrome-headless-shell: FLAC__stream_encoder_get_sample_rate:
-  # symbol not found". Use chromium's bundled third_party/flac/ instead
-  # (identical API, matched to chromium's link expectations).
+  # ffmpeg + flac REMOVED from system-libs 2026-07-13 — alpine SONAME skew:
+  #   - flac: alpine:edge shipped flac 1.5.0 (libFLAC.so.14) which drops the
+  #     encoder_get_* public exports. Chromium 148 links against them; ld.so
+  #     runtime: "Error relocating: FLAC__stream_encoder_get_sample_rate:
+  #     symbol not found".
+  #   - ffmpeg: alpine:edge ships ffmpeg 8.x (libavformat.so.62), alpine:3.22
+  #     runtime image ships ffmpeg 6.x (libavformat.so.60). SONAME mismatch
+  #     → runtime "Error relocating chrome-headless-shell: av_strerror:
+  #     symbol not found". (Runner base is 3.22 because alpine:edge chromium
+  #     apk needs libFLAC.so.12 — see conformance/build-runner.sh comment.)
+  # Use chromium's bundled third_party/{flac,ffmpeg}/ instead — matched to
+  # chromium's link expectations.
   fontconfig
   freetype
   harfbuzz
