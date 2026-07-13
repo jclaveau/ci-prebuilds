@@ -162,9 +162,18 @@ run_one() {
   # Distill the tail of the line reporter into a stable `stats.txt` line
   # for the runtime-parity aggregator. Matches PW's summary format:
   #   `  <N> passed (<time>)` | `  <N> failed` | `  <N> skipped`
-  passed=$(grep -oE '^\s+[0-9]+ passed' "$LOG" | tail -1 | grep -oE '[0-9]+' || echo 0)
-  failed=$(grep -oE '^\s+[0-9]+ failed' "$LOG" | tail -1 | grep -oE '[0-9]+' || echo 0)
-  skipped=$(grep -oE '^\s+[0-9]+ skipped' "$LOG" | tail -1 | grep -oE '[0-9]+' || echo 0)
+  #
+  # PW's line reporter emits progress with ANSI cursor-move sequences
+  # (`ESC[1A`, `ESC[2K`) prepended to each terminal-refresh line — including
+  # the final summary row. `^\s+` in the grep pattern never matches a line
+  # that starts with `\e[1A\e[2K`. Strip ANSI escape sequences before the
+  # summary grep so pass/fail counts land in stats.txt reliably. Prior bug
+  # per-run 29273524842 shard 1: log has `95 passed (17.0s)` but stats.txt
+  # got passed=0 → runtime-parity aggregator undercounted the whole leg.
+  strip_ansi() { sed -E 's/\x1B\[[0-9;?]*[a-zA-Z]//g'; }
+  passed=$(strip_ansi < "$LOG" | grep -oE '^\s*[0-9]+ passed' | tail -1 | grep -oE '[0-9]+' || echo 0)
+  failed=$(strip_ansi < "$LOG" | grep -oE '^\s*[0-9]+ failed' | tail -1 | grep -oE '[0-9]+' || echo 0)
+  skipped=$(strip_ansi < "$LOG" | grep -oE '^\s*[0-9]+ skipped' | tail -1 | grep -oE '[0-9]+' || echo 0)
   echo "browser=${BROWSER} shard=${SHARD}/${SHARD_TOTAL} suite=${LABEL} passed=${passed} failed=${failed} skipped=${skipped}" \
     >> "$REPORT_DIR/stats.txt"
 

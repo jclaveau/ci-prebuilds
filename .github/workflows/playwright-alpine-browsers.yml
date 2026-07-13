@@ -786,6 +786,7 @@ jobs:
   conformance-runtime-parity:
     needs:
       - conformance-chromium-headless-shell
+      - conformance-chromium-headless-shell-from-source
       - conformance-ubuntu-chromium
       - conformance-firefox
       - conformance-ubuntu-firefox
