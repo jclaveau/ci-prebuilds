@@ -268,7 +268,13 @@ USE_SYSTEM_LIBS=(
   dav1d
   double-conversion
   ffmpeg
-  flac
+  # flac REMOVED from system-libs 2026-07-13: Alpine :edge shipped flac 1.5.0
+  # which drops the `FLAC__stream_encoder_get_{sample_rate,bits_per_sample}`
+  # public exports (readelf --dyn-syms shows 0 encoder_get_ symbols). Chromium
+  # 148 links against these — ld.so at runtime: "Error relocating
+  # /opt/chs/chrome-headless-shell: FLAC__stream_encoder_get_sample_rate:
+  # symbol not found". Use chromium's bundled third_party/flac/ instead
+  # (identical API, matched to chromium's link expectations).
   fontconfig
   freetype
   harfbuzz
