@@ -2,6 +2,12 @@
 # Per line: JS regex matched against PW's `test.titlePath().join(' › ')`.
 # Joined with `|` into a single regex passed to --grep-invert.
 
+# ── Recorder-family single-test (rest of the file runs) ────────────────────
+# locator-generator.spec.ts has one `it.describe` block calling _enableRecorder
+# in its beforeEach — sole recorder-dependent test in an otherwise-runnable
+# file. Match FF skip-list.
+reverse engineer internal:has-text locators
+
 # ── Locale formatting (Alpine musl + WPE ICU differs from glibc + GTK) ──────
 # Run 28285531191 shard 2 surfaced these. Alpine ships icu-libs but the
 # default locale set may not cover all the regions PW's tests exercise.
