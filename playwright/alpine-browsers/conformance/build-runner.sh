@@ -111,8 +111,12 @@ EOF
     # /sbin/ldconfig -p so PW thinks libGLESv2/libx264 are missing).
     # `/webkit` artifact maps directly to `webkit-${REV}/` (no nested
     # subdir) and contains `pw_run.sh` + `minibrowser-{wpe,gtk}/`.
+    # WebKit runner MUST match alpine:edge (WebKit built on edge). Same
+    # SONAME rationale as FF above. Drop `chromium` — alpine :edge chromium
+    # apk broken post-flac-1.5, and WebKit's recorder-UI tests are already
+    # file-skipped in webkit skip-list.
     cat > "$TMPDIR/Dockerfile" <<EOF
-FROM alpine:3.22
+FROM alpine:edge
 RUN apk update && apk add --no-cache \\
     nodejs npm bash git \\
     file binutils ca-certificates ttf-freefont \\
@@ -122,10 +126,7 @@ RUN apk update && apk add --no-cache \\
     mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \\
     gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \\
     cairo pango gdk-pixbuf libnotify dbus-libs opus libsecret \\
-    xvfb xvfb-run \\
-    chromium \\
- && mkdir -p /opt/google/chrome \\
- && ln -sf /usr/bin/chromium /opt/google/chrome/chrome
+    xvfb xvfb-run
 COPY --from=${IMAGE_REF} /webkit /ms-playwright/webkit-${ARTIFACT_REV}
 RUN touch /ms-playwright/webkit-${ARTIFACT_REV}/INSTALLATION_COMPLETE
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
