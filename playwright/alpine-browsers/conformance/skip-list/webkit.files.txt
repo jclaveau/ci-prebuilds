@@ -11,6 +11,14 @@
 # `chromium` + the existing `xvfb-run` and the `xvfb-run -a` wrap in run.sh
 # gives the internal recorder-UI harness an X server. Same fix as the FF+
 # chromium legs.
+#
+# 2026-07-14: chromium DROPPED from the WK runner apks — alpine :edge
+# chromium apk broken post-flac-1.5, and pinning the runner to :3.22 hits
+# SONAME mismatch against WK (built on :edge). RESTORE the recorder-UI
+# whole-directory file skips for the WK leg (same rationale as FF).
+tests/library/inspector/
+tests/library/slowmo\.spec\.ts$
+tests/library/debug-controller\.spec\.ts$
 
 # Screencast / recordVideo — video encoding pipeline absent (run 28285531191
 # shard 7 surfaced screencast file-wide failure).

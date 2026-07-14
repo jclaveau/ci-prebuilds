@@ -5,10 +5,15 @@
 # Prior "recorder-dependent" file skips (inspector/*, selector-generator,
 # trace-viewer*, debug-controller, slowmo) were REMOVED after diagnosing the
 # root cause: PW's recorder subsystem launches an INTERNAL headed chromium
-# as its UI harness, decoupled from the browser under test. The runner
-# image now bundles `chromium` + `xvfb-run` (see conformance/build-runner.sh)
-# and the `xvfb-run -a` wrap in run.sh gives the harness an X server —
-# ~453 tests recovered.
+# as its UI harness, decoupled from the browser under test.
+#
+# 2026-07-14: chromium DROPPED from the FF runner apks — alpine :edge
+# chromium apk broken post-flac-1.5, and pinning the runner to :3.22 hits
+# SONAME mismatch against FF (built on :edge, needs libFLAC.so.14 /
+# libavformat.so.62). Every `_enableRecorder(...)` call now throws "No
+# chromium-based browser found on the system", failing every inspector /
+# recorder / codegen test (~42 fails/shard on shards 10,12,15,16 in
+# iter 29308849076). RESTORE the recorder-UI file skips for the FF leg.
 
 # Prior client-certificates + proxy stack file-skips REMOVED after diagnosing
 # the root cause (agent 3, 2026-07-09): Alpine FF build was missing PW's
@@ -26,18 +31,16 @@
 # handle (ipv6, wss, headed mode, reconnect).
 tests/library/browsertype-connect\.spec\.ts
 
-# ── Codegen output-language cluster (batched from run 29082778991) ────────
-# All tests in these files assert exact codegen output (Python/JS/pytest/
-# test-framework strings). Failures cluster tightly per file — every test
-# in the file fails with the same output-format divergence. Same root cause
-# family surfaced on chromium leg too. Track umbrella once bounded.
-tests/library/inspector/cli-codegen-python\.spec\.ts$
-tests/library/inspector/cli-codegen-python-async\.spec\.ts$
-tests/library/inspector/cli-codegen-pytest\.spec\.ts$
-tests/library/inspector/cli-codegen-test\.spec\.ts$
-tests/library/inspector/cli-codegen-javascript\.spec\.ts$
-tests/library/inspector/cli-codegen-csharp\.spec\.ts$
-tests/library/inspector/cli-codegen-java\.spec\.ts$
+# ── Recorder-UI / inspector cluster (runner missing chromium binary) ──────
+# Every inspector/* + slowmo + debug-controller test calls
+# `browserContext._enableRecorder(...)` which internally spawns a headed
+# chromium as the recorder-UI harness. FF runner has no `chromium` apk
+# post-2026-07-14 (see header). PW's bundled `playwright install chromium`
+# would be glibc-linked → SIGSEGV on musl. Whole-directory skip is the
+# only correct option.
+tests/library/inspector/
+tests/library/slowmo\.spec\.ts$
+tests/library/debug-controller\.spec\.ts$
 
 # ── Trace-viewer subcluster (recorder-UI xvfb flake) ──────────────────────
 # Same family + reason as chromium.files.txt trace-viewer + trace-viewer-
