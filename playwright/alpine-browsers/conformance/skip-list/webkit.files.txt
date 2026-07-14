@@ -19,6 +19,7 @@
 tests/library/inspector/
 tests/library/slowmo\.spec\.ts$
 tests/library/debug-controller\.spec\.ts$
+tests/library/selector-generator\.spec\.ts$
 
 # Screencast / recordVideo — video encoding pipeline absent (run 28285531191
 # shard 7 surfaced screencast file-wide failure).

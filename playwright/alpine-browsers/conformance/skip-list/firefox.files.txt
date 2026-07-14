@@ -41,6 +41,7 @@ tests/library/browsertype-connect\.spec\.ts
 tests/library/inspector/
 tests/library/slowmo\.spec\.ts$
 tests/library/debug-controller\.spec\.ts$
+tests/library/selector-generator\.spec\.ts$
 
 # ── Trace-viewer subcluster (recorder-UI xvfb flake) ──────────────────────
 # Same family + reason as chromium.files.txt trace-viewer + trace-viewer-
