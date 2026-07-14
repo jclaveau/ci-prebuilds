@@ -61,25 +61,26 @@ EOF
     ;;
 
   firefox)
-    # `chromium` + `xvfb` + chrome symlink: PW's inspector / recorder / trace-
-    # viewer / selector-generator / slowmo / debug-controller subsystems all
-    # launch an INTERNAL headed chromium as the recorder UI harness, decoupled
-    # from the browser under test. Without them PW throws "No chromium-based
-    # browser found on the system" and every recorder-touching spec is
-    # unrunnable. Adding them recovers ~453 FF tests (see FF-675 gap diag).
-    # The symlink fools PW's `chrome` channel probe into finding /usr/bin/chromium.
+    # FF runner MUST match the alpine version FF was built against
+    # (playwright/alpine-browsers/Dockerfile uses alpine:edge builder). FF
+    # binary DT_NEEDED points at edge SONAMEs (libFLAC.so.14 from flac 1.5,
+    # libavformat.so.62 from ffmpeg 8.x). alpine:3.22 provides .so.12/.60
+    # → runtime SIGSEGV at launch (see run 29306045726 shard 3 diag).
+    #
+    # Trade-off: alpine :edge's chromium apk is broken (still declares
+    # dep on libFLAC.so.12 post-flac-1.5). Drop `chromium xvfb-run` from
+    # the FF runner — all recorder-UI codegen/inspector/trace-viewer/
+    # slowmo tests are already file-skipped in the FF skip-list, so the
+    # loss is zero-cost. Xvfb is bundled in `xvfb` package.
     cat > "$TMPDIR/Dockerfile" <<EOF
-FROM alpine:3.22
+FROM alpine:edge
 RUN apk update && apk add --no-cache \\
     nodejs npm bash git build-base python3 \\
     alsa-lib dbus-libs fontconfig freetype glib gtk+3.0 harfbuzz \\
     icu-libs libevent libffi libjpeg-turbo libnotify libogg \\
     libtheora libvorbis libvpx libwebp libwebp-tools libxcomposite \\
     libxt mesa-gl mesa-dri-gallium nspr nss pipewire-libs libpulse \\
-    ttf-freefont \\
-    chromium xvfb-run \\
- && mkdir -p /opt/google/chrome \\
- && ln -sf /usr/bin/chromium /opt/google/chrome/chrome
+    ttf-freefont xvfb xvfb-run
 COPY --from=${IMAGE_REF} /firefox /ms-playwright/firefox-${ARTIFACT_REV}/firefox
 RUN touch /ms-playwright/firefox-${ARTIFACT_REV}/INSTALLATION_COMPLETE
 # PW SDK prefs — Alpine FF build (apply-and-build.sh:175) writes these to the
