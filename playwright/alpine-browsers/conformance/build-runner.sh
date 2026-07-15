@@ -78,12 +78,15 @@ FROM alpine:3.22 AS chromium-fetch
 RUN apk add --no-cache chromium chromium-swiftshader binutils patchelf
 RUN mkdir -p /opt/chromium-322 \\
  && SRC=/usr/lib/chromium && DEST=/opt/chromium-322 \\
- && cp -aL "\$SRC"/chromium "\$DEST"/chrome \\
- && find "\$SRC" -maxdepth 1 -type f \\( -name '*.pak' -o -name '*.bin' -o -name '*.dat' -o -name '*.json' \\) -exec cp -aL {} "\$DEST"/ \\; \\
- && { [ -d "\$SRC/locales" ] && cp -aL "\$SRC/locales" "\$DEST"/ || true; } \\
- && find "\$SRC" -maxdepth 1 -name '*.so*' -exec cp -aL {} "\$DEST"/ \\; \\
+ && cp -aL "\$SRC"/* "\$DEST"/ \\
+ && mv "\$DEST"/chromium "\$DEST"/chrome \\
  && for so in \$(ldd "\$DEST"/chrome 2>/dev/null | awk '{print \$3}' | grep '^/'); do \\
       [ -f "\$so" ] && [ ! -f "\$DEST/\$(basename "\$so")" ] && cp -aL "\$so" "\$DEST"/ || true; \\
+    done \\
+ && for bin in "\$DEST"/chrome_crashpad_handler "\$DEST"/chrome-sandbox "\$DEST"/xdg-mime "\$DEST"/xdg-settings; do \\
+      [ -f "\$bin" ] && for so in \$(ldd "\$bin" 2>/dev/null | awk '{print \$3}' | grep '^/'); do \\
+        [ -f "\$so" ] && [ ! -f "\$DEST/\$(basename "\$so")" ] && cp -aL "\$so" "\$DEST"/ || true; \\
+      done; \\
     done \\
  && for lib in "\$DEST"/*.so*; do \\
       [ -L "\$lib" ] && continue; \\
@@ -92,6 +95,9 @@ RUN mkdir -p /opt/chromium-322 \\
       done; \\
     done \\
  && patchelf --set-rpath '\$ORIGIN' "\$DEST"/chrome \\
+ && for bin in "\$DEST"/chrome_crashpad_handler "\$DEST"/chrome-sandbox; do \\
+      [ -f "\$bin" ] && patchelf --set-rpath '\$ORIGIN' "\$bin" 2>/dev/null || true; \\
+    done \\
  && for so in "\$DEST"/*.so*; do [ -L "\$so" ] && continue; patchelf --set-rpath '\$ORIGIN' "\$so" 2>/dev/null || true; done \\
  && "\$DEST"/chrome --version
 
@@ -159,12 +165,15 @@ FROM alpine:3.22 AS chromium-fetch
 RUN apk add --no-cache chromium chromium-swiftshader binutils patchelf
 RUN mkdir -p /opt/chromium-322 \\
  && SRC=/usr/lib/chromium && DEST=/opt/chromium-322 \\
- && cp -aL "\$SRC"/chromium "\$DEST"/chrome \\
- && find "\$SRC" -maxdepth 1 -type f \\( -name '*.pak' -o -name '*.bin' -o -name '*.dat' -o -name '*.json' \\) -exec cp -aL {} "\$DEST"/ \\; \\
- && { [ -d "\$SRC/locales" ] && cp -aL "\$SRC/locales" "\$DEST"/ || true; } \\
- && find "\$SRC" -maxdepth 1 -name '*.so*' -exec cp -aL {} "\$DEST"/ \\; \\
+ && cp -aL "\$SRC"/* "\$DEST"/ \\
+ && mv "\$DEST"/chromium "\$DEST"/chrome \\
  && for so in \$(ldd "\$DEST"/chrome 2>/dev/null | awk '{print \$3}' | grep '^/'); do \\
       [ -f "\$so" ] && [ ! -f "\$DEST/\$(basename "\$so")" ] && cp -aL "\$so" "\$DEST"/ || true; \\
+    done \\
+ && for bin in "\$DEST"/chrome_crashpad_handler "\$DEST"/chrome-sandbox "\$DEST"/xdg-mime "\$DEST"/xdg-settings; do \\
+      [ -f "\$bin" ] && for so in \$(ldd "\$bin" 2>/dev/null | awk '{print \$3}' | grep '^/'); do \\
+        [ -f "\$so" ] && [ ! -f "\$DEST/\$(basename "\$so")" ] && cp -aL "\$so" "\$DEST"/ || true; \\
+      done; \\
     done \\
  && for lib in "\$DEST"/*.so*; do \\
       [ -L "\$lib" ] && continue; \\
@@ -173,6 +182,9 @@ RUN mkdir -p /opt/chromium-322 \\
       done; \\
     done \\
  && patchelf --set-rpath '\$ORIGIN' "\$DEST"/chrome \\
+ && for bin in "\$DEST"/chrome_crashpad_handler "\$DEST"/chrome-sandbox; do \\
+      [ -f "\$bin" ] && patchelf --set-rpath '\$ORIGIN' "\$bin" 2>/dev/null || true; \\
+    done \\
  && for so in "\$DEST"/*.so*; do [ -L "\$so" ] && continue; patchelf --set-rpath '\$ORIGIN' "\$so" 2>/dev/null || true; done \\
  && "\$DEST"/chrome --version
 
