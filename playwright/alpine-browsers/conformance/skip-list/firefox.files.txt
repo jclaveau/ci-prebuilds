@@ -30,10 +30,17 @@
 # handle (ipv6, wss, headed mode, reconnect).
 tests/library/browsertype-connect\.spec\.ts
 
-# Recorder-UI + trace-viewer whole-file skips REMOVED 2026-07-15 — chromium
-# bundle in the FF runner unblocks _enableRecorder. If specific tests still
-# fail on FF (browser-specific gaps rather than missing recorder harness),
-# add per-title entries to firefox.titles.txt.
+# Recorder-UI whole-file skips REMOVED 2026-07-15 — chromium bundle unblocks
+# _enableRecorder for inspector/* + slowmo + debug-controller + selector-
+# generator (~270 tests recovered).
+#
+# Trace-viewer whole-file skip RE-ADDED — bundle chromium 142 (:3.22) vs
+# PW-expected chromium 148 mismatches around trace-viewer's internal
+# chromium harness (snapshot/redirect/dialog/action-list edge cases). Whack-
+# a-mole title-skips fail (different 4 titles each iter). Whole-file skip
+# stays until we can bundle a matching chromium version.
+tests/library/trace-viewer\.spec\.ts$
+tests/library/trace-viewer-scrub\.spec\.ts$
 #
 # EXCEPTION — cli-codegen-<lang> whole-file skips PRESERVED. These assert
 # exact codegen OUTPUT STRINGS for specific target languages (Python /
