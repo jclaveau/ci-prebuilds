@@ -94,6 +94,9 @@ RUN mkdir -p /opt/chromium-322 \\
         [ -f "\$so" ] && [ ! -f "\$DEST/\$(basename "\$so")" ] && cp -aL "\$so" "\$DEST"/ || true; \\
       done; \\
     done \\
+ && for so in libsoftokn3.so libfreebl3.so libnssdbm3.so libnssckbi.so libnsspem.so libsqlite3.so.0 libplc4.so libplds4.so; do \\
+      [ -f "/usr/lib/\$so" ] && [ ! -f "\$DEST/\$so" ] && cp -aL "/usr/lib/\$so" "\$DEST"/ || true; \\
+    done \\
  && patchelf --set-rpath '\$ORIGIN' "\$DEST"/chrome \\
  && for bin in "\$DEST"/chrome_crashpad_handler "\$DEST"/chrome-sandbox; do \\
       [ -f "\$bin" ] && patchelf --set-rpath '\$ORIGIN' "\$bin" 2>/dev/null || true; \\
@@ -180,6 +183,9 @@ RUN mkdir -p /opt/chromium-322 \\
       for so in \$(ldd "\$lib" 2>/dev/null | awk '{print \$3}' | grep '^/'); do \\
         [ -f "\$so" ] && [ ! -f "\$DEST/\$(basename "\$so")" ] && cp -aL "\$so" "\$DEST"/ || true; \\
       done; \\
+    done \\
+ && for so in libsoftokn3.so libfreebl3.so libnssdbm3.so libnssckbi.so libnsspem.so libsqlite3.so.0 libplc4.so libplds4.so; do \\
+      [ -f "/usr/lib/\$so" ] && [ ! -f "\$DEST/\$so" ] && cp -aL "/usr/lib/\$so" "\$DEST"/ || true; \\
     done \\
  && patchelf --set-rpath '\$ORIGIN' "\$DEST"/chrome \\
  && for bin in "\$DEST"/chrome_crashpad_handler "\$DEST"/chrome-sandbox; do \\
