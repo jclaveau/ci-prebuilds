@@ -12,14 +12,12 @@
 # gives the internal recorder-UI harness an X server. Same fix as the FF+
 # chromium legs.
 #
-# 2026-07-14: chromium DROPPED from the WK runner apks — alpine :edge
-# chromium apk broken post-flac-1.5, and pinning the runner to :3.22 hits
-# SONAME mismatch against WK (built on :edge). RESTORE the recorder-UI
-# whole-directory file skips for the WK leg (same rationale as FF).
-tests/library/inspector/
-tests/library/slowmo\.spec\.ts$
-tests/library/debug-controller\.spec\.ts$
-tests/library/selector-generator\.spec\.ts$
+# 2026-07-14 → 2026-07-15: chromium RE-ADDED via multi-stage :3.22 bundle
+# at /opt/chromium-322/ (see conformance/build-runner.sh). Isolated from
+# :edge system libs via RPATH $ORIGIN. WK binary keeps its :edge deps; the
+# bundled chromium uses its own :3.22 deps under $ORIGIN. Recorder-UI
+# whole-file skips REMOVED to run inspector/* + slowmo + debug-controller
+# + selector-generator + trace-viewer on the WK leg.
 
 # Screencast / recordVideo — video encoding pipeline absent (run 28285531191
 # shard 7 surfaced screencast file-wide failure).
@@ -37,17 +35,13 @@ tests/library/chromium/oopif\.spec\.ts$
 # our Alpine WebKit build, which has a divergent UA-agent header).
 tests/library/modernizr\.spec\.ts$
 
-# ── Trace-viewer subcluster (recorder-UI xvfb flake, matches CHS leg) ─────
-# Same family as chromium — trace-viewer loads an internal headed chromium
-# UI under xvfb where snapshot/click/network assertions flake vs the glibc-
-# recorded reference values. Same file-skip as chromium.files.txt (100+
-# fails across 2 spec files in shards 16+17 of run 29129935714).
-tests/library/trace-viewer\.spec\.ts$
-tests/library/trace-viewer-scrub\.spec\.ts$
+# Trace-viewer whole-file skips REMOVED 2026-07-15 with recorder-UI cluster.
 
-# ── Codegen output-language cluster (batched from run 29130051375 FF leg) ──
-# Same file-skip family as chromium + firefox. All tests in these files
-# assert exact codegen output (Python/JS/pytest/test-framework strings).
+# ── Codegen output-language cluster ────────────────────────────────────────
+# PRESERVED. These assert exact codegen OUTPUT STRINGS for specific target
+# languages; divergence is Alpine chromium's codegen module vs Ubuntu's,
+# NOT the recorder harness (fixed). Whole-file skip stays cleaner than
+# per-title.
 tests/library/inspector/cli-codegen-python\.spec\.ts$
 tests/library/inspector/cli-codegen-python-async\.spec\.ts$
 tests/library/inspector/cli-codegen-pytest\.spec\.ts$

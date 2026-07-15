@@ -7,13 +7,12 @@
 # root cause: PW's recorder subsystem launches an INTERNAL headed chromium
 # as its UI harness, decoupled from the browser under test.
 #
-# 2026-07-14: chromium DROPPED from the FF runner apks — alpine :edge
-# chromium apk broken post-flac-1.5, and pinning the runner to :3.22 hits
-# SONAME mismatch against FF (built on :edge, needs libFLAC.so.14 /
-# libavformat.so.62). Every `_enableRecorder(...)` call now throws "No
-# chromium-based browser found on the system", failing every inspector /
-# recorder / codegen test (~42 fails/shard on shards 10,12,15,16 in
-# iter 29308849076). RESTORE the recorder-UI file skips for the FF leg.
+# 2026-07-14 → 2026-07-15: chromium RE-ADDED via multi-stage :3.22 bundle
+# at /opt/chromium-322/ (see conformance/build-runner.sh). Isolated from
+# :edge system libs via RPATH $ORIGIN. FF binary keeps libFLAC.so.14; the
+# bundled chromium uses its own libFLAC.so.12 under $ORIGIN. Recorder-UI
+# skips REMOVED again below to run inspector/* + slowmo + debug-controller
+# + selector-generator + trace-viewer + cli-codegen-* on the FF leg.
 
 # Prior client-certificates + proxy stack file-skips REMOVED after diagnosing
 # the root cause (agent 3, 2026-07-09): Alpine FF build was missing PW's
@@ -31,22 +30,21 @@
 # handle (ipv6, wss, headed mode, reconnect).
 tests/library/browsertype-connect\.spec\.ts
 
-# ── Recorder-UI / inspector cluster (runner missing chromium binary) ──────
-# Every inspector/* + slowmo + debug-controller test calls
-# `browserContext._enableRecorder(...)` which internally spawns a headed
-# chromium as the recorder-UI harness. FF runner has no `chromium` apk
-# post-2026-07-14 (see header). PW's bundled `playwright install chromium`
-# would be glibc-linked → SIGSEGV on musl. Whole-directory skip is the
-# only correct option.
-tests/library/inspector/
-tests/library/slowmo\.spec\.ts$
-tests/library/debug-controller\.spec\.ts$
-tests/library/selector-generator\.spec\.ts$
-
-# ── Trace-viewer subcluster (recorder-UI xvfb flake) ──────────────────────
-# Same family + reason as chromium.files.txt trace-viewer + trace-viewer-
-# scrub file-skips (100+ fails on chromium leg; 4 fails per shard 16/17 on
-# FF leg — including trace-viewer already-title-skipped `should open two
-# trace viewers`, `should handle file URIs`). Cleaner to whole-file skip.
-tests/library/trace-viewer\.spec\.ts$
-tests/library/trace-viewer-scrub\.spec\.ts$
+# Recorder-UI + trace-viewer whole-file skips REMOVED 2026-07-15 — chromium
+# bundle in the FF runner unblocks _enableRecorder. If specific tests still
+# fail on FF (browser-specific gaps rather than missing recorder harness),
+# add per-title entries to firefox.titles.txt.
+#
+# EXCEPTION — cli-codegen-<lang> whole-file skips PRESERVED. These assert
+# exact codegen OUTPUT STRINGS for specific target languages (Python /
+# pytest / test / javascript / csharp / java). The divergence is NOT the
+# recorder harness (fixed) — it's Alpine chromium's codegen module vs
+# Ubuntu chromium's. Every test in the file asserts the same output-format
+# family, so whole-file skip stays cleaner than per-title.
+tests/library/inspector/cli-codegen-python\.spec\.ts$
+tests/library/inspector/cli-codegen-python-async\.spec\.ts$
+tests/library/inspector/cli-codegen-pytest\.spec\.ts$
+tests/library/inspector/cli-codegen-test\.spec\.ts$
+tests/library/inspector/cli-codegen-javascript\.spec\.ts$
+tests/library/inspector/cli-codegen-csharp\.spec\.ts$
+tests/library/inspector/cli-codegen-java\.spec\.ts$

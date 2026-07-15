@@ -11,12 +11,6 @@
 # joined via `|` alternation, even though they match as a single pattern.
 # Always strip describe-chain when adding entries.
 #
-# Recorder-family single-test skip:
-#   locator-generator.spec.ts has ONE `it.describe` block whose beforeEach
-#   calls _enableRecorder; the other 96 tests in the file run fine on
-#   Alpine. Whole-file skip would lose them; title-skip preserves coverage.
-reverse engineer internal:has-text locators
-
 # Clusters:
 #   - cross-process iframe / docShell access (Juggler cross-origin gap)
 #   - file:// subframes / bfcache (musl file:// resolver)
