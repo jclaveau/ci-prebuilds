@@ -11,6 +11,16 @@
 # joined via `|` alternation, even though they match as a single pattern.
 # Always strip describe-chain when adding entries.
 #
+# ── Trace-viewer specific-title fails (v2 chromium bundle iter 29410600244) ─
+# 4 trace-viewer tests fail: internal chromium harness closes mid-test
+# ("Target page, context or browser has been closed"). Rest of trace-viewer
+# (400+ tests) passes. Alpine chromium :3.22 slight version mismatch vs PW
+# expected — small edge cases.
+should open trace viewer on specific host
+should include metainfo
+should respect CSSOM changes
+should neutralize meta http-equiv refresh during rendering
+
 # Clusters:
 #   - cross-process iframe / docShell access (Juggler cross-origin gap)
 #   - file:// subframes / bfcache (musl file:// resolver)
