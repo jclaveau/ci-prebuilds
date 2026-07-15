@@ -44,7 +44,13 @@ tests/library/ignorehttpserrors\.spec\.ts$
 # build patch / different apk.
 #
 # See .agents/auto-memory/project_pw_conformance_visibility_cluster.md.
-tests/page/page-check\.spec\.ts$
+#
+# 2026-07-16: CHS-apk PAUSED (workflow_dispatch-only). Only CHS-fs consumes
+# this skip-list now. From-source chromium ships the full chrome_100_percent
+# pak with a proper UA stylesheet — the visibility bug is APK-specific. This
+# whole-file skip REMOVED as a probe; if CHS-fs still fails page-check
+# tests, restore + document.
+# tests/page/page-check\.spec\.ts$
 
 # Drag-and-drop subcluster — PW's mouse-drag synthesis does NOT fire
 # HTML5 dragstart/dragend in chromium-headless-shell on Alpine. Probed
@@ -90,21 +96,12 @@ tests/library/inspector/cli-codegen-javascript\.spec\.ts$
 tests/library/inspector/cli-codegen-csharp\.spec\.ts$
 tests/library/inspector/cli-codegen-java\.spec\.ts$
 
-# ── Bounding-box + scroll-into-view subcluster ────────────────────────────
-# `elementhandle-bounding-box.spec.ts` — 5/5 tests failed on shard 1 CHS
-# run 29082778991. `elementhandle-scroll-into-view.spec.ts` — 2 fails same
-# shard. All fail on assertion `expect(box).toEqual(...)` — headless-shell
-# reports 0-height/0-width boxes when the viewport has no default page-
-# scale set. Same underlying `appearance: none` UA-stylesheet family as
-# page-check / page-drag / wheel.
-tests/page/elementhandle-bounding-box\.spec\.ts$
-tests/page/elementhandle-scroll-into-view\.spec\.ts$
-
-# ── locator-handler subcluster ────────────────────────────────────────────
-# `page-add-locator-handler.spec.ts` — 6 fails on shard 8 CHS. All rely on
-# a handler triggered by an overlay locator that PW checks visible-in-DOM
-# via headless-shell's rendering path — same UA-stylesheet family failure.
-tests/page/page-add-locator-handler\.spec\.ts$
+# ── Bounding-box + scroll-into-view + locator-handler subcluster ─────────
+# 2026-07-16: same UA-stylesheet family probe as page-check above — REMOVED
+# on the assumption from-source chromium ships the proper UA stylesheet.
+# tests/page/elementhandle-bounding-box\.spec\.ts$
+# tests/page/elementhandle-scroll-into-view\.spec\.ts$
+# tests/page/page-add-locator-handler\.spec\.ts$
 
 # ── Trace-viewer subcluster (shard-cap cancellation trigger) ──────────────
 # Run 29092364096 shards 16/17 cancelled at 90m cap. Root cause: 43-45
