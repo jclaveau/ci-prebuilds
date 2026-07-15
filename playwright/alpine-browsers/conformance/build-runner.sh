@@ -67,12 +67,34 @@ EOF
     # libavformat.so.62 from ffmpeg 8.x). alpine:3.22 provides .so.12/.60
     # → runtime SIGSEGV at launch (see run 29306045726 shard 3 diag).
     #
-    # Trade-off: alpine :edge's chromium apk is broken (still declares
-    # dep on libFLAC.so.12 post-flac-1.5). Drop `chromium xvfb-run` from
-    # the FF runner — all recorder-UI codegen/inspector/trace-viewer/
-    # slowmo tests are already file-skipped in the FF skip-list, so the
-    # loss is zero-cost. Xvfb is bundled in `xvfb` package.
+    # 2026-07-15: chromium re-added via multi-stage :3.22 self-contained
+    # bundle at /opt/chromium-322/ (isolated from :edge system libs via
+    # RPATH \$ORIGIN). Recorder-UI subsystem (inspector, slowmo, debug-
+    # controller, selector-generator, trace-viewer, cli-codegen-*) needs a
+    # HEADED chromium binary — apk-install from :edge broken post-flac-1.5,
+    # so we ship chromium in its own dep tree. FF binary unaffected.
     cat > "$TMPDIR/Dockerfile" <<EOF
+FROM alpine:3.22 AS chromium-fetch
+RUN apk add --no-cache chromium chromium-swiftshader binutils patchelf
+RUN mkdir -p /opt/chromium-322 \\
+ && SRC=/usr/lib/chromium && DEST=/opt/chromium-322 \\
+ && cp -aL "\$SRC"/chromium "\$DEST"/chrome \\
+ && find "\$SRC" -maxdepth 1 -type f \\( -name '*.pak' -o -name '*.bin' -o -name '*.dat' -o -name '*.json' \\) -exec cp -aL {} "\$DEST"/ \\; \\
+ && { [ -d "\$SRC/locales" ] && cp -aL "\$SRC/locales" "\$DEST"/ || true; } \\
+ && find "\$SRC" -maxdepth 1 -name '*.so*' -exec cp -aL {} "\$DEST"/ \\; \\
+ && for so in \$(ldd "\$DEST"/chrome 2>/dev/null | awk '{print \$3}' | grep '^/'); do \\
+      [ -f "\$so" ] && [ ! -f "\$DEST/\$(basename "\$so")" ] && cp -aL "\$so" "\$DEST"/ || true; \\
+    done \\
+ && for lib in "\$DEST"/*.so*; do \\
+      [ -L "\$lib" ] && continue; \\
+      for so in \$(ldd "\$lib" 2>/dev/null | awk '{print \$3}' | grep '^/'); do \\
+        [ -f "\$so" ] && [ ! -f "\$DEST/\$(basename "\$so")" ] && cp -aL "\$so" "\$DEST"/ || true; \\
+      done; \\
+    done \\
+ && patchelf --set-rpath '\$ORIGIN' "\$DEST"/chrome \\
+ && for so in "\$DEST"/*.so*; do [ -L "\$so" ] && continue; patchelf --set-rpath '\$ORIGIN' "\$so" 2>/dev/null || true; done \\
+ && "\$DEST"/chrome --version
+
 FROM alpine:edge
 RUN apk update && apk add --no-cache \\
     nodejs npm bash git build-base python3 \\
@@ -80,7 +102,8 @@ RUN apk update && apk add --no-cache \\
     icu-libs libevent libffi libjpeg-turbo libnotify libogg \\
     libtheora libvorbis libvpx libwebp libwebp-tools libxcomposite \\
     libxt mesa-gl mesa-dri-gallium nspr nss pipewire-libs libpulse \\
-    ttf-freefont xvfb xvfb-run
+    ttf-freefont xvfb xvfb-run jq
+COPY --from=chromium-fetch /opt/chromium-322 /opt/chromium-322
 COPY --from=${IMAGE_REF} /firefox /ms-playwright/firefox-${ARTIFACT_REV}/firefox
 RUN touch /ms-playwright/firefox-${ARTIFACT_REV}/INSTALLATION_COMPLETE
 # PW SDK prefs — Alpine FF build (apply-and-build.sh:175) writes these to the
@@ -99,6 +122,19 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \\
     LD_LIBRARY_PATH=/ms-playwright/firefox-${ARTIFACT_REV}/firefox
 RUN npm install -g playwright@${PW_VERSION}
 RUN playwright install ffmpeg
+# Place chromium at PW's auto-discovery path so recorder-UI (\_enableRecorder)
+# finds a musl-native chromium instead of throwing 'No chromium-based browser
+# found'. Revision is looked up from playwright-core/browsers.json rather than
+# hard-coded so it stays in sync with the installed PW.
+RUN CHR_REV=\$(jq -r '.browsers[] | select(.name == "chromium") | .revision' \\
+      /usr/local/lib/node_modules/playwright/node_modules/playwright-core/browsers.json 2>/dev/null \\
+    || jq -r '.browsers[] | select(.name == "chromium") | .revision' \\
+      \$(npm root -g)/playwright-core/browsers.json) \\
+ && CHR_DIR=/ms-playwright/chromium-\${CHR_REV}/chrome-linux64 \\
+ && mkdir -p "\${CHR_DIR}" \\
+ && cp -a /opt/chromium-322/* "\${CHR_DIR}"/ \\
+ && touch /ms-playwright/chromium-\${CHR_REV}/INSTALLATION_COMPLETE \\
+ && "\${CHR_DIR}"/chrome --version
 EOF
     ;;
 
@@ -111,11 +147,32 @@ EOF
     # /sbin/ldconfig -p so PW thinks libGLESv2/libx264 are missing).
     # `/webkit` artifact maps directly to `webkit-${REV}/` (no nested
     # subdir) and contains `pw_run.sh` + `minibrowser-{wpe,gtk}/`.
-    # WebKit runner MUST match alpine:edge (WebKit built on edge). Same
-    # SONAME rationale as FF above. Drop `chromium` — alpine :edge chromium
-    # apk broken post-flac-1.5, and WebKit's recorder-UI tests are already
-    # file-skipped in webkit skip-list.
+    #
+    # 2026-07-15: chromium re-added via multi-stage :3.22 self-contained
+    # bundle at /opt/chromium-322/ (isolated from :edge system libs via
+    # RPATH \$ORIGIN). Recorder-UI subsystem needs a HEADED chromium binary.
     cat > "$TMPDIR/Dockerfile" <<EOF
+FROM alpine:3.22 AS chromium-fetch
+RUN apk add --no-cache chromium chromium-swiftshader binutils patchelf
+RUN mkdir -p /opt/chromium-322 \\
+ && SRC=/usr/lib/chromium && DEST=/opt/chromium-322 \\
+ && cp -aL "\$SRC"/chromium "\$DEST"/chrome \\
+ && find "\$SRC" -maxdepth 1 -type f \\( -name '*.pak' -o -name '*.bin' -o -name '*.dat' -o -name '*.json' \\) -exec cp -aL {} "\$DEST"/ \\; \\
+ && { [ -d "\$SRC/locales" ] && cp -aL "\$SRC/locales" "\$DEST"/ || true; } \\
+ && find "\$SRC" -maxdepth 1 -name '*.so*' -exec cp -aL {} "\$DEST"/ \\; \\
+ && for so in \$(ldd "\$DEST"/chrome 2>/dev/null | awk '{print \$3}' | grep '^/'); do \\
+      [ -f "\$so" ] && [ ! -f "\$DEST/\$(basename "\$so")" ] && cp -aL "\$so" "\$DEST"/ || true; \\
+    done \\
+ && for lib in "\$DEST"/*.so*; do \\
+      [ -L "\$lib" ] && continue; \\
+      for so in \$(ldd "\$lib" 2>/dev/null | awk '{print \$3}' | grep '^/'); do \\
+        [ -f "\$so" ] && [ ! -f "\$DEST/\$(basename "\$so")" ] && cp -aL "\$so" "\$DEST"/ || true; \\
+      done; \\
+    done \\
+ && patchelf --set-rpath '\$ORIGIN' "\$DEST"/chrome \\
+ && for so in "\$DEST"/*.so*; do [ -L "\$so" ] && continue; patchelf --set-rpath '\$ORIGIN' "\$so" 2>/dev/null || true; done \\
+ && "\$DEST"/chrome --version
+
 FROM alpine:edge
 RUN apk update && apk add --no-cache \\
     nodejs npm bash git \\
@@ -126,7 +183,8 @@ RUN apk update && apk add --no-cache \\
     mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \\
     gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \\
     cairo pango gdk-pixbuf libnotify dbus-libs opus libsecret \\
-    xvfb xvfb-run
+    xvfb xvfb-run jq
+COPY --from=chromium-fetch /opt/chromium-322 /opt/chromium-322
 COPY --from=${IMAGE_REF} /webkit /ms-playwright/webkit-${ARTIFACT_REV}
 RUN touch /ms-playwright/webkit-${ARTIFACT_REV}/INSTALLATION_COMPLETE
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
@@ -136,6 +194,17 @@ RUN npm install -g playwright@${PW_VERSION}
 # ffmpeg-1011 needed by recordVideo + screencast fixtures; skip-list narrows the
 # affected suite, but downloading lets the rest of tests/library boot cleanly.
 RUN playwright install ffmpeg
+# Same recorder-UI setup as FF runner — musl chromium at PW's auto-discovery
+# path so \_enableRecorder finds it.
+RUN CHR_REV=\$(jq -r '.browsers[] | select(.name == "chromium") | .revision' \\
+      /usr/local/lib/node_modules/playwright/node_modules/playwright-core/browsers.json 2>/dev/null \\
+    || jq -r '.browsers[] | select(.name == "chromium") | .revision' \\
+      \$(npm root -g)/playwright-core/browsers.json) \\
+ && CHR_DIR=/ms-playwright/chromium-\${CHR_REV}/chrome-linux64 \\
+ && mkdir -p "\${CHR_DIR}" \\
+ && cp -a /opt/chromium-322/* "\${CHR_DIR}"/ \\
+ && touch /ms-playwright/chromium-\${CHR_REV}/INSTALLATION_COMPLETE \\
+ && "\${CHR_DIR}"/chrome --version
 EOF
     ;;
 
