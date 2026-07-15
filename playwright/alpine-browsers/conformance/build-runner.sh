@@ -126,14 +126,17 @@ RUN playwright install ffmpeg
 # finds a musl-native chromium instead of throwing 'No chromium-based browser
 # found'. Revision is looked up from playwright-core/browsers.json rather than
 # hard-coded so it stays in sync with the installed PW.
-RUN CHR_REV=\$(jq -r '.browsers[] | select(.name == "chromium") | .revision' \\
-      /usr/local/lib/node_modules/playwright/node_modules/playwright-core/browsers.json 2>/dev/null \\
-    || jq -r '.browsers[] | select(.name == "chromium") | .revision' \\
-      \$(npm root -g)/playwright-core/browsers.json) \\
+RUN PWC_JSON=\$(find /usr/local/lib/node_modules -name browsers.json -path '*playwright-core*' | head -1) \\
+ && CHR_REV=\$(jq -r '.browsers[] | select(.name == "chromium") | .revision' "\$PWC_JSON") \\
+ && CHS_REV=\$(jq -r '.browsers[] | select(.name == "chromium-headless-shell") | .revision' "\$PWC_JSON") \\
  && CHR_DIR=/ms-playwright/chromium-\${CHR_REV}/chrome-linux64 \\
- && mkdir -p "\${CHR_DIR}" \\
+ && CHS_DIR=/ms-playwright/chromium_headless_shell-\${CHS_REV}/chrome-headless-shell-linux64 \\
+ && mkdir -p "\${CHR_DIR}" "\${CHS_DIR}" \\
  && cp -a /opt/chromium-322/* "\${CHR_DIR}"/ \\
+ && cp -a /opt/chromium-322/* "\${CHS_DIR}"/ \\
+ && ln -sf chrome "\${CHS_DIR}"/chrome-headless-shell \\
  && touch /ms-playwright/chromium-\${CHR_REV}/INSTALLATION_COMPLETE \\
+ && touch /ms-playwright/chromium_headless_shell-\${CHS_REV}/INSTALLATION_COMPLETE \\
  && "\${CHR_DIR}"/chrome --version
 EOF
     ;;
@@ -196,14 +199,17 @@ RUN npm install -g playwright@${PW_VERSION}
 RUN playwright install ffmpeg
 # Same recorder-UI setup as FF runner — musl chromium at PW's auto-discovery
 # path so \_enableRecorder finds it.
-RUN CHR_REV=\$(jq -r '.browsers[] | select(.name == "chromium") | .revision' \\
-      /usr/local/lib/node_modules/playwright/node_modules/playwright-core/browsers.json 2>/dev/null \\
-    || jq -r '.browsers[] | select(.name == "chromium") | .revision' \\
-      \$(npm root -g)/playwright-core/browsers.json) \\
+RUN PWC_JSON=\$(find /usr/local/lib/node_modules -name browsers.json -path '*playwright-core*' | head -1) \\
+ && CHR_REV=\$(jq -r '.browsers[] | select(.name == "chromium") | .revision' "\$PWC_JSON") \\
+ && CHS_REV=\$(jq -r '.browsers[] | select(.name == "chromium-headless-shell") | .revision' "\$PWC_JSON") \\
  && CHR_DIR=/ms-playwright/chromium-\${CHR_REV}/chrome-linux64 \\
- && mkdir -p "\${CHR_DIR}" \\
+ && CHS_DIR=/ms-playwright/chromium_headless_shell-\${CHS_REV}/chrome-headless-shell-linux64 \\
+ && mkdir -p "\${CHR_DIR}" "\${CHS_DIR}" \\
  && cp -a /opt/chromium-322/* "\${CHR_DIR}"/ \\
+ && cp -a /opt/chromium-322/* "\${CHS_DIR}"/ \\
+ && ln -sf chrome "\${CHS_DIR}"/chrome-headless-shell \\
  && touch /ms-playwright/chromium-\${CHR_REV}/INSTALLATION_COMPLETE \\
+ && touch /ms-playwright/chromium_headless_shell-\${CHS_REV}/INSTALLATION_COMPLETE \\
  && "\${CHR_DIR}"/chrome --version
 EOF
     ;;
