@@ -50,9 +50,9 @@ on:
         type: choice
         options: ['false', 'true']
       build_chromium_headless_shell:
-        description: 'Build chromium-headless-shell (musl) — default on'
+        description: 'Build chromium-headless-shell APK path (musl) — PAUSED; use build_chromium_headless_shell_from_source instead'
         required: false
-        default: 'true'
+        default: 'false'
         type: choice
         options: ['false', 'true']
       diagnostic:
@@ -887,10 +887,13 @@ jobs:
   # + repackage into PW's auto-discovery shape. ~5 sec build vs ~12h
   # from-source.
   build-chromium-headless-shell:
+    # PAUSED 2026-07-15 (user request): alpine :3.22 lacks chromium-headless-
+    # shell subpkg (alpine :edge chromium apk broken post-flac-1.5). Only the
+    # from-source path (build_chromium_headless_shell_from_source) matters
+    # going forward; likely to be dropped later. Push/schedule auto-triggers
+    # removed; only fires on explicit workflow_dispatch or PR label.
     if: |
-      github.event_name == 'push'
-      || github.event_name == 'schedule'
-      || (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell == 'true')
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell == 'true')
       || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell'))
     runs-on: ubuntu-latest
     timeout-minutes: 15   # apk fetch is sub-minute; padding for image push
