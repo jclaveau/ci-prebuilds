@@ -88,8 +88,9 @@ RUN mkdir -p /opt/chromium-bundle \\
  && for so in \$(ldd "\$DEST"/chrome 2>/dev/null | awk '{print \$3}' | grep '^/'); do \\
       [ -f "\$so" ] && [ ! -f "\$DEST/\$(basename "\$so")" ] && cp -aL "\$so" "\$DEST"/ || true; \\
     done \\
- && for bin in "\$DEST"/chrome_crashpad_handler "\$DEST"/chrome-sandbox "\$DEST"/xdg-mime "\$DEST"/xdg-settings; do \\
-      [ -f "\$bin" ] && for so in \$(ldd "\$bin" 2>/dev/null | awk '{print \$3}' | grep '^/'); do \\
+ && for bin in "\$DEST"/chrome_crashpad_handler "\$DEST"/chrome-sandbox; do \\
+      [ -f "\$bin" ] || continue; \\
+      for so in \$(ldd "\$bin" 2>/dev/null | awk '{print \$3}' | grep '^/'); do \\
         [ -f "\$so" ] && [ ! -f "\$DEST/\$(basename "\$so")" ] && cp -aL "\$so" "\$DEST"/ || true; \\
       done; \\
     done \\
@@ -180,8 +181,9 @@ RUN mkdir -p /opt/chromium-bundle \\
  && for so in \$(ldd "\$DEST"/chrome 2>/dev/null | awk '{print \$3}' | grep '^/'); do \\
       [ -f "\$so" ] && [ ! -f "\$DEST/\$(basename "\$so")" ] && cp -aL "\$so" "\$DEST"/ || true; \\
     done \\
- && for bin in "\$DEST"/chrome_crashpad_handler "\$DEST"/chrome-sandbox "\$DEST"/xdg-mime "\$DEST"/xdg-settings; do \\
-      [ -f "\$bin" ] && for so in \$(ldd "\$bin" 2>/dev/null | awk '{print \$3}' | grep '^/'); do \\
+ && for bin in "\$DEST"/chrome_crashpad_handler "\$DEST"/chrome-sandbox; do \\
+      [ -f "\$bin" ] || continue; \\
+      for so in \$(ldd "\$bin" 2>/dev/null | awk '{print \$3}' | grep '^/'); do \\
         [ -f "\$so" ] && [ ! -f "\$DEST/\$(basename "\$so")" ] && cp -aL "\$so" "\$DEST"/ || true; \\
       done; \\
     done \\
