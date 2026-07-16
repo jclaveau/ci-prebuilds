@@ -15,10 +15,17 @@ reverse engineer internal:has-text locators
 #   should format number / should format date / should format number in
 #   popups / should be isolated between contexts
 
-# ── Capabilities — media codecs — RECOVERED 2026-07-16 via gst-plugins-ugly ─
-# WK GStreamer pipeline lacked an H.264 decoder (Safari-flavored suite forces
-# mp4). Added `gst-plugins-ugly` (x264) + `openh264` to the WK runner apks.
-# Removed skips: should play video / webm video / audio / not crash mp4.
+# ── Capabilities — media codecs — STRUCTURAL (re-skipped 2026-07-16) ────────
+# Un-skip probe (iter 29496096569 shard 7) with gst-plugins-ugly + openh264
+# added to the WK runner apks STILL failed all 4. WK's GStreamer media
+# pipeline doesn't pick up the decoders from runner apks alone — it needs a
+# WebKit build flag / WPE MediaStream backend wiring (audit's predicted risk).
+# Not runner-fixable; re-skipped as structural. (Locale part of rank-3 DID
+# recover via icu-data-full — kept un-skipped above.)
+should play video
+should play webm video
+should play audio
+should not crash on page with mp4
 
 # ── browsertype-connect — same headed/video subcluster as chromium ──────────
 should ignore page.pause when headed$
