@@ -204,6 +204,7 @@ RUN apk update && apk add --no-cache \\
     mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \\
     gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \\
     cairo pango gdk-pixbuf libnotify dbus-libs opus libsecret \\
+    nss \\
     xvfb xvfb-run jq
 COPY --from=chromium-fetch /opt/chromium-322 /opt/chromium-322
 COPY --from=${IMAGE_REF} /webkit /ms-playwright/webkit-${ARTIFACT_REV}
