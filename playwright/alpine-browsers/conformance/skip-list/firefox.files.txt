@@ -44,13 +44,15 @@ tests/library/browsertype-connect\.spec\.ts
 tests/library/trace-viewer\.spec\.ts$
 tests/library/trace-viewer-scrub\.spec\.ts$
 #
-# EXCEPTION — cli-codegen-<lang> whole-file skips PRESERVED. These assert
-# exact codegen OUTPUT STRINGS for specific target languages (Python /
-# pytest / test / javascript / csharp / java). The divergence is NOT the
-# recorder harness (fixed) — it's Alpine chromium's codegen module vs
-# Ubuntu chromium's. Every test in the file asserts the same output-format
-# family, so whole-file skip stays cleaner than per-title.
-tests/library/inspector/cli-codegen-python\.spec\.ts$
+# cli-codegen-<lang> — root cause UNVERIFIED post-bundle. The "divergent
+# codegen module output" rationale was a pre-bundle guess never re-probed.
+# The only concrete log (pre-8b55edf) showed `Received string: ""` — the
+# codegen CLI subprocess wrote ZERO bytes, i.e. a harness/subprocess-launch
+# failure, NOT divergent strings. DIAGNOSTIC PROBE 2026-07-16: un-skip
+# cli-codegen-python.spec.ts on the FF leg to capture the post-bundle failure
+# signature. If still empty-string → subprocess-env fix (~140 tests across
+# browsers). If non-empty wrong text → real codegen divergence, restore skip.
+# tests/library/inspector/cli-codegen-python\.spec\.ts$
 tests/library/inspector/cli-codegen-python-async\.spec\.ts$
 tests/library/inspector/cli-codegen-pytest\.spec\.ts$
 tests/library/inspector/cli-codegen-test\.spec\.ts$
