@@ -78,7 +78,13 @@ tests/page/page-drop\.spec\.ts$
 tests/library/screenshot\.spec\.ts$
 tests/page/page-screenshot\.spec\.ts$
 tests/page/elementhandle-screenshot\.spec\.ts$
-tests/page/page-aria-snapshot\.spec\.ts$
+# page-aria-snapshot BISECT PROBE 2026-07-16 — aria snapshots compare
+# accessible-name/-role TEXT (YAML), NOT pixels, so they should NOT share the
+# font-rasterization root cause of the pixel screenshot files above. Un-skip
+# to test. page-aria-snapshot-ai stays skipped (LLM-nondeterministic, needs a
+# model). Restore below if accname text diverges (2nd root cause: font/locale
+# accessible-name stack).
+# tests/page/page-aria-snapshot\.spec\.ts$
 tests/page/page-aria-snapshot-ai\.spec\.ts$
 
 # ── Codegen — PERMANENT SKIP, OUT OF CONFORMANCE SCOPE ──────────────────────
