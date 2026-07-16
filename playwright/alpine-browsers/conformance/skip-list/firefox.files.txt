@@ -44,15 +44,18 @@ tests/library/browsertype-connect\.spec\.ts
 tests/library/trace-viewer\.spec\.ts$
 tests/library/trace-viewer-scrub\.spec\.ts$
 #
-# cli-codegen-<lang> — root cause UNVERIFIED post-bundle. The "divergent
-# codegen module output" rationale was a pre-bundle guess never re-probed.
-# The only concrete log (pre-8b55edf) showed `Received string: ""` — the
-# codegen CLI subprocess wrote ZERO bytes, i.e. a harness/subprocess-launch
-# failure, NOT divergent strings. DIAGNOSTIC PROBE 2026-07-16: un-skip
-# cli-codegen-python.spec.ts on the FF leg to capture the post-bundle failure
-# signature. If still empty-string → subprocess-env fix (~140 tests across
-# browsers). If non-empty wrong text → real codegen divergence, restore skip.
-# tests/library/inspector/cli-codegen-python\.spec\.ts$
+# cli-codegen-<lang> — root cause CONFIRMED 2026-07-16 (probe iter
+# 29503931312): the `node cli.js codegen` SUBPROCESS writes zero bytes
+# (`Received string: ""` + `expect.poll ... Timeout 30000ms` in
+# inspectorTest.ts CLIMock.waitFor). NOT divergent codegen output — the
+# subprocess's own internal recorder-UI chromium never emits actions. The
+# multi-stage bundle (8b55edf) fixed main-process _enableRecorder (inspector/*
+# pass) but the CLI-codegen subprocess has a SEPARATE recorder-UI launch that
+# stays broken. Fix (~4h, ~140 tests across FF+WK+CHS-fs): forward the bundle
+# chromium into the codegen subprocess env (PWTEST_CLI_HEADLESS / explicit
+# executablePath) or patch pw-src cli/program.ts codegen(). Deferred — real
+# engineering, not a skip tweak. Whole-file skip until then.
+tests/library/inspector/cli-codegen-python\.spec\.ts$
 tests/library/inspector/cli-codegen-python-async\.spec\.ts$
 tests/library/inspector/cli-codegen-pytest\.spec\.ts$
 tests/library/inspector/cli-codegen-test\.spec\.ts$
