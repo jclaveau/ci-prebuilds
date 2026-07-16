@@ -35,11 +35,11 @@ tests/library/chromium/oopif\.spec\.ts$
 # our Alpine WebKit build, which has a divergent UA-agent header).
 tests/library/modernizr\.spec\.ts$
 
-# Trace-viewer whole-file skip UN-SKIP PROBE 2026-07-16 — bundle chromium
-# bumped :3.22/142 → :3.23/149, 1 minor from PW-pinned 148. Same probe as
-# the FF leg. Restore the two lines below if trace-viewer still crashes.
-# tests/library/trace-viewer\.spec\.ts$
-# tests/library/trace-viewer-scrub\.spec\.ts$
+# Trace-viewer whole-file skip — STRUCTURAL (needs exact PW-pinned chromium
+# 148; no Alpine tag ships it). :3.23/149 probe failed same as FF leg
+# (iter 29494313953). Stays skipped until a from-source-148 bundle exists.
+tests/library/trace-viewer\.spec\.ts$
+tests/library/trace-viewer-scrub\.spec\.ts$
 
 # ── Codegen output-language cluster ────────────────────────────────────────
 # PRESERVED. These assert exact codegen OUTPUT STRINGS for specific target

@@ -34,12 +34,15 @@ tests/library/browsertype-connect\.spec\.ts
 # _enableRecorder for inspector/* + slowmo + debug-controller + selector-
 # generator (~270 tests recovered).
 #
-# Trace-viewer whole-file skip UN-SKIP PROBE 2026-07-16 — bundle chromium
-# bumped :3.22/142 → :3.23/149 (see build-runner.sh), now 1 minor from
-# PW-pinned 148 instead of 6. The 142-vs-148 harness crashes should clear.
-# If trace-viewer still whack-a-moles, restore the two lines below.
-# tests/library/trace-viewer\.spec\.ts$
-# tests/library/trace-viewer-scrub\.spec\.ts$
+# Trace-viewer whole-file skip — STRUCTURAL. The internal trace-viewer chromium
+# harness needs the EXACT PW-pinned chromium (148); the recorder-UI bundle can
+# only ship whatever an Alpine tag has (:3.22=142, :3.23=149). Probed :3.23/149
+# 2026-07-16 (iter 29494313953): still 4 whack-a-mole title fails + a ~94-test
+# worker-abort cascade (beforeAll fixture crash aborts the whole worker). No
+# Alpine tag ships 148, so this stays whole-file skipped until we can bundle a
+# from-source 148 (expensive, deferred). See conformance-gap-triage audit.
+tests/library/trace-viewer\.spec\.ts$
+tests/library/trace-viewer-scrub\.spec\.ts$
 #
 # EXCEPTION — cli-codegen-<lang> whole-file skips PRESERVED. These assert
 # exact codegen OUTPUT STRINGS for specific target languages (Python /

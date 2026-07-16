@@ -74,12 +74,14 @@ EOF
     # binary — apk-install from :edge broken post-flac-1.5, so we ship chromium
     # in its own dep tree. FF binary unaffected.
     #
-    # 2026-07-16: bumped bundle base :3.22 (chromium 142) → :3.23 (chromium
-    # 149) — PW pins chromium 148 for the recorder-UI internal viewer; :3.22's
-    # 142 was 6 minors behind, surfacing as trace-viewer harness crashes. :3.23
-    # closes the gap to 1 minor.
+    # Bundle base is :3.22 (chromium 142). Tried :3.23 (chromium 149) on
+    # 2026-07-16 to close the gap to PW-pinned 148 for trace-viewer's internal
+    # viewer — still whack-a-mole-failed + worker-abort cascade (iter
+    # 29494313953), so reverted. Trace-viewer stays whole-file skipped; every
+    # other recorder-UI test (inspector/slowmo/selector-generator) passes fine
+    # on 142.
     cat > "$TMPDIR/Dockerfile" <<EOF
-FROM alpine:3.23 AS chromium-fetch
+FROM alpine:3.22 AS chromium-fetch
 RUN apk add --no-cache chromium chromium-swiftshader binutils patchelf
 RUN mkdir -p /opt/chromium-bundle \\
  && SRC=/usr/lib/chromium && DEST=/opt/chromium-bundle \\
@@ -168,11 +170,11 @@ EOF
     #
     # 2026-07-15: chromium re-added via multi-stage self-contained bundle at
     # /opt/chromium-bundle/ (isolated from :edge system libs via RPATH
-    # \$ORIGIN). Recorder-UI subsystem needs a HEADED chromium binary.
-    # 2026-07-16: bundle base bumped :3.22 → :3.23 (chromium 149, closes the
-    # gap to PW-pinned 148) — see FF branch comment.
+    # \$ORIGIN). Recorder-UI subsystem needs a HEADED chromium binary. Bundle
+    # base :3.22 (chromium 142); :3.23/149 trace-viewer probe reverted — see
+    # FF branch comment.
     cat > "$TMPDIR/Dockerfile" <<EOF
-FROM alpine:3.23 AS chromium-fetch
+FROM alpine:3.22 AS chromium-fetch
 RUN apk add --no-cache chromium chromium-swiftshader binutils patchelf
 RUN mkdir -p /opt/chromium-bundle \\
  && SRC=/usr/lib/chromium && DEST=/opt/chromium-bundle \\
