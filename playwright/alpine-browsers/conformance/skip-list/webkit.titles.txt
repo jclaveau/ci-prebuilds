@@ -8,19 +8,17 @@
 # case; other 96 tests in locator-generator.spec.ts pass.
 reverse engineer internal:has-text locators
 
-# ── Locale formatting (Alpine musl + WPE ICU differs from glibc + GTK) ──────
-# Run 28285531191 shard 2 surfaced these. Alpine ships icu-libs but the
-# default locale set may not cover all the regions PW's tests exercise.
-should format number
-should format date
-should format number in popups
-should be isolated between contexts
+# ── Locale formatting — RECOVERED 2026-07-16 via icu-data-full ──────────────
+# Alpine shipped only icu-libs (en-* CLDR); fr-FR/de-DE/ru-RU number+date
+# formatting couldn't be produced. Added `icu-data-full` (~30MB full CLDR)
+# to the WK runner apk list (build-runner.sh). Removed skips:
+#   should format number / should format date / should format number in
+#   popups / should be isolated between contexts
 
-# ── Capabilities — media codecs (Alpine WebKit ships limited GStreamer plugins) ──
-should play video
-should play webm video
-should play audio
-should not crash on page with mp4
+# ── Capabilities — media codecs — RECOVERED 2026-07-16 via gst-plugins-ugly ─
+# WK GStreamer pipeline lacked an H.264 decoder (Safari-flavored suite forces
+# mp4). Added `gst-plugins-ugly` (x264) + `openh264` to the WK runner apks.
+# Removed skips: should play video / webm video / audio / not crash mp4.
 
 # ── browsertype-connect — same headed/video subcluster as chromium ──────────
 should ignore page.pause when headed$

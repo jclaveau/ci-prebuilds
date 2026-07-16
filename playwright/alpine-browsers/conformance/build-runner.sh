@@ -67,17 +67,22 @@ EOF
     # libavformat.so.62 from ffmpeg 8.x). alpine:3.22 provides .so.12/.60
     # → runtime SIGSEGV at launch (see run 29306045726 shard 3 diag).
     #
-    # 2026-07-15: chromium re-added via multi-stage :3.22 self-contained
-    # bundle at /opt/chromium-322/ (isolated from :edge system libs via
-    # RPATH \$ORIGIN). Recorder-UI subsystem (inspector, slowmo, debug-
-    # controller, selector-generator, trace-viewer, cli-codegen-*) needs a
-    # HEADED chromium binary — apk-install from :edge broken post-flac-1.5,
-    # so we ship chromium in its own dep tree. FF binary unaffected.
+    # 2026-07-15: chromium re-added via multi-stage self-contained bundle at
+    # /opt/chromium-bundle/ (isolated from :edge system libs via RPATH
+    # \$ORIGIN). Recorder-UI subsystem (inspector, slowmo, debug-controller,
+    # selector-generator, trace-viewer, cli-codegen-*) needs a HEADED chromium
+    # binary — apk-install from :edge broken post-flac-1.5, so we ship chromium
+    # in its own dep tree. FF binary unaffected.
+    #
+    # 2026-07-16: bumped bundle base :3.22 (chromium 142) → :3.23 (chromium
+    # 149) — PW pins chromium 148 for the recorder-UI internal viewer; :3.22's
+    # 142 was 6 minors behind, surfacing as trace-viewer harness crashes. :3.23
+    # closes the gap to 1 minor.
     cat > "$TMPDIR/Dockerfile" <<EOF
-FROM alpine:3.22 AS chromium-fetch
+FROM alpine:3.23 AS chromium-fetch
 RUN apk add --no-cache chromium chromium-swiftshader binutils patchelf
-RUN mkdir -p /opt/chromium-322 \\
- && SRC=/usr/lib/chromium && DEST=/opt/chromium-322 \\
+RUN mkdir -p /opt/chromium-bundle \\
+ && SRC=/usr/lib/chromium && DEST=/opt/chromium-bundle \\
  && cp -aL "\$SRC"/* "\$DEST"/ \\
  && mv "\$DEST"/chromium "\$DEST"/chrome \\
  && for so in \$(ldd "\$DEST"/chrome 2>/dev/null | awk '{print \$3}' | grep '^/'); do \\
@@ -112,7 +117,7 @@ RUN apk update && apk add --no-cache \\
     libtheora libvorbis libvpx libwebp libwebp-tools libxcomposite \\
     libxt mesa-gl mesa-dri-gallium nspr nss pipewire-libs libpulse \\
     ttf-freefont xvfb xvfb-run jq
-COPY --from=chromium-fetch /opt/chromium-322 /opt/chromium-322
+COPY --from=chromium-fetch /opt/chromium-bundle /opt/chromium-bundle
 COPY --from=${IMAGE_REF} /firefox /ms-playwright/firefox-${ARTIFACT_REV}/firefox
 RUN touch /ms-playwright/firefox-${ARTIFACT_REV}/INSTALLATION_COMPLETE
 # PW SDK prefs — Alpine FF build (apply-and-build.sh:175) writes these to the
@@ -141,8 +146,8 @@ RUN PWC_JSON=\$(find /usr/local/lib/node_modules -name browsers.json -path '*pla
  && CHR_DIR=/ms-playwright/chromium-\${CHR_REV}/chrome-linux64 \\
  && CHS_DIR=/ms-playwright/chromium_headless_shell-\${CHS_REV}/chrome-headless-shell-linux64 \\
  && mkdir -p "\${CHR_DIR}" "\${CHS_DIR}" \\
- && cp -a /opt/chromium-322/* "\${CHR_DIR}"/ \\
- && cp -a /opt/chromium-322/* "\${CHS_DIR}"/ \\
+ && cp -a /opt/chromium-bundle/* "\${CHR_DIR}"/ \\
+ && cp -a /opt/chromium-bundle/* "\${CHS_DIR}"/ \\
  && ln -sf chrome "\${CHS_DIR}"/chrome-headless-shell \\
  && touch /ms-playwright/chromium-\${CHR_REV}/INSTALLATION_COMPLETE \\
  && touch /ms-playwright/chromium_headless_shell-\${CHS_REV}/INSTALLATION_COMPLETE \\
@@ -160,14 +165,16 @@ EOF
     # `/webkit` artifact maps directly to `webkit-${REV}/` (no nested
     # subdir) and contains `pw_run.sh` + `minibrowser-{wpe,gtk}/`.
     #
-    # 2026-07-15: chromium re-added via multi-stage :3.22 self-contained
-    # bundle at /opt/chromium-322/ (isolated from :edge system libs via
-    # RPATH \$ORIGIN). Recorder-UI subsystem needs a HEADED chromium binary.
+    # 2026-07-15: chromium re-added via multi-stage self-contained bundle at
+    # /opt/chromium-bundle/ (isolated from :edge system libs via RPATH
+    # \$ORIGIN). Recorder-UI subsystem needs a HEADED chromium binary.
+    # 2026-07-16: bundle base bumped :3.22 → :3.23 (chromium 149, closes the
+    # gap to PW-pinned 148) — see FF branch comment.
     cat > "$TMPDIR/Dockerfile" <<EOF
-FROM alpine:3.22 AS chromium-fetch
+FROM alpine:3.23 AS chromium-fetch
 RUN apk add --no-cache chromium chromium-swiftshader binutils patchelf
-RUN mkdir -p /opt/chromium-322 \\
- && SRC=/usr/lib/chromium && DEST=/opt/chromium-322 \\
+RUN mkdir -p /opt/chromium-bundle \\
+ && SRC=/usr/lib/chromium && DEST=/opt/chromium-bundle \\
  && cp -aL "\$SRC"/* "\$DEST"/ \\
  && mv "\$DEST"/chromium "\$DEST"/chrome \\
  && for so in \$(ldd "\$DEST"/chrome 2>/dev/null | awk '{print \$3}' | grep '^/'); do \\
@@ -203,10 +210,11 @@ RUN apk update && apk add --no-cache \\
     libgcc libstdc++ \\
     mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \\
     gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \\
+    gst-plugins-ugly openh264 \\
     cairo pango gdk-pixbuf libnotify dbus-libs opus libsecret \\
-    nss \\
+    nss icu-data-full \\
     xvfb xvfb-run jq
-COPY --from=chromium-fetch /opt/chromium-322 /opt/chromium-322
+COPY --from=chromium-fetch /opt/chromium-bundle /opt/chromium-bundle
 COPY --from=${IMAGE_REF} /webkit /ms-playwright/webkit-${ARTIFACT_REV}
 RUN touch /ms-playwright/webkit-${ARTIFACT_REV}/INSTALLATION_COMPLETE
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
@@ -224,8 +232,8 @@ RUN PWC_JSON=\$(find /usr/local/lib/node_modules -name browsers.json -path '*pla
  && CHR_DIR=/ms-playwright/chromium-\${CHR_REV}/chrome-linux64 \\
  && CHS_DIR=/ms-playwright/chromium_headless_shell-\${CHS_REV}/chrome-headless-shell-linux64 \\
  && mkdir -p "\${CHR_DIR}" "\${CHS_DIR}" \\
- && cp -a /opt/chromium-322/* "\${CHR_DIR}"/ \\
- && cp -a /opt/chromium-322/* "\${CHS_DIR}"/ \\
+ && cp -a /opt/chromium-bundle/* "\${CHR_DIR}"/ \\
+ && cp -a /opt/chromium-bundle/* "\${CHS_DIR}"/ \\
  && ln -sf chrome "\${CHS_DIR}"/chrome-headless-shell \\
  && touch /ms-playwright/chromium-\${CHR_REV}/INSTALLATION_COMPLETE \\
  && touch /ms-playwright/chromium_headless_shell-\${CHS_REV}/INSTALLATION_COMPLETE \\

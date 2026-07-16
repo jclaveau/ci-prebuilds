@@ -34,13 +34,12 @@ tests/library/browsertype-connect\.spec\.ts
 # _enableRecorder for inspector/* + slowmo + debug-controller + selector-
 # generator (~270 tests recovered).
 #
-# Trace-viewer whole-file skip RE-ADDED — bundle chromium 142 (:3.22) vs
-# PW-expected chromium 148 mismatches around trace-viewer's internal
-# chromium harness (snapshot/redirect/dialog/action-list edge cases). Whack-
-# a-mole title-skips fail (different 4 titles each iter). Whole-file skip
-# stays until we can bundle a matching chromium version.
-tests/library/trace-viewer\.spec\.ts$
-tests/library/trace-viewer-scrub\.spec\.ts$
+# Trace-viewer whole-file skip UN-SKIP PROBE 2026-07-16 — bundle chromium
+# bumped :3.22/142 → :3.23/149 (see build-runner.sh), now 1 minor from
+# PW-pinned 148 instead of 6. The 142-vs-148 harness crashes should clear.
+# If trace-viewer still whack-a-moles, restore the two lines below.
+# tests/library/trace-viewer\.spec\.ts$
+# tests/library/trace-viewer-scrub\.spec\.ts$
 #
 # EXCEPTION — cli-codegen-<lang> whole-file skips PRESERVED. These assert
 # exact codegen OUTPUT STRINGS for specific target languages (Python /
