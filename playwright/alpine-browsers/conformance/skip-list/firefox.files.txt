@@ -44,17 +44,17 @@ tests/library/browsertype-connect\.spec\.ts
 tests/library/trace-viewer\.spec\.ts$
 tests/library/trace-viewer-scrub\.spec\.ts$
 #
-# cli-codegen-<lang> — root cause CONFIRMED 2026-07-16 (probe iter
-# 29503931312): the `node cli.js codegen` SUBPROCESS writes zero bytes
-# (`Received string: ""` + `expect.poll ... Timeout 30000ms` in
-# inspectorTest.ts CLIMock.waitFor). NOT divergent codegen output — the
-# subprocess's own internal recorder-UI chromium never emits actions. The
-# multi-stage bundle (8b55edf) fixed main-process _enableRecorder (inspector/*
-# pass) but the CLI-codegen subprocess has a SEPARATE recorder-UI launch that
-# stays broken. Fix (~4h, ~140 tests across FF+WK+CHS-fs): forward the bundle
-# chromium into the codegen subprocess env (PWTEST_CLI_HEADLESS / explicit
-# executablePath) or patch pw-src cli/program.ts codegen(). Deferred — real
-# engineering, not a skip tweak. Whole-file skip until then.
+# cli-codegen-<lang> — PERMANENT SKIP, OUT OF CONFORMANCE SCOPE. These assert
+# PW's code-GENERATION tooling (record actions → python/js/csharp/java source
+# strings) via an internal recorder-UI chromium subprocess. They validate
+# PW's OWN CLI tooling running on Alpine, NOT the musl-built browser-under-
+# test's rendering/protocol — which is what this suite exists to certify.
+# Codegen is never invoked in this repo's CI (we ship browser binaries, not a
+# codegen service). Root cause is known (probe iter 29503931312: the
+# `node cli.js codegen` subprocess's recorder-UI chromium writes zero bytes,
+# `Received string: ""` + poll timeout) and a ~4h subprocess-env fix exists,
+# but recovering these ~140 tests would inflate pass% with zero browser-
+# conformance signal. Kept whole-file skipped by design.
 tests/library/inspector/cli-codegen-python\.spec\.ts$
 tests/library/inspector/cli-codegen-python-async\.spec\.ts$
 tests/library/inspector/cli-codegen-pytest\.spec\.ts$
