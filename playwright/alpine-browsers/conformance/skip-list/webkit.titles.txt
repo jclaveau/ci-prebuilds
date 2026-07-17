@@ -27,21 +27,23 @@ should play webm video
 should play audio
 should not crash on page with mp4
 
-# ── browsertype-connect — same headed/video subcluster as chromium ──────────
+# ── Video / headed remote subcluster ────────────────────────────────────────
 should ignore page.pause when headed$
 should saveAs videos from remote browser
 should save videos to artifactsDir
 should name video file after page guid when connecting to remote browser with artifactsDir
-# BUCKET-C PROBE 2026-07-17: upload-folder + lastModified are file-INPUT tests,
-# mis-bucketed under this video/headed block; no video/headed dependency.
-# Un-skip to test; restore if red.
-# should upload a folder
-# should preserve lastModified timestamp
 
-# ── Download artifactsDir ──────────────────────────────────────────────────
-# BUCKET-C PROBE 2026-07-17: download handling works on WK generally; the
-# artifactsDir path is not video-encoder-dependent. Un-skip to test.
-# should save downloads to artifactsDir
+# ── File-input / download — STRUCTURAL on WK-musl (bucket-C verdict 2026-07-17)
+# Un-skip probe (iter 29565116253) FAILED all 3 — NOT mis-bucketed, genuine
+# WK-on-Alpine gaps. They fail across every spec that exercises them
+# (browsertype-connect run-server + launchServer, page-set-input-files,
+# download.spec.ts); the title grep-invert covers all instances.
+#   - upload a folder: directory upload (webkitdirectory file chooser) unsupported
+#   - lastModified timestamp: setInputFiles doesn't preserve file mtime on musl
+#   - save downloads to artifactsDir: WK download-save path broken on Alpine
+should upload a folder
+should preserve lastModified timestamp
+should save downloads to artifactsDir
 
 # ── Cluster-sibling small leaks (TODO probes) ──────────────────────────────
 # Track each pending its own investigation. Don't expand prematurely.

@@ -24,22 +24,19 @@ tests/library/video\.spec\.ts$
 # Touch / tap — touch event source not in headless-shell.
 tests/library/tap\.spec\.ts$
 
-# OOPIF (out-of-process iframes) — needs full chromium with extra flags.
-# BUCKET-C PROBE 2026-07-17: rationale was APK-headless-shell-subset; from-
-# source 148 is a full chromium build that may ship site-isolation. Un-skip
-# to test; restore if still red.
-# tests/library/chromium/oopif\.spec\.ts$
+# OOPIF (out-of-process iframes) — RECOVERED 2026-07-17 (bucket-C, iter
+# 29565116253). from-source chromium 148 ships site-isolation; the whole file
+# passes on Alpine EXCEPT one test (`should allow to re-connect to OOPIFs with
+# CDP when iframes were there already`), now a single title-skip in
+# chromium.titles.txt. Old APK-headless-shell-subset rationale didn't hold for
+# from-source.
 
-# Client certificates — requires curl+openssl trust chain headless-shell
-# doesn't have. 18 tests, all in one spec.
-# BUCKET-C PROBE 2026-07-17: APK-era rationale; from-source chromium uses its
-# own BoringSSL/NSS cert path. Un-skip to test; restore if red.
-# tests/library/client-certificates\.spec\.ts$
+# Client certificates — RECOVERED 2026-07-17 (bucket-C). All pass on from-source
+# chromium (its own BoringSSL/NSS cert path); the APK-era "no curl+openssl trust
+# chain" skip was defensive. ~18 tests regained.
 
-# ignoreHTTPSErrors — Alpine ca-certificates / libressl cert-trust gap.
-# BUCKET-C PROBE 2026-07-17: --ignore-certificate-errors is core chromium;
-# runner now bundles ca-certificates. Un-skip to test; restore if red.
-# tests/library/ignorehttpserrors\.spec\.ts$
+# ignoreHTTPSErrors — RECOVERED 2026-07-17 (bucket-C). Passes on from-source
+# chromium; --ignore-certificate-errors is core + runner bundles ca-certificates.
 
 # ── Form-control subcluster ───────────────────────────────────────────────
 # Root-caused 2026-06-26: Alpine's community/chromium apk ships

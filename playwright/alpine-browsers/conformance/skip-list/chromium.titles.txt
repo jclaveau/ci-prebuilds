@@ -6,6 +6,16 @@
 # Use for individual real Alpine/musl conformance gaps. Whole-file
 # divergences (UI subsystems, codecs) go in chromium.files.txt.
 
+# ── OOPIF CDP re-connect (single test) ──────────────────────────────────────
+# oopif.spec.ts RECOVERED whole-file 2026-07-17 (bucket-C, iter 29565116253) —
+# from-source 148 ships site-isolation. This ONE test still fails on Alpine (the
+# only failure in the whole run): re-attaching a CDP session to OOPIFs that were
+# already present at connect time. Likely a musl CDP-target timing edge; the
+# other ~9 oopif tests (contentFrame, filechooser, click-in-iframe, intercept
+# response body, cdp sessions on oopifs) all pass. TODO(probe): dynamic-oopif
+# navigation timing if we chase this one.
+should allow to re-connect to OOPIFs with CDP when iframes were there already
+
 # ── Third-party cookies / CHIPS / Partitioned — UN-SKIP PROBE 2026-07-16 ─────
 # Skip was a defensive CHS-apk-era carryover (seeded 2026-06-26 against the
 # broken apk build, never probed). CHS-apk is now paused (workflow_dispatch-
