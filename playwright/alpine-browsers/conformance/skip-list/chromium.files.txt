@@ -24,15 +24,22 @@ tests/library/video\.spec\.ts$
 # Touch / tap — touch event source not in headless-shell.
 tests/library/tap\.spec\.ts$
 
-# OOPIF (out-of-process iframes) — needs full chromium with extra flags
-tests/library/chromium/oopif\.spec\.ts$
+# OOPIF (out-of-process iframes) — needs full chromium with extra flags.
+# BUCKET-C PROBE 2026-07-17: rationale was APK-headless-shell-subset; from-
+# source 148 is a full chromium build that may ship site-isolation. Un-skip
+# to test; restore if still red.
+# tests/library/chromium/oopif\.spec\.ts$
 
 # Client certificates — requires curl+openssl trust chain headless-shell
 # doesn't have. 18 tests, all in one spec.
-tests/library/client-certificates\.spec\.ts$
+# BUCKET-C PROBE 2026-07-17: APK-era rationale; from-source chromium uses its
+# own BoringSSL/NSS cert path. Un-skip to test; restore if red.
+# tests/library/client-certificates\.spec\.ts$
 
-# ignoreHTTPSErrors — Alpine ca-certificates / libressl cert-trust gap
-tests/library/ignorehttpserrors\.spec\.ts$
+# ignoreHTTPSErrors — Alpine ca-certificates / libressl cert-trust gap.
+# BUCKET-C PROBE 2026-07-17: --ignore-certificate-errors is core chromium;
+# runner now bundles ca-certificates. Un-skip to test; restore if red.
+# tests/library/ignorehttpserrors\.spec\.ts$
 
 # ── Form-control subcluster ───────────────────────────────────────────────
 # Root-caused 2026-06-26: Alpine's community/chromium apk ships

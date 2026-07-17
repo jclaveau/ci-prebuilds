@@ -32,11 +32,16 @@ should ignore page.pause when headed$
 should saveAs videos from remote browser
 should save videos to artifactsDir
 should name video file after page guid when connecting to remote browser with artifactsDir
-should upload a folder
-should preserve lastModified timestamp
+# BUCKET-C PROBE 2026-07-17: upload-folder + lastModified are file-INPUT tests,
+# mis-bucketed under this video/headed block; no video/headed dependency.
+# Un-skip to test; restore if red.
+# should upload a folder
+# should preserve lastModified timestamp
 
 # ── Download artifactsDir ──────────────────────────────────────────────────
-should save downloads to artifactsDir
+# BUCKET-C PROBE 2026-07-17: download handling works on WK generally; the
+# artifactsDir path is not video-encoder-dependent. Un-skip to test.
+# should save downloads to artifactsDir
 
 # ── Cluster-sibling small leaks (TODO probes) ──────────────────────────────
 # Track each pending its own investigation. Don't expand prematurely.

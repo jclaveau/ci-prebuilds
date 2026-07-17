@@ -28,7 +28,11 @@
 # browsertype-connect: 6 fails clustered under `run-server` + `launchServer`
 # describe blocks — connect-over-WS launcher path our musl build doesn't
 # handle (ipv6, wss, headed mode, reconnect).
-tests/library/browsertype-connect\.spec\.ts
+# BUCKET-C PROBE 2026-07-17: only ~6 of the file's tests are structural, and
+# those titles (reconnect / wss / ipv6×2) are ALREADY grep-inverted in
+# firefox.titles.txt. Un-skip the whole file to recover the passing majority;
+# titles.txt keeps the 6 out. Restore this line if the file reds broadly.
+# tests/library/browsertype-connect\.spec\.ts
 
 # Recorder-UI whole-file skips REMOVED 2026-07-15 — chromium bundle unblocks
 # _enableRecorder for inspector/* + slowmo + debug-controller + selector-
