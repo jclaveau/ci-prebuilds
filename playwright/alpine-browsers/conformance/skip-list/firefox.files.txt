@@ -34,13 +34,17 @@ tests/library/browsertype-connect\.spec\.ts
 # _enableRecorder for inspector/* + slowmo + debug-controller + selector-
 # generator (~270 tests recovered).
 #
-# Trace-viewer whole-file skip — STRUCTURAL. The internal trace-viewer chromium
-# harness needs the EXACT PW-pinned chromium (148); the recorder-UI bundle can
-# only ship whatever an Alpine tag has (:3.22=142, :3.23=149). Probed :3.23/149
-# 2026-07-16 (iter 29494313953): still 4 whack-a-mole title fails + a ~94-test
-# worker-abort cascade (beforeAll fixture crash aborts the whole worker). No
-# Alpine tag ships 148, so this stays whole-file skipped until we can bundle a
-# from-source 148 (expensive, deferred). See conformance-gap-triage audit.
+# Trace-viewer whole-file skip — OUT OF CONFORMANCE SCOPE. trace-viewer.spec.ts
+# tests the trace VIEWER UI (`npx playwright show-trace` / showTraceViewer() —
+# a separate headed chromium app that renders a recorded trace for a human to
+# click through). It is interactive inspection tooling, NEVER invoked during
+# an automated test run. Trace GENERATION (the CI-relevant part — recording a
+# trace during a run via context.tracing.start()) is tests/library/tracing.
+# spec.ts, which runs and passes. Like cli-codegen, these tests validate PW's
+# own tooling on Alpine, not the musl browser-under-test. (Also technically
+# blocked: the viewer's internal chromium needs exact PW-pinned 148; probe
+# :3.23/149 iter 29494313953 whack-a-mole-failed + cascaded — but even if
+# bundleable it stays skipped by scope.) Kept whole-file skipped by design.
 tests/library/trace-viewer\.spec\.ts$
 tests/library/trace-viewer-scrub\.spec\.ts$
 #

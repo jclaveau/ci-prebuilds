@@ -35,9 +35,11 @@ tests/library/chromium/oopif\.spec\.ts$
 # our Alpine WebKit build, which has a divergent UA-agent header).
 tests/library/modernizr\.spec\.ts$
 
-# Trace-viewer whole-file skip — STRUCTURAL (needs exact PW-pinned chromium
-# 148; no Alpine tag ships it). :3.23/149 probe failed same as FF leg
-# (iter 29494313953). Stays skipped until a from-source-148 bundle exists.
+# Trace-viewer whole-file skip — OUT OF CONFORMANCE SCOPE. Tests the trace
+# VIEWER UI (show-trace headed-chromium app for human inspection), NOT invoked
+# during test runs. Trace GENERATION (tracing.spec.ts) runs + passes. Validates
+# PW's viewer tooling on Alpine, not the musl WebKit binary. See FF leg for the
+# full rationale. Kept skipped by design.
 tests/library/trace-viewer\.spec\.ts$
 tests/library/trace-viewer-scrub\.spec\.ts$
 
