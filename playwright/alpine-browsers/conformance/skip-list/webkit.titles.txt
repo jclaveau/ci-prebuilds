@@ -33,30 +33,27 @@ should saveAs videos from remote browser
 should save videos to artifactsDir
 should name video file after page guid when connecting to remote browser with artifactsDir
 
-# ── File-input / download — STRUCTURAL on WK-musl (bucket-C verdict 2026-07-17)
-# Un-skip probe (iter 29565116253) FAILED all 3. Deep-diagnosed from the shard
-# error bodies + A/B vs the Ubuntu-WK baseline (same run, same PW WebKit SHA +
-# patches — Ubuntu passes all 3, so this is musl/our-WPE-build specific, NOT a
-# PW-upstream-known fail). TWO root-cause clusters, needing a WebKit build/source
-# fix (not runner apks — the icu/nss/gst apk probe didn't move them):
-#
-# Cluster A — automation file-input METADATA not propagated. PW's setInputFiles
-# injects via WebKit Automation.setFilesForInputElement (not the native picker);
-# file CONTENTS arrive but metadata is dropped:
-#   - upload a folder: all 3 files present but webkitRelativePath="" for each →
-#     Set collapses 3→1 ({""}). Directory upload also crashes WebProcess on retry
-#     (Target closed / 30s timeout) — instability on top of the metadata bug.
-#   - preserve lastModified timestamp: File.lastModified is ~170s late (≈ upload
-#     wall-clock, not source stat mtime) — File built from a fresh copy/now().
-#   Dig-site: WebKit WebAutomationSession file handling (relativePath + mtime).
-#
-# Cluster B — download-delegate PERSISTENCE. download.path() → "No such file or
-# directory" at artifacts/<uuid>: WebKit fires the download event + returns a
-# path, but the bytes are never written to the automation-designated dir.
-#   Dig-site: WebKit DownloadManager / SandboxExtension write path on musl/WPE.
-should upload a folder
-should preserve lastModified timestamp
-should save downloads to artifactsDir
+# ── File-input / download — SANDBOX-FIX PROBE 2026-07-17 ────────────────────
+# These 3 FAILED as bucket-C un-skips (iter 29565116253): upload-folder returned
+# webkitRelativePath="" for every file, lastModified came back ≈now not source
+# mtime, and downloads never landed at artifacts/<uuid>. A 3-agent source dive
+# (PW-core + WebKit@SHA + our build config) traced ALL THREE to a single ROOT
+# CAUSE that is NOT a WebKit source bug: the conformance runner left WebKit's
+# bwrap sandbox LIVE (pw-conformance.yml used the misspelled WEBKIT_DISABLE_
+# SANDBOX=1 instead of the upstream WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS the
+# smoke jobs use). A live bwrap namespaces the FS and doesn't mount PW's host
+# tmp dirs, so the WebProcess/NetworkProcess couldn't stat the upload sources
+# (→ DirectoryFileListCreator skips the dir branch → empty relativePath +
+# fileModificationTime nullopt → lastModified=now()) or write the download
+# destination (→ g_file_create fails). Ubuntu-WK baseline passes all 3, matching
+# a config-not-source cause. Fixed the env var in pw-conformance.yml; un-skipped
+# here to validate. If they now PASS, delete this block. If any still red, the
+# residual is the musl std::filesystem seam (WTF FileSystem.cpp last_write_time/
+# listDirectory) — restore the failing title(s) then. See
+# project_wk_fileinput_download_musl_gaps.md.
+# should upload a folder
+# should preserve lastModified timestamp
+# should save downloads to artifactsDir
 
 # ── Cluster-sibling small leaks (TODO probes) ──────────────────────────────
 # Track each pending its own investigation. Don't expand prematurely.

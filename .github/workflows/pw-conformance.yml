@@ -111,9 +111,19 @@ jobs:
             # Peel-by-error layers per project_webkit_smoke_sandbox_strip_layers
             # memory: WebKit's bwrap on Alpine needs both seccomp +
             # apparmor unconfined AND SYS_ADMIN + NET_ADMIN caps AND the
-            # WEBKIT_DISABLE_SANDBOX=1 escape hatch.
+            # sandbox-disable escape hatch.
+            #
+            # The escape-hatch env var MUST be the upstream WebKitGTK/WPE
+            # spelling WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS (+ FORCE_SANDBOX=0)
+            # — the same the smoke jobs use. The old `WEBKIT_DISABLE_SANDBOX=1`
+            # here was a TYPO WebKit silently ignores, so bwrap stayed LIVE (the
+            # SYS_ADMIN cap above proves it runs). A live bwrap namespaces the FS
+            # and doesn't mount PW's host tmp dirs, so file-upload sources +
+            # download destinations were invisible to the Web/NetworkProcess →
+            # webkitRelativePath="", lastModified=now(), downloads not written.
+            # Root-caused via iter 29565116253 bucket-C + 3-agent source dive.
             SECURITY_FLAGS="$SECURITY_FLAGS --security-opt apparmor=unconfined --cap-add SYS_ADMIN --cap-add NET_ADMIN"
-            EXTRA_ENV="-e WEBKIT_DISABLE_SANDBOX=1"
+            EXTRA_ENV="-e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 -e WEBKIT_FORCE_SANDBOX=0"
           fi
 
           docker run --rm $SECURITY_FLAGS \
