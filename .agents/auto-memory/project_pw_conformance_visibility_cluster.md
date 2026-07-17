@@ -67,4 +67,8 @@ Failing-cluster spec files (count of fails per file across the run):
 - page-aria-snapshot-ai.spec.ts (~8)
 - wheel.spec.ts (~6)
 
-Related: [[pw-upstream-juggler-handshake-hang]] (firefox cousin), [[webkit-alpine-branch-c]].
+**CONFIRMED APK-ONLY (2026-07-16):** on **CHS-from-source** (chromium 148, ships the full `chrome_100_percent.pak` UA stylesheet) the visibility cluster passes — page-check + elementhandle-bounding-box + scroll-into-view + add-locator-handler un-skipped clean (+~21). The bug is the ALPINE APK's truncated pak, not chromium/musl. CHS-apk is now paused (workflow_dispatch-only); only CHS-fs consumes the chromium skip-list. Also recovered on CHS-fs the SAME cycle: CHIPS/Partitioned third-party cookies (+11 — defensive apk-era over-skip; chromium 148 ships CHIPS on) and `page-aria-snapshot` (+39 — aria snapshots compare accessible-name TEXT/YAML, NOT pixels, so they don't share the font-rasterization root cause of the pixel-screenshot files; bisected OUT of the screenshot whole-file skip). CHS-fs 84.4%→86.4%.
+
+**Still structural on CHS-fs (headless_shell GN target strips them; from-source 148 identical):** drag/wheel/drop (input paths), pixel-screenshot (Alpine freetype rasterization ≠ reference PNGs). page-aria-snapshot-**ai** stays skipped (LLM-nondeterministic).
+
+Related: [[pw-upstream-juggler-handshake-hang]] (firefox cousin), [[webkit-alpine-branch-c]], [[recorder-family-chromium-bundle]], [[pw-conformance-scope-out-of-scope]].
