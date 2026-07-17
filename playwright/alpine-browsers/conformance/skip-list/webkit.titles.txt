@@ -34,13 +34,26 @@ should save videos to artifactsDir
 should name video file after page guid when connecting to remote browser with artifactsDir
 
 # ── File-input / download — STRUCTURAL on WK-musl (bucket-C verdict 2026-07-17)
-# Un-skip probe (iter 29565116253) FAILED all 3 — NOT mis-bucketed, genuine
-# WK-on-Alpine gaps. They fail across every spec that exercises them
-# (browsertype-connect run-server + launchServer, page-set-input-files,
-# download.spec.ts); the title grep-invert covers all instances.
-#   - upload a folder: directory upload (webkitdirectory file chooser) unsupported
-#   - lastModified timestamp: setInputFiles doesn't preserve file mtime on musl
-#   - save downloads to artifactsDir: WK download-save path broken on Alpine
+# Un-skip probe (iter 29565116253) FAILED all 3. Deep-diagnosed from the shard
+# error bodies + A/B vs the Ubuntu-WK baseline (same run, same PW WebKit SHA +
+# patches — Ubuntu passes all 3, so this is musl/our-WPE-build specific, NOT a
+# PW-upstream-known fail). TWO root-cause clusters, needing a WebKit build/source
+# fix (not runner apks — the icu/nss/gst apk probe didn't move them):
+#
+# Cluster A — automation file-input METADATA not propagated. PW's setInputFiles
+# injects via WebKit Automation.setFilesForInputElement (not the native picker);
+# file CONTENTS arrive but metadata is dropped:
+#   - upload a folder: all 3 files present but webkitRelativePath="" for each →
+#     Set collapses 3→1 ({""}). Directory upload also crashes WebProcess on retry
+#     (Target closed / 30s timeout) — instability on top of the metadata bug.
+#   - preserve lastModified timestamp: File.lastModified is ~170s late (≈ upload
+#     wall-clock, not source stat mtime) — File built from a fresh copy/now().
+#   Dig-site: WebKit WebAutomationSession file handling (relativePath + mtime).
+#
+# Cluster B — download-delegate PERSISTENCE. download.path() → "No such file or
+# directory" at artifacts/<uuid>: WebKit fires the download event + returns a
+# path, but the bytes are never written to the automation-designated dir.
+#   Dig-site: WebKit DownloadManager / SandboxExtension write path on musl/WPE.
 should upload a folder
 should preserve lastModified timestamp
 should save downloads to artifactsDir
