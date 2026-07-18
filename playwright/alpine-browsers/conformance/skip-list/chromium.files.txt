@@ -13,13 +13,16 @@
 # `xvfb-run -a` wrap in run.sh gives the internal recorder-UI harness an X
 # server. Same fix as the FF leg.
 
-# Screencast / recordVideo — chromium-headless-shell ships without the
-# video encoding pipeline. `screencast.spec.ts` is the launch-options test;
-# `video.spec.ts` is the recordVideo flow; `tracing.spec.ts` "screencast frames"
-# uses the same encoder path (caught earlier via title regex; whole file
-# skipped is cleaner).
-tests/library/screencast\.spec\.ts$
-tests/library/video\.spec\.ts$
+# Screencast / recordVideo — RECOVERED 2026-07-19. The "headless-shell ships
+# without the video encoding pipeline" rationale was wrong on two counts: PW
+# captures frames over standard CDP Page.startScreencast (in every chromium) and
+# encodes them with PW's OWN bundled ffmpeg, not the browser. That PW ffmpeg is
+# a STATICALLY-linked glibc binary that execs fine on musl (verified: its
+# -version runs). Local probe against chs-fs-edge with the original PW ffmpeg:
+# video.spec 28 passed; screencast.spec 12 passed (retries=2 — the empty-video /
+# start-dispose pair flakes at retries=0, passes under CI's retries=2).
+# tests/library/screencast\.spec\.ts$
+# tests/library/video\.spec\.ts$
 
 # Touch / tap — RECOVERED 2026-07-19. The "touch event source not in
 # headless-shell" rationale was an APK-era carryover; PW drives tap purely over
