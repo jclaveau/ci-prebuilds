@@ -42,16 +42,16 @@ should name video file after page guid when connecting to remote browser with ar
 # so the WebProcess couldn't stat the upload sources. With the sandbox actually
 # disabled (validated iter 29619124025) both PASS — no title-skip needed.
 
-# ── Download to artifactsDir — RESIDUAL, sandbox-independent ─────────────────
-# `should save downloads to artifactsDir` STILL fails after the sandbox fix
-# (iter 29619124025, same "download.path: … No such file or directory" at
-# artifacts/<uuid>). So this is NOT the sandbox — it's a real WebKit soup
-# download-write residual on musl/WPE: NetworkDataTaskSoup::download() either
-# doesn't makeAllDirectories the automation download dir before g_file_create,
-# or g_file_move (intermediate .wkdownload → final) fails EXDEV across the
-# container's tmpfs/overlay mounts. Needs a WebKit source patch — kept skipped.
-# Dig-sites in project_wk_fileinput_download_musl_gaps.md.
-should save downloads to artifactsDir
+# ── Download to artifactsDir — FIXED 2026-07-18 via WebKit soup mkdir -p ─────
+# `should save downloads to artifactsDir` used to fail with `Error opening file
+# …/artifacts/<uuid>: No such file or directory`. Root-caused via local repro +
+# strace: the test passes a *user-provided* artifactsDir as the download path,
+# but neither PW (browserType only mkdirs the auto mkdtemp path) nor WebKit's
+# NetworkDataTaskSoup::download() (g_file_replace/g_file_create don't mkdir -p)
+# creates it → ENOENT. Proven: pre-creating the dir made the test pass locally.
+# Fixed by injecting an idempotent g_file_make_directory_with_parents of the
+# destination's parent into NetworkDataTaskSoup::download() (prep-source.sh).
+# See project_wk_fileinput_download_musl_gaps.md.
 
 # ── Cluster-sibling small leaks (TODO probes) ──────────────────────────────
 # Track each pending its own investigation. Don't expand prematurely.

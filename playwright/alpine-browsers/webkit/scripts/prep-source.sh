@@ -105,6 +105,38 @@ if [[ -f "$DACG_FILE" ]] && ! grep -q '<wtf/SystemTracing.h>' "$DACG_FILE"; then
   mv "${DACG_FILE}.new" "$DACG_FILE"
 fi
 
+# NetworkDataTaskSoup::download() opens the automation download destination
+# with g_file_replace/g_file_create, which do NOT create parent directories.
+# PW's `should save downloads to artifactsDir` passes a *user-provided*
+# artifactsDir as the download path, and neither PW (browserType only mkdirs
+# the auto mkdtemp path, not a caller-supplied one) nor WebKit-soup creates it
+# — so the write fails with `Error opening file …/artifacts/<uuid>: No such
+# file or directory` (ENOENT). Proven locally: pre-creating the dir makes the
+# test pass. Insert an idempotent mkdir -p of the destination's parent before
+# the stream open. Pure glib, no new include (GFile/GRefPtr already in scope).
+SOUP_FILE="Source/WebKit/NetworkProcess/soup/NetworkDataTaskSoup.cpp"
+if [[ -f "$SOUP_FILE" ]] && ! grep -q 'download destination parent' "$SOUP_FILE"; then
+  echo "  inject download-destination mkdir -p into $(basename "$SOUP_FILE")"
+  awk '
+    !done && /m_downloadDestinationFile = adoptGRef\(g_file_new_for_path\(downloadDestinationPath\.data\(\)\)\);/ {
+      print
+      print "    // Playwright/Alpine parity (added by prep-source.sh): create the"
+      print "    // download destination parent dir; g_file_replace/g_file_create do"
+      print "    // not mkdir -p and a user-provided artifactsDir is created by no one."
+      print "    if (GRefPtr<GFile> downloadParentDir = adoptGRef(g_file_get_parent(m_downloadDestinationFile.get())))"
+      print "        g_file_make_directory_with_parents(downloadParentDir.get(), nullptr, nullptr);"
+      done = 1
+      next
+    }
+    { print }
+  ' "$SOUP_FILE" > "${SOUP_FILE}.new"
+  mv "${SOUP_FILE}.new" "$SOUP_FILE"
+  if ! grep -q 'download destination parent' "$SOUP_FILE"; then
+    echo "ERROR: failed to inject download-destination mkdir -p (anchor not found?)" >&2
+    exit 1
+  fi
+fi
+
 # Strip .git — ~1GB saved in the source-prep image which both port chains FROM.
 rm -rf .git
 
