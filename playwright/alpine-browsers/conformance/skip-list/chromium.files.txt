@@ -21,8 +21,11 @@
 tests/library/screencast\.spec\.ts$
 tests/library/video\.spec\.ts$
 
-# Touch / tap — touch event source not in headless-shell.
-tests/library/tap\.spec\.ts$
+# Touch / tap — RECOVERED 2026-07-19. The "touch event source not in
+# headless-shell" rationale was an APK-era carryover; PW drives tap purely over
+# CDP (Input.dispatchTouchEvent + Emulation.setTouchEmulationEnabled), a Blink
+# feature present in the from-source full-pak binary. Local probe against
+# chs-fs-edge: tests/library/tap.spec.ts → 9 passed.
 
 # OOPIF (out-of-process iframes) — RECOVERED 2026-07-17 (bucket-C, iter
 # 29565116253). from-source chromium 148 ships site-isolation; the whole file
@@ -56,20 +59,13 @@ tests/library/tap\.spec\.ts$
 # tests, restore + document.
 # tests/page/page-check\.spec\.ts$
 
-# Drag-and-drop subcluster — PW's mouse-drag synthesis does NOT fire
-# HTML5 dragstart/dragend in chromium-headless-shell on Alpine. Probed
-# locally — confirmed dataset never set after dragTo. Headless-shell
-# limitation; not fixable without a chromium build patch.
-tests/page/page-drag\.spec\.ts$
-
-# Wheel subcluster — `mouse.wheel(...)` does not deliver wheel events
-# in chromium-headless-shell on Alpine. Probed locally — scrollTop stays
-# zero after wheel(0, 100). Same root-cause family as drag.
-tests/page/wheel\.spec\.ts$
-
-# Drop (page-drop) — drag-and-drop target side; same family as page-drag
-# above (HTML5 drag events not synthesized).
-tests/page/page-drop\.spec\.ts$
+# Drag / wheel / drop subcluster — RECOVERED 2026-07-19. The old "not
+# synthesized in headless-shell" probes were on the APK binary; PW drives all
+# three purely over CDP (crDragDrop setInterceptDrags/dispatchDragEvent, crInput
+# wheel→dispatchMouseEvent) — DragController + wheel forwarding ARE in the
+# headless_shell target (the glibc chrome-headless-shell passes them on the
+# Ubuntu baseline). Local probe against chs-fs-edge: page-drag 19, wheel 7,
+# page-drop 7 — all pass.
 
 # ── Snapshot-comparison subcluster ────────────────────────────────────────
 # PW tests that assert against pixel-stored reference PNGs (toMatchSnapshot
@@ -82,14 +78,13 @@ tests/page/page-drop\.spec\.ts$
 tests/library/screenshot\.spec\.ts$
 tests/page/page-screenshot\.spec\.ts$
 tests/page/elementhandle-screenshot\.spec\.ts$
-# page-aria-snapshot BISECT PROBE 2026-07-16 — aria snapshots compare
-# accessible-name/-role TEXT (YAML), NOT pixels, so they should NOT share the
-# font-rasterization root cause of the pixel screenshot files above. Un-skip
-# to test. page-aria-snapshot-ai stays skipped (LLM-nondeterministic, needs a
-# model). Restore below if accname text diverges (2nd root cause: font/locale
-# accessible-name stack).
+# page-aria-snapshot — RECOVERED 2026-07-19. aria snapshots compare accessible
+# name/role TEXT (YAML), not pixels, so they never shared the pixel screenshot
+# font-rasterization root cause. Both the plain and -ai variants pass: despite
+# the "-ai" name these are deterministic aria-tree assertions (no live model).
+# Local probe against chs-fs-edge: page-aria-snapshot-ai → 34 passed.
 # tests/page/page-aria-snapshot\.spec\.ts$
-tests/page/page-aria-snapshot-ai\.spec\.ts$
+# tests/page/page-aria-snapshot-ai\.spec\.ts$
 
 # ── Codegen — PERMANENT SKIP, OUT OF CONFORMANCE SCOPE ──────────────────────
 # These validate PW's code-GENERATION tooling (record actions → python/js/
