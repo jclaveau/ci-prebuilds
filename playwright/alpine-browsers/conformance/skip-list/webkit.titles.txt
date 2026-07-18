@@ -33,27 +33,25 @@ should saveAs videos from remote browser
 should save videos to artifactsDir
 should name video file after page guid when connecting to remote browser with artifactsDir
 
-# ── File-input / download — SANDBOX-FIX PROBE 2026-07-17 ────────────────────
-# These 3 FAILED as bucket-C un-skips (iter 29565116253): upload-folder returned
-# webkitRelativePath="" for every file, lastModified came back ≈now not source
-# mtime, and downloads never landed at artifacts/<uuid>. A 3-agent source dive
-# (PW-core + WebKit@SHA + our build config) traced ALL THREE to a single ROOT
-# CAUSE that is NOT a WebKit source bug: the conformance runner left WebKit's
-# bwrap sandbox LIVE (pw-conformance.yml used the misspelled WEBKIT_DISABLE_
-# SANDBOX=1 instead of the upstream WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS the
-# smoke jobs use). A live bwrap namespaces the FS and doesn't mount PW's host
-# tmp dirs, so the WebProcess/NetworkProcess couldn't stat the upload sources
-# (→ DirectoryFileListCreator skips the dir branch → empty relativePath +
-# fileModificationTime nullopt → lastModified=now()) or write the download
-# destination (→ g_file_create fails). Ubuntu-WK baseline passes all 3, matching
-# a config-not-source cause. Fixed the env var in pw-conformance.yml; un-skipped
-# here to validate. If they now PASS, delete this block. If any still red, the
-# residual is the musl std::filesystem seam (WTF FileSystem.cpp last_write_time/
-# listDirectory) — restore the failing title(s) then. See
-# project_wk_fileinput_download_musl_gaps.md.
-# should upload a folder
-# should preserve lastModified timestamp
-# should save downloads to artifactsDir
+# ── File-input metadata — RECOVERED 2026-07-18 via the bwrap-sandbox fix ─────
+# `should upload a folder` + `should preserve lastModified timestamp` used to
+# fail (webkitRelativePath="" for every file; lastModified ≈now not source mtime)
+# because the conformance runner left WebKit's bwrap sandbox LIVE — the misspelled
+# WEBKIT_DISABLE_SANDBOX=1 env var (fixed to WEBKIT_DISABLE_SANDBOX_THIS_IS_
+# DANGEROUS in pw-conformance.yml). A live bwrap didn't mount PW's host tmp dirs,
+# so the WebProcess couldn't stat the upload sources. With the sandbox actually
+# disabled (validated iter 29619124025) both PASS — no title-skip needed.
+
+# ── Download to artifactsDir — RESIDUAL, sandbox-independent ─────────────────
+# `should save downloads to artifactsDir` STILL fails after the sandbox fix
+# (iter 29619124025, same "download.path: … No such file or directory" at
+# artifacts/<uuid>). So this is NOT the sandbox — it's a real WebKit soup
+# download-write residual on musl/WPE: NetworkDataTaskSoup::download() either
+# doesn't makeAllDirectories the automation download dir before g_file_create,
+# or g_file_move (intermediate .wkdownload → final) fails EXDEV across the
+# container's tmpfs/overlay mounts. Needs a WebKit source patch — kept skipped.
+# Dig-sites in project_wk_fileinput_download_musl_gaps.md.
+should save downloads to artifactsDir
 
 # ── Cluster-sibling small leaks (TODO probes) ──────────────────────────────
 # Track each pending its own investigation. Don't expand prematurely.
