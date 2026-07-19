@@ -54,3 +54,9 @@ tests/library/inspector/cli-codegen-test\.spec\.ts$
 tests/library/inspector/cli-codegen-javascript\.spec\.ts$
 tests/library/inspector/cli-codegen-csharp\.spec\.ts$
 tests/library/inspector/cli-codegen-java\.spec\.ts$
+
+# modernizr — STRUCTURAL (re-skipped 2026-07-19). The gst-registry env recovered
+# the 4 media-codec titles, but modernizr's Safari Desktop + Mobile Safari
+# feature-detection still fails on WPE (WPE's capability set diverges from real
+# Safari-18 UA beyond codec sub-keys). Genuine port delta, not runner-fixable.
+tests/library/modernizr\.spec\.ts$
