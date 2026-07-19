@@ -37,8 +37,11 @@ directory". **Proven**: injecting `fs.mkdirSync(artifactsDir)` into the test mad
 it PASS locally (4.7s). Fix = inject an idempotent
 `g_file_make_directory_with_parents(g_file_get_parent(dest))` into
 `download()` before the stream open — in `prep-source.sh` (awk, marker
-`download destination parent`). Un-skipped in webkit.titles.txt; validates on the
-next WK producer rebuild. (Ubuntu-WebKit passes this same test unpatched — its
+`download destination parent`). Un-skipped in webkit.titles.txt. **VALIDATED
+2026-07-19: full WK rebuild + conformance run 29661800753 — all 20
+conformance-webkit shards GREEN, download-to-artifactsDir now passes** (the run's
+only red was the unrelated pre-existing conformance-ubuntu-chromium shard-18
+baseline flake). All 3 WK file-input/download gaps now closed. (Ubuntu-WebKit passes this same test unpatched — its
 build/env creates the dir; our musl build doesn't. Didn't fully resolve that
 asymmetry; the mkdir -p is idempotent so it's safe either way.)
 
