@@ -72,7 +72,6 @@ should not construct a new URL when valid URLs are passed\s*$
 should not hang when frame is detached\s*$
 should not receive console message for pageError\s*$
 should not throw if request was cancelled by the page\s*$
-should play video @smoke\s*$
 should reject cors with disallowed credentials\s*$
 should reject when frame detaches\s*$
 should report errors\s*$

@@ -119,7 +119,8 @@ RUN apk update && apk add --no-cache \\
     icu-libs icu-data-full libevent libffi libjpeg-turbo libnotify libogg \\
     libtheora libvorbis libvpx libwebp libwebp-tools libxcomposite \\
     libxt mesa-gl mesa-dri-gallium nspr nss pipewire-libs libpulse \\
-    ttf-freefont xvfb xvfb-run jq
+    ttf-freefont xvfb xvfb-run jq \\
+    ffmpeg-libs
 COPY --from=chromium-fetch /opt/chromium-bundle /opt/chromium-bundle
 COPY --from=${IMAGE_REF} /firefox /ms-playwright/firefox-${ARTIFACT_REV}/firefox
 RUN touch /ms-playwright/firefox-${ARTIFACT_REV}/INSTALLATION_COMPLETE
@@ -224,6 +225,13 @@ RUN touch /ms-playwright/webkit-${ARTIFACT_REV}/INSTALLATION_COMPLETE
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
+# WebKit's WebProcess builds an EMPTY GStreamer registry unless pointed at the
+# apk plugin dir + scanner — canPlayType() then returns '' for every codec.
+# Point it at the runner's gstreamer-1.0 install so media capability + playback
+# discover the avdec/vpx/opus decoders.
+ENV GST_PLUGIN_SYSTEM_PATH_1_0=/usr/lib/gstreamer-1.0
+ENV GST_PLUGIN_SCANNER_1_0=/usr/libexec/gstreamer-1.0/gst-plugin-scanner
+ENV GST_REGISTRY_1_0=/tmp/gst-registry.bin
 RUN npm install -g playwright@${PW_VERSION}
 # ffmpeg-1011 needed by recordVideo + screencast fixtures; skip-list narrows the
 # affected suite, but downloading lets the rest of tests/library boot cleanly.

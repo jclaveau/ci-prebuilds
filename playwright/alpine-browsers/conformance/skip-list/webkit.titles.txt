@@ -26,10 +26,6 @@ reverse engineer internal:has-text locators
 # sandbox was masking media) — STILL structural. `should play video` fails at
 # `video.play()` with the sandbox genuinely off; the GStreamer/WPE decode gap is
 # the wall, unrelated to bwrap. Needs a WebKit build flag. Don't re-probe.
-should play video
-should play webm video
-should play audio
-should not crash on page with mp4
 
 # ── Video / headed remote subcluster ────────────────────────────────────────
 should ignore page.pause when headed$
