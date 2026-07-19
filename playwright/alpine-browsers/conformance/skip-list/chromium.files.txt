@@ -70,14 +70,15 @@
 # Ubuntu baseline). Local probe against chs-fs-edge: page-drag 19, wheel 7,
 # page-drop 7 — all pass.
 
-# ── Snapshot-comparison subcluster ────────────────────────────────────────
-# PW tests that assert against pixel-stored reference PNGs (toMatchSnapshot
-# / toHaveScreenshot / toMatchAriaSnapshot) fail because Alpine's font
-# rendering + chromium's compositor combination produces subpixel-different
-# output vs. upstream PW's reference snapshots (taken on Mac + glibc
-# linux). NOT a real conformance gap — same PW SDK behavior, different
-# rasterization. Would require shipping our own Alpine baseline PNG set
-# per PW version (impractical to maintain).
+# ── Snapshot-comparison subcluster — RECOVERED 2026-07-19 (from-source) ──────
+# The "Alpine freetype/fontconfig rasterization vs Mac/glibc goldens" reason was
+# ASSUMED and never re-probed on from-source. WRONG: chromium 148 built from
+# source bundles its OWN Skia+freetype, so it renders PIXEL-IDENTICAL to PW's
+# Ubuntu goldens (the golden name has no platform suffix — `{arg}-chromium.png` —
+# and grid.html is digit-IMAGES + solid HSL boxes, no text). Local probe at the
+# strict threshold:0 — page-screenshot 60, elementhandle-screenshot 18,
+# screenshot 25 — ALL pass. The pixel-golden skips were APK-era carryovers like
+# the rest. Un-skipped the 3 screenshot files (+ 'should not affect screenshots').
 # page-aria-snapshot — RECOVERED 2026-07-19. aria snapshots compare accessible
 # name/role TEXT (YAML), not pixels, so they never shared the pixel screenshot
 # font-rasterization root cause. Both the plain and -ai variants pass: despite
