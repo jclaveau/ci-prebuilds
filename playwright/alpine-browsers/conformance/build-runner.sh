@@ -116,7 +116,7 @@ FROM alpine:edge
 RUN apk update && apk add --no-cache \\
     nodejs npm bash git build-base python3 \\
     alsa-lib dbus-libs fontconfig freetype glib gtk+3.0 harfbuzz \\
-    icu-libs libevent libffi libjpeg-turbo libnotify libogg \\
+    icu-libs icu-data-full libevent libffi libjpeg-turbo libnotify libogg \\
     libtheora libvorbis libvpx libwebp libwebp-tools libxcomposite \\
     libxt mesa-gl mesa-dri-gallium nspr nss pipewire-libs libpulse \\
     ttf-freefont xvfb xvfb-run jq

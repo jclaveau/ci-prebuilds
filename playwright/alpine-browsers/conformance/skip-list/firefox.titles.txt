@@ -14,7 +14,10 @@
 # Clusters:
 #   - cross-process iframe / docShell access (Juggler cross-origin gap)
 #   - file:// subframes / bfcache (musl file:// resolver)
-#   - locale (Alpine ICU package differs from Ubuntu)
+#   - locale — RECOVERED 2026-07-19: added icu-data-full to the FF runner
+#     apk list (build-runner.sh); browsercontext-locale.spec.ts 6→11 pass
+#     locally. Removed: should format number/date/number-in-popups,
+#     should be isolated between contexts, should not change default locale.
 #   - detached frame handling (Juggler frame lifecycle timing)
 #   - CORS / CSP throw messages (FF error-string variance on musl)
 #   - PW-known upstream fails (webgl @smoke × 3 — also in
@@ -37,7 +40,6 @@ should be able to download a inline PDF file via navigation\s*$
 should be able to reconnect to a browser\s*$
 should be able to visit ipv6 through localhost\s*$
 should be able to visit ipv6\s*$
-should be isolated between contexts\s*$
 should click the button with deviceScaleFactor set\s*$
 should click the button with fixed position inside an iframe\s*$
 should connect over wss\s*$
@@ -60,9 +62,6 @@ should fail with predicate throwing sometimes\s*$
 should fetch hidpi assets\s*$
 should fire illegal character error\s*$
 should fire\s*$
-should format date\s*$
-should format number in popups\s*$
-should format number\s*$
 should goBack to redirected navigation\s*$
 should goForward to redirected navigation\s*$
 should gracefully fallback when child frame cant be captured\s*$
@@ -76,7 +75,6 @@ should mask in parallel\s*$
 should navigate subframes @smoke\s*$
 should not allow cross-frame element handles when frames do not script each other\s*$
 should not be called after finishing unsuccessfully\s*$
-should not change default locale in another context\s*$
 should not construct a new URL when valid URLs are passed\s*$
 should not hang when frame is detached\s*$
 should not receive console message for pageError\s*$
