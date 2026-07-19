@@ -135,7 +135,18 @@ RUN apk add --no-cache curl \\
  && curl -fsSL "https://raw.githubusercontent.com/microsoft/playwright/v${PW_VERSION}/browser_patches/firefox/preferences/00-playwright-prefs.js" \\
       -o /ms-playwright/firefox-${ARTIFACT_REV}/firefox/browser/defaults/preferences/00-playwright-prefs.js \\
  && curl -fsSL "https://raw.githubusercontent.com/microsoft/playwright/v${PW_VERSION}/browser_patches/firefox/preferences/playwright.cfg" \\
-      -o /ms-playwright/firefox-${ARTIFACT_REV}/firefox/playwright.cfg
+      -o /ms-playwright/firefox-${ARTIFACT_REV}/firefox/playwright.cfg \\
+ && printf '%s\\n' \\
+      'pref("fission.autostart", false);' \\
+      'pref("fission.webContentIsolationStrategy", 0);' \\
+      'pref("security.fileuri.strict_origin_policy", false);' \\
+      'pref("privacy.file_unique_origin", false);' \\
+      >> /ms-playwright/firefox-${ARTIFACT_REV}/firefox/playwright.cfg
+# Disable Fission (site isolation): PW's Juggler does a single-process docShell
+# frame walk that doesn't bridge OOP iframes, so cross-process iframe tests fail.
+# Local probe: cross-process-iframes / navigate-subframes / emulate-media-in-
+# cross-process-iframe all pass with fission.autostart=false (file:// subframes
+# stays broken — deeper musl file-uri resolver).
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \\
     LD_LIBRARY_PATH=/ms-playwright/firefox-${ARTIFACT_REV}/firefox
 RUN npm install -g playwright@${PW_VERSION}

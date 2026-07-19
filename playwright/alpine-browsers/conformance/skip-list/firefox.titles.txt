@@ -48,7 +48,6 @@ should dispose\s*$
 should emit close upon frame detach\s*$
 should emit error from unhandled rejects\s*$
 should emit event for iframe\s*$
-should emulate media in cross-process iframe\s*$
 should fail with ReferenceError on wrong page\s*$
 should fail with busted Array\.prototype\.toJSON\s*$
 should fail with predicate throwing on first call\s*$
@@ -66,7 +65,6 @@ should have different hars for concurrent contexts\s*$
 should have pages\s*$
 should ignore page.pause when headed\s*$
 should mask in parallel\s*$
-should navigate subframes @smoke\s*$
 should not be called after finishing unsuccessfully\s*$
 should not construct a new URL when valid URLs are passed\s*$
 should not hang when frame is detached\s*$
@@ -80,7 +78,6 @@ should report requests and responses handled by service worker with routing\s*$
 should report requests and responses handled by service worker\s*$
 should respect CSP @smoke\s*$
 should respect cors overrides\s*$
-should resolve responses after a navigation\s*$
 should round-trip har with postData\s*$
 should roundtrip local storage in third-party context\s*$
 should scroll into view element in iframe\s*$
@@ -99,9 +96,6 @@ should throw error with detailed information on exception inside promise\s*$
 should throw when added with URL to the CSP page\s*$
 should throw when frame is detached\s*$
 should upload a folder\s*$
-should wait for networkidle to succeed navigation with request from previous navigation\s*$
-should wait for networkidle when navigating iframe\s*$
-should work for cross-process iframes\s*$
 should work for frame\s*$
 should work for subframes\s*$
 should work for webgl\s*$
