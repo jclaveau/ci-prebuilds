@@ -21,8 +21,6 @@
 
 # Screencast / recordVideo — video encoding pipeline absent (run 28285531191
 # shard 7 surfaced screencast file-wide failure).
-tests/library/screencast\.spec\.ts$
-tests/library/video\.spec\.ts$
 
 # Touch / tap — touch event source not exposed by MiniBrowser-wpe.
 
