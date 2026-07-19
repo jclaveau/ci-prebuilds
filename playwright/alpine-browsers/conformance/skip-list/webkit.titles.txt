@@ -15,17 +15,18 @@ reverse engineer internal:has-text locators
 #   should format number / should format date / should format number in
 #   popups / should be isolated between contexts
 
-# ── Capabilities — media codecs — STRUCTURAL (re-skipped 2026-07-16) ────────
-# Un-skip probe (iter 29496096569 shard 7) with gst-plugins-ugly + openh264
-# added to the WK runner apks STILL failed all 4. WK's GStreamer media
-# pipeline doesn't pick up the decoders from runner apks alone — it needs a
-# WebKit build flag / WPE MediaStream backend wiring (audit's predicted risk).
-# Not runner-fixable; re-skipped as structural. (Locale part of rank-3 DID
-# recover via icu-data-full — kept un-skipped above.)
-# 2026-07-19: re-probed after the bwrap-sandbox env-var fix (in case the
-# sandbox was masking media) — STILL structural. `should play video` fails at
-# `video.play()` with the sandbox genuinely off; the GStreamer/WPE decode gap is
-# the wall, unrelated to bwrap. Needs a WebKit build flag. Don't re-probe.
+# ── Capabilities — media codecs — RECOVERED 2026-07-19 (gst registry env) ────
+# NOT structural after all. The WebProcess built an EMPTY GStreamer registry —
+# canPlayType() returned '' for EVERY codec (incl. royalty-free vp8/webm), so
+# the earlier gst-plugins-ugly/openh264 apk additions couldn't help: the
+# decoders were installed but never DISCOVERED. Root cause = the runner never
+# set GST_PLUGIN_SYSTEM_PATH_1_0 / GST_PLUGIN_SCANNER_1_0 / GST_REGISTRY_1_0, so
+# the WebProcess scanned an empty path. Pointed them at the apk gstreamer-1.0
+# install (build-runner.sh). Local probe: play video / play webm / play audio /
+# not-crash-mp4 all PASS (5/5). Un-skipped; modernizr file also un-skipped (its
+# codec sub-keys normalize once canPlayType works). Supersedes the 07-16/07-19
+# "structural / video.play() fails" verdict — that was the missing env, not a
+# WebKit build gap.
 
 # ── Video / headed remote subcluster ────────────────────────────────────────
 should ignore page.pause when headed$
