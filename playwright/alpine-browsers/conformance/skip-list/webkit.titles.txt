@@ -22,6 +22,10 @@ reverse engineer internal:has-text locators
 # WebKit build flag / WPE MediaStream backend wiring (audit's predicted risk).
 # Not runner-fixable; re-skipped as structural. (Locale part of rank-3 DID
 # recover via icu-data-full — kept un-skipped above.)
+# 2026-07-19: re-probed after the bwrap-sandbox env-var fix (in case the
+# sandbox was masking media) — STILL structural. `should play video` fails at
+# `video.play()` with the sandbox genuinely off; the GStreamer/WPE decode gap is
+# the wall, unrelated to bwrap. Needs a WebKit build flag. Don't re-probe.
 should play video
 should play webm video
 should play audio
