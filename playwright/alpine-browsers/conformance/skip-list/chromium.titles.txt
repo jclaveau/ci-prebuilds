@@ -50,17 +50,12 @@ should allow to re-connect to OOPIFs with CDP when iframes were there already
 # HAR security details — headless-shell may strip cert details
 
 # Permissions APIs not in headless-shell
-should be able to use the local-fonts API
-local network request is allowed from public origin
 
 # Capabilities not in headless-shell
 
 # SSL / cert family
 
 # WPT accname + axe-core — depend on fonts/locale stack not in our runner
-wpt accname #1
-wpt accname #2
-axe-core accessible-text
 
 # Mobile viewport / device-scale-factor / mobile-scale
 
@@ -99,7 +94,6 @@ input event.composed should be true and cross shadow dom boundary  # page-select
 # `tracing.spec.ts` "should produce screencast frames" — sibling of the
 # file-skipped screencast/video.spec.ts. Three sub-tests (fit/crop/scale)
 # in one parameterized spec.
-should produce screencast frames
 
 # launcher.spec.ts:45 headed-no-xserver — asserts a specific error string
 # when `headless: false` launches on a Linux box without an X server.
