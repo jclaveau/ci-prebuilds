@@ -59,4 +59,5 @@ should name video file after page guid when connecting to remote browser with ar
 
 # PW-known upstream fails shared with the Ubuntu-webkit baseline (see
 # skip-list-ubuntu/webkit.titles.txt). Parity gate enforces both sides
-# carry these entries.
+# carry these entries. (Passes on our WK locally, but carried for parity.)
+should capture navigation$
