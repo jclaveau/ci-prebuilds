@@ -25,10 +25,8 @@ tests/library/screencast\.spec\.ts$
 tests/library/video\.spec\.ts$
 
 # Touch / tap — touch event source not exposed by MiniBrowser-wpe.
-tests/library/tap\.spec\.ts$
 
 # OOPIF (out-of-process iframes) — chromium-specific test directory
-tests/library/chromium/oopif\.spec\.ts$
 
 # Modernizr — User-Agent feature-detection tests assume upstream macOS Safari
 # UA string ("Safari Desktop"/"Mobile Safari" suites both fail UA assertions on

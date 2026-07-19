@@ -24,93 +24,41 @@
 #     skip-list-ubuntu/firefox.titles.txt)
 clearPageErrors should work\s*$
 do not update console count on unhandled rejections\s*$
-frame\.press should work\s*$
-init script should run only once in iframe\s*$
-insertText should only emit input event\s*$
 pageErrors should work\s*$
 pageErrors since-navigation filter should work\s*$
-page\.frame should respect url\s*$
-reverse engineer internal:has-text locators\s*$
-should allow unnamed cookies\s*$
-should auto-wait for blocking CSS\s*$
-should be able to download a inline PDF file via navigation\s*$
 should be able to reconnect to a browser\s*$
 should be able to visit ipv6 through localhost\s*$
 should be able to visit ipv6\s*$
-should click the button with deviceScaleFactor set\s*$
-should click the button with fixed position inside an iframe\s*$
 should connect over wss\s*$
 should contain sourceURL\s*$
 should contain the Error\.name property\s*$
-should delete downloads when persistent context closes\s*$
-should disable memory cache when intercepting\s*$
-should dispose\s*$
-should emit close upon frame detach\s*$
 should emit error from unhandled rejects\s*$
-should emit event for iframe\s*$
 should emulate media in cross-process iframe\s*$
 should fail with ReferenceError on wrong page\s*$
 should fail with busted Array\.prototype\.toJSON\s*$
 should fail with predicate throwing on first call\s*$
 should fail with predicate throwing sometimes\s*$
-should fetch hidpi assets\s*$
 should fire illegal character error\s*$
 should fire\s*$
-should goBack to redirected navigation\s*$
-should goForward to redirected navigation\s*$
-should gracefully fallback when child frame cant be captured\s*$
 should handle object\s*$
 should handle odd values\s*$
 should handle window\s*$
-should have different hars for concurrent contexts\s*$
-should have pages\s*$
 should ignore page.pause when headed\s*$
-should mask in parallel\s*$
 should navigate subframes @smoke\s*$
 should not be called after finishing unsuccessfully\s*$
-should not construct a new URL when valid URLs are passed\s*$
-should not hang when frame is detached\s*$
 should not receive console message for pageError\s*$
-should not throw if request was cancelled by the page\s*$
 should play video @smoke\s*$
-should reject cors with disallowed credentials\s*$
-should reject when frame detaches\s*$
-should report errors\s*$
-should report hover and fine pointer for desktop\s*$
-should report requests and responses handled by service worker with routing\s*$
-should report requests and responses handled by service worker\s*$
-should respect CSP @smoke\s*$
-should respect cors overrides\s*$
 should resolve responses after a navigation\s*$
-should round-trip har with postData\s*$
-should roundtrip local storage in third-party context\s*$
-should scroll into view element in iframe\s*$
-should set local storage in third-party context\s*$
 should support an empty Error\.name property\s*$
-should support cors with GET\s*$
-should support custom firefox policies\s*$
-should support requestStorageAccess\s*$
-should support touch points in touch event arguments\s*$
-should support touch with null viewport\s*$
 should support webgl 2 @smoke\s*$
 should support webgl @smoke\s*$
-should throw a nice error when the request fails\s*$
-should throw an error if loading from url fail\s*$
 should throw error with detailed information on exception inside promise\s*$
-should throw when added with URL to the CSP page\s*$
-should throw when frame is detached\s*$
 should upload a folder\s*$
 should wait for networkidle to succeed navigation with request from previous navigation\s*$
 should wait for networkidle when navigating iframe\s*$
 should work for cross-process iframes\s*$
-should work for frame\s*$
-should work for subframes\s*$
 should work for webgl\s*$
-should work with device scale factor and clip\s*$
-should work with device scale factor\s*$
 should work with file URL with subframes\s*$
-should work with mixed content\s*$
-triggers event when some throw\s*$
 weberror event should include location\s*$
 weberror event should work\s*$
 # ── Trace-viewer title-skips REMOVED 2026-07-16 — dead weight ──────────────
