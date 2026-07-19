@@ -83,8 +83,6 @@ browserType\.executablePath should work
 #   page-click: checkbox toggle; page-fill: range/color fills + throws +
 #   contenteditable/body/wrong-frame/unsupported; page-focus: checkbox activate.
 # Kept below (different files, NOT the UA cluster):
-inputValue should work                                        # elementhandle-convenience
-input event.composed should be true and cross shadow dom boundary  # page-select-option
 
 # ── Drag subcluster siblings ──────────────────────────────────────────────
 # Already file-skipped page-drag.spec.ts; this catches sibling tests that
