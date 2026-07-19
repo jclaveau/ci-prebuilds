@@ -46,25 +46,16 @@ should allow to re-connect to OOPIFs with CDP when iframes were there already
 #   should not block third party SameSite=None cookies
 
 # Secure cookies over WSS
-should set secure cookies on secure WebSocket
 
 # HAR security details — headless-shell may strip cert details
-should include secure set-cookies
-should have security details
-should return security details directly from response
-should contain http2 for http2 requests
 
 # Permissions APIs not in headless-shell
 should be able to use the local-fonts API
 local network request is allowed from public origin
 
 # Capabilities not in headless-shell
-SharedArrayBuffer should work
-should not crash on showDirectoryPicker
-should not crash when clicking a color input
 
 # SSL / cert family
-should work for SSL
 
 # WPT accname + axe-core — depend on fonts/locale stack not in our runner
 wpt accname #1
@@ -72,37 +63,21 @@ wpt accname #2
 axe-core accessible-text
 
 # Mobile viewport / device-scale-factor / mobile-scale
-should scroll to a precise position with mobile scale
-should scroll mobile page with background-attachment: fixed
-should click the button with offset with page scale
-should return bounding box with page scale
 
 # Reuse-context mouse position
-should reset mouse position
 
 # Misc isolated gaps
-should use proxy for https urls
-should work with ignoreHTTPSErrors
 should not affect screenshots
-should remove locator handlers upon disconnect
-addLocatorHandler should throw when page closes
 
 # Hit-target — DOM event dispatching
-should block all events when hit target is wrong
-should click the button again after document.write
 
 # browsertype-connect — launchServer / run-server video + headed page.pause
 should ignore page.pause when headed$
-should saveAs videos from remote browser
-should save videos to artifactsDir
-should name video file after page guid when connecting to remote browser with artifactsDir
 
 # browserType.executablePath path-shape
 browserType\.executablePath should work
 
 # defaultbrowsercontext + download
-should support ignoreHTTPSErrors option
-should close the context without awaiting the failed download
 
 # ── Form-control subcluster — RECOVERED 2026-07-19 (from-source UA stylesheet) ─
 # The APK chromium-headless-shell shipped a UA stylesheet with `appearance:none`
@@ -120,7 +95,6 @@ input event.composed should be true and cross shadow dom boundary  # page-select
 # ── Drag subcluster siblings ──────────────────────────────────────────────
 # Already file-skipped page-drag.spec.ts; this catches sibling tests that
 # use the same drag synthesis.
-should report event.buttons
 
 # ── Cluster-sibling small leaks (v4 residual) ─────────────────────────────
 # `tracing.spec.ts` "should produce screencast frames" — sibling of the
@@ -135,9 +109,6 @@ should throw a friendly error if its headed and there is no xserver on linux run
 
 # browsercontext-har.spec.ts redirected navigation — all three behave
 # the same (history nav after HAR replay).
-should goBack to redirected navigation
-should goForward to redirected navigation
-should reload redirected navigation
 
 # ── Alpine UA-stylesheet cluster — RECOVERED 2026-07-19 (from-source) ────────
 # The 1x1-div hit-target geometry (page-click grid.html), page-mouse dblclick /
@@ -148,24 +119,16 @@ should reload redirected navigation
 # The entries kept below are DIFFERENT files (not the UA cluster), still skipped:
 
 # page-keyboard Escape-dialog contenteditable
-should close dialog on Escape key press in contenteditable\s*$
 
 # page-autowaiting-no-hang
-clicking in the middle of navigation that aborts\s*$
 
 # page-click-timeout-4
-should fail to click the button behind a large header after scrolling around\s*$
 
 # page-wait-for-selector-2 zero-sized
-should not consider visible when zero-sized\s*$
 
 # retarget
-check retargeting\s*$
 
 # expect-misc toBeInViewport + expect-boolean toBeVisible
-toBeInViewport should work\s*$
-toBeInViewport should respect ratio option\s*$
-toBeVisible over navigation\s*$
 
 # inspector/cli-codegen-1 partials (kept as title-skips; file has many
 # passing tests)
