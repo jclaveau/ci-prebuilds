@@ -1,164 +1,119 @@
 export const meta = {
   name: 'conformance-gap-triage',
-  description: 'Root-cause + ROI-rank the remaining PW-conformance skip clusters (Alpine-vs-Ubuntu delta) per browser',
-  whenToUse: 'After a conformance iter lands, to decide which skip clusters are worth attacking next. Pass args to override the cluster list; omit for the full default sweep.',
+  description: 'Autonomous per-browser attack: root-cause EVERY remaining Alpine-only conformance skip and emit a concrete, ordered fix queue (attempt even structural). Never asks — produces executable actions.',
+  whenToUse: 'To attack the remaining conformance parity gap. Runs one agent per browser in parallel, each returning an ordered attack queue the caller executes in a loop.',
   phases: [
-    { title: 'Investigate' },
-    { title: 'Synthesize' }
+    { title: 'Attack' },
+    { title: 'Sequence' }
   ]
 }
 
-// Default cluster catalog. Override by passing `args: { clusters: [...] }` with
-// the same shape, or `args: { only: ['trace-viewer', ...] }` to run a subset.
-const DEFAULT_CLUSTERS = [
-  {
-    key: 'trace-viewer',
-    scope: 'FF+WK+CHS-fs',
-    files: 'tests/library/trace-viewer.spec.ts + tests/library/trace-viewer-scrub.spec.ts',
-    hypothesis: 'Recorder-UI internal chromium version mismatch (Alpine :3.22 chromium 142 vs PW-pinned 148). Bundling a closer chromium may recover; else structural.',
-    est_tests: 360,
-  },
-  {
-    key: 'cli-codegen-lang',
-    scope: 'FF+WK+CHS-fs',
-    files: 'tests/library/inspector/cli-codegen-{python,python-async,pytest,test,javascript,csharp,java}.spec.ts',
-    hypothesis: 'Codegen CLI subprocess writes zero bytes (harness/subprocess launch), NOT divergent output strings. Un-skip probe needed post multi-stage chromium bundle.',
-    est_tests: 216,
-  },
-  {
-    key: 'ff-title-longtail',
-    scope: 'FF',
-    file_to_review: 'playwright/alpine-browsers/conformance/skip-list/firefox.titles.txt',
-    hypothesis: 'Coarse bucket of ~128 titles = 5 orthogonal sub-clusters (juggler-frame, juggler-console/pageError, musl-icu-locale, cors/csp string-variance, tail) + dead-weight trace-viewer + upstream-dupes.',
-    est_tests: 128,
-  },
-  {
-    key: 'wk-title-longtail',
-    scope: 'WK',
-    file_to_review: 'playwright/alpine-browsers/conformance/skip-list/webkit.titles.txt',
-    hypothesis: 'Locale (icu-data-full missing), video-codec (gst-plugins-ugly/openh264 missing), connect-headed (structural), locator-generator (upstream). Runner-image fixes recover most.',
-    est_tests: 17,
-  },
-  {
-    key: 'chs-fs-cookies-partitioned',
-    scope: 'CHS-fs',
-    hypothesis: 'CHIPS/Partitioned cookie skip is a defensive CHS-apk-era carryover. Chromium 148 from-source ships CHIPS on by default, no cookie feature suppression → likely full recovery. Un-skip probe.',
-    est_tests: 15,
-  },
-  {
-    key: 'chs-fs-drag-wheel-drop',
-    scope: 'CHS-fs',
-    files: 'tests/page/page-drag.spec.ts + tests/page/wheel.spec.ts + tests/page/page-drop.spec.ts',
-    hypothesis: '//headless:headless_shell GN target strips DragController + wheel forwarding. Identical in from-source 148 → structural, NOT apk-vs-source.',
-    est_tests: 24,
-  },
-  {
-    key: 'chs-fs-screenshot',
-    scope: 'CHS-fs',
-    files: 'tests/library/screenshot.spec.ts + tests/page/{page,elementhandle}-screenshot.spec.ts + tests/page/page-aria-snapshot{,-ai}.spec.ts',
-    hypothesis: 'Pixel-diff vs glibc/macOS reference PNGs (Alpine freetype/fontconfig rasterization). Pixel files structural; aria-snapshot may not rasterize → bisect.',
-    est_tests: 60,
-  }
+// Autonomous: no ask/wait. Each browser agent enumerates its CURRENT remaining
+// skips and emits concrete fix actions for ALL of them, ranked by feasibility,
+// attempting a real source patch even for "structural" ones. Override the
+// browser set with args:{browsers:[...]}.
+const BROWSERS = (args && args.browsers) || [
+  { key: 'chromium-fs', filesTxt: 'chromium.files.txt', titlesTxt: 'chromium.titles.txt', artifact: 'chs-fs-edge', rev: '1223', producerFlag: 'build_chromium_headless_shell_from_source' },
+  { key: 'firefox',     filesTxt: 'firefox.files.txt',   titlesTxt: 'firefox.titles.txt',   artifact: 'edge',        rev: '1522', producerFlag: 'build_firefox' },
+  { key: 'webkit',      filesTxt: 'webkit.files.txt',    titlesTxt: 'webkit.titles.txt',    artifact: 'wk-edge',     rev: '2287', producerFlag: 'build_webkit' },
 ]
 
-const CLUSTER_SCHEMA = {
+const ACTION_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['cluster', 'root_cause', 'fix_candidates', 'best_roi', 'files_examined'],
+  required: ['browser', 'actions', 'summary'],
   properties: {
-    cluster: { type: 'string' },
-    root_cause: { type: 'string' },
-    fix_candidates: {
+    browser: { type: 'string' },
+    summary: { type: 'string' },
+    actions: {
       type: 'array',
+      description: 'EVERY remaining attackable cluster as a concrete, ordered action. Cheapest/highest-confidence first. Attempt even structural (emit the best source patch).',
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['approach', 'effort_hours_est', 'expected_recovery_tests', 'risk_notes'],
-        properties: {
-          approach: { type: 'string' },
-          effort_hours_est: { type: 'number' },
-          expected_recovery_tests: { type: 'number' },
-          risk_notes: { type: 'string' }
-        }
-      }
-    },
-    best_roi: { type: 'string' },
-    files_examined: { type: 'array', items: { type: 'string' } }
-  }
-}
-
-const SYNTH_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['top_actions', 'structural_close', 'quick_wins', 'total_potential_tests'],
-  properties: {
-    top_actions: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['rank', 'approach', 'effort_hours', 'tests_recovered', 'cluster'],
+        required: ['rank', 'cluster', 'feasibility', 'type', 'root_cause', 'concrete_change', 'target_tests', 'needs_local_probe', 'needs_rebuild'],
         properties: {
           rank: { type: 'number' },
-          approach: { type: 'string' },
-          effort_hours: { type: 'number' },
-          tests_recovered: { type: 'number' },
-          cluster: { type: 'string' }
+          cluster: { type: 'string' },
+          feasibility: { type: 'string', enum: ['pass-now', 'config-fix', 'source-patch', 'structural-attempt'], description: 'structural-attempt = no clean fix known, but emit the most plausible source patch to TRY anyway' },
+          type: { type: 'string', enum: ['skiplist-remove', 'runner-config', 'source-patch'] },
+          root_cause: { type: 'string' },
+          concrete_change: { type: 'string', description: 'EXACT executable change: the skip-list lines/regex to delete, OR the apk/env runner diff, OR the source file + patch hunk + cmake/build flag. Precise enough to apply verbatim.' },
+          target_tests: { type: 'number' },
+          needs_local_probe: { type: 'boolean' },
+          needs_rebuild: { type: 'boolean' }
         }
       }
-    },
-    structural_close: { type: 'array', items: { type: 'string' } },
-    quick_wins: { type: 'array', items: { type: 'string' } },
-    total_potential_tests: { type: 'number' }
+    }
   }
 }
 
-const catalog = (args && args.clusters) || DEFAULT_CLUSTERS
-const clusters = (args && args.only)
-  ? catalog.filter(c => args.only.includes(c.key))
-  : catalog
+const SEQ_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['queue', 'total_target_tests'],
+  properties: {
+    queue: {
+      type: 'array',
+      description: 'Global execution order across browsers: all no-rebuild actions first (batched per browser), then one batched rebuild per browser folding all its source-patch/structural-attempt actions.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['step', 'browser', 'kind', 'clusters', 'target_tests', 'needs_rebuild'],
+        properties: {
+          step: { type: 'number' },
+          browser: { type: 'string' },
+          kind: { type: 'string', enum: ['skiplist-remove', 'runner-config', 'batched-rebuild'] },
+          clusters: { type: 'array', items: { type: 'string' } },
+          target_tests: { type: 'number' },
+          needs_rebuild: { type: 'boolean' }
+        }
+      }
+    },
+    total_target_tests: { type: 'number' }
+  }
+}
 
-phase('Investigate')
+phase('Attack')
 
 const results = await parallel(
-  clusters.map(c => () => agent(
-    `Investigate PW conformance skip cluster "${c.key}" on Alpine (${c.scope}).
+  BROWSERS.map(b => () => agent(
+    `Autonomously attack EVERY remaining Alpine-only PW-conformance skip for ${b.key}. Do NOT ask questions or defer — emit a concrete, ordered, executable fix queue for ALL remaining clusters, attempting a real source patch even for structural ones.
 
-Hypothesis: ${c.hypothesis}
-Est test count in cluster: ${c.est_tests}
-${c.files ? 'Spec files:\n' + c.files : ''}
-${c.file_to_review ? 'Skip-list file to review: ' + c.file_to_review : ''}
+Repo: /home/jean/dev/ci-prebuilds. Branch: feat/webkit-alpine-branch-c.
+Skip-list: playwright/alpine-browsers/conformance/skip-list/${b.filesTxt} + ${b.titlesTxt}.
+Ubuntu baseline (out-of-scope if shared): skip-list-ubuntu/. Local PW source: tmp/pw-cc-repro/pw-src.
+Published artifact: ghcr.io/jclaveau/playwright-alpine-browsers:${b.artifact} (rev ${b.rev}). Producer rebuild flag: ${b.producerFlag}.
 
-Repo root: /home/jean/dev/ci-prebuilds. Branch: feat/webkit-alpine-branch-c.
+Method:
+1. Read the current ${b.filesTxt}/${b.titlesTxt}; list every ACTIVE skip (non-comment). Exclude entries also in skip-list-ubuntu (PW-known, out-of-scope) and pure PW-tooling (cli-codegen/trace-viewer/slowmo).
+2. For each remaining cluster, read the test source in tmp/pw-cc-repro/pw-src and (for native failures) the browser source at the pinned SHA via web. Root-cause precisely.
+3. Emit a concrete action for EVERY cluster — none deferred:
+   - pass-now  → the exact skip-list lines/regex to delete (type=skiplist-remove).
+   - config-fix → the exact apk pkg / env var runner change in conformance/build-runner.sh (type=runner-config), plus the skip-list lines to delete.
+   - source-patch → the exact source file + patch hunk + any cmake/GN/build flag, in prep-source.sh idiom (type=source-patch, needs_rebuild=true).
+   - structural-attempt → NO clean fix known, but still emit the MOST PLAUSIBLE source patch or build flag to try (e.g. WebKit ENABLE_VIDEO / GStreamer plugin build, WPE encodeFrame !PLATFORM guard, FF Juggler docShell/Fission patch). Mark feasibility=structural-attempt, needs_rebuild=true. NEVER skip a cluster as unfixable — always propose an attempt.
+4. Rank cheapest+highest-confidence first (pass-now, config-fix, source-patch, structural-attempt). Set needs_local_probe=true where a docker probe against the published artifact would confirm before committing.
 
-Tasks:
-1. Read auto-memory: .agents/auto-memory/project_pw_conformance_visibility_cluster.md and adjacent project_*.md that reference this cluster.
-2. Read the relevant skip-list rationale under playwright/alpine-browsers/conformance/skip-list/.
-3. If test-fail log fragments exist under /tmp/iter*, /tmp/wk*, /tmp/ff*, /tmp/iterchsfs*, read one sample of the cluster.
-4. Optionally check git log via Bash: git log --all --oneline --grep="<cluster_keyword>" | head -20.
-5. Identify concrete root cause + 2-4 fix candidates (source patch / runner-image change / skip-list improvement / accept-as-structural).
-6. Estimate effort (hours) and expected test recovery per candidate. Note risks.
-
-Return structured verdict per schema. best_roi = one sentence naming the top candidate.`,
-    { label: 'audit:' + c.key, phase: 'Investigate', schema: CLUSTER_SCHEMA, agentType: 'general-purpose' }
+Return the full action list per schema. concrete_change must be precise enough to apply verbatim.`,
+    { label: 'attack:' + b.key, phase: 'Attack', schema: ACTION_SCHEMA, agentType: 'general-purpose' }
   ))
 )
 
 const findings = results.filter(Boolean)
 
-phase('Synthesize')
+phase('Sequence')
 
-const synthesis = await agent(
-  `Synthesize ${findings.length} cluster investigation results into a ROI-ranked action plan.
+const sequence = await agent(
+  `Build a single global execution queue from these per-browser attack lists. No asking — output the order to execute.
 
-Cluster findings:
 ${JSON.stringify(findings, null, 2)}
 
-Rank the top 5 highest-ROI attack paths across all clusters (approach + effort_hours + tests_recovered).
-Identify clusters to close as structural (skip permanently, no realistic fix).
-Identify quick-wins landable in the next commit (< 1h effort each).
-Compute total_potential_tests = sum of expected_recovery across all viable fixes.`,
-  { label: 'synthesize', phase: 'Synthesize', schema: SYNTH_SCHEMA, agentType: 'general-purpose' }
+Rules:
+- All no-rebuild actions FIRST (skiplist-remove, runner-config), batched per browser — these validate via cheap conformance-only dispatch.
+- Then exactly ONE batched-rebuild step per browser that folds ALL its source-patch + structural-attempt actions into a single producer rebuild (amortize the multi-hour cost) — the 3 browsers' rebuilds run in parallel (separate CI concurrency channels).
+- target_tests per step = sum of its clusters' target_tests. total_target_tests = grand sum.`,
+  { label: 'sequence', phase: 'Sequence', schema: SEQ_SCHEMA, agentType: 'general-purpose' }
 )
 
-return { findings, synthesis }
+return { findings, sequence }
