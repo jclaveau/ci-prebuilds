@@ -23,16 +23,13 @@
 #   - PW-known upstream fails (webgl @smoke × 3 — also in
 #     skip-list-ubuntu/firefox.titles.txt)
 clearPageErrors should work\s*$
-dialog\.accept should work\s*$
 do not update console count on unhandled rejections\s*$
 frame\.press should work\s*$
-goBack/goForward should work with bfcache-able pages\s*$
 init script should run only once in iframe\s*$
 insertText should only emit input event\s*$
 pageErrors should work\s*$
 pageErrors since-navigation filter should work\s*$
 page\.frame should respect url\s*$
-page\.goBack should work for file urls\s*$
 reverse engineer internal:has-text locators\s*$
 should allow unnamed cookies\s*$
 should auto-wait for blocking CSS\s*$
@@ -46,10 +43,7 @@ should connect over wss\s*$
 should contain sourceURL\s*$
 should contain the Error\.name property\s*$
 should delete downloads when persistent context closes\s*$
-should detach child frames on navigation\s*$
 should disable memory cache when intercepting\s*$
-should dispose context on cross-origin navigation\s*$
-should dispose context on navigation\s*$
 should dispose\s*$
 should emit close upon frame detach\s*$
 should emit error from unhandled rejects\s*$
@@ -73,7 +67,6 @@ should have pages\s*$
 should ignore page.pause when headed\s*$
 should mask in parallel\s*$
 should navigate subframes @smoke\s*$
-should not allow cross-frame element handles when frames do not script each other\s*$
 should not be called after finishing unsuccessfully\s*$
 should not construct a new URL when valid URLs are passed\s*$
 should not hang when frame is detached\s*$
@@ -82,28 +75,20 @@ should not throw if request was cancelled by the page\s*$
 should play video @smoke\s*$
 should reject cors with disallowed credentials\s*$
 should reject when frame detaches\s*$
-should report different frame instance when frame re-attaches\s*$
 should report errors\s*$
-should report frame\.name\(\)\s*$
-should report frame\.parent\(\)\s*$
 should report hover and fine pointer for desktop\s*$
 should report requests and responses handled by service worker with routing\s*$
 should report requests and responses handled by service worker\s*$
 should respect CSP @smoke\s*$
 should respect cors overrides\s*$
 should resolve responses after a navigation\s*$
-should respect selectors\s*$
 should round-trip har with postData\s*$
 should roundtrip local storage in third-party context\s*$
-should run in specified frame xpath\s*$
-should run in specified frame\s*$
 should scroll into view element in iframe\s*$
 should set local storage in third-party context\s*$
 should support an empty Error\.name property\s*$
 should support cors with GET\s*$
 should support custom firefox policies\s*$
-should support framesets\s*$
-should support hasTouch option\s*$
 should support requestStorageAccess\s*$
 should support touch points in touch event arguments\s*$
 should support touch with null viewport\s*$
@@ -112,9 +97,7 @@ should support webgl @smoke\s*$
 should throw a nice error when the request fails\s*$
 should throw an error if loading from url fail\s*$
 should throw error with detailed information on exception inside promise\s*$
-should throw for detached frames\s*$
 should throw when added with URL to the CSP page\s*$
-should throw when frame is detached xpath\s*$
 should throw when frame is detached\s*$
 should upload a folder\s*$
 should wait for networkidle to succeed navigation with request from previous navigation\s*$
