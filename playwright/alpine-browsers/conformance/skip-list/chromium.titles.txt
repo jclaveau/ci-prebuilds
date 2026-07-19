@@ -104,46 +104,18 @@ browserType\.executablePath should work
 should support ignoreHTTPSErrors option
 should close the context without awaiting the failed download
 
-# ── Form-control subcluster (sibling tests outside the file-skipped ones) ──
-# Same root cause as page-check.spec.ts file-skip: Alpine's
-# chromium-headless-shell ships UA stylesheet with `appearance:none`
-# defaults on form controls, so vanilla checkbox/range/color render 0px
-# and PW's auto-wait `is visible` fails. These are the per-test occurrences
-# in spec files we keep mostly enabled.
-
-# elementhandle-misc.spec.ts checkbox set:
-should check the box
-should check the box using setChecked
-should uncheck the box
-
-# locator-misc-1.spec.ts checkbox set (same titles, different project):
-# (the three titles above also catch the locator-misc-1 variants since
-# title regex is project-agnostic — leave them once.)
-
-# locator-convenience.spec.ts inputValue (uses default input which is OK
-# but isChecked indeterminate uses checkbox):
-isChecked should work for indeterminate input
-inputValue should work
-
-# locator-misc-2.spec.ts scroll/bbox tests that hit form-control geometry:
-should scroll into view
-should scroll zero-sized element into view
-should return bounding box
-
-# page-click.spec.ts: checkbox toggle uses a vanilla checkbox.
-should click on checkbox input and toggle
-
-# page-fill.spec.ts: range/color inputs are form-control-rendered to 0px.
-# Other fills (textarea, contenteditable) MAY work — be specific.
-should fill range input
-should throw on incorrect range value
-should fill color input
-should fill color input case insensitive
-should throw on incorrect color value
-input event.composed should be true and cross shadow dom boundary
-
-# page-focus.spec.ts: checkbox click
-clicking checkbox should activate it
+# ── Form-control subcluster — RECOVERED 2026-07-19 (from-source UA stylesheet) ─
+# The APK chromium-headless-shell shipped a UA stylesheet with `appearance:none`
+# on form controls (checkbox/range/color rendered 0px → PW auto-wait `is visible`
+# failed). From-source chromium ships the proper UA stylesheet. Local probe of
+# the whole files (retries=2) — all green — recovered these titles:
+#   elementhandle-misc: check/uncheck the box (+setChecked); locator-convenience:
+#   isChecked indeterminate; locator-misc-2: scroll-into-view / bounding-box;
+#   page-click: checkbox toggle; page-fill: range/color fills + throws +
+#   contenteditable/body/wrong-frame/unsupported; page-focus: checkbox activate.
+# Kept below (different files, NOT the UA cluster):
+inputValue should work                                        # elementhandle-convenience
+input event.composed should be true and cross shadow dom boundary  # page-select-option
 
 # ── Drag subcluster siblings ──────────────────────────────────────────────
 # Already file-skipped page-drag.spec.ts; this catches sibling tests that
@@ -167,40 +139,16 @@ should goBack to redirected navigation
 should goForward to redirected navigation
 should reload redirected navigation
 
-# ── Alpine UA-stylesheet cluster titles (batched from run 29082778991) ────
-# Same family as file-skipped page-check / page-drag / wheel / drop /
-# elementhandle-bounding-box / page-add-locator-handler: chromium-headless-
-# shell on Alpine ships a UA stylesheet that renders form controls / drag
-# widgets / hit-tested 1x1 divs incorrectly. Skipping these gets runtime-
-# parity green while we track root cause in umbrella issue.
-
-# page-click 1x1 div alignment cluster (grid.html)
-should click the aligned 1x1 div\s*$
-should click the half-aligned 1x1 div\s*$
-should click the unaligned 1x1 div v1\s*$
-should click the unaligned 1x1 div v2\s*$
-should click the unaligned 1x1 div v3\s*$
-should click the unaligned 1x1 div v4\s*$
-should wait for stable position\s*$
-should fail when element is animating from outside the viewport with force\s*$
-ensure events are dispatched in the individual tasks\s*$
-should set PointerEvent\.pressure on pointermove\s*$
-should click with tweened mouse movement\s*$
-
-# page-mouse siblings
-should dblclick the div\s*$
-should pointerdown the div with a custom button\s*$
+# ── Alpine UA-stylesheet cluster — RECOVERED 2026-07-19 (from-source) ────────
+# The 1x1-div hit-target geometry (page-click grid.html), page-mouse dblclick /
+# pointerdown / pressure / tweened, stable-position, and page-fill
+# contenteditable/body titles all shared the APK UA-stylesheet root cause.
+# Local full-file probe (retries=2) — page-click 85, page-mouse 15, page-fill 46,
+# elementhandle-wait-for-element-state 12 — all green. Titles removed.
+# The entries kept below are DIFFERENT files (not the UA cluster), still skipped:
 
 # page-keyboard Escape-dialog contenteditable
 should close dialog on Escape key press in contenteditable\s*$
-
-# page-fill contenteditable + body-fill + unsupported-inputs
-should fill contenteditable\s*$
-should fill contenteditable with new lines\s*$
-should not double-fill in contenteditable with beforeinput handler in Firefox\s*$
-should be able to fill the body\s*$
-should be able to fill when focus is in the wrong frame\s*$
-should throw on unsupported inputs\s*$
 
 # page-autowaiting-no-hang
 clicking in the middle of navigation that aborts\s*$
@@ -225,7 +173,6 @@ should fill \[contentEditable\]\s*$
 cli codegen should check\s*$
 should check a radio button\s*$
 should check with keyboard\s*$
-should uncheck\s*$
 cli codegen should select\s*$
 should select with size attribute\s*$
 should record slider\s*$
