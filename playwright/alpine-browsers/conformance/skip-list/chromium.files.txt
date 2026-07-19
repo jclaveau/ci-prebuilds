@@ -127,4 +127,3 @@ tests/library/trace-viewer-scrub\.spec\.ts$
 # SlowMo check + uncheck`. All exercise vanilla checkbox click under
 # slowMo timing. Same family as file-skipped page-check.spec.ts (Alpine
 # chromium-headless-shell UA stylesheet renders checkbox 0px wide).
-tests/library/slowmo\.spec\.ts$
