@@ -6,6 +6,15 @@
 # Use for individual real Alpine/musl conformance gaps. Whole-file
 # divergences (UI subsystems, codecs) go in chromium.files.txt.
 
+# ── Video pixel-content (single test) ───────────────────────────────────────
+# `screencast › should capture navigation` decodes a recorded video frame and
+# asserts every pixel isAlmostGray — on Alpine/Xvfb it captures a black frame
+# (bad pixel 0,0,0,255) instead, failing 3× retries (conf run 29665829491
+# shard 17). Same pixel-content nondeterminism as the screenshot pixel-golden
+# files; the OTHER 27 video.spec tests pass (see chromium.files.txt un-skip).
+# Local passes (host Xvfb renders gray) — CI display differs. Single title-skip.
+screencast › should capture navigation$
+
 # ── OOPIF CDP re-connect (single test) ──────────────────────────────────────
 # oopif.spec.ts RECOVERED whole-file 2026-07-17 (bucket-C, iter 29565116253) —
 # from-source 148 ships site-isolation. This ONE test still fails on Alpine (the
