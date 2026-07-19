@@ -29,6 +29,18 @@ The fix location is uncertain and spans Juggler + the FF binary + possibly
 upstream PW-core — unverifiable without a 2h FF rebuild per iteration. Per the
 "don't fire a build on an unverifiable guess" rule, documented structural.
 
+**The crash CASCADES (2026-07-20 sharded probe, run 29706652835).** Un-skipping
+all 86 non-shared FF titles at once: 7/20 shards went FULLY green (a real stale
+subset exists among the 90) but 13/20 red. The `.url`-undefined crash fires,
+prints "Test ended", and kills the worker's REMAINING tests → one crash ripples
+into many failures. So the FF delta is NOT ~90 independent gaps; it's this
+cascade PLUS diverse genuine musl deltas (browsercontext-fetch/base-url,
+har-transferSize, CORS/CSP error-strings, cross-process/Fission). The cascade
+makes the stale subset non-isolable from line-reporter logs — reverted to the
+90-skip / 95.3% baseline. To recover FF further: fix the pageerror crash FIRST
+(then re-probe; many "genuine" fails are just cascade victims), OR parse the
+per-shard HTML report artifacts (exact per-test pass/fail) instead of logs.
+
 **Dig-sites (if attacked later, on a throwaway branch):** (1) in the musl FF
 build, log `message.outerWindowID` / `message.sourceName` in
 `juggler/content/Runtime.js` observe() to confirm whether the error is even
