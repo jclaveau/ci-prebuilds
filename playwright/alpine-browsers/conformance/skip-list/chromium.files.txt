@@ -78,9 +78,6 @@
 # linux). NOT a real conformance gap — same PW SDK behavior, different
 # rasterization. Would require shipping our own Alpine baseline PNG set
 # per PW version (impractical to maintain).
-tests/library/screenshot\.spec\.ts$
-tests/page/page-screenshot\.spec\.ts$
-tests/page/elementhandle-screenshot\.spec\.ts$
 # page-aria-snapshot — RECOVERED 2026-07-19. aria snapshots compare accessible
 # name/role TEXT (YAML), not pixels, so they never shared the pixel screenshot
 # font-rasterization root cause. Both the plain and -ai variants pass: despite

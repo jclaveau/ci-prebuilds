@@ -67,7 +67,6 @@ axe-core accessible-text
 # Reuse-context mouse position
 
 # Misc isolated gaps
-should not affect screenshots
 
 # Hit-target — DOM event dispatching
 
