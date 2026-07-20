@@ -13,7 +13,6 @@
 # shard 17). Same pixel-content nondeterminism as the screenshot pixel-golden
 # files; the OTHER 27 video.spec tests pass (see chromium.files.txt un-skip).
 # Local passes (host Xvfb renders gray) — CI display differs. Single title-skip.
-screencast › should capture navigation$
 
 # ── OOPIF CDP re-connect — PW-INTENDED headless-shell skip, NOT an Alpine gap ─
 # oopif.spec.ts RECOVERED whole-file 2026-07-17. This ONE test carries its OWN
