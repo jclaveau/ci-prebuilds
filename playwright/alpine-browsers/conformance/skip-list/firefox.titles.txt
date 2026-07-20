@@ -85,5 +85,6 @@ should work for frame\s*$
 should work with file URL with subframes\s*$
 triggers event when some throw\s*$
 weberror event should include location\s*$
-weberror event should work\s*$should dispose context on navigation\s*$
+weberror event should work\s*$
+should dispose context on navigation\s*$
 should record when manual popover with fullscreen backdrop is open\s*$
