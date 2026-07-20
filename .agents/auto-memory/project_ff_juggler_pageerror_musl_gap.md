@@ -1,9 +1,25 @@
 ---
 name: ff-juggler-pageerror-musl-gap
-description: FF page-event-pageerror cluster (~22 tests) fails on Alpine/musl with a client-side `Cannot read properties of undefined (reading 'url')` + "Test ended" — deep Juggler/musl error-surfacing gap, fix location uncertain, NOT fired as a speculative rebuild.
+description: RESOLVED 2026-07-20 — FF page-event-pageerror crash-family (26 titles) fixed by threading `location` through Juggler Page.uncaughtError; run 29745047841 conformance-firefox all-20-shards green with the 26 un-skipped.
 metadata:
   type: project
 ---
+
+**RESOLVED 2026-07-20 (commit ef541ad, run 29745047841 all-20-shards green).**
+Root cause was NOT musl error-surfacing — it was a Juggler protocol GAP: v1.60.0
+juggler omitted `location` from the `Page.uncaughtError` event, but the v1.60.0
+CLIENT (`browserContextDispatcher.ts:117`) reads `pageError.location.url`
+UNCONDITIONALLY → `Cannot read properties of undefined (reading 'url')` client-side
+crash on every page-level uncaught error → "Test ended" → cascade. Fix (ports
+upstream `main`): patch juggler `Runtime.js` to build
+`errorLocation = {lineNumber, columnNumber, url: message.sourceName}` and thread it
+through `onErrorFromWorker`/`_onRuntimeError`; add `location` param in `PageAgent.js`;
+add `location: runtimeTypes.ScriptLocation` to `Protocol.js` uncaughtError. Applied as
+a python3 heredoc in `firefox/scripts/apply-and-build.sh` (after the juggler cp).
+The un-skipped `weberror event should include location` title passing is direct proof.
+26 crash-family titles recovered → FF conformance ~95.3% → higher.
+
+--- ORIGINAL DIAGNOSIS (kept for the dig-site method) ---
 
 FF `tests/page/page-event-pageerror.spec.ts` cluster (`pageErrors should work`,
 `clearPageErrors should work`, `should contain the Error.name property`,
