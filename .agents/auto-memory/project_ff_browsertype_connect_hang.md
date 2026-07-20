@@ -20,11 +20,29 @@ reaches PAST the 6 named titles → title-level grep-invert can't contain it →
 whole-file skip is load-bearing. A hanging shard is worse than missing coverage.
 Root cause UNCONFIRMED (did NOT even prove shard-6 == this file).
 
-**How to apply:** keep the whole-file skip in `firefox.files.txt` (the wired-up
-TODO with dig-sites lives in its comment). WebSockets themselves are fine on
-FF-musl (page `new WebSocket()` + Juggler control both pass) — the failure is
-specific to the launchServer/connect proxy, possibly in PW's Node-side WS server
-not FF. Dig-sites when picked up: (1) confirm shard-6 attribution; (2) single-
-spec local repro via conformance/run.sh; (3) bisect launchServer WS spawn vs
-reconnect loop vs video/artifactsDir sub-tests. Related:
-[[pw-conformance-scope-out-of-scope]], [[pw-upstream-juggler-handshake-hang]].
+**ROOT CAUSE CONFIRMED 2026-07-20 (local repro, ff-prepared).** The hang is the
+`run-server` KIND, not `launchServer`. The musl FF needs the
+`--remote-debugging-port=0` arg (wakes RemoteAgent → Juggler; else dormant → the
+handshake hang, see [[pw-upstream-juggler-handshake-hang]]). For the
+`launchServer` kind the arg reaches the browser (works). For the `run-server`
+kind (`cli.js run-server` → `PlaywrightServer`), PW's `filterLaunchOptions()` in
+`packages/playwright-core/src/remote/playwrightServer.ts` STRIPS all client-
+supplied launch `args` — an RCE-prevention control (a remote client must not
+inject arbitrary browser args). So the Juggler workaround arg is filtered out →
+run-server FF launches WITHOUT it → Juggler dormant → every run-server subtest
+TIMES OUT → the "38min hang".
+
+**Fix is a SECURITY decision (NOT auto-applied).** filterLaunchOptions already
+lets `executablePath`/`artifactsDir` through under `isUnderTest()`
+(PWTEST_UNDER_TEST=1). Extending that gate to `args` (a one-line run.sh sed on the
+runner's PW-core clone, test-harness-only, not shipped in any artifact) unblocks
+the hang — validated locally, no hangs, 82/112+ passing. BUT it weakens an
+RCE-prevention control, so it needs explicit authorization. Non-weakening
+alternatives: (a) fix the musl FF Juggler/RemoteAgent handshake at BUILD time so
+the `--remote-debugging-port=0` workaround isn't needed at all (deep, the real
+fix); (b) keep skipped (the filter is doing its job; our workaround is the
+problem). Pending jean's call.
+
+**How to apply:** keep the whole-file skip until the security call is made.
+Related: [[pw-conformance-scope-out-of-scope]],
+[[pw-upstream-juggler-handshake-hang]], [[project_conformance_structural_was_stale]].
