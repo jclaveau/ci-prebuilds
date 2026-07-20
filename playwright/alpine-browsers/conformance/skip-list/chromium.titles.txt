@@ -6,19 +6,6 @@
 # Use for individual real Alpine/musl conformance gaps. Whole-file
 # divergences (UI subsystems, codecs) go in chromium.files.txt.
 
-# ── Video capture-navigation — DETERMINISTIC CI shard-17 fail (sibling GL) ────
-# `screencast › should capture navigation` records video across a cross-process
-# black→gray nav + asserts the LAST video frame isAlmostGray; on CI it captures a
-# black frame (0,0,0,255). DETERMINISTIC: failed on shard 17 in BOTH conf runs
-# 29665829491 AND 29748697128 (not a random flake). Root cause: passes ISOLATED
-# locally 14/14 (incl. forced --use-angle=swiftshader + CPU-starved load), but on
-# shard 17 it runs ALONGSIDE the other video/screencast tests → software-GL
-# compositor/screencast-encoder contention → Chromium's new-content-rendering-
-# timeout holds the old black content past context.close() → black last frame.
-# Not an Alpine browser bug (any chromium on contended software-GL). Kept skipped;
-# --disable-new-content-rendering-timeout is a candidate fix but is a global arg.
-screencast › should capture navigation$
-
 # ── OOPIF CDP re-connect — PW-INTENDED headless-shell skip, NOT an Alpine gap ─
 # oopif.spec.ts RECOVERED whole-file 2026-07-17. This ONE test carries its OWN
 # guard `it.skip(!!process.env.PWTEST_CHANNEL, 'Test default channel only')` — it

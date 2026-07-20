@@ -68,7 +68,15 @@ cd "$PW_SRC"
 # RemoteAgent → Juggler activates. Inject the same arg into the upstream
 # tests/library/playwright.config.ts firefox launchOptions so every project
 # picks it up.
-sed -i 's|executablePath,|executablePath,\n        args: browserName === "firefox" ? ["--remote-debugging-port=0"] : undefined,|' \
+# chromium: --run-all-compositor-stages-before-draw + --disable-new-content-
+# rendering-timeout fix `screencast › should capture navigation` on CI's
+# software-GL (SwiftShader). That test records a cross-process black→gray nav
+# and asserts the LAST frame isAlmostGray; late in a big shard the accumulated
+# software-GL compositor state holds the old BLACK content past context.close()
+# → black last frame. The two flags together (neither alone) force the new gray
+# to composite synchronously before the screencast frame emits. Validated on the
+# exact --shard=17/20 repro: neither flag alone passes, both → 113/113.
+sed -i 's|executablePath,|executablePath,\n        args: browserName === "firefox" ? ["--remote-debugging-port=0"] : browserName === "chromium" ? ["--run-all-compositor-stages-before-draw", "--disable-new-content-rendering-timeout"] : undefined,|' \
   tests/library/playwright.config.ts
 grep -A3 "launchOptions:" tests/library/playwright.config.ts | head -6
 
