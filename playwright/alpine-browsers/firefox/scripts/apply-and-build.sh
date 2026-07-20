@@ -168,6 +168,95 @@ patch -p1 -i /tmp/bootstrap-linux.diff
 mkdir -p juggler
 cp -a "$PW/juggler/." juggler/
 
+# FIX (2026-07-20): PW v1.60.0's juggler omits `location` on Page.uncaughtError,
+# but the v1.60.0 CLIENT (browserContextDispatcher.ts) reads
+# `pageError.location.url` UNCONDITIONALLY → "Cannot read properties of undefined
+# (reading 'url')" crashes the test worker on EVERY page-level uncaught error
+# (pageerror / weberror / worker error / CSP-blocked eval), cascading via
+# "Test ended". This is a version-skew inside the pinned tag (upstream `main`
+# added the location plumbing), NOT a musl divergence. Port main's location field
+# through the two emit paths + the protocol type. Assertive replacements so a
+# future juggler reformat fails the build loudly instead of re-shipping the crash.
+echo "  FIX: thread location through Page.uncaughtError (ports microsoft/playwright main)"
+python3 - <<'PYEOF'
+import pathlib
+def patch(path, pairs):
+    p = pathlib.Path(path); s = p.read_text()
+    for old, new in pairs:
+        assert old in s, f"anchor not found in {path}:\n{old!r}"
+        s = s.replace(old, new, 1)
+    p.write_text(s)
+
+patch('juggler/content/Runtime.js', [
+  ("        const errorWindow = Services.wm.getOuterWindowWithId(message.outerWindowID);\n"
+   "        if (message.category === 'Web Worker' && message.logLevel === Ci.nsIConsoleMessage.error) {\n"
+   "          emitEvent(this.events.onErrorFromWorker, errorWindow, message.message, '' + message.stack);",
+   "        const errorWindow = Services.wm.getOuterWindowWithId(message.outerWindowID);\n"
+   "        const errorLocation = {\n"
+   "          lineNumber: message.lineNumber - 1,\n"
+   "          columnNumber: message.columnNumber - 1,\n"
+   "          url: message.sourceName,\n"
+   "        };\n"
+   "        if (message.category === 'Web Worker' && message.logLevel === Ci.nsIConsoleMessage.error) {\n"
+   "          emitEvent(this.events.onErrorFromWorker, errorWindow, message.message, '' + message.stack, errorLocation);"),
+  ("          emitEvent(this.events.onRuntimeError, {\n"
+   "            executionContext,\n"
+   "            message: message.errorMessage,\n"
+   "            stack: message.stack ? message.stack.toString() : '',\n"
+   "          });",
+   "          emitEvent(this.events.onRuntimeError, {\n"
+   "            executionContext,\n"
+   "            message: message.errorMessage,\n"
+   "            stack: message.stack ? message.stack.toString() : '',\n"
+   "            location: errorLocation,\n"
+   "          });"),
+])
+
+patch('juggler/content/PageAgent.js', [
+  ("      this._runtime.events.onErrorFromWorker((domWindow, message, stack) => {",
+   "      this._runtime.events.onErrorFromWorker((domWindow, message, stack, location) => {"),
+  ("        this._browserPage.emit('pageUncaughtError', {\n"
+   "          frameId: frame.id(),\n"
+   "          message,\n"
+   "          stack,\n"
+   "        });",
+   "        this._browserPage.emit('pageUncaughtError', {\n"
+   "          frameId: frame.id(),\n"
+   "          message,\n"
+   "          stack,\n"
+   "          location,\n"
+   "        });"),
+  ("  _onRuntimeError({ executionContext, message, stack }) {\n"
+   "    this._browserPage.emit('pageUncaughtError', {\n"
+   "      frameId: executionContext.auxData().frameId,\n"
+   "      message: message.toString(),\n"
+   "      stack: stack.toString(),\n"
+   "    });",
+   "  _onRuntimeError({ executionContext, message, stack, location }) {\n"
+   "    this._browserPage.emit('pageUncaughtError', {\n"
+   "      frameId: executionContext.auxData().frameId,\n"
+   "      message: message.toString(),\n"
+   "      stack: stack.toString(),\n"
+   "      location,\n"
+   "    });"),
+])
+
+patch('juggler/protocol/Protocol.js', [
+  ("    'uncaughtError': {\n"
+   "      frameId: t.String,\n"
+   "      message: t.String,\n"
+   "      stack: t.String,\n"
+   "    },",
+   "    'uncaughtError': {\n"
+   "      frameId: t.String,\n"
+   "      message: t.String,\n"
+   "      stack: t.String,\n"
+   "      location: runtimeTypes.ScriptLocation,\n"
+   "    },"),
+])
+print("  juggler location patch applied (Runtime.js + PageAgent.js + Protocol.js)")
+PYEOF
+
 # Preferences: PW lays them under browser/app/profile/firefox.js by appending,
 # but the modern convention is to ship them as a separate prefs file Firefox
 # loads at runtime. PW's `preferences/` tree contains the canonical layout.
