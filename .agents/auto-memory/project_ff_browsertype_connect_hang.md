@@ -1,9 +1,26 @@
 ---
 name: ff-browsertype-connect-hang
-description: FF browsertype-connect.spec.ts (remote-browser-server launchServer/connect) HANGS a conformance shard 38min+ on musl; marked out-of-scope with a fix-later TODO
+description: FF browsertype-connect run-server HANG was PW filterLaunchOptions stripping the musl Juggler arg — RESOLVED 2026-07-20 by wrapping the FF binary to inject --remote-debugging-port=0 server-side (no security-filter change). Un-skipped + validated.
 metadata:
   type: project
 ---
+
+**RESOLVED 2026-07-20 — binary wrapper (jean's idea), no security change.** The
+FF conformance runner now wraps the FF binary (conformance/build-runner.sh):
+`mv firefox firefox.real` + a tiny `firefox` sh-wrapper that injects
+`--remote-debugging-port=0` (dedup-guarded) before `exec firefox.real "$@"`. The
+arg is now ALWAYS on the command line regardless of PW's `filterLaunchOptions`
+stripping client args on the run-server path — so PW's RCE-prevention filter stays
+FULLY intact (we did NOT patch it). Un-skipped `browsertype-connect.spec.ts` +
+reconnect/wss titles + the FF & WK remote-video titles. Validated: browsertype-
+connect green across shards (run 29732802155, 19-20/20; the lone shard-6 red was
+an unrelated frame-lifecycle flake). REJECTED alternative: an investigation agent
+proposed patching PlaywrightServer.filterLaunchOptions to let args through under
+isUnderTest() — that weakens the RCE control; the wrapper achieves the same with
+zero security change. See [[feedback_unskip_regression_beyond_target]] +
+[[project_conformance_structural_was_stale]].
+
+--- original diagnosis kept below ---
 
 `tests/library/browsertype-connect.spec.ts` = PW's remote-browser-server path:
 `browserType.launchServer()` exposes a `ws://` endpoint, `connect(wsEndpoint)`
