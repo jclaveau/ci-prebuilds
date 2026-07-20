@@ -15,14 +15,16 @@
 # Local passes (host Xvfb renders gray) — CI display differs. Single title-skip.
 screencast › should capture navigation$
 
-# ── OOPIF CDP re-connect (single test) ──────────────────────────────────────
-# oopif.spec.ts RECOVERED whole-file 2026-07-17 (bucket-C, iter 29565116253) —
-# from-source 148 ships site-isolation. This ONE test still fails on Alpine (the
-# only failure in the whole run): re-attaching a CDP session to OOPIFs that were
-# already present at connect time. Likely a musl CDP-target timing edge; the
-# other ~9 oopif tests (contentFrame, filechooser, click-in-iframe, intercept
-# response body, cdp sessions on oopifs) all pass. TODO(probe): dynamic-oopif
-# navigation timing if we chase this one.
+# ── OOPIF CDP re-connect — PW-INTENDED headless-shell skip, NOT an Alpine gap ─
+# oopif.spec.ts RECOVERED whole-file 2026-07-17. This ONE test carries its OWN
+# guard `it.skip(!!process.env.PWTEST_CHANNEL, 'Test default channel only')` — it
+# internally launches a hostBrowser via `channel:'chromium'` + connectOverCDP +
+# re-attaches to pre-existing OOPIFs, a headed-oriented path out-of-profile for a
+# chromium-headless-shell GN target (which our from-source artifact IS). PW itself
+# skips it off the default channel. Carried here as a headless-shell-inapplicable
+# skip (does NOT count against browser parity), not a musl bug. Setting
+# PWTEST_CHANNEL globally would fire the guard but has blast radius — kept as a
+# title-skip instead.
 should allow to re-connect to OOPIFs with CDP when iframes were there already
 
 # ── Third-party cookies / CHIPS / Partitioned — UN-SKIP PROBE 2026-07-16 ─────
@@ -92,9 +94,15 @@ should ignore page.pause when headed$
 # file-skipped screencast/video.spec.ts. Three sub-tests (fit/crop/scale)
 # in one parameterized spec.
 
-# launcher.spec.ts:45 headed-no-xserver — asserts a specific error string
-# when `headless: false` launches on a Linux box without an X server.
-# headless-shell can't launch headed at all, so the error path differs.
+# headed-no-xserver — PW-INTENDED headless-shell skip, NOT an Alpine gap.
+# launcher.spec.ts:45 launches headless:false with DISPLAY unset + expects the
+# full-chromium 'launched a headed browser without an XServer' error; the
+# headless-shell binary ignores headed-ness + launches fine → no error. PW's OWN
+# guard `it.skip(channel === 'chromium-headless-shell', 'shell is never headed')`
+# covers this; our runner doesn't declare the channel so the guard is dead, but
+# our artifact IS a headless-shell GN target (browserTest.ts derives isShell=true
+# via !channel && headless). Headless-shell-inapplicable — does NOT count against
+# browser parity.
 should throw a friendly error if its headed and there is no xserver on linux running
 
 # browsercontext-har.spec.ts redirected navigation — all three behave

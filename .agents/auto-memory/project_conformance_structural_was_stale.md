@@ -36,6 +36,25 @@ genuine source/build change, not an additive apk/env. Prefer additive
 runner-config over behavior toggles ([[feedback_unskip_regression_beyond_target]]
 — FF fission-off regressed untargeted tests).
 
+**Two more traps found 2026-07-20 (FF deep-dive):**
+- **A skip seed can predate a fix that would've prevented it.** The FF title-skip
+  seed (run 28952021038, 2026-07-08) was taken ONE DAY before the playwright.cfg
+  placement fix (2026-07-09, the `+56` recovery). So the seed FF had NO cfg at all
+  → every cfg-pref-dependent test (pdfjs, cookieBehavior, https-first, etc) failed
+  and got skipped. ~39 of the ~90 FF titles were stale THAT way — they pass now
+  that the runner curls playwright.cfg. Always check whether a skip predates a
+  since-landed runner/build fix before trusting it.
+- **A crashing test can CASCADE and poison whole shards.** FF
+  `page-event-pageerror` fails with a client-side `.url`-undefined crash that
+  prints "Test ended" and kills the worker → EVERY subsequent test in that worker
+  fails too. So a bulk un-skip probe reds far more than the real gaps (13-14/20
+  shards) and you cannot read stale-vs-genuine from it. FIX: either keep the
+  cascade source skipped during the probe (skip pageerror → the rest reads clean),
+  or run each file in its OWN `npx playwright test <file>` invocation (per-file
+  isolation stops one file's crash from touching another). Isolated per-file
+  probe: console 16 / har 56 / fetch 110 / page-goto 62 / base-url 8 — all green,
+  proving the bulk stale while pageerror alone is genuine.
+
 **Genuine-structural remainder (probed, real):** FF page-event-pageerror musl
 crash ([[project_ff_juggler_pageerror_musl_gap]]), FF cross-process/CORS/HAR/
 detached error-string deltas, FF+WK browsertype-connect hang
