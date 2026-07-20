@@ -87,22 +87,13 @@
 # tests/page/page-aria-snapshot\.spec\.ts$
 # tests/page/page-aria-snapshot-ai\.spec\.ts$
 
-# ── Codegen — PERMANENT SKIP, OUT OF CONFORMANCE SCOPE ──────────────────────
-# These validate PW's code-GENERATION tooling (record actions → python/js/
-# csharp/java source strings) via an internal recorder-UI chromium subprocess,
-# NOT the musl chromium-headless-shell binary this suite exists to certify.
-# Codegen is never invoked in this repo's CI (we ship a browser binary, not a
-# codegen service). Root cause known (probe iter 29503931312 on the FF leg:
-# the codegen CLI subprocess's recorder-UI writes zero bytes); a ~4h fix
-# exists but recovering these ~72 tests adds zero browser-conformance signal.
-# Kept whole-file skipped by design.
-tests/library/inspector/cli-codegen-python\.spec\.ts$
-tests/library/inspector/cli-codegen-python-async\.spec\.ts$
-tests/library/inspector/cli-codegen-pytest\.spec\.ts$
-tests/library/inspector/cli-codegen-test\.spec\.ts$
-tests/library/inspector/cli-codegen-javascript\.spec\.ts$
-tests/library/inspector/cli-codegen-csharp\.spec\.ts$
-tests/library/inspector/cli-codegen-java\.spec\.ts$
+# ── Codegen — RECOVERED 2026-07-20 (stale skip, re-probed) ──────────────────
+# The "zero-bytes recorder-UI subprocess" rationale was STALE — re-probed on
+# chs-prepared:local (bundled-chromium runner + xvfb-run -a): all 7 codegen
+# files pass (python 7, python-async 7, pytest 4, test 7, javascript 5,
+# csharp 21, java 8 = ~59 tests, 0 fail). Codegen's internal recorder-UI runs
+# fine on the runner's bundled chromium; the old skip predated that bundle.
+# Un-skipped.
 
 # ── Bounding-box + scroll-into-view + locator-handler subcluster ─────────
 # 2026-07-16: same UA-stylesheet family probe as page-check above — REMOVED
@@ -111,16 +102,11 @@ tests/library/inspector/cli-codegen-java\.spec\.ts$
 # tests/page/elementhandle-scroll-into-view\.spec\.ts$
 # tests/page/page-add-locator-handler\.spec\.ts$
 
-# ── Trace-viewer — OUT OF CONFORMANCE SCOPE ────────────────────────────────
-# trace-viewer.spec.ts tests the trace VIEWER UI (show-trace headed-chromium
-# app that renders a recorded trace for human inspection), NOT invoked during
-# an automated test run. Trace GENERATION (the CI-relevant part — recording a
-# trace during a run) is tests/library/tracing.spec.ts, which runs + passes.
-# Like cli-codegen, these validate PW's own viewer tooling on Alpine, not the
-# musl chromium-headless-shell binary. (Also had a shard-cap side effect: 43-45
-# tests × 4 retries under xvfb pushed shards past 90m.) Kept skipped by design.
-tests/library/trace-viewer\.spec\.ts$
-tests/library/trace-viewer-scrub\.spec\.ts$
+# ── Trace-viewer — RECOVERED 2026-07-20 (stale skip, re-probed) ─────────────
+# Re-probed on chs-prepared:local (bundled-chromium viewer + xvfb): trace-viewer
+# 102 passed / 1 failed, trace-viewer-scrub 9/9. The viewer UI runs fine on the
+# runner's bundled chromium. Un-skipped both files; the single residual
+# `should filter actions by text` is a title-skip in chromium.titles.txt.
 
 # ── slowMo checkbox subcluster ────────────────────────────────────────────
 # `slowmo.spec.ts` — 6 fails on shard 16/17: `Page/Frame/ElementHandle

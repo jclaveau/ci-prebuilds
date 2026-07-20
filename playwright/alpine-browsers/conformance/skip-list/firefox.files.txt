@@ -45,35 +45,12 @@
 # _enableRecorder for inspector/* + slowmo + debug-controller + selector-
 # generator (~270 tests recovered).
 #
-# Trace-viewer whole-file skip — OUT OF CONFORMANCE SCOPE. trace-viewer.spec.ts
-# tests the trace VIEWER UI (`npx playwright show-trace` / showTraceViewer() —
-# a separate headed chromium app that renders a recorded trace for a human to
-# click through). It is interactive inspection tooling, NEVER invoked during
-# an automated test run. Trace GENERATION (the CI-relevant part — recording a
-# trace during a run via context.tracing.start()) is tests/library/tracing.
-# spec.ts, which runs and passes. Like cli-codegen, these tests validate PW's
-# own tooling on Alpine, not the musl browser-under-test. (Also technically
-# blocked: the viewer's internal chromium needs exact PW-pinned 148; probe
-# :3.23/149 iter 29494313953 whack-a-mole-failed + cascaded — but even if
-# bundleable it stays skipped by scope.) Kept whole-file skipped by design.
-tests/library/trace-viewer\.spec\.ts$
-tests/library/trace-viewer-scrub\.spec\.ts$
-#
-# cli-codegen-<lang> — PERMANENT SKIP, OUT OF CONFORMANCE SCOPE. These assert
-# PW's code-GENERATION tooling (record actions → python/js/csharp/java source
-# strings) via an internal recorder-UI chromium subprocess. They validate
-# PW's OWN CLI tooling running on Alpine, NOT the musl-built browser-under-
-# test's rendering/protocol — which is what this suite exists to certify.
-# Codegen is never invoked in this repo's CI (we ship browser binaries, not a
-# codegen service). Root cause is known (probe iter 29503931312: the
-# `node cli.js codegen` subprocess's recorder-UI chromium writes zero bytes,
-# `Received string: ""` + poll timeout) and a ~4h subprocess-env fix exists,
-# but recovering these ~140 tests would inflate pass% with zero browser-
-# conformance signal. Kept whole-file skipped by design.
-tests/library/inspector/cli-codegen-python\.spec\.ts$
-tests/library/inspector/cli-codegen-python-async\.spec\.ts$
-tests/library/inspector/cli-codegen-pytest\.spec\.ts$
-tests/library/inspector/cli-codegen-test\.spec\.ts$
-tests/library/inspector/cli-codegen-javascript\.spec\.ts$
-tests/library/inspector/cli-codegen-csharp\.spec\.ts$
-tests/library/inspector/cli-codegen-java\.spec\.ts$
+# Trace-viewer + cli-codegen — UN-SKIP PROBE 2026-07-20 (stale, CHS-proven).
+# Both the "viewer out of scope" and "codegen writes zero bytes" rationales were
+# STALE — re-probed on chs-prepared:local (same bundled-chromium runner recipe):
+# all 7 codegen files pass (~59 tests) + trace-viewer 102/104 + trace-viewer-scrub
+# 9/9. Codegen's recorder-UI is browser-agnostic (records via the bundled chromium,
+# not the browser-under-test), so the FF leg should mirror CHS. Un-skipped as a
+# probe; validated via conformance-firefox dispatch. The single CHS residual
+# `should filter actions by text` is a title-skip in firefox.titles.txt; any
+# FF-trace-specific residuals get restored from the dispatch.
