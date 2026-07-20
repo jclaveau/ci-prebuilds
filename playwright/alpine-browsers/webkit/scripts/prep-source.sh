@@ -82,6 +82,50 @@ patch_orientation_events() {
 patch_orientation_events Source/cmake/OptionsWPE.cmake WPE
 patch_orientation_events Source/cmake/OptionsGTK.cmake GTK
 
+# WebRTC parity (added by prep-source.sh): the WPE/GTK ports default ENABLE_WEB_RTC
+# to ${ENABLE_EXPERIMENTAL_FEATURES} (=OFF), so RTCPeerConnection/RTCDataChannel are
+# never compiled → tests/library/modernizr.spec.ts fails on peerconnection:false +
+# datachannel:false. Force it ON for both ports. Like ENABLE_ORIENTATION_EVENTS this
+# is a PRIVATE port value (a CLI -D in cmake-flags.overlay does NOT override it), so
+# edit the source. USE_GSTREAMER_WEBRTC needs no change: it defaults ON (PUBLIC) and
+# is WEBKIT_OPTION_DEPEND'd on ENABLE_WEB_RTC → enabling WEB_RTC auto-selects the
+# GStreamer webrtcbin backend and keeps USE_LIBWEBRTC FALSE (no libwebrtc vendoring).
+# GStreamerChecks.cmake then needs gstreamer-webrtc-1.0 (gst-plugins-bad-dev, present)
+# + OpenSSL>=3 (openssl-dev, added to Dockerfile.source-prep).
+force_webrtc_option() {
+  local cmake_file="$1"
+  if grep -q 'ENABLE_WEB_RTC PRIVATE ${ENABLE_EXPERIMENTAL_FEATURES}' "$cmake_file"; then
+    echo "  force ENABLE_WEB_RTC ON in $(basename "$cmake_file")"
+    awk '
+      /WEBKIT_OPTION_DEFAULT_PORT_VALUE\(ENABLE_WEB_RTC PRIVATE/ {
+        print "WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_WEB_RTC PRIVATE ON)"; next
+      }
+      { print }
+    ' "$cmake_file" > "${cmake_file}.new"
+    mv "${cmake_file}.new" "$cmake_file"
+  fi
+  if ! grep -q 'ENABLE_WEB_RTC PRIVATE ON' "$cmake_file"; then
+    echo "ERROR: failed to force ENABLE_WEB_RTC ON in $(basename "$cmake_file")" >&2
+    exit 1
+  fi
+}
+force_webrtc_option Source/cmake/OptionsWPE.cmake
+force_webrtc_option Source/cmake/OptionsGTK.cmake
+
+# GTK defaults USE_LIBRICE ON (Rust librice ICE backend); Alpine has no librice →
+# GStreamerChecks.cmake FATAL_ERRORs at configure. Force OFF so the GStreamer WebRTC
+# backend uses libnice. WPE has no USE_LIBRICE port default (uses libnice already).
+if grep -q 'WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_LIBRICE PRIVATE ON)' Source/cmake/OptionsGTK.cmake; then
+  echo "  force USE_LIBRICE OFF in OptionsGTK.cmake"
+  awk '
+    /WEBKIT_OPTION_DEFAULT_PORT_VALUE\(USE_LIBRICE PRIVATE ON\)/ {
+      print "WEBKIT_OPTION_DEFAULT_PORT_VALUE(USE_LIBRICE PRIVATE OFF)"; next
+    }
+    { print }
+  ' Source/cmake/OptionsGTK.cmake > Source/cmake/OptionsGTK.cmake.new
+  mv Source/cmake/OptionsGTK.cmake.new Source/cmake/OptionsGTK.cmake
+fi
+
 # DrawingAreaCoordinatedGraphicsGLib.cpp (GTK port only) calls tracePoint()
 # and WTFEmitSignpost() without explicitly including <wtf/SystemTracing.h>;
 # upstream relies on it coming via transitive includes. On Alpine/musl with

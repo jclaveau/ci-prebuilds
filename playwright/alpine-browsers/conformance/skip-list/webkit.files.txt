@@ -60,4 +60,3 @@ tests/library/inspector/cli-codegen-java\.spec\.ts$
 # needs a WebKit rebuild with ENABLE_WEB_RTC=ON, so the whole toEqual can't pass
 # via runner-config — kept skipped. (gst-registry env already recovered the 4
 # media-codec titles separately.)
-tests/library/modernizr\.spec\.ts$

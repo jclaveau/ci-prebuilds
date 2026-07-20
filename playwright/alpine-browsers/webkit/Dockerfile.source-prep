@@ -28,7 +28,7 @@ RUN apk add --no-cache \
         harfbuzz-dev fontconfig-dev freetype-dev woff2-dev pango-dev \
         libsoup3-dev libsecret-dev \
         gstreamer-dev gst-plugins-base-dev gst-plugins-bad-dev \
-        libgcrypt-dev libtasn1-dev gnutls-dev \
+        libgcrypt-dev libtasn1-dev gnutls-dev openssl-dev \
         enchant2-dev hyphen-dev lcms2-dev \
         mesa-dev libdrm-dev libepoxy-dev libxkbcommon-dev \
         libxcomposite-dev libxt-dev \

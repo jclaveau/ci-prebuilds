@@ -235,6 +235,36 @@ RUN mkdir -p /opt/chromium-bundle \\
  && for so in "\$DEST"/*.so*; do [ -L "\$so" ] && continue; patchelf --set-rpath '\$ORIGIN' "\$so" 2>/dev/null || true; done \\
  && "\$DEST"/chrome --version
 
+FROM alpine:edge AS webrtc-build
+# WebRTC runtime plugin: Alpine's gst-plugins-bad OMITS the classic 'webrtc'
+# plugin (webrtcbin) — gst 1.28 needs libnice >= 0.1.23 (NICE_AGENT_OPTION_CLOSE_
+# FORCED) but Alpine ships 0.1.22. WebKit's GStreamerWebRTCProvider checks the
+# 'webrtc' plugin is registered + eagerly creates webrtcbin at RTCPeerConnection
+# construction; without it `new RTCPeerConnection()` throws → Modernizr
+# datachannel:false. Build libnice 0.1.23 + the webrtc plugin from source against
+# the runner's own gstreamer. GSTVER auto-detected so it can't drift from edge.
+RUN apk add --no-cache build-base meson ninja pkgconf curl \\
+    gstreamer-dev gst-plugins-base-dev gst-plugins-bad-dev openssl-dev libsrtp-dev glib-dev
+RUN set -e; GSTVER=\$(pkg-config --modversion gstreamer-1.0); cd /tmp \\
+ && curl -fsSL "https://gitlab.freedesktop.org/libnice/libnice/-/archive/0.1.23/libnice-0.1.23.tar.gz" | tar xz \\
+ && cd libnice-0.1.23 \\
+ && meson setup b --prefix=/usr --libdir=lib -Dgstreamer=enabled \\
+      -Dtests=disabled -Dexamples=disabled -Dintrospection=disabled -Dgtk_doc=disabled \\
+ && ninja -C b install \\
+ && cd /tmp \\
+ && curl -fsSL "https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-\${GSTVER}.tar.xz" | tar xJ \\
+ && cd gst-plugins-bad-\${GSTVER} \\
+ && meson setup build -Dauto_features=disabled \\
+      -Dwebrtc=enabled -Dsctp=enabled -Ddtls=enabled -Dsrtp=enabled \\
+      -Dnls=disabled -Dorc=disabled -Dgpl=disabled \\
+      -Dexamples=disabled -Dtests=disabled -Dintrospection=disabled -Ddoc=disabled \\
+ && ninja -C build ext/webrtc/libgstwebrtc.so \\
+ && mkdir -p /webrtc-dist/gstreamer-1.0 \\
+ && cp build/ext/webrtc/libgstwebrtc.so                          /webrtc-dist/gstreamer-1.0/ \\
+ && cp -a /usr/lib/gstreamer-1.0/libgstnice.so                   /webrtc-dist/gstreamer-1.0/ \\
+ && cp -a build/gst-libs/gst/webrtc/nice/libgstwebrtcnice-1.0.so* /webrtc-dist/ \\
+ && cp -a /usr/lib/libnice.so.10*                                /webrtc-dist/
+
 FROM alpine:edge
 RUN apk update && apk add --no-cache \\
     nodejs npm bash git \\
@@ -247,7 +277,16 @@ RUN apk update && apk add --no-cache \\
     gst-plugins-ugly openh264 \\
     cairo pango gdk-pixbuf libnotify dbus-libs opus libsecret \\
     nss icu-data-full \\
-    xvfb xvfb-run jq
+    xvfb xvfb-run jq \\
+    font-noto-emoji
+# WebRTC runtime: our libnice 0.1.23 + the built 'webrtc' plugin (webrtcbin) +
+# updated nice element. gst-plugins-bad (above) ships the dtls/srtp/sctp plugins +
+# libgstwebrtc-1.0 the plugin links; GST_PLUGIN_SYSTEM_PATH_1_0 (set below) points
+# at /usr/lib/gstreamer-1.0 so webrtcbin is auto-discovered. font-noto-emoji fixes
+# Modernizr's emoji canvas-pixel key.
+COPY --from=webrtc-build /webrtc-dist/libnice.so.10*             /usr/lib/
+COPY --from=webrtc-build /webrtc-dist/libgstwebrtcnice-1.0.so*   /usr/lib/
+COPY --from=webrtc-build /webrtc-dist/gstreamer-1.0/             /usr/lib/gstreamer-1.0/
 COPY --from=chromium-fetch /opt/chromium-bundle /opt/chromium-bundle
 COPY --from=${IMAGE_REF} /webkit /ms-playwright/webkit-${ARTIFACT_REV}
 RUN touch /ms-playwright/webkit-${ARTIFACT_REV}/INSTALLATION_COMPLETE
