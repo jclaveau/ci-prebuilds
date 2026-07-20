@@ -29,9 +29,6 @@
 
 # ── Video / headed remote subcluster ────────────────────────────────────────
 should ignore page.pause when headed$
-should saveAs videos from remote browser
-should save videos to artifactsDir
-should name video file after page guid when connecting to remote browser with artifactsDir
 
 # ── File-input metadata — RECOVERED 2026-07-18 via the bwrap-sandbox fix ─────
 # `should upload a folder` + `should preserve lastModified timestamp` used to
