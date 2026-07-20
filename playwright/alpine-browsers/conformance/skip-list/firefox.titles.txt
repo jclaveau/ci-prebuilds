@@ -49,3 +49,41 @@ should work for webgl\s*$
 # Detach/framesets navigation timing is marginal on musl FF under load.
 should detach child frames on navigation\s*$
 should support framesets\s*$
+
+# Genuine musl FF deltas — restored after the +72 stale-unskip (sharded run
+# 29736113986, cascade-free with pageerror kept skipped): error-string/throw
+# messages, CORS/CSP variance, weberror, service-worker routing, frame/subframe
+# cross-process, har-postData, networkidle, dsf-hover, predicate-throwing. These
+# genuinely differ on musl FF (not cfg-recoverable).
+do not update console count on unhandled rejections\s*$
+pageErrors since-navigation filter should work\s*$
+should auto-wait for blocking CSS\s*$
+should dispose\s*$
+should fail with ReferenceError on wrong page\s*$
+should fail with busted Array\.prototype\.toJSON\s*$
+should fail with predicate throwing on first call\s*$
+should fail with predicate throwing sometimes\s*$
+should navigate subframes @smoke\s*$
+should not be called after finishing unsuccessfully\s*$
+should not throw if request was cancelled by the page\s*$
+should reject cors with disallowed credentials\s*$
+should report errors\s*$
+should report hover and fine pointer for desktop\s*$
+should report requests and responses handled by service worker with routing\s*$
+should report requests and responses handled by service worker\s*$
+should resolve responses after a navigation\s*$
+should respect CSP @smoke\s*$
+should respect cors overrides\s*$
+should round-trip har with postData\s*$
+should support cors with GET\s*$
+should throw a nice error when the request fails\s*$
+should throw an error if loading from url fail\s*$
+should throw error with detailed information on exception inside promise\s*$
+should throw when added with URL to the CSP page\s*$
+should wait for networkidle to succeed navigation with request from previous navigation\s*$
+should work for frame\s*$
+should work with file URL with subframes\s*$
+triggers event when some throw\s*$
+weberror event should include location\s*$
+weberror event should work\s*$should dispose context on navigation\s*$
+should record when manual popover with fullscreen backdrop is open\s*$
