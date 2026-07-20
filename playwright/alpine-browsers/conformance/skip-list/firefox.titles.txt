@@ -115,3 +115,9 @@ weberror event should work\s*$
 # trace-viewer whole-file un-skip probe (chromium :3.23/149 bump). They were
 # the 142-vs-148 whack-a-mole titles. If the whole-file probe shows specific
 # trace-viewer tests still fail on 149, re-add only those as narrow titles.
+
+# CI-load-flaky frame-lifecycle timing (passed in the +17 validation run
+# 29679715834 + locally; fail on shard 6 under 20-shard parallel load, twice).
+# Detach/framesets navigation timing is marginal on musl FF under load.
+should detach child frames on navigation\s*$
+should support framesets\s*$
