@@ -78,6 +78,16 @@ cd "$PW_SRC"
 # exact --shard=17/20 repro: neither flag alone passes, both → 113/113.
 sed -i 's|executablePath,|executablePath,\n        args: browserName === "firefox" ? ["--remote-debugging-port=0"] : browserName === "chromium" ? ["--run-all-compositor-stages-before-draw", "--disable-new-content-rendering-timeout"] : undefined,|' \
   tests/library/playwright.config.ts
+
+# Upstream's config only builds ${browser}-library + ${browser}-page projects
+# (testDir library/ + page/). tests/stress/ + tests/extension/ use the same
+# tests/config/baseTest but have no project, so they never run. Inject a
+# ${browser}-stress + ${browser}-extension project (same projectTemplate → same
+# launchOptions/browserName) so consumers get parity on those surfaces too.
+# Extension is a chromium-only feature (specs self-skip on FF/WK + on the
+# headless-shell channel); stress heap.spec is browser-agnostic.
+sed -i 's#  config.projects.push(pageProject);#  config.projects.push(pageProject);\n  config.projects.push({ name: browserName + "-stress", testDir: path.join(testDir, "stress"), ...projectTemplate });\n  config.projects.push({ name: browserName + "-extension", testDir: path.join(testDir, "extension"), ...projectTemplate });#' \
+  tests/library/playwright.config.ts
 grep -A3 "launchOptions:" tests/library/playwright.config.ts | head -6
 
 echo "==== npm ci (cold install, ~3-5min) ===="
@@ -131,6 +141,8 @@ TIMEOUT_FLAG=""
 set +e
 RC_LIB=0
 RC_PAGE=0
+RC_STRESS=0
+RC_EXTENSION=0
 
 run_one() {
   CONFIG="$1"; PROJECT="$2"; LABEL="$3"
@@ -198,10 +210,16 @@ RC_LIB=$?
 run_one tests/library/playwright.config.ts "${BROWSER}-page" page
 RC_PAGE=$?
 
+run_one tests/library/playwright.config.ts "${BROWSER}-stress" stress
+RC_STRESS=$?
+
+run_one tests/library/playwright.config.ts "${BROWSER}-extension" extension
+RC_EXTENSION=$?
+
 set -e
 
-echo "==== Shard ${SHARD}/${SHARD_TOTAL} done — library rc=${RC_LIB}, page rc=${RC_PAGE} ===="
+echo "==== Shard ${SHARD}/${SHARD_TOTAL} done — library rc=${RC_LIB}, page rc=${RC_PAGE}, stress rc=${RC_STRESS}, extension rc=${RC_EXTENSION} ===="
 
-# Fail the shard if either suite failed. Caller's matrix has fail-fast: false
+# Fail the shard if any suite failed. Caller's matrix has fail-fast: false
 # so other shards keep running; aggregator job sees the per-shard outcome.
-[ "$RC_LIB" -eq 0 ] && [ "$RC_PAGE" -eq 0 ]
+[ "$RC_LIB" -eq 0 ] && [ "$RC_PAGE" -eq 0 ] && [ "$RC_STRESS" -eq 0 ] && [ "$RC_EXTENSION" -eq 0 ]
