@@ -34,12 +34,10 @@ reverse engineer internal:has-text locators\s*$
 should allow unnamed cookies\s*$
 should auto-wait for blocking CSS\s*$
 should be able to download a inline PDF file via navigation\s*$
-should be able to reconnect to a browser\s*$
 should be able to visit ipv6 through localhost\s*$
 should be able to visit ipv6\s*$
 should click the button with deviceScaleFactor set\s*$
 should click the button with fixed position inside an iframe\s*$
-should connect over wss\s*$
 should contain sourceURL\s*$
 should contain the Error\.name property\s*$
 should delete downloads when persistent context closes\s*$

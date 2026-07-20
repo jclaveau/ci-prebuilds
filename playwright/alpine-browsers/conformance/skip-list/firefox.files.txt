@@ -40,7 +40,6 @@
 # `run.sh` with only browsertype-connect; (3) bisect launchServer WS spawn vs
 # reconnect loop vs the video/artifactsDir sub-tests. Until then: whole-file
 # skipped — a hanging shard is worse than the missing coverage.
-tests/library/browsertype-connect\.spec\.ts
 
 # Recorder-UI whole-file skips REMOVED 2026-07-15 — chromium bundle unblocks
 # _enableRecorder for inspector/* + slowmo + debug-controller + selector-

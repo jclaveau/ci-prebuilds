@@ -135,6 +135,24 @@ RUN apk update && apk add --no-cache \\
 COPY --from=chromium-fetch /opt/chromium-bundle /opt/chromium-bundle
 COPY --from=${IMAGE_REF} /firefox /ms-playwright/firefox-${ARTIFACT_REV}/firefox
 RUN touch /ms-playwright/firefox-${ARTIFACT_REV}/INSTALLATION_COMPLETE
+# musl Juggler workaround, applied at the BINARY (not via PW args): the FF Juggler
+# stays dormant unless launched with --remote-debugging-port=0 (wakes RemoteAgent).
+# The conformance config injects that arg, but PW's PlaywrightServer.filterLaunchOptions
+# STRIPS all client-supplied `args` for RCE-prevention on the `run-server` path, so
+# browsertype-connect run-server tests launch FF without it → 38min hang. Wrap the
+# binary so the arg is always present regardless of PW's filtering — the security
+# filter stays fully intact. Dedup guard avoids double-passing on paths that add it.
+RUN FFBIN=/ms-playwright/firefox-${ARTIFACT_REV}/firefox/firefox \\
+ && mv "\$FFBIN" "\$FFBIN.real" \\
+ && printf '%s\\n' \\
+      '#!/bin/sh' \\
+      'D=\$(dirname "\$0")' \\
+      'case " \$* " in' \\
+      '  *" --remote-debugging-port"*) exec "\$D/firefox.real" "\$@" ;;' \\
+      '  *) exec "\$D/firefox.real" --remote-debugging-port=0 "\$@" ;;' \\
+      'esac' \\
+      > "\$FFBIN" \\
+ && chmod +x "\$FFBIN"
 # PW SDK prefs — Alpine FF build (apply-and-build.sh:175) writes these to the
 # wrong path (browser/app/profile/); Ubuntu FF ships them at these exact
 # locations. Missing them means `dom.security.https_first` stays true, PW's
