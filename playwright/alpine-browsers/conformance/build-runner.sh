@@ -54,6 +54,17 @@ COPY --from=${IMAGE_REF} \\
 RUN touch /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/INSTALLATION_COMPLETE
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN npm install -g playwright@${PW_VERSION}
+# browserType.executablePath() resolves to /ms-playwright/chromium-<rev>/
+# chrome-linux64/chrome (the full chromium, NOT headless-shell), which the
+# conformance tests never launch but `executablePath should work` existsSync-
+# checks. Stage the binary there (symlink the headless-shell binary) so the
+# check passes. Rev looked up from browsers.json to stay PW-version-correct.
+RUN PWC_JSON=$(find /usr/local/lib/node_modules -name browsers.json -path '*playwright-core*' | head -1) \
+ && CHR_REV=$(node -e "console.log(require('$PWC_JSON').browsers.find(b=>b.name==='chromium').revision)") \
+ && mkdir -p /ms-playwright/chromium-${CHR_REV}/chrome-linux64 \
+ && ln -sf /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/chrome-headless-shell-linux64/chrome-headless-shell \
+      /ms-playwright/chromium-${CHR_REV}/chrome-linux64/chrome \
+ && touch /ms-playwright/chromium-${CHR_REV}/INSTALLATION_COMPLETE
 # ffmpeg-1011 is bundled by PW's recordVideo / screencast paths; install via
 # the PW SDK so the cache layout matches what tests fixture-expect.
 RUN playwright install ffmpeg

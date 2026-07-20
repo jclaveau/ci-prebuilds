@@ -69,7 +69,6 @@ should allow to re-connect to OOPIFs with CDP when iframes were there already
 should ignore page.pause when headed$
 
 # browserType.executablePath path-shape
-browserType\.executablePath should work
 
 # defaultbrowsercontext + download
 
