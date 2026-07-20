@@ -1,9 +1,27 @@
 ---
 name: pw-conformance-scope-out-of-scope
-description: cli-codegen + trace-viewer conformance tests are OUT OF SCOPE (validate PW tooling, not the musl browser); never chase them
+description: SUPERSEDED 2026-07-20 — cli-codegen + trace-viewer were STALE skips, not out-of-scope; re-probed green on the bundled-chromium runner and un-skipped (~170 tests/browser on CHS + FF).
 metadata:
   type: project
 ---
+
+**SUPERSEDED 2026-07-20.** The "out of scope, never chase" verdict below was WRONG —
+codegen + trace-viewer were STALE skips, not unrunnable tooling. Re-probed on
+chs-prepared:local (bundled-chromium runner + `xvfb-run -a`): all 7 codegen files
+pass (~59 tests, 0 fail), trace-viewer 102/104, trace-viewer-scrub 9/9. Un-skipped on
+BOTH chromium + firefox (commit b057279); conformance-chromium 29776539019 AND
+conformance-firefox 29776540998 BOTH 20/20 GREEN. Only residual title:
+`should filter actions by text` (trace-viewer, 1 deterministic fail). The "zero-bytes
+codegen subprocess" root cause was an OLD-runner artifact — the current runner's chromium
+bundle runs the recorder-UI fine, and codegen is browser-AGNOSTIC (records via bundled
+chromium, not the browser-under-test), so FF mirrored CHS with zero extra residuals.
+WK gets the same un-skip once its rebuild lands. Lesson: re-probe the LIVE artifact before
+trusting ANY "out of scope / structural" skip — same stale pattern as
+[[project_conformance_structural_was_stale]]. The generation-vs-viewer distinction below
+is still TRUE (tracing.spec.ts = generation, in-scope) but did NOT justify skipping the
+viewer — the viewer runs fine too.
+
+--- ORIGINAL (now-superseded) RATIONALE ---
 
 This suite exists to certify the musl-built **browser binaries** (chromium-headless-shell / FF / WK) are drop-in PW-compatible. Two big test families do NOT test the browser and are permanently skipped BY DESIGN, not as a gap:
 
