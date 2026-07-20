@@ -240,7 +240,7 @@ FROM alpine:edge AS webrtc-build
 # plugin (webrtcbin) — gst 1.28 needs libnice >= 0.1.23 (NICE_AGENT_OPTION_CLOSE_
 # FORCED) but Alpine ships 0.1.22. WebKit's GStreamerWebRTCProvider checks the
 # 'webrtc' plugin is registered + eagerly creates webrtcbin at RTCPeerConnection
-# construction; without it `new RTCPeerConnection()` throws → Modernizr
+# construction; without it new RTCPeerConnection() throws → Modernizr
 # datachannel:false. Build libnice 0.1.23 + the webrtc plugin from source against
 # the runner's own gstreamer. GSTVER auto-detected so it can't drift from edge.
 RUN apk add --no-cache build-base meson ninja pkgconf curl \\

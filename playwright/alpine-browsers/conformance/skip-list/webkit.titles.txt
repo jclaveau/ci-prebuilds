@@ -54,6 +54,14 @@ should ignore page.pause when headed$
 # Track each pending its own investigation. Don't expand prematurely.
 # TODO(probe): webkit-page suite full sweep once skip-list stabilizes
 
+# modernizr — sole residual after the ENABLE_WEB_RTC rebuild (2026-07-21). The
+# WebRTC rebuild + font-noto-emoji recovered datachannel/peerconnection/emoji; the
+# toEqual now fails on ONLY `unicoderange: false` (CSS @font-face unicode-range
+# detection — a musl WebKit font-feature gap, not WebRTC). All-or-nothing toEqual
+# → both UA suites skip on that one key. datachannel + peerconnection now work.
+Safari Desktop$
+Mobile Safari$
+
 # PW-known upstream fails shared with the Ubuntu-webkit baseline (see
 # skip-list-ubuntu/webkit.titles.txt). Parity gate enforces both sides
 # carry these entries. (Passes on our WK locally, but carried for parity.)
