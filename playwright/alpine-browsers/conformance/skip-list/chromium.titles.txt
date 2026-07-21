@@ -119,33 +119,18 @@ should throw a friendly error if its headed and there is no xserver on linux run
 
 # expect-misc toBeInViewport + expect-boolean toBeVisible
 
-# inspector/cli-codegen-1 partials (kept as title-skips; file has many
-# passing tests)
-should fill \[contentEditable\]\s*$
-cli codegen should check\s*$
-should check a radio button\s*$
-should check with keyboard\s*$
-cli codegen should select\s*$
-should select with size attribute\s*$
-should record slider\s*$
+# inspector/cli-codegen-{1,2,3,aria} + pause partials — RECOVERED 2026-07-21
+# (deep diagnosis). Whole-file isolated probe on chs-prepared:local: cli-codegen-1
+# 36 passed, -2 20, -3 31, -aria 7, pause 28 — ALL green. These per-action title
+# skips (fill/check/select/slider/radio/assert-value/popover/multiline-snapshot/
+# pause-record-debugger) were stale recorder-UI carryovers. Un-skipped.
 
-# inspector/cli-codegen-2 partials
-should update active model on action\s*$
-should check input with chaining id\s*$
-
-# inspector/cli-codegen-3 partials
-should assert value\s*$
-should record when manual popover with fullscreen backdrop is open\s*$
-
-# inspector/cli-codegen-aria partial
-should generate valid javascript with multiline snapshot assertion\s*$
-
-# inspector/pause partial
-pause should record from debugger\s*$
-
-# trace-viewer residual — RECOVERED the file 2026-07-20 (102/104 pass); this
-# ONE test deterministically fails (toBeLessThan on a filtered-action count,
-# survived retries=1). trace-viewer-scrub un-skipped whole-file (9/9).
+# trace-viewer residual — GENUINE (deep-diagnosed 2026-07-21): fails on chromium
+# AND firefox with `toBeLessThan Expected: < 0`. Root cause: fullCount =
+# actionTitles.count() returns 0 because the count races the trace-viewer's
+# action-list render (the bundled-chromium VIEWER populates slowly on Alpine),
+# so the later `filtered < fullCount` becomes `< 0`. Viewer-timing flake in the
+# recorder-UI chromium, NOT a browser-under-test gap. Kept skipped.
 should filter actions by text\s*$
 
 # PW-known upstream fails shared with the Ubuntu-chromium baseline (see

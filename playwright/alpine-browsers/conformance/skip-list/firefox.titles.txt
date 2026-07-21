@@ -32,11 +32,10 @@ should work for webgl\s*$
 # the 142-vs-148 whack-a-mole titles. If the whole-file probe shows specific
 # trace-viewer tests still fail on 149, re-add only those as narrow titles.
 
-# CI-load-flaky frame-lifecycle timing (passed in the +17 validation run
-# 29679715834 + locally; fail on shard 6 under 20-shard parallel load, twice).
-# Detach/framesets navigation timing is marginal on musl FF under load.
-should detach child frames on navigation\s*$
-should support framesets\s*$
+# detach-child-frames + framesets — RECOVERED 2026-07-21 (deep diagnosis).
+# Isolated probe on ff-prepared:local (frame-hierarchy.spec.ts): both pass. The
+# old "load-flaky" restore predated the pageerror-cascade fix (ef541ad) that was
+# the real poisoner; un-skipped to validate under 20-shard load.
 
 # UN-SKIP PROBE 2026-07-21 — these were labelled "genuine musl deltas" but DEEP
 # DIAGNOSIS (ff-prepared:local from sha-ef541ad, per-title isolated) showed 17/19
@@ -56,9 +55,8 @@ should support framesets\s*$
 # apply-and-build.sh. Validated locally (pref combo probe: 6 passes, 2 alone fails).
 # UN-SKIPPED.
 
-# UNTESTED codegen title (cli-codegen-3.spec.ts) — file un-skipped 2026-07-20;
-# this one title carried defensively pending isolated probe.
-should record when manual popover with fullscreen backdrop is open\s*$
+# codegen popover (cli-codegen-3.spec.ts) — RECOVERED 2026-07-21: isolated probe
+# on ff-prepared:local passes. Un-skipped.
 
 # trace-viewer residual — un-skipped the file 2026-07-20 (CHS: 102/104). This
 # ONE title deterministically fails on CHS; carried here defensively for the FF
