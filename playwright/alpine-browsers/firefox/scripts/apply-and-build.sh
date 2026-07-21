@@ -488,12 +488,27 @@ echo "===== END ./mach build (rc=$mach_rc) ====="
 # patch it in-place BETWEEN mach's first pass (which generated it) and
 # any retry. Fix is idempotent + narrow — targets only the specific
 # BudgetType_VALUES + PRESSURE_COUNTERS + bytes_per_texture_of_type
-# array bounds. See gfx/wr/webrender/src/texture_cache.rs:265+ for the
-# 7-variant BudgetType enum.
+# array bounds.
+#
+# The array size is `BudgetType::COUNT`, defined as a literal
+# `const COUNT: usize = N;` in the BudgetType impl. We DERIVE N from that
+# source line rather than hardcoding it — a future Firefox bump that adds a
+# BudgetType variant would still emit `[COUNT]`, and a hardcoded size would
+# then silently under-size the array (no compile error, wrong runtime bound).
+# If the source line can't be found (enum moved/renamed/reshaped), we FAIL
+# LOUD instead of guessing. See gfx/wr/webrender/src/texture_cache.rs.
 FFI_HDR="/work/firefox-src/obj/dist/include/mozilla/webrender/webrender_ffi_generated.h"
 if [[ "$mach_rc" != "0" && -f "$FFI_HDR" ]] && grep -q '\[COUNT\]' "$FFI_HDR"; then
-  echo "===== Patching webrender_ffi_generated.h — cbindgen bare-COUNT bug ====="
-  sed -i 's/\[COUNT\]/[7]/g' "$FFI_HDR"
+  BUDGET_COUNT=$(sed -n 's/^[[:space:]]*const COUNT:[[:space:]]*usize[[:space:]]*=[[:space:]]*\([0-9][0-9]*\);.*/\1/p' \
+    gfx/wr/webrender/src/texture_cache.rs | head -1)
+  if [[ -z "$BUDGET_COUNT" ]]; then
+    echo "ERROR: cbindgen [COUNT] patch: could not derive BudgetType::COUNT from" >&2
+    echo "       gfx/wr/webrender/src/texture_cache.rs (const COUNT line moved/reshaped?)." >&2
+    echo "       Refusing to guess an array size — inspect the header + source." >&2
+    exit 1
+  fi
+  echo "===== Patching webrender_ffi_generated.h — cbindgen bare-COUNT bug (COUNT=$BUDGET_COUNT) ====="
+  sed -i "s/\[COUNT\]/[$BUDGET_COUNT]/g" "$FFI_HDR"
   echo "===== Retry ./mach build after webrender FFI patch ====="
   mach_rc=0
   ./mach build || mach_rc=$?

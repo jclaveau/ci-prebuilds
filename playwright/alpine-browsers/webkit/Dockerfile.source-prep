@@ -73,27 +73,6 @@ RUN cd /tmp && git clone --depth=1 https://github.com/Igalia/WPEBackend-fdo.git 
     && meson install -C build \
     && cd /tmp && rm -rf WPEBackend-fdo
 
-# Iter #7: WPEBackend-rdk HEADLESS backend. Master libwpebackend-fdo's
-# _wpe_loader_interface→load_object reads NULL in WebKit's subprocess
-# context despite being valid in standalone dlopen. Try rdk's headless
-# backend as alternative. Install with fdo-compatible symlinks so
-# WebKit's DT_NEEDED + wpe_loader_init("libWPEBackend-fdo-1.0.so.1")
-# resolves to rdk-headless instead.
-RUN cd /tmp && git clone --depth=1 https://github.com/WebPlatformForEmbedded/WPEBackend-rdk.git \
-    && cd WPEBackend-rdk \
-    && cmake -B build -S . \
-        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-        -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DUSE_BACKEND_HEADLESS=ON \
-        -DUSE_INPUT_LIBINPUT=OFF \
-        -DUSE_INPUT_UDEV=OFF \
-    && cmake --build build -j$(nproc) \
-    && cmake --install build \
-    && cd /tmp && rm -rf WPEBackend-rdk \
-    && cd /usr/lib \
-    && ln -sf $(ls libWPEBackend-rdk*.so* | head -1) libWPEBackend-default.so
-
 WORKDIR /work
 
 COPY versions.env /work/versions.env
