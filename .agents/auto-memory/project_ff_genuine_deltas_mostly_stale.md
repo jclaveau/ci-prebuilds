@@ -10,7 +10,9 @@ Deep diagnosis 2026-07-21 (built ff-prepared:local from artifact sha-ef541ad, ra
 title ISOLATED): **17/19 PASS** on the current FF binary. They were restored during the
 pageerror-CASCADE era (the `.url`-undefined crash poisoned whole workers → many tests
 looked like genuine fails). That crash is fixed (juggler location patch, ef541ad), so the
-cascade is gone. Un-skipped (commit dad0a4c), validated under 20-shard load via dispatch.
+cascade is gone. Un-skipped (commit dad0a4c) + CONFIRMED: conformance-firefox 29810375273
+went 20/20 GREEN under full 20-shard load (all 17 pass under parallel load — they were
+stale, NOT load-sensitive as the old restore comment claimed).
 
 **Sole genuine one — `should report hover and fine pointer for desktop`** (page-emulate-
 media): headless musl FF's LookAndFeel defaults pointer/hover to coarse/none, so
