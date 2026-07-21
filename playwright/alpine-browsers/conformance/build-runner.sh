@@ -288,12 +288,16 @@ RUN apk update && apk add --no-cache \\
     cairo pango gdk-pixbuf libnotify dbus-libs opus libsecret \\
     nss icu-data-full \\
     xvfb xvfb-run jq \\
-    font-noto-emoji
+    font-noto-emoji font-liberation
 # WebRTC runtime: our libnice 0.1.23 + the built 'webrtc' plugin (webrtcbin) +
 # updated nice element. gst-plugins-bad (above) ships the dtls/srtp/sctp plugins +
 # libgstwebrtc-1.0 the plugin links; GST_PLUGIN_SYSTEM_PATH_1_0 (set below) points
 # at /usr/lib/gstreamer-1.0 so webrtcbin is auto-discovered. font-noto-emoji fixes
-# Modernizr's emoji canvas-pixel key.
+# Modernizr's emoji canvas-pixel key. font-liberation makes `local("Arial")`
+# resolve (fontconfig aliases Arial→Liberation Sans) — Modernizr's unicoderange
+# test declares `@font-face{src:local("Arial");unicode-range:U+0020,U+002E}` and
+# reports false when Arial is absent; adding Liberation flips unicoderange true
+# (validated locally 2026-07-21 → modernizr Safari Desktop passes). Last modernizr key.
 COPY --from=webrtc-build /webrtc-dist/libnice.so.10*             /usr/lib/
 COPY --from=webrtc-build /webrtc-dist/libgstwebrtcnice-1.0.so*   /usr/lib/
 COPY --from=webrtc-build /webrtc-dist/gstreamer-1.0/             /usr/lib/gstreamer-1.0/
