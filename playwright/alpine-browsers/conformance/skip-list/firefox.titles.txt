@@ -49,13 +49,12 @@ should support framesets\s*$
 # nav-dispose, har-postData, expose-dispose, load-state-frame, blocking-CSS,
 # request-cancelled, loading-url-fail.
 
-# GENUINE (deep-diagnosed 2026-07-21) — headless musl FF reports the wrong
-# pointer/hover media: `(hover: hover)` doesn't match (gets none/coarse). PW forces
-# this for chromium via --blink-settings=primaryHoverType/PointerType but has NO
-# firefox equivalent → FF relies on its build default. Candidate fix: a FF
-# `ui.primaryPointerCapabilities`/`ui.primaryHoverCapabilities` runner pref (under
-# verification). Kept skipped until the pref is confirmed.
-should report hover and fine pointer for desktop\s*$
+# hover/fine-pointer for desktop — FIXED 2026-07-21. Headless musl FF's LookAndFeel
+# defaulted pointer/hover to coarse/none; forced fine+hover via FF pref
+# `ui.primaryPointerCapabilities=6`/`ui.allPointerCapabilities=6` (6 = eFine|eHover)
+# in build-runner.sh (01-alpine-pointer.js) + baked into the artifact via
+# apply-and-build.sh. Validated locally (pref combo probe: 6 passes, 2 alone fails).
+# UN-SKIPPED.
 
 # UNTESTED codegen title (cli-codegen-3.spec.ts) — file un-skipped 2026-07-20;
 # this one title carried defensively pending isolated probe.

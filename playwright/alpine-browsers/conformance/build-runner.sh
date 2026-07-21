@@ -159,12 +159,22 @@ RUN FFBIN=/ms-playwright/firefox-${ARTIFACT_REV}/firefox/firefox \\
 # proxy filter never attaches, and every proxy / client-cert test fails.
 # Root cause diagnosed 2026-07-09; drop-in fetch here recovers ~56 tests
 # (client-certs + proxy.spec.ts + siblings) without rebuilding FF.
+#
+# 01-alpine-pointer.js: headless musl FF's LookAndFeel defaults pointer/hover to
+# coarse/none, so `(hover: hover)` + `(pointer: fine)` don't match on the default
+# desktop context (page-emulate-media "should report hover and fine pointer for
+# desktop" fails). Ubuntu FF reports fine+hover by default; PW forces it for
+# chromium via --blink-settings but has no firefox equivalent. Force it via FF's
+# own pref (6 = eFine|eHover). Diagnosed + validated locally 2026-07-21; also
+# baked into the artifact in apply-and-build.sh so consumers get the same default.
 RUN apk add --no-cache curl \\
  && mkdir -p /ms-playwright/firefox-${ARTIFACT_REV}/firefox/browser/defaults/preferences \\
  && curl -fsSL "https://raw.githubusercontent.com/microsoft/playwright/v${PW_VERSION}/browser_patches/firefox/preferences/00-playwright-prefs.js" \\
       -o /ms-playwright/firefox-${ARTIFACT_REV}/firefox/browser/defaults/preferences/00-playwright-prefs.js \\
  && curl -fsSL "https://raw.githubusercontent.com/microsoft/playwright/v${PW_VERSION}/browser_patches/firefox/preferences/playwright.cfg" \\
-      -o /ms-playwright/firefox-${ARTIFACT_REV}/firefox/playwright.cfg
+      -o /ms-playwright/firefox-${ARTIFACT_REV}/firefox/playwright.cfg \\
+ && printf 'pref("ui.primaryPointerCapabilities", 6);\\npref("ui.allPointerCapabilities", 6);\\n' \\
+      > /ms-playwright/firefox-${ARTIFACT_REV}/firefox/browser/defaults/preferences/01-alpine-pointer.js
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \\
     LD_LIBRARY_PATH=/ms-playwright/firefox-${ARTIFACT_REV}/firefox
 RUN npm install -g playwright@${PW_VERSION}

@@ -600,6 +600,13 @@ if [[ -d "$PW/preferences" ]]; then
     cp "$PW/preferences/00-playwright-prefs.js" /work/firefox-dist/browser/defaults/preferences/
   [[ -f "$PW/preferences/playwright.cfg" ]] && \
     cp "$PW/preferences/playwright.cfg" /work/firefox-dist/
+  # Headless musl FF's LookAndFeel defaults pointer/hover to coarse/none, so
+  # `(hover: hover)` + `(pointer: fine)` don't match on the default desktop
+  # context (Ubuntu FF reports fine+hover by default). PW forces this for chromium
+  # via --blink-settings but has no firefox equivalent → set FF's own pref
+  # (6 = eFine|eHover) as a baked default so the artifact matches Ubuntu FF.
+  printf 'pref("ui.primaryPointerCapabilities", 6);\npref("ui.allPointerCapabilities", 6);\n' \
+    > /work/firefox-dist/browser/defaults/preferences/01-alpine-pointer.js
 fi
 
 # Self-contained-bundle step (ldd-walk + RPATH=$ORIGIN + ICU data). Shared
