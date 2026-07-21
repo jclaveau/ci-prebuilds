@@ -58,7 +58,6 @@ should work for webgl\s*$
 # codegen popover (cli-codegen-3.spec.ts) — RECOVERED 2026-07-21: isolated probe
 # on ff-prepared:local passes. Un-skipped.
 
-# trace-viewer residual — un-skipped the file 2026-07-20 (CHS: 102/104). This
-# ONE title deterministically fails on CHS; carried here defensively for the FF
-# un-skip probe (conformance-firefox dispatch restores any FF-specific extras).
-should filter actions by text\s*$
+# trace-viewer "filter actions by text" — RECOVERED 2026-07-21 via the run.sh
+# test-race patch (see run.sh: upstream PW race, fullCount captured before the
+# action tree renders). Un-skipped.

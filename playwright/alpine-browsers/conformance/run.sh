@@ -90,6 +90,17 @@ sed -i 's#  config.projects.push(pageProject);#  config.projects.push(pageProjec
   tests/library/playwright.config.ts
 grep -A3 "launchOptions:" tests/library/playwright.config.ts | head -6
 
+# trace-viewer.spec.ts "should filter actions by text" captures
+# `fullCount = actionTitles.count()` immediately after showTraceViewer, before the
+# trace-derived action tree finishes rendering (the Filter searchbox renders faster
+# than the list). On the slower Alpine viewer fullCount races to 0 → the later
+# `filtered < fullCount` becomes `< 0` and fails DETERMINISTICALLY. Upstream PW test
+# race (not a browser gap — the browser renders + filters correctly). Add the missing
+# wait for the action list to render before the baseline count. Strengthens the
+# baseline capture; does NOT weaken the assertion. Diagnosed + validated 2026-07-21.
+sed -i 's#  const fullCount = await traceViewer.actionTitles.count();#  await traceViewer.page.locator(".action-title").first().waitFor();\n  const fullCount = await traceViewer.actionTitles.count();#' \
+  tests/library/trace-viewer.spec.ts
+
 echo "==== npm ci (cold install, ~3-5min) ===="
 npm ci --no-audit --no-fund --prefer-offline
 

@@ -125,13 +125,10 @@ should throw a friendly error if its headed and there is no xserver on linux run
 # skips (fill/check/select/slider/radio/assert-value/popover/multiline-snapshot/
 # pause-record-debugger) were stale recorder-UI carryovers. Un-skipped.
 
-# trace-viewer residual — GENUINE (deep-diagnosed 2026-07-21): fails on chromium
-# AND firefox with `toBeLessThan Expected: < 0`. Root cause: fullCount =
-# actionTitles.count() returns 0 because the count races the trace-viewer's
-# action-list render (the bundled-chromium VIEWER populates slowly on Alpine),
-# so the later `filtered < fullCount` becomes `< 0`. Viewer-timing flake in the
-# recorder-UI chromium, NOT a browser-under-test gap. Kept skipped.
-should filter actions by text\s*$
+# trace-viewer "filter actions by text" — RECOVERED 2026-07-21 via a run.sh
+# test-race patch (upstream PW race: fullCount captured before the action tree
+# renders → 0 → `< 0`). run.sh injects a `.action-title` waitFor before the
+# baseline count. Un-skipped. See run.sh for the patch + rationale.
 
 # PW-known upstream fails shared with the Ubuntu-chromium baseline (see
 # skip-list-ubuntu/chromium.titles.txt). The parity gate enforces both
