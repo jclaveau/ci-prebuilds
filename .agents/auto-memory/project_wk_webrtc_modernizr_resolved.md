@@ -21,11 +21,14 @@ metadata:
   `new RTCPeerConnection()` throws → datachannel:false.
 - **emoji**: `font-noto-emoji` in the WK runner apk list.
 
-**Sole residual — `unicoderange: false`** (expected true): a CSS `@font-face`
-`unicode-range` font-feature-detection gap in the musl WebKit build, unrelated to
-WebRTC. modernizr's `toEqual` is all-or-nothing so this one key still fails the two
-UA suites → `Safari Desktop` / `Mobile Safari` title-skipped in webkit.titles.txt.
-datachannel + peerconnection now compile + work (future direct-RTC tests will pass).
+**`unicoderange` — ALSO FIXED 2026-07-21 (font-liberation, no rebuild).** It was NOT
+a WebKit gap: Modernizr's test declares `@font-face{src:local("Arial");
+unicode-range:U+0020,U+002E}` and reports false when `local("Arial")` can't resolve.
+Alpine shipped no Arial; adding `font-liberation` to the WK runner (build-runner.sh)
+makes fontconfig alias Arial→Liberation Sans → `local("Arial")` resolves → unicoderange
+true. Validated locally (modernizr Safari Desktop passes). Both UA suites un-skipped.
+So modernizr is now FULLY green — datachannel/peerconnection (WebRTC rebuild) + emoji
+(font-noto-emoji) + unicoderange (font-liberation).
 
 **Gotcha:** don't put literal backticks in a comment inside an UNQUOTED (`<<EOF`)
 heredoc in build-runner.sh — the shell command-substitutes them at build time

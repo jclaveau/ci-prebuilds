@@ -9,13 +9,16 @@ Deep-diagnosed every remaining title-skip 2026-07-21 (isolated on chs/ff/wk-prep
 local). Result: **15 title-skips left (chromium 6, FF 5, WK 4), 0 file-skips.** Do NOT
 re-open these — each is dispositioned:
 
-**GENUINE Alpine-musl gaps (only 2 distinct):**
-- WK `unicoderange` (modernizr `Safari Desktop` + `Mobile Safari`) — the toEqual fails on
-  EXACTLY `unicoderange:false` (CSS @font-face unicode-range font-feature). WebRTC/emoji
-  already recovered. Needs a WebKit source/font fix (rebuild) — low value, 1 key.
-- `trace-viewer › should filter actions by text` (chromium AND firefox) — `fullCount =
-  actionTitles.count()` returns 0 racing the bundled-chromium VIEWER's action-list render →
-  `filtered < 0` fails. Viewer-timing flake in the recorder-UI chromium, NOT a browser gap.
+**GENUINE Alpine-musl gaps — BOTH FIXED 2026-07-21 (no rebuild, runner/test-race):**
+- WK `unicoderange` — NOT a WebKit gap: Modernizr uses `@font-face{src:local("Arial");
+  unicode-range:U+0020,U+002E}`; Alpine had no Arial so it reported false. Fix:
+  `font-liberation` in the WK runner (fontconfig aliases Arial→Liberation Sans). Un-skipped.
+  See [[project_wk_webrtc_modernizr_resolved]].
+- `trace-viewer › should filter actions by text` (chromium+FF) — UPSTREAM PW test race:
+  `fullCount = actionTitles.count()` captured before the trace-derived action tree renders
+  (searchbox renders faster) → 0 → `filtered < 0`. Browser renders + filters correctly.
+  Fix: run.sh injects a `.action-title` waitFor before the baseline count. Un-skipped.
+  → **Net genuine Alpine browser gaps across the whole suite: 0.**
 
 **PARITY-CARRIED — pass on Alpine (xvfb) but MUST stay** (parity gate = Alpine skip-list ⊇
 skip-list-ubuntu; these are in skip-list-ubuntu so removing them fails `check-skip-parity.sh`):
