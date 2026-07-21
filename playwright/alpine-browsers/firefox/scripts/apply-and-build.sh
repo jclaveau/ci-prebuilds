@@ -490,21 +490,23 @@ echo "===== END ./mach build (rc=$mach_rc) ====="
 # BudgetType_VALUES + PRESSURE_COUNTERS + bytes_per_texture_of_type
 # array bounds.
 #
-# The array size is `BudgetType::COUNT`, defined as a literal
-# `const COUNT: usize = N;` in the BudgetType impl. We DERIVE N from that
-# source line rather than hardcoding it — a future Firefox bump that adds a
-# BudgetType variant would still emit `[COUNT]`, and a hardcoded size would
-# then silently under-size the array (no compile error, wrong runtime bound).
-# If the source line can't be found (enum moved/renamed/reshaped), we FAIL
-# LOUD instead of guessing. See gfx/wr/webrender/src/texture_cache.rs.
+# The array size is `BudgetType::COUNT`. We DERIVE the real count from the
+# header's OWN `BudgetType_VALUES[COUNT] = { ... }` initializer — a
+# `[BudgetType; COUNT]` array holding exactly COUNT `BudgetType::` elements —
+# rather than hardcoding it. A future Firefox bump that adds a BudgetType
+# variant would still emit `[COUNT]`, and a hardcoded size would then silently
+# under-size the array (no compile error, wrong runtime bound). Deriving from
+# the emitted initializer is self-consistent (matches the elements cbindgen
+# actually wrote) and independent of the Rust source's `const COUNT` form,
+# which varies across revisions. If the initializer can't be found, FAIL LOUD
+# instead of guessing.
 FFI_HDR="/work/firefox-src/obj/dist/include/mozilla/webrender/webrender_ffi_generated.h"
 if [[ "$mach_rc" != "0" && -f "$FFI_HDR" ]] && grep -q '\[COUNT\]' "$FFI_HDR"; then
-  BUDGET_COUNT=$(sed -n 's/^[[:space:]]*const COUNT:[[:space:]]*usize[[:space:]]*=[[:space:]]*\([0-9][0-9]*\);.*/\1/p' \
-    gfx/wr/webrender/src/texture_cache.rs | head -1)
-  if [[ -z "$BUDGET_COUNT" ]]; then
+  BUDGET_COUNT=$(awk '/BudgetType_VALUES\[COUNT\] = \{/ { print gsub(/BudgetType::/, "&"); exit }' "$FFI_HDR")
+  if [[ -z "$BUDGET_COUNT" || "$BUDGET_COUNT" -lt 1 ]]; then
     echo "ERROR: cbindgen [COUNT] patch: could not derive BudgetType::COUNT from" >&2
-    echo "       gfx/wr/webrender/src/texture_cache.rs (const COUNT line moved/reshaped?)." >&2
-    echo "       Refusing to guess an array size — inspect the header + source." >&2
+    echo "       $FFI_HDR (BudgetType_VALUES initializer moved/reshaped?)." >&2
+    echo "       Refusing to guess an array size — inspect the generated header." >&2
     exit 1
   fi
   echo "===== Patching webrender_ffi_generated.h — cbindgen bare-COUNT bug (COUNT=$BUDGET_COUNT) ====="
