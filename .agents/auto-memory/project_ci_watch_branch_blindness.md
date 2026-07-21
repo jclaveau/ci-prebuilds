@@ -13,16 +13,21 @@ This grabs the most recent TP run *across all branches* — so after `git push o
 
 **Symptom**: watcher reports a failure like `test-playwright-usage (alpine, dood, slim)` on a job/matrix-cell that doesn't correspond to any code path I just touched. Cross-check: `gh run view <id> --json headBranch,displayTitle` — if `headBranch != main` or `displayTitle` doesn't match my commit, it's a false alarm.
 
-**Workaround** for main-branch monitoring after a push:
+**Workaround** — pin the run-id and use `gh run watch` (simpler than the manual loop):
+
 ```bash
-RUN=$(gh run list --workflow=test-and-publish.yml --branch main -L1 --json databaseId --jq '.[0].databaseId')
-while :; do
-  j=$(gh run view "$RUN" --json status,conclusion,jobs --jq '{s:.status,c:.conclusion,f:[.jobs[]|select(.conclusion=="failure")|.name][0]}')
-  s=$(echo "$j" | jq -r .s); c=$(echo "$j" | jq -r .c); f=$(echo "$j" | jq -r .f)
-  [ -n "$f" ] && [ "$f" != null ] && { echo "FAIL: $f"; exit 0; }
-  [ "$s" = completed ] && { echo "DONE: $c"; exit 0; }
-  sleep 30
-done
+# 1. find the run for THIS commit (filter by headSha, not just -L1)
+HEAD=$(git rev-parse HEAD)
+RUN=$(gh run list --workflow=test-and-publish.yml -L 5 --json databaseId,headSha \
+       --jq "[.[] | select(.headSha==\"$HEAD\")][0].databaseId")
+# 2. watch that specific run in the background
+gh run watch "$RUN" --exit-status &
 ```
 
-Could be folded into a new pnpm script (e.g. `ci:watch:tp:main`) if it bites repeatedly.
+**Second failure mode (own back-to-back pushes):** when you push A then push B within seconds,
+GitHub auto-cancels A's run and `pnpm ci:watch:tp` may have already latched onto A's databaseId.
+The watch then reports `cancelled` even though B's run is in progress / green. Same workaround
+applies: re-derive the run-id by `headSha == git rev-parse HEAD` filter after each push, not via
+`-L1`.
+
+Could be folded into a new pnpm script (e.g. `ci:watch:tp:head`) if it bites repeatedly.

@@ -1,98 +1,60 @@
 ---
 name: pw-upstream-juggler-handshake-hang
-description: PW's upstream `tests/library/` test runner hangs at Juggler handshake on our musl FF artifact — every test sits idle for exactly 3min (PW default testTimeout) then SIGKILLs. Smoke layer passes with the same binary, so the divergence is in PW's fixture layer (tests/library/playwright.config.ts), not the build. Tracked in #60; job kept in-tree as `if: false`.
+description: ROOT-CAUSED 2026-07-08. musl FF's Juggler XPCOM component-line-handler registers under category `m-remote`, colliding with Mozilla's RemoteAgent. JugglerFactory only instantiates as side-effect of RemoteAgent activating. Workaround: sed-inject `--remote-debugging-port=0` into PW test config so RemoteAgent wakes → Juggler activates. Real fix (pending): rename `m-remote` → `m-juggler` in juggler/components/components.conf via PW_JUGGLER_CATEGORY_RENAME=1 + FF rebuild.
 metadata:
   type: project
 ---
 
-The `test-firefox-library-upstream` job in
-`.github/workflows/playwright-alpine-browsers.yml` is disabled (`if: false`)
-pending investigation of issue #60.
+**Root cause (verified 2026-07-08):** Juggler's XPCOM
+component-line-handler registers under category name `m-remote`, which
+collides with Mozilla's own RemoteAgent (same category). JugglerFactory
+only instantiates as a side-effect of RemoteAgent activating. When PW's
+fixture launches FF with only `-juggler-pipe`, Juggler stays dormant →
+fd4 never writes "Juggler listening to the pipe" → launch times out at
+whatever ceiling PW's fixture sets.
 
-**Symptom (run 27004002735):** PW's runner launches FF
-(`-juggler-pipe -silent`), FF reports `*** You are running in headless
-mode.`, then sits idle for **exactly 180 seconds** (`+3m` in pw:browser
-debug timestamps), then PW SIGKILLs and starts the next test. No
-`--reporter=dot` output ever emitted — tests stuck before first protocol
-message. ~14 tests cycled in the 45min job-timeout window. Zero pass.
+**Diagnostic path that got there:**
+1. Docker-pulled the published `sha-90102ce27b28...` FF image, wrapped
+   in a diag image with Alpine deps + nodejs (`/tmp/ff-repro`).
+2. Confirmed `firefox.launch()` from PW SDK reproduces the hang locally
+   (30s timeout, pid launched but no fd4 output).
+3. Grep'd `playwright/alpine-browsers/firefox/smoke/launch.cjs` which
+   already documents the workaround at lines 20-25 (`args:
+   ['--remote-debugging-port=0']`) — the smoke-firefox job passes because
+   of this arg. Compaction summary had misattributed the hang to a
+   Firefox IPC channel error (`MessageChannel.cpp:2003`); actual
+   `OnChannelErrorFromLink` events in MOZ_LOG are false positives
+   ([[moz-log-ipc-false-positives]]).
+4. Verified fix: `firefox.launch({ args: ['--remote-debugging-port=0']})`
+   returns in 891ms, `page.goto` works.
 
-**Why we know the FF binary is fine:**
-
-- `smoke-firefox` (basic launch + goto + screenshot) → 22s green
-- `smoke-firefox-library` (8 Juggler RPCs: Browser.getInfo,
-  Network.setCookies, Page.frameAttached, evaluate, dialogs, screenshot,
-  response) → 22s green on the SAME binary, SAME PW version (1.60.0)
-- So launch + Juggler protocol + all standard RPCs work via
-  `firefox.launch()` from the published PW SDK.
-
-**What differs in PW's test framework:**
-
-The test invocation in
-`playwright/alpine-browsers/firefox/library-upstream/run.sh`:
-```sh
-PWTEST_UNDER_TEST=1 npx playwright test \
-  --config=tests/library/playwright.config.ts \
-  --project=firefox-library \
-  --reporter=dot --workers=1 \
-  tests/library/{browsertype-basic,browser,browsercontext-basic,browsercontext-cookies}.spec.ts
+**Landed workaround** (commit 72882f9): `conformance/run.sh` sed-injects
+into `tests/library/playwright.config.ts`:
+```
+launchOptions: {
+  executablePath,
+  args: browserName === "firefox" ? ["--remote-debugging-port=0"] : undefined,
+},
 ```
 
-Suspects (read these first when picking up #60):
-- `tests/library/playwright.config.ts` — likely sets a `globalSetup`,
-  custom `_browserType` fixture, or extends baseTest in a way the
-  patched-musl build doesn't satisfy.
-- `PWTEST_UNDER_TEST=1` — enables a fixture path that may expect specific
-  pref/extension/channel setup.
-- The base fixture's `browser` setup probably uses `_setupInProcess` or
-  opens an extra channel (CDP-over-Juggler bridge?) that our build
-  doesn't bind.
+Local 1-spec verify: 26 pass / 1 real fail / 2 skip in 17.7s (was 11h
+before). Full 10-shard: ~92% pass rate.
 
-**How to re-enable:**
+**Real source-side fix (pending, requires FF rebuild):** flip
+`PW_JUGGLER_CATEGORY_RENAME=1` default in
+`playwright/alpine-browsers/firefox/scripts/apply-and-build.sh` — that
+already-present diagnostic renames `m-remote` → `m-juggler` in
+`juggler/components/components.conf` so there's no collision. Then PW
+upstream tests need no workaround arg.
 
-In `.github/workflows/playwright-alpine-browsers.yml`, find the
-`test-firefox-library-upstream:` job. Drop `if: false` and restore the
-gate (already inlined as a YAML comment):
-```yaml
-if: |
-  (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'test-firefox-upstream'))
-  || (github.event_name == 'workflow_dispatch' && inputs.test_firefox_library_upstream == 'true')
-```
-
-**Confirmed catastrophic 2026-06-26 against full 10-shard conformance (run 28239393075):**
-
-Dispatched `conformance-firefox` via `run_firefox_conformance=true`
-input. FF artifact built green on the same SHA. All 10 conformance
-shards exhibited identical pattern:
-
-- launched ~20 FF processes with `-juggler-pipe` over 60min
-- every test asserted `Test timeout of 30000ms exceeded.`
-- 0 useful PW assertions emitted (no `--reporter=line` output)
-- all 10 shards hit GHA `timeout-minutes: 60` ceiling → CANCELLED
-- `conformance-firefox / summary` → failure
-
-Juggler-hang dominates: ~20/233 tests *attempted* per shard, all
-fail at 30s. Full PW upstream conformance against musl Firefox is
-not viable until this is root-caused.
-
-Workaround paths considered:
-1. Per-test timeout 5s — same outcome, denser failures.
-2. Patch tests/library/playwright.config.ts to skip the hanging
-   fixture stage — unknown which stage hangs.
-3. Replace upstream config with custom config that launches FF
-   directly via PW SDK (smoke-firefox-library pattern) — bypasses
-   the bug but is no longer "what PW runs for its build".
-
-Decision: `conformance-firefox` stays dispatch-gated and produces
-a catastrophic-timeout signal as the baseline metric. Any future
-Juggler fix is then measurable against this run.
-
-**How to apply:** Do NOT remove the job, run.sh, or related plumbing.
-They're parked, not abandoned — per [[land-disabled-over-revert]]. Any
-future "let's run PW upstream tests" work starts from this job, not
-from scratch.
+**How to apply:** When investigating FF launch hangs on musl, DO NOT
+grep MOZ_LOG for `OnChannelErrorFromLink` (those are noise —
+[[moz-log-ipc-false-positives]]). Instead: (a) check whether smoke/
+launch.cjs already documents a workaround, (b) reproduce locally in
+Docker without CI, (c) test the workaround arg + verify Juggler
+handshake completes.
 
 Related:
 - [[firefox-alpine-wip-pipeline]] — broader FF-on-Alpine context
-- [[pw-version-aware-chs-rev-chain]] — how PW_VERSION pins propagate;
-  upstream tests must match PW_VERSION exactly (run.sh clones
-  `microsoft/playwright@v${PW_VERSION}`).
+- [[moz-log-ipc-false-positives]] — MOZ_LOG=ipc:5 noise trap
+- [[ff-conformance-skip-seed-v1]] — resulting skip-list post-fix
