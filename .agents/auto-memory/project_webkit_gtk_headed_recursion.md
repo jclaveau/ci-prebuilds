@@ -1,9 +1,42 @@
 ---
 name: webkit-gtk-headed-recursion
-description: PW SDK headed launch on Alpine/musl crashes MiniBrowser-gtk inside libgtk-4 with what looks like infinite recursion (~30 identical-PC frames in gtk widget code) at newPage time; WebKit code never runs. Tier-2 headed gated `if: false` in the producer smoke until the GTK4-on-musl event-loop quirk is identified.
+description: RESOLVED 2026-07-22 — headed MiniBrowser-gtk SIGSEGV (libgtk-4 self-recursion at newPage) was the artifact's hand-assembled bundled gtk4 stack, NOT GTK4-on-musl or WebKit. Fix — bundle-dist drops the gtk4 closure for the GTK port so the consumer's consistent `apk add gtk4.0` supplies it. Tier-2 headed smoke re-enabled.
 metadata:
   type: project
 ---
+
+**RESOLVED 2026-07-22 — root cause = the bundled gtk4 stack, not GTK4/WebKit.**
+Discriminator chain (local, `wk-prepared`):
+- A **standalone** GTK4 window (`apk gtk4.0-4.22.4` + pygobject) realizes fine
+  under the same Xvfb-Alpine → NOT a generic GTK4-on-musl-Xvfb bug.
+- The bundled libgtk-4 is the SAME version (4.22.4) as the working apk one →
+  NOT a gtk4 version issue.
+- Reproduced the crash in `wk-prepared` (headed `newPage` → "Target closed").
+  Forcing the runner's apk gtk4 over the bundle via `LD_LIBRARY_PATH=/usr/lib`
+  (RUNPATH=`$ORIGIN` loses to LD_LIBRARY_PATH) → **PAGE+GOTO OK**. So the flat
+  ldd-walk **bundle** is the culprit: it mixes libs from different apk states,
+  and a version-skewed member of the gtk4 stack drives libgtk-4 into infinite
+  self-recursion (bottoming through glib `g_get_monotonic_time`). glib-only
+  swap did NOT fix it — the whole gtk4 stack must be consistent.
+
+**Fix (validated locally, no WebKit rebuild logic changed):**
+`webkit/scripts/bundle-dist.sh` — for the **GTK port only**, exclude libgtk-4's
+own ldd-closure (glib/gobject/gio, pango, cairo, gdk-pixbuf, graphene, epoxy,
+harfbuzz, X11/wayland, fontconfig, freetype, …, ~107 libs) from the bundle.
+The consumer's single consistent `apk add gtk4.0` supplies that closure.
+Everything else stays bundled — WebKit-built libs AND webkit media/font apk
+libs (gstreamer, icu, avif, webp, enchant) — so the consumer needs ONLY
+gtk4.0, nothing more. WPE (headless) is untouched (links no gtk4, fully
+self-contained). Producer smoke Tier-2 headed re-enabled (dropped `if: false`).
+Consumer-image `apk add gtk4.0` + a WK headed conformance leg are the
+follow-ons once the smoke confirms the fix in a rebuild.
+Sibling of [[feedback_diagnose_before_accepting_cant_fix]] — the "GTK4-on-musl
+event-loop quirk" verdict below was a hypothesis; the real cause was cheap.
+
+---
+
+**Original diagnosis (kept for the backtrace evidence — hypotheses now
+superseded by the RESOLVED section above):**
 
 The headed launch path through `pw_run.sh` dispatches to MiniBrowser-gtk
 (the GTK4 build of MiniBrowser). On Alpine/musl under Xvfb (no compositor,

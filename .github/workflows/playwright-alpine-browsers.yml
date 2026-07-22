@@ -2159,20 +2159,14 @@ jobs:
             '
 
       - name: Run Tier-2 headed smoke (PW SDK → MiniBrowser-gtk via Xvfb)
-        if: false  # Tier-2 headed disabled: GTK4 internal infinite recursion
-                   # on Alpine/musl. Iter against wk-edge (smoke-webkit-iter
-                   # run 28155027218): launch.cjs OK, newContext OK, then
-                   # MiniBrowser-gtk SIGSEGV during newPage. gdb bt shows
-                   # libgtk-4.so.1 at +0x257 recursing into itself (~30
-                   # frames identical PC) until stack overflow. WebKit
-                   # itself never reached. Headless WPE Tier-2 passes —
-                   # the diagnostic frontier is GTK4-on-musl event/layout
-                   # plumbing, separate from the build pipeline.
-                   # See: project_webkit_gtk_headed_recursion.md
-                   # Re-enable by dropping `if: false` once root cause
-                   # identified (likely a GTK4 event/layout loop triggered
-                   # by Xvfb without a compositor, or musl-specific glib
-                   # main loop behavior).
+        # Re-enabled 2026-07-22: the GTK4 infinite-recursion SIGSEGV at newPage
+        # was root-caused to the artifact's hand-assembled bundled gtk4 stack
+        # (a version-skewed transitive lib in the flat ldd-walk), NOT a
+        # GTK4-on-musl or WebKit bug — a standalone GTK4 window realizes fine,
+        # and forcing the runner's consistent apk gtk4.0 over the bundle makes
+        # headed newPage+goto green (validated locally). bundle-dist.sh now
+        # drops the gtk4 closure from the GTK port so this runner's apk gtk4.0
+        # supplies it. See project_webkit_gtk_headed_recursion.md.
         timeout-minutes: 5
         run: |
           # Headed launches dispatch through pw_run.sh → MiniBrowser-gtk
