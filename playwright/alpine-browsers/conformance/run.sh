@@ -166,6 +166,22 @@ case "$BROWSER" in
   *)              HEADED_ENABLED=0 ;;
 esac
 
+# Full-headed mode (HEADED=1 dispatch input) runs the ENTIRE suite headed via
+# --headed on every leg, not just headful.spec.ts. The single lever flips
+# playwright.config.ts's `headless: !argv.includes('--headed')` for all
+# projects. Only FF + WK have a headed binary; chromium-headless-shell does not
+# (use the chr-fs `chrome` artifact for headed chromium). When on, the separate
+# run_headed leg is redundant (the whole run is already headed) and is skipped.
+HEADED_FLAG=""
+if [ "${HEADED:-0}" = "1" ]; then
+  if [ "$HEADED_ENABLED" -ne 1 ]; then
+    echo "HEADED=1 unsupported for BROWSER=${BROWSER} (no headed binary)" >&2
+    exit 1
+  fi
+  HEADED_FLAG="--headed"
+  echo "==== FULL-HEADED mode: every leg runs --headed ===="
+fi
+
 set +e
 RC_LIB=0
 RC_PAGE=0
@@ -223,6 +239,7 @@ run_one() {
       --shard="${SHARD}/${SHARD_TOTAL}" \
       --reporter=line,html \
       --retries=2 \
+      $HEADED_FLAG \
       $TIMEOUT_FLAG \
       $GREP_INVERT "$TITLE_PATTERNS" 2>&1 | tee "$LOG"
   else
@@ -232,6 +249,7 @@ run_one() {
       --shard="${SHARD}/${SHARD_TOTAL}" \
       --reporter=line,html \
       --retries=2 \
+      $HEADED_FLAG \
       $TIMEOUT_FLAG 2>&1 | tee "$LOG"
   fi
   RC=$?
@@ -276,8 +294,10 @@ RC_STRESS=$?
 run_one tests/library/playwright.config.ts "${BROWSER}-extension" extension
 RC_EXTENSION=$?
 
-# Headed leg runs once (shard 1) for headed-capable browsers only.
-if [ "$HEADED_ENABLED" -eq 1 ] && [ "$SHARD" -eq 1 ]; then
+# Headed leg runs once (shard 1) for headed-capable browsers only. Skipped in
+# full-headed mode — the four legs above already ran --headed, so headful.spec.ts
+# is covered within the (headed) library leg and a separate leg would duplicate it.
+if [ "$HEADED_ENABLED" -eq 1 ] && [ "$SHARD" -eq 1 ] && [ "${HEADED:-0}" != "1" ]; then
   run_headed
   RC_HEADED=$?
 fi

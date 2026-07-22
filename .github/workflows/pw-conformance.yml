@@ -31,6 +31,11 @@ on:
         description: 'Browser revision (chs CHS_REV / ff revision / wk revision) for PW cache-path layout'
         required: true
         type: string
+      headed:
+        description: 'Run the FULL suite headed (--headed on every leg), not just headful.spec.ts. FF/WK only.'
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     # Standalone dispatch — useful when re-running conformance against an
     # already-published artifact without re-firing the producer's smoke
@@ -55,6 +60,11 @@ on:
         description: 'Browser revision (CHS_REV / firefox_revision / webkit_revision)'
         required: true
         type: string
+      headed:
+        description: 'Run the FULL suite headed (--headed on every leg). FF/WK only — chromium needs the chrome (not headless-shell) artifact.'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -99,6 +109,7 @@ jobs:
           PW_VERSION: ${{ inputs.pw_version }}
           SHARD: ${{ matrix.shard }}
           SHARD_TOTAL: 20
+          HEADED: ${{ inputs.headed && '1' || '0' }}
         run: |
           # --security-opt seccomp=unconfined: PW's browser renderers use
           # clone(CLONE_NEWUSER) which is blocked by default seccomp on FF,
@@ -132,6 +143,7 @@ jobs:
             -e PW_VERSION \
             -e SHARD \
             -e SHARD_TOTAL \
+            -e HEADED \
             $EXTRA_ENV \
             pw-conformance-runner-${{ inputs.browser }}:${{ github.sha }} \
             sh /conformance/run.sh
@@ -165,6 +177,7 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Artifact image: \`${{ inputs.image_ref }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "PW version:     \`v${{ inputs.pw_version }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Mode:           \`${{ inputs.headed && 'headed — full suite --headed' || 'headless + headful.spec.ts headed leg' }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Shard outcomes via the shard job; per-shard html reports uploaded as artifacts." >> "$GITHUB_STEP_SUMMARY"
           ls -la shards/ || true
