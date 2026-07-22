@@ -149,47 +149,31 @@ TIMEOUT_FLAG=""
 # --reporter=html (config-default) writes to playwright-report/; we move it
 # into REPORT_DIR after each run so both library + page outputs survive.
 
+# Headed conformance leg gate. PW's headful.spec.ts (whole-file
+# skip-when-headless) exercises the real windowed path that the headless legs
+# never touch. Only firefox is headed-capable today: its from-source binary
+# links gtk3 and runs headed under Xvfb (proven locally — headful.spec.ts
+# 15/15). webkit headed SIGSEGVs inside libgtk-4 (see
+# project_webkit_gtk_headed_recursion) and chromium ships headless-shell only
+# (no headed target) — both stay off until their fixes land. The leg is small
+# (~16 tests) so it runs UNSHARDED, once, on shard 1.
+case "$BROWSER" in
+  firefox) HEADED_ENABLED=1 ;;
+  *)       HEADED_ENABLED=0 ;;
+esac
+
 set +e
 RC_LIB=0
 RC_PAGE=0
 RC_STRESS=0
 RC_EXTENSION=0
+RC_HEADED=0
 
-run_one() {
-  CONFIG="$1"; PROJECT="$2"; LABEL="$3"
-  echo "==== ${LABEL} — shard ${SHARD}/${SHARD_TOTAL} ===="
-  # Tee stdout to a per-suite log so the runtime-parity gate can grep pass
-  # /fail/skip counts without pulling GH logs by API. `pipefail` propagates
-  # the playwright exit code past `tee`.
-  LOG="$REPORT_DIR/${LABEL}.log"
-  # PW's inspector / recorder / trace-viewer / selector-generator / slowmo /
-  # debug-controller subsystems launch an INTERNAL headed chromium as the
-  # recorder UI harness (independent of the browser under test). It fails
-  # under headless Alpine without X. Wrap with `xvfb-run -a` so those specs
-  # can run — the browser-under-test still runs headless via its own launcher.
-  # `xvfb-run` is a no-op cost when a DISPLAY is already set.
-  set -o pipefail
-  if [ -n "$GREP_INVERT" ]; then
-    xvfb-run -a npx playwright test \
-      --config="$CONFIG" \
-      --project="$PROJECT" \
-      --shard="${SHARD}/${SHARD_TOTAL}" \
-      --reporter=line,html \
-      --retries=2 \
-      $TIMEOUT_FLAG \
-      $GREP_INVERT "$TITLE_PATTERNS" 2>&1 | tee "$LOG"
-  else
-    xvfb-run -a npx playwright test \
-      --config="$CONFIG" \
-      --project="$PROJECT" \
-      --shard="${SHARD}/${SHARD_TOTAL}" \
-      --reporter=line,html \
-      --retries=2 \
-      $TIMEOUT_FLAG 2>&1 | tee "$LOG"
-  fi
-  RC=$?
-  set +o pipefail
-
+# Emit the stable stats.txt line + relocate the html report for one suite run.
+# Shared by the sharded headless legs (run_one) and the headed leg
+# (run_headed) so both feed the runtime-parity aggregator identically.
+emit_stats() {
+  LABEL="$1"; LOG="$2"
   # Distill the tail of the line reporter into a stable `stats.txt` line
   # for the runtime-parity aggregator. Matches PW's summary format:
   #   `  <N> passed (<time>)` | `  <N> failed` | `  <N> skipped`
@@ -212,6 +196,67 @@ run_one() {
   if [ -d "$PW_SRC/playwright-report" ]; then
     mv "$PW_SRC/playwright-report" "$REPORT_DIR/${LABEL}-report"
   fi
+}
+
+run_one() {
+  CONFIG="$1"; PROJECT="$2"; LABEL="$3"
+  echo "==== ${LABEL} — shard ${SHARD}/${SHARD_TOTAL} ===="
+  # Tee stdout to a per-suite log so the runtime-parity gate can grep pass
+  # /fail/skip counts without pulling GH logs by API. `pipefail` propagates
+  # the playwright exit code past `tee`.
+  LOG="$REPORT_DIR/${LABEL}.log"
+  # PW's inspector / recorder / trace-viewer / selector-generator / slowmo /
+  # debug-controller subsystems launch an INTERNAL headed chromium as the
+  # recorder UI harness (independent of the browser under test). It fails
+  # under headless Alpine without X. Wrap with `xvfb-run -a` so those specs
+  # can run — the browser-under-test still runs headless via its own launcher.
+  # `xvfb-run` is a no-op cost when a DISPLAY is already set.
+  set -o pipefail
+  if [ -n "$GREP_INVERT" ]; then
+    xvfb-run -a -s "-screen 0 1280x720x24" npx playwright test \
+      --config="$CONFIG" \
+      --project="$PROJECT" \
+      --shard="${SHARD}/${SHARD_TOTAL}" \
+      --reporter=line,html \
+      --retries=2 \
+      $TIMEOUT_FLAG \
+      $GREP_INVERT "$TITLE_PATTERNS" 2>&1 | tee "$LOG"
+  else
+    xvfb-run -a -s "-screen 0 1280x720x24" npx playwright test \
+      --config="$CONFIG" \
+      --project="$PROJECT" \
+      --shard="${SHARD}/${SHARD_TOTAL}" \
+      --reporter=line,html \
+      --retries=2 \
+      $TIMEOUT_FLAG 2>&1 | tee "$LOG"
+  fi
+  RC=$?
+  set +o pipefail
+  emit_stats "$LABEL" "$LOG"
+  return "$RC"
+}
+
+# Headed leg — runs the headed-only specs (headful.spec.ts, whole-file
+# skip-when-headless) with --headed so the windowed path is actually
+# exercised. Unsharded (small suite, runs once on shard 1). The headless
+# title skip-list is deliberately NOT applied — those patterns target the
+# headless legs; headed keeps its own list only if a real gap appears.
+run_headed() {
+  LABEL="headed"
+  echo "==== ${LABEL} (unsharded) — ${BROWSER} ===="
+  LOG="$REPORT_DIR/${LABEL}.log"
+  set -o pipefail
+  xvfb-run -a -s "-screen 0 1280x720x24" npx playwright test \
+    --config=tests/library/playwright.config.ts \
+    --project="${BROWSER}-library" \
+    --headed \
+    --reporter=line,html \
+    --retries=2 \
+    $TIMEOUT_FLAG \
+    tests/library/headful.spec.ts 2>&1 | tee "$LOG"
+  RC=$?
+  set +o pipefail
+  emit_stats "$LABEL" "$LOG"
   return "$RC"
 }
 
@@ -227,10 +272,16 @@ RC_STRESS=$?
 run_one tests/library/playwright.config.ts "${BROWSER}-extension" extension
 RC_EXTENSION=$?
 
+# Headed leg runs once (shard 1) for headed-capable browsers only.
+if [ "$HEADED_ENABLED" -eq 1 ] && [ "$SHARD" -eq 1 ]; then
+  run_headed
+  RC_HEADED=$?
+fi
+
 set -e
 
-echo "==== Shard ${SHARD}/${SHARD_TOTAL} done — library rc=${RC_LIB}, page rc=${RC_PAGE}, stress rc=${RC_STRESS}, extension rc=${RC_EXTENSION} ===="
+echo "==== Shard ${SHARD}/${SHARD_TOTAL} done — library rc=${RC_LIB}, page rc=${RC_PAGE}, stress rc=${RC_STRESS}, extension rc=${RC_EXTENSION}, headed rc=${RC_HEADED} ===="
 
 # Fail the shard if any suite failed. Caller's matrix has fail-fast: false
 # so other shards keep running; aggregator job sees the per-shard outcome.
-[ "$RC_LIB" -eq 0 ] && [ "$RC_PAGE" -eq 0 ] && [ "$RC_STRESS" -eq 0 ] && [ "$RC_EXTENSION" -eq 0 ]
+[ "$RC_LIB" -eq 0 ] && [ "$RC_PAGE" -eq 0 ] && [ "$RC_STRESS" -eq 0 ] && [ "$RC_EXTENSION" -eq 0 ] && [ "$RC_HEADED" -eq 0 ]
