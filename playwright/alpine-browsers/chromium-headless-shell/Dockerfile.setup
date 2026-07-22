@@ -49,8 +49,16 @@ RUN curl -sSL "https://github.com/mozilla/sccache/releases/download/v0.16.0/scca
 
 WORKDIR /work
 
+# VARIANT (headless|headed) baked as ENV so it flows through Dockerfile.round
+# and Dockerfile.finalize (both FROM this image) — the scripts source
+# variant-config.sh to pick target/out-dir/overlay/layout. Default headless
+# keeps the existing chrome-headless-shell build byte-identical.
+ARG VARIANT=headless
+ENV VARIANT=${VARIANT}
+
 COPY versions.env /work/versions.env
 COPY chromium-headless-shell/args.gn.overlay /work/chromium-headless-shell/args.gn.overlay
+COPY chromium-headless-shell/args.gn.headed.overlay /work/chromium-headless-shell/args.gn.headed.overlay
 COPY chromium-headless-shell/scripts /work/chromium-headless-shell/scripts
 
 RUN set -a && . /work/versions.env && set +a \

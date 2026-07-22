@@ -58,8 +58,11 @@ export CC="$CLANG_BASE/bin/clang"
 export CXX="$CLANG_BASE/bin/clang++"
 export RUSTC_BOOTSTRAP=1
 
+# VARIANT (headless|headed) selects out dir + ninja target + binary name.
+. "$WORK/chromium-headless-shell/scripts/variant-config.sh"
+
 SRC="$WORK/chromium-src/chromium-${CHS_VER}"
-OUT="out/headless"
+OUT="$VARIANT_OUT_DIR"
 cd "$SRC"
 
 # Pre-round status: how many .o files already on disk (resumed work).
@@ -68,13 +71,13 @@ echo "===== ninja $LABEL — starting with $PRE_OBJ_COUNT .o files on disk =====
 
 # Final round vs resumable round
 if [[ "$FINAL" == "final" ]]; then
-  ninja -C "$OUT" -j "$(nproc)" headless_shell
+  ninja -C "$OUT" -j "$(nproc)" $VARIANT_TARGET
   rc=$?
 else
   # 5h hard cap (300m × 60 = 18000s); ninja's own SIGTERM handler drains
   # in-flight jobs, then exits 124. `|| true` lets the layer commit with
   # whatever obj/ files were written before the cap.
-  timeout 18000 ninja -C "$OUT" -j "$(nproc)" headless_shell || true
+  timeout 18000 ninja -C "$OUT" -j "$(nproc)" $VARIANT_TARGET || true
   rc=0
 fi
 
@@ -94,7 +97,7 @@ sccache --show-stats 2>&1 | sed 's/^/  sccache: /' || true
 # directory) was never copied, and PW's official ubuntu image ships more paks
 # than the old list matched.
 if [[ "$FINAL" == "final" && $rc -eq 0 ]]; then
-  BIN="$OUT/headless_shell"
+  BIN="$OUT/$VARIANT_BIN"
   if [[ ! -x "$BIN" ]]; then
     echo "ERROR: expected $BIN after final ninja" >&2
     ls -la "$OUT" | head -20
@@ -103,17 +106,33 @@ if [[ "$FINAL" == "final" && $rc -eq 0 ]]; then
   DIST="$WORK/chromium-dist"
   mkdir -p "$DIST"
   cp -a "$BIN" "$DIST/"
+  # Shared runtime data (both variants): ICU, V8 snapshots, SwiftShader.
   for f in icudtl.dat snapshot_blob.bin v8_context_snapshot.bin \
-           headless_command_resources.pak headless_lib_data.pak headless_lib_strings.pak \
            vk_swiftshader_icd.json; do
     [[ -f "$OUT/$f" ]] && cp -a "$OUT/$f" "$DIST/"
   done
-  for d in locales hyphen-data; do
-    [[ -d "$OUT/$d" ]] && cp -a "$OUT/$d" "$DIST/"
-  done
+  if [[ "$VARIANT" == "headed" ]]; then
+    # Full chrome: the crashpad handler + the desktop .pak set + UI resources.
+    # chrome refuses to start without chrome_100_percent.pak + resources.pak.
+    for f in chrome_crashpad_handler product_logo_48.png \
+             chrome_100_percent.pak chrome_200_percent.pak resources.pak; do
+      [[ -f "$OUT/$f" ]] && cp -a "$OUT/$f" "$DIST/"
+    done
+    for d in locales resources MEIPreload; do
+      [[ -d "$OUT/$d" ]] && cp -a "$OUT/$d" "$DIST/"
+    done
+  else
+    # Headless-shell paks (no chrome UI resources).
+    for f in headless_command_resources.pak headless_lib_data.pak headless_lib_strings.pak; do
+      [[ -f "$OUT/$f" ]] && cp -a "$OUT/$f" "$DIST/"
+    done
+    for d in locales hyphen-data; do
+      [[ -d "$OUT/$d" ]] && cp -a "$OUT/$d" "$DIST/"
+    done
+  fi
   find "$OUT" -maxdepth 1 \( -name '*.so' -o -name '*.so.*' \) -exec cp -a {} "$DIST/" \;
-  echo "===== DIST staged at $DIST ====="
-  ls -lh "$DIST" | head -20
+  echo "===== DIST staged at $DIST ($VARIANT) ====="
+  ls -lh "$DIST" | head -30
 fi
 
 exit $rc

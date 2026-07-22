@@ -345,11 +345,13 @@ echo "  AR=$AR  CC=$CC  CXX=$CXX  NM=$NM"
 export RUSTC_BOOTSTRAP=1
 echo "  RUSTC_BOOTSTRAP=1 (allow -Z flags on stable rust)"
 
-OUT_DIR="out/headless"
+# VARIANT (headless|headed) selects the out dir, args overlay + ninja target.
+. "$WORK/chromium-headless-shell/scripts/variant-config.sh"
+OUT_DIR="$VARIANT_OUT_DIR"
 mkdir -p "$OUT_DIR"
 
 {
-  cat "$WORK/chromium-headless-shell/args.gn.overlay"
+  cat "$WORK/chromium-headless-shell/$VARIANT_OVERLAY"
   echo ""
   echo "# Injected at build time"
   echo "clang_base_path = \"$CLANG_BASE\""
@@ -393,10 +395,10 @@ if [[ "${PW_CHROMIUM_SKIP_NINJA:-0}" == "1" ]]; then
   echo "===== SKIP ninja (PW_CHROMIUM_SKIP_NINJA=1; Dockerfile owns ninja) ====="
   exit 0
 fi
-echo "===== START ninja headless_shell ====="
+echo "===== START ninja $VARIANT_TARGET ====="
 ninja_rc=0
-ninja -C "$OUT_DIR" -j "${NINJA_JOBS:-$(nproc)}" headless_shell || ninja_rc=$?
-echo "===== END ninja headless_shell (rc=$ninja_rc) ====="
+ninja -C "$OUT_DIR" -j "${NINJA_JOBS:-$(nproc)}" $VARIANT_TARGET || ninja_rc=$?
+echo "===== END ninja $VARIANT_TARGET (rc=$ninja_rc) ====="
 
 if [[ $ninja_rc -ne 0 ]]; then
   echo "ERROR: ninja failed with rc=$ninja_rc" >&2

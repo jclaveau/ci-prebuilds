@@ -2,10 +2,16 @@
 #
 # chromium-from-source multi-job STAGE N: final ninja + artifact staging.
 #
-# Consumes the last round's image (BASE_IMAGE) and runs `ninja headless_shell`
-# WITHOUT a timeout — this call MUST complete or the job (rightly) fails.
-# Then stages the binary/pak tree via stage-cache-layout.sh and copies the
-# result into a FROM scratch artifact stage matching the pre-refactor layout.
+# Consumes the last round's image (BASE_IMAGE) and runs the final `ninja
+# <target>` (headless_shell | chrome, from the inherited ENV VARIANT) WITHOUT a
+# timeout — this call MUST complete or the job (rightly) fails. Then stages the
+# binary/pak tree via stage-cache-layout.sh and copies the result into a FROM
+# scratch artifact stage.
+#
+# ARTIFACT_LAYOUT is the PW-discovery dir name stage-cache-layout.sh produced
+# (chrome-headless-shell-linux64 for headless, chrome-linux for headed). It
+# must match VARIANT — the caller passes both. Default keeps headless
+# byte-identical.
 
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE} AS chromium-builder
@@ -18,4 +24,5 @@ RUN --mount=type=cache,target=/root/.cache/sccache,id=chr-sccache,sharing=locked
 RUN bash /work/chromium-headless-shell/scripts/stage-cache-layout.sh /work
 
 FROM scratch AS artifact
-COPY --from=chromium-builder /work/chrome-headless-shell-linux64 /chrome-headless-shell-linux64
+ARG ARTIFACT_LAYOUT=chrome-headless-shell-linux64
+COPY --from=chromium-builder /work/${ARTIFACT_LAYOUT} /${ARTIFACT_LAYOUT}
