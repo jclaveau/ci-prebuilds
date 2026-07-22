@@ -33,8 +33,14 @@ webrtc/dawn/codecs/printing/audio). Heavier features re-enable per aports if a
 headful test needs them. Extra runtime apk over headless: `gtk+3.0
 mesa-dri-gallium font-opensans xdg-utils libudev`.
 
-**Chain:** bigger than headless_shell's 8 rounds → likely 12+. First validation
-= setup+r1 ONLY (gn-gen + early compile) before the full multi-day commit;
-extend r2..rN + finalize once r1 compiles. chr-* tag namespace, own concurrency
-bucket. WATCH the BASE_IMAGE chain ([[project_multijob_base_image_audit]]).
+**Chain (LIVE):** setup → r1..r14 → finalize. r1 config validated green (run
+29909366384); rounds r2..r14 added generous (chrome graph ≫ headless_shell's 8)
+— spare rounds no-op fast once ninja is exhausted (cheaper than an undershoot
+re-dispatch). finalize: `ninja chrome` no-timeout, BASE=chr-build-r14,
+ARTIFACT_LAYOUT=chrome-linux, outputs chr-fs-sha-<sha> + chr-fs-edge, Tier-1
+`chrome --version`. chr-* tag namespace, own concurrency bucket. pins query
+browsers.json name=="chromium" (rev ≠ chromium-headless-shell path). WATCH the
+BASE_IMAGE chain ([[project_multijob_base_image_audit]]) — audited rN→r{N-1},
+finalize→r14. Consumer smoke + headed conformance leg land once the artifact
+finalizes (days).
 [[project_headed_mode_support]] [[project_chromium_from_source_split_build]]

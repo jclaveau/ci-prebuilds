@@ -151,15 +151,19 @@ TIMEOUT_FLAG=""
 
 # Headed conformance leg gate. PW's headful.spec.ts (whole-file
 # skip-when-headless) exercises the real windowed path that the headless legs
-# never touch. Only firefox is headed-capable today: its from-source binary
-# links gtk3 and runs headed under Xvfb (proven locally — headful.spec.ts
-# 15/15). webkit headed SIGSEGVs inside libgtk-4 (see
-# project_webkit_gtk_headed_recursion) and chromium ships headless-shell only
-# (no headed target) — both stay off until their fixes land. The leg is small
-# (~16 tests) so it runs UNSHARDED, once, on shard 1.
+# never touch. Headed-capable today:
+#   firefox — from-source binary links gtk3, runs headed under Xvfb.
+#   webkit  — MiniBrowser-gtk (gtk4). The libgtk-4 SIGSEGV was the bundled gtk4
+#             stack, fixed in bundle-dist (exclude gtk4 closure -> runner apk
+#             gtk4.0); smoke Tier-2 headed green in run 29907310889. See
+#             project_webkit_gtk_headed_recursion (RESOLVED).
+# chromium stays off here: chrome-headless-shell has no headed target — the
+# headed full-chrome build (chr-fs artifact) is a separate pipeline; its
+# conformance leg lands once that artifact exists. The leg is small (~16 tests)
+# so it runs UNSHARDED, once, on shard 1.
 case "$BROWSER" in
-  firefox) HEADED_ENABLED=1 ;;
-  *)       HEADED_ENABLED=0 ;;
+  firefox|webkit) HEADED_ENABLED=1 ;;
+  *)              HEADED_ENABLED=0 ;;
 esac
 
 set +e

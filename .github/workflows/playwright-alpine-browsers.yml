@@ -1514,13 +1514,13 @@ jobs:
           echo "$OUT" | grep -q "${{ steps.pins.outputs.chromium_version }}" \
             || { echo "Tier-1: chrome-headless-shell didn't report expected ${{ steps.pins.outputs.chromium_version }}"; exit 1; }
 
-  # HEADED full-chrome build (VARIANT=headed). Currently setup + r1 ONLY — a
-  # cheap config validation (gn gen for the `chrome` target + early ninja
-  # compile on musl) before committing to the full multi-round pipeline. The
-  # `chrome` graph is bigger than headless_shell (8 rounds) so it'll need more
-  # rounds + a finalize; those get added once r1 confirms the config compiles.
-  # Shares the same Dockerfiles/scripts as headless via VARIANT (baked as ENV
-  # in setup, inherited through round). Separate chr-* tag namespace.
+  # HEADED full-chrome build (VARIANT=headed). Full chain: setup -> r1..r14 ->
+  # finalize. r1 config (gn gen `chrome` + early ninja on musl) validated green
+  # in run 29909366384; the rounds knock out the rest of the bigger `chrome`
+  # graph before the no-timeout finalize link. Round count is generous — spare
+  # rounds no-op fast once ninja is exhausted (see finalize comment). Shares the
+  # same Dockerfiles/scripts as headless via VARIANT (baked as ENV in setup,
+  # inherited through round). Separate chr-* tag namespace + concurrency bucket.
   build-chromium-headed-setup:
     if: |
       (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headed == 'true')
@@ -1606,6 +1606,667 @@ jobs:
           secrets: |
             actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
             actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headed-r2:
+    needs: build-chromium-headed-r1
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headed == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headed'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build headed round-2 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r2-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r1-sha-${{ github.sha }}
+            ROUND_LABEL=round-2
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headed-r3:
+    needs: build-chromium-headed-r2
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headed == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headed'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build headed round-3 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r3-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r2-sha-${{ github.sha }}
+            ROUND_LABEL=round-3
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headed-r4:
+    needs: build-chromium-headed-r3
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headed == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headed'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build headed round-4 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r4-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r3-sha-${{ github.sha }}
+            ROUND_LABEL=round-4
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headed-r5:
+    needs: build-chromium-headed-r4
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headed == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headed'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build headed round-5 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r5-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r4-sha-${{ github.sha }}
+            ROUND_LABEL=round-5
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headed-r6:
+    needs: build-chromium-headed-r5
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headed == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headed'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build headed round-6 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r6-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r5-sha-${{ github.sha }}
+            ROUND_LABEL=round-6
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headed-r7:
+    needs: build-chromium-headed-r6
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headed == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headed'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build headed round-7 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r7-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r6-sha-${{ github.sha }}
+            ROUND_LABEL=round-7
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headed-r8:
+    needs: build-chromium-headed-r7
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headed == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headed'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build headed round-8 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r8-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r7-sha-${{ github.sha }}
+            ROUND_LABEL=round-8
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headed-r9:
+    needs: build-chromium-headed-r8
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headed == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headed'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build headed round-9 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r9-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r8-sha-${{ github.sha }}
+            ROUND_LABEL=round-9
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headed-r10:
+    needs: build-chromium-headed-r9
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headed == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headed'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build headed round-10 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r10-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r9-sha-${{ github.sha }}
+            ROUND_LABEL=round-10
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headed-r11:
+    needs: build-chromium-headed-r10
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headed == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headed'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build headed round-11 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r11-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r10-sha-${{ github.sha }}
+            ROUND_LABEL=round-11
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headed-r12:
+    needs: build-chromium-headed-r11
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headed == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headed'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build headed round-12 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r12-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r11-sha-${{ github.sha }}
+            ROUND_LABEL=round-12
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headed-r13:
+    needs: build-chromium-headed-r12
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headed == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headed'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build headed round-13 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r13-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r12-sha-${{ github.sha }}
+            ROUND_LABEL=round-13
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headed-r14:
+    needs: build-chromium-headed-r13
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headed == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headed'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build headed round-14 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r14-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r13-sha-${{ github.sha }}
+            ROUND_LABEL=round-14
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headed-finalize:
+    # Final headed job — runs `ninja chrome` (VARIANT inherited) WITHOUT a
+    # timeout; MUST complete. Consumes the last round's obj/ layer. Bigger
+    # graph than headless_shell so the round count is generous — spare rounds
+    # no-op fast once ninja is exhausted, keeping finalize's link step inside
+    # the 350min GHA cap (a cap-killed finalize pushes no cache).
+    needs: build-chromium-headed-r14
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headed == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headed'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    outputs:
+      build_tag: chr-sha-${{ github.sha }}
+      pw_version: ${{ steps.pins.outputs.pw_version }}
+      chromium_revision: ${{ steps.pins.outputs.chromium_revision }}
+      chromium_version: ${{ steps.pins.outputs.chromium_version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: pins
+        run: |
+          set -a; . playwright/alpine-browsers/versions.env; set +a
+          if [ -n "${PW_VERSION_OVERRIDE:-}" ]; then
+            echo "pin override: PW_VERSION=$PW_VERSION -> $PW_VERSION_OVERRIDE (workflow_dispatch input)"
+            PW_VERSION="$PW_VERSION_OVERRIDE"
+          fi
+          echo "pw_version=$PW_VERSION" >> "$GITHUB_OUTPUT"
+          BROWSERS_JSON=$(curl -fsSL "https://unpkg.com/playwright-core@${PW_VERSION}/browsers.json")
+          REV=$(jq -r '.browsers[] | select(.name=="chromium") | .revision' <<<"$BROWSERS_JSON")
+          VER=$(jq -r '.browsers[] | select(.name=="chromium") | .browserVersion' <<<"$BROWSERS_JSON")
+          echo "chromium_revision=$REV" >> "$GITHUB_OUTPUT"
+          echo "chromium_version=$VER" >> "$GITHUB_OUTPUT"
+          echo "PW v${PW_VERSION} -> chromium revision=${REV} browserVersion=${VER}"
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/jclaveau/playwright-alpine-browsers
+          tags: |
+            type=raw,value=chr-fs-sha-${{ github.sha }}
+            type=raw,value=chr-fs-edge,enable=${{ github.event_name != 'pull_request' }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build final headed artifact image (ninja chrome must complete)
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.finalize
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          target: artifact
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r14-sha-${{ github.sha }}
+            ARTIFACT_LAYOUT=chrome-linux
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+      - name: Tier-1 smoke (chrome --version)
+        run: |
+          cat > /tmp/Dockerfile.chr-t1 <<EOF
+          FROM alpine:edge
+          # Full-chrome runtime deps = headless-shell set + the headed extras
+          # (gtk3/mesa-dri/xdg-utils). --version needs the binary to load only,
+          # but chrome links gtk3 so keep it in the closure.
+          RUN apk update && apk add --no-cache \\
+              nss freetype harfbuzz ca-certificates ttf-freefont libdrm mesa-gl \\
+              libwebp libwebpdemux libxcomposite libxdamage libxrandr libxscrnsaver libxtst \\
+              libx11 libxcb libxext libxi cups-libs alsa-lib dbus-libs pango cairo \\
+              opus dav1d ffmpeg-libavformat libjpeg-turbo libxslt \\
+              libatk-1.0 libatk-bridge-2.0 at-spi2-core minizip \\
+              double-conversion crc32c libxkbcommon mesa-gbm eudev-libs flac \\
+              harfbuzz-subset \\
+              gtk+3.0 mesa-dri-gallium font-opensans xdg-utils
+          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:chr-fs-sha-${{ github.sha }} \\
+               /chrome-linux \\
+               /opt/chr
+          EOF
+          docker build -t chr-t1:${{ github.sha }} -f /tmp/Dockerfile.chr-t1 /tmp
+          OUT=$(docker run --rm chr-t1:${{ github.sha }} /opt/chr/chrome --version 2>&1 || true)
+          echo "chrome --version output:"
+          echo "$OUT"
+          echo "$OUT" | grep -q "${{ steps.pins.outputs.chromium_version }}" \
+            || { echo "Tier-1: chrome didn't report expected ${{ steps.pins.outputs.chromium_version }}"; exit 1; }
 
   smoke-chromium-headless-shell:
     # Tier-2: drive chromium via the Playwright SDK using auto-discovery (NO
