@@ -10,8 +10,20 @@ metadata:
 1. First pass fails (`rc=2`) on the cbindgen 0.29.4 (alpine edge) bare-`[COUNT]`
    regression: `webrender_ffi_generated.h:6735: error: use of undeclared
    identifier 'COUNT'` in accessible/atk (`BudgetType_VALUES[COUNT]`).
-2. Script then `sed 's/\[COUNT\]/[7]/g'` the generated header (line ~496) and
+2. Script then patches `[COUNT]` in the generated header (line ~496) and
    RETRIES `./mach build`. Retry compiles clean past the accessibility dir.
+
+**Count is DERIVED, not hardcoded (2026-07-21, commit e5d1907).** The size is
+`BudgetType::COUNT`. First attempt (f3bd807) parsed the Rust source
+`const COUNT: usize = N` in `gfx/wr/webrender/src/texture_cache.rs` — but that
+returned EMPTY on the pinned FF rev (its const form differs from mozilla main's
+`const COUNT: usize = 7;`), so the fail-loud guard aborted the build. Warm
+sccache surfaced it FAST (~15min, not the ~5-6h cold path) — [[feedback_iterate_deps_locally_before_ci_rebuild]] in reverse: a fast fail is a gift.
+Fix: derive from the header's OWN `BudgetType_VALUES[COUNT] = { ... }`
+initializer via `awk '/BudgetType_VALUES\[COUNT\] = \{/ { print gsub(/BudgetType::/,"&"); exit }'`
+(counts the `BudgetType::` elements cbindgen actually emitted → self-consistent,
+independent of Rust source form). Still fails loud if the initializer is absent.
+Validated green run 29824226695 (`Patching…(COUNT=7)` → retry green).
 
 **Watch-time implication:** during a FF rebuild watch, seeing `gmake: *** Error 2`
 + `END ./mach build (rc=2)` + first-pass build-clock ~22-29min is NORMAL — do NOT
