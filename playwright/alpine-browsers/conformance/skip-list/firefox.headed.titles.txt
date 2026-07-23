@@ -1,0 +1,18 @@
+# Headed-ONLY title skip-list for firefox. Applied only when the conformance
+# run is dispatched with headed=true (HEADED=1); the headless legs, where these
+# pass, are unaffected. Per line: JS regex matched against PW's bare innermost
+# test.title, joined with `|` into --grep-invert (same semantics as
+# firefox.titles.txt).
+#
+# Seeded 2026-07-23 from FF full-headed run 29967180041 (shard 17, library leg):
+#
+#   - trace-viewer "should reflect system color scheme changes in document
+#     theme" asserts the viewer's DEFAULT theme is light-mode. The trace-viewer
+#     UI (chromium-based) follows the display's prefers-color-scheme; under
+#     headed Xvfb (no desktop portal) it resolves to dark, so the first
+#     `toHaveClass('light-mode')` fails deterministically (3 retries). Headless
+#     chromium reports light by default, so this passes in every headless leg.
+#     A PW-UI-theme artifact of the headed environment, not a musl/Firefox gap.
+#     (WK's headed run passed it — the system default is env-nondeterministic;
+#     add a webkit.headed.titles.txt entry only if WK flakes on it later.)
+should reflect system color scheme changes in document theme

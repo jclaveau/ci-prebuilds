@@ -136,6 +136,24 @@ if [ -f "$TITLES_LIST" ]; then
   fi
 fi
 
+# In full-headed mode, additionally apply <browser>.headed.titles.txt — headed-
+# ONLY divergences that pass headless (e.g. trace-viewer's default theme follows
+# the display's prefers-color-scheme, which resolves dark under headed Xvfb).
+# Kept as a separate list so the headless legs stay unskipped.
+HEADED_TITLES_LIST="$SKIP_DIR/${BROWSER}.headed.titles.txt"
+if [ "${HEADED:-0}" = "1" ] && [ -f "$HEADED_TITLES_LIST" ]; then
+  HEADED_TITLE_PATTERNS=$(grep -vE '^\s*(#|$)' "$HEADED_TITLES_LIST" | paste -sd'|' -)
+  if [ -n "$HEADED_TITLE_PATTERNS" ]; then
+    if [ -n "$TITLE_PATTERNS" ]; then
+      TITLE_PATTERNS="$TITLE_PATTERNS|$HEADED_TITLE_PATTERNS"
+    else
+      TITLE_PATTERNS="$HEADED_TITLE_PATTERNS"
+    fi
+    GREP_INVERT="--grep-invert"
+    echo "==== Headed title skip-list active ($HEADED_TITLES_LIST): $(echo "$HEADED_TITLE_PATTERNS" | tr '|' '\n' | wc -l) patterns ===="
+  fi
+fi
+
 export PWTEST_UNDER_TEST=1
 
 TIMEOUT_FLAG=""
