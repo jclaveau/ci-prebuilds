@@ -54,6 +54,17 @@ COPY --from=${IMAGE_REF} \\
      /chrome-linux \\
      /ms-playwright/chromium-${ARTIFACT_REV}/chrome-linux64
 RUN touch /ms-playwright/chromium-${ARTIFACT_REV}/INSTALLATION_COMPLETE
+# headful.spec.ts launches BOTH the headed browser AND a headless one
+# (browserType.launch({headless:true})) in a single test to compare default
+# fonts + hyphen rendering. The headless launch resolves to the
+# chrome-headless-shell path, which the chr-fs image doesn't carry (full chrome
+# only). Symlink that path to the full chrome binary — it runs headless via
+# --headless=new, and being the SAME binary makes the font/hyphen comparison
+# pass by construction (which is exactly the invariant the test asserts).
+RUN mkdir -p /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/chrome-headless-shell-linux64 \
+ && ln -sf /ms-playwright/chromium-${ARTIFACT_REV}/chrome-linux64/chrome \
+      /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/chrome-headless-shell-linux64/chrome-headless-shell \
+ && touch /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/INSTALLATION_COMPLETE
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN npm install -g playwright@${PW_VERSION}
 RUN playwright install ffmpeg
