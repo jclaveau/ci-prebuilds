@@ -24,6 +24,12 @@ FROM ${BASE_IMAGE} AS chromium-builder
 ARG PATCH_HEADED_PRINTING=
 ENV PATCH_HEADED_PRINTING=${PATCH_HEADED_PRINTING}
 
+# ninja-resume.sh is baked into BASE_IMAGE at setup time, so an edit to it on
+# the branch would NOT reach this container — overlay the fresh copy from the
+# (checked-out) build context so its PATCH_HEADED_PRINTING block actually runs.
+# Harmless for the unpatched paths: the fresh script == what setup baked.
+COPY chromium-headless-shell/scripts/ninja-resume.sh /work/chromium-headless-shell/scripts/ninja-resume.sh
+
 RUN --mount=type=cache,target=/root/.cache/sccache,id=chr-sccache,sharing=locked \
     --mount=type=secret,id=actions_runtime_token \
     --mount=type=secret,id=actions_results_url \

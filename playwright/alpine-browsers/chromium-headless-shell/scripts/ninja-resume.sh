@@ -76,7 +76,14 @@ cd "$SRC"
 # fixed overlay) has produced the artifact.
 if [ "${PATCH_HEADED_PRINTING:-0}" = "1" ]; then
   echo "===== PATCH_HEADED_PRINTING=1 — re-enabling print-preview on baked args.gn ====="
-  printf '\nenable_basic_printing = true\nenable_print_preview = true\nuse_cups = false\n' >> "$OUT/args.gn"
+  # sed-REPLACE the baked false lines (gn forbids reassigning an arg already set
+  # in args.gn, so appending a second `= true` is a no-op / error — must edit
+  # in place). use_cups stays false.
+  sed -i -E \
+    -e 's/^enable_basic_printing = false/enable_basic_printing = true/' \
+    -e 's/^enable_print_preview = false/enable_print_preview = true/' \
+    "$OUT/args.gn"
+  grep -E '^(enable_basic_printing|enable_print_preview|use_cups) ' "$OUT/args.gn"
   gn gen "$OUT"
 fi
 
