@@ -137,6 +137,18 @@ jobs:
             SECURITY_FLAGS="$SECURITY_FLAGS --security-opt apparmor=unconfined --cap-add SYS_ADMIN --cap-add NET_ADMIN"
             EXTRA_ENV="-e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 -e WEBKIT_FORCE_SANDBOX=0"
           fi
+          if [ "$BROWSER" = "chromium" ]; then
+            # chr-fs (and chs-fs) are DCHECK_ALWAYS_ON builds. Chrome raises a
+            # foreground renderer's priority via setpriority(PRIO_PROCESS, .., <)
+            # which returns EPERM without CAP_SYS_NICE; the DPCHECK(result==0) is
+            # FATAL in this build (release chrome ignores the failure) → the
+            # browser SIGABRTs on new-renderer ops (navigation, cross-process
+            # iframes), surfacing as "Target closed" on ~23 tests/shard. Grant
+            # SYS_NICE so the priority call succeeds. Headless chromium never hit
+            # it (headless-shell doesn't reprioritize renderers) but the cap is
+            # harmless there. base/process/process_linux.cc:201; run 30293866890.
+            SECURITY_FLAGS="$SECURITY_FLAGS --cap-add SYS_NICE"
+          fi
 
           docker run --rm $SECURITY_FLAGS \
             -v "$PWD/playwright/alpine-browsers/conformance:/conformance" \
