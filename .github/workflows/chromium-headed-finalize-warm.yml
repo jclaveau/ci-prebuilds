@@ -1,0 +1,118 @@
+name: Chromium Headed — warm finalize (print-preview salvage)
+
+# TEMP salvage workflow. The 5-day headed chromium build (run 29946711140)
+# finished all 14 rounds but its finalize FAILED: the chrome target needs
+# print-preview, which args.gn.headed.overlay had disabled as a stale lean-cut.
+# The overlay is now fixed, but the r14 obj/ image was gen'd with the OLD args,
+# and ninja-resume.sh runs `ninja` only (never `gn gen`) — so a plain re-dispatch
+# would cold-restart the whole chain from setup (~5 days).
+#
+# This job instead consumes the EXISTING r14 image directly, re-flips the
+# printing args on its baked args.gn + `gn gen` (PATCH_HEADED_PRINTING=1), and
+# compiles ONLY the print-preview delta on top of the warm obj/ (~1-2h). On
+# success it publishes chr-fs-edge / chr-fs-sha-<sha> exactly as the normal
+# finalize would.
+#
+# TODO(headed-printing-cold-rebuild): delete this workflow + the
+# PATCH_HEADED_PRINTING gate in ninja-resume.sh / Dockerfile.finalize once a
+# clean rebuild from the fixed overlay (path A) has produced the artifact — the
+# final goal is a chain that finalizes green with no patch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_image:
+        description: 'Existing r14 obj/ image to resume from (chr-build-r14-sha-<SHA>)'
+        required: true
+        default: 'ghcr.io/jclaveau/playwright-alpine-browsers:chr-build-r14-sha-38d49d643d1c4a9914e13c6f99c81f341dc4a3ec'
+        type: string
+      pw_version:
+        description: 'PW version — derives the chromium revision/version pins'
+        required: true
+        default: '1.60.0'
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  finalize-warm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - id: pins
+        run: |
+          BROWSERS_JSON=$(curl -fsSL "https://unpkg.com/playwright-core@${{ inputs.pw_version }}/browsers.json")
+          REV=$(jq -r '.browsers[] | select(.name=="chromium") | .revision' <<<"$BROWSERS_JSON")
+          VER=$(jq -r '.browsers[] | select(.name=="chromium") | .browserVersion' <<<"$BROWSERS_JSON")
+          echo "chromium_revision=$REV" >> "$GITHUB_OUTPUT"
+          echo "chromium_version=$VER" >> "$GITHUB_OUTPUT"
+          echo "PW v${{ inputs.pw_version }} -> chromium revision=${REV} browserVersion=${VER}"
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/jclaveau/playwright-alpine-browsers
+          tags: |
+            type=raw,value=chr-fs-sha-${{ github.sha }}
+            type=raw,value=chr-fs-edge
+      - name: Expose GHA cache env
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Warm finalize (re-enable print-preview, delta-compile chrome)
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.finalize
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          target: artifact
+          build-args: |
+            BASE_IMAGE=${{ inputs.base_image }}
+            ARTIFACT_LAYOUT=chrome-linux
+            PATCH_HEADED_PRINTING=1
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+      - name: Tier-1 smoke (chrome --version)
+        run: |
+          cat > /tmp/Dockerfile.chr-t1 <<EOF
+          FROM alpine:edge
+          RUN apk update && apk add --no-cache \\
+              nss freetype harfbuzz ca-certificates ttf-freefont libdrm mesa-gl \\
+              libwebp libwebpdemux libxcomposite libxdamage libxrandr libxscrnsaver libxtst \\
+              libx11 libxcb libxext libxi cups-libs alsa-lib dbus-libs pango cairo \\
+              opus dav1d ffmpeg-libavformat libjpeg-turbo libxslt \\
+              libatk-1.0 libatk-bridge-2.0 at-spi2-core minizip \\
+              double-conversion crc32c libxkbcommon mesa-gbm eudev-libs flac \\
+              harfbuzz-subset \\
+              gtk+3.0 mesa-dri-gallium font-opensans xdg-utils
+          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:chr-fs-sha-${{ github.sha }} \\
+               /chrome-linux \\
+               /opt/chr
+          EOF
+          docker build -t chr-t1:${{ github.sha }} -f /tmp/Dockerfile.chr-t1 /tmp
+          OUT=$(docker run --rm chr-t1:${{ github.sha }} /opt/chr/chrome --version 2>&1 || true)
+          echo "chrome --version output:"
+          echo "$OUT"
+          echo "$OUT" | grep -q "${{ steps.pins.outputs.chromium_version }}" \
+            || { echo "Tier-1: chrome didn't report expected ${{ steps.pins.outputs.chromium_version }}"; exit 1; }

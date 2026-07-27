@@ -2,7 +2,8 @@
 #
 # Strategy: MINIMAL-headed. Build the real `chrome` target (headed window via
 # Ozone/X11 + GTK) but keep the same lean cuts as the headless-shell overlay
-# (is_official_build=false, no webrtc/dawn/codecs/printing/audio) so the compile
+# (is_official_build=false, no webrtc/dawn/codecs/audio; printing stays on — the
+# chrome target hard-requires print-preview) so the compile
 # stays as small as a headed browser allows. This proves headed chrome
 # builds+runs on musl and passes headed conformance; heavier features
 # (webrtc/vaapi/proprietary codecs/pulseaudio) can be re-enabled later per
@@ -71,9 +72,18 @@ ffmpeg_branding = "Chromium"
 rtc_use_pipewire = false
 use_pulseaudio = false
 use_alsa = false
+# Printing MUST stay on for the chrome target. Unlike the lean cuts below, the
+# full //chrome/browser graph references printing::mojom::RequestPrintPreviewParams
+# (print_preview_dialog_controller.h, pulled by chrome_content_browser_client.cc)
+# unconditionally — that mojom is generated only when enable_print_preview=true.
+# Disabling it passes `gn gen` but fails the compile at the very last finalize
+# TU (cost us a 5-day build, run 29946711140). Same "can't cut from chrome"
+# class as extensions/pdf above. use_cups stays false: print-to-PDF needs no
+# CUPS backend (and cups-dev in Dockerfile.setup would cold-invalidate the whole
+# round chain), which is all conformance drives.
 use_cups = false
-enable_basic_printing = false
-enable_print_preview = false
+enable_basic_printing = true
+enable_print_preview = true
 enable_vr = false
 chrome_pgo_phase = 0
 disable_fieldtrial_testing_config = true

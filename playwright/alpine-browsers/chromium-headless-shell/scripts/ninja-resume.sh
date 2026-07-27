@@ -65,6 +65,21 @@ SRC="$WORK/chromium-src/chromium-${CHS_VER}"
 OUT="$VARIANT_OUT_DIR"
 cd "$SRC"
 
+# TEMP warm-fix (headed printing). The chr-build-r14 obj/ image was gen'd with
+# printing OFF (a stale lean-cut in args.gn.headed.overlay); the chrome target
+# actually needs print-preview, so its final link fails. Rather than re-gen the
+# whole 5-day chain, re-flip the flags on the baked args.gn (later gn
+# assignments win) and `gn gen` so the warm finalize compiles ONLY the
+# print-preview delta on top of r14's warm obj/. The overlay is now correct, so
+# a clean rebuild needs none of this. TODO(headed-printing-cold-rebuild): drop
+# this block + the Dockerfile.finalize ARG once path A (clean rebuild from the
+# fixed overlay) has produced the artifact.
+if [ "${PATCH_HEADED_PRINTING:-0}" = "1" ]; then
+  echo "===== PATCH_HEADED_PRINTING=1 — re-enabling print-preview on baked args.gn ====="
+  printf '\nenable_basic_printing = true\nenable_print_preview = true\nuse_cups = false\n' >> "$OUT/args.gn"
+  gn gen "$OUT"
+fi
+
 # Pre-round status: how many .o files already on disk (resumed work).
 PRE_OBJ_COUNT=$(find "$OUT" -name '*.o' 2>/dev/null | wc -l)
 echo "===== ninja $LABEL — starting with $PRE_OBJ_COUNT .o files on disk ====="

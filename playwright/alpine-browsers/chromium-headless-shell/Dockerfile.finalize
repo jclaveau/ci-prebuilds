@@ -16,6 +16,14 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE} AS chromium-builder
 
+# TEMP warm-fix gate — only the standalone chromium-headed-finalize-warm.yml
+# dispatch sets this to 1, to re-enable print-preview on a stale r14 obj/ image
+# built before the overlay was fixed. Default off: a clean rebuild (path A) runs
+# finalize with the corrected overlay and needs no patch.
+# TODO(headed-printing-cold-rebuild): remove with the ninja-resume.sh block.
+ARG PATCH_HEADED_PRINTING=
+ENV PATCH_HEADED_PRINTING=${PATCH_HEADED_PRINTING}
+
 RUN --mount=type=cache,target=/root/.cache/sccache,id=chr-sccache,sharing=locked \
     --mount=type=secret,id=actions_runtime_token \
     --mount=type=secret,id=actions_results_url \
