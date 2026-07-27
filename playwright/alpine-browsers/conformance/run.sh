@@ -79,6 +79,18 @@ cd "$PW_SRC"
 sed -i 's|executablePath,|executablePath,\n        args: browserName === "firefox" ? ["--remote-debugging-port=0"] : browserName === "chromium" ? ["--run-all-compositor-stages-before-draw", "--disable-new-content-rendering-timeout"] : undefined,|' \
   tests/library/playwright.config.ts
 
+# Headed chromium only: the full chrome spins up a GPU process for window
+# compositing (headless-shell never does), and its ANGLE→Vulkan→SwiftShader init
+# aborts (SIGABRT, "Exiting GPU process due to errors during initialization")
+# under musl/Xvfb — killing the browser on paint-heavy tests (~70 Target-closed
+# fails/shard, run 30292662114; vulkan-loader alone didn't fix it). --disable-gpu
+# drops the GPU process entirely → in-process software compositing → the headed
+# browser survives. Headless-shell starts no GPU process, so scope this to HEADED.
+if [ "${HEADED:-0}" = "1" ]; then
+  sed -i 's|"--disable-new-content-rendering-timeout"|"--disable-new-content-rendering-timeout", "--disable-gpu"|' \
+    tests/library/playwright.config.ts
+fi
+
 # Upstream's config only builds ${browser}-library + ${browser}-page projects
 # (testDir library/ + page/). tests/stress/ + tests/extension/ use the same
 # tests/config/baseTest but have no project, so they never run. Inject a
