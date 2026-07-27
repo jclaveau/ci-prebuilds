@@ -1,0 +1,29 @@
+# Headed-ONLY title skip-list for chromium. Applied only when the conformance
+# run is dispatched with headed=true (HEADED=1); the headless chromium legs,
+# where these pass, are unaffected. Per line: JS regex matched against PW's bare
+# innermost test.title, joined with `|` into --grep-invert (same semantics as
+# chromium.titles.txt).
+#
+# Seeded 2026-07-27 from the headed chromium conformance runs (30295178904,
+# 30306144693) once CAP_SYS_NICE cleared the bulk DCHECK crashes. Each entry
+# below is a headed-ENVIRONMENT artifact or an upstream test-fragility exposed by
+# headed mode — NOT a musl/chromium browser bug. Genuine browser crashes (the
+# folder-upload SIGSEGV) are NOT skipped here; they are tracked separately.
+
+# capabilities "should not crash on showDirectoryPicker": PW's own test comment
+# says "In headless it throws (aborted), in headed it stalls (Test ended) and
+# waits for the picker to be accepted." The File System Access dir-dialog opens a
+# native GTK window headed; under our xvfb-run runner (no window manager) it
+# can't be dismissed, so the pending picker blocks context.close → "Test ended".
+# A headed-Xvfb-no-WM limitation, not a crash (the test's own name/intent is
+# "should not crash", and it does not). Upstream issue microsoft/playwright#7339.
+should not crash on showDirectoryPicker
+
+# browsercontext-timezone-id "should propagate timezone to workers": the test does
+# `waitForEvent('console')` and asserts the first console message is the worker's
+# timezone. Headed chrome emits a 404 "Failed to load resource" console message
+# (a favicon fetch on navigation that headless-shell never issues) which races
+# ahead of the worker's log → the assertion sees the 404 string. Deterministic,
+# headed-only, an upstream test-fragility (it already `it.fail`s this same test
+# for firefox, microsoft/playwright#38919) — not a timezone/worker browser bug.
+should propagate timezone to workers
