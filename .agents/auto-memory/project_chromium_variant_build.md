@@ -41,6 +41,33 @@ ARTIFACT_LAYOUT=chrome-linux, outputs chr-fs-sha-<sha> + chr-fs-edge, Tier-1
 `chrome --version`. chr-* tag namespace, own concurrency bucket. pins query
 browsers.json name=="chromium" (rev ≠ chromium-headless-shell path). WATCH the
 BASE_IMAGE chain ([[project_multijob_base_image_audit]]) — audited rN→r{N-1},
-finalize→r14. Consumer smoke + headed conformance leg land once the artifact
-finalizes (days).
+finalize→r14.
+
+**GREEN (2026-07-27):** headed artifact built — `chr-fs-edge` = Chromium
+148.0.7778.96, Tier-1 smoke pass. Ninja exhausted ~r11 (r10 5h → r11 24min →
+r12-14 no-op ~22min). **First finalize FAILED** (run 29946711140): the chrome
+target references `printing::mojom::RequestPrintPreviewParams`
+(print_preview_dialog_controller.h ← chrome_content_browser_client.cc)
+unconditionally; the overlay had cut `enable_print_preview`/`enable_basic_printing`
+as a stale lean-cut. `gn gen` passes, the last TU fails. Same "can't cut from
+chrome" class as extensions/pdf. Fix: enable both in the overlay, keep
+`use_cups=false` (print-to-PDF needs no CUPS backend; cups-dev in Dockerfile.setup
+would cold-invalidate the whole chain).
+
+**Warm-salvage pattern** (avoids a 2nd 5-day cold build) — `chromium-headed-finalize-warm.yml`,
+dispatch-only, FROMs the existing r14 image directly (no round re-run),
+delta-compiles only print-preview (~5452 edges, ~4h). Two bugs bit first:
+(1) `Dockerfile.finalize` runs `/work/.../ninja-resume.sh` which is BAKED into
+r14 at setup — a branch edit never reaches the container; fix = `COPY` the fresh
+script over the baked one in finalize. (2) gn forbids reassigning an arg already
+set in args.gn, so the patch must `sed`-REPLACE the baked `= false` lines, not
+append. Gated by `PATCH_HEADED_PRINTING=1` (default off → clean path-A finalize
+unaffected). TODO(headed-printing-cold-rebuild): once a clean rebuild from the
+fixed overlay produces the artifact, drop the warm workflow + the gate.
+
+**PENDING:** headed chromium conformance. build-runner.sh chromium branch stages
+headless-shell + a fake `chrome-linux64/chrome` symlink — headed needs the REAL
+`/chrome-linux` at PW's cache path; VERIFY dir name (`chrome-linux` vs
+`chrome-linux64`, line ~64 suspicious) before dispatching pw-conformance
+browser=chromium image_ref=chr-fs-edge headed=true. FF+WK headed already green.
 [[project_headed_mode_support]] [[project_chromium_from_source_split_build]]
