@@ -37,6 +37,14 @@ case "$BROWSER" in
     # PW launches chromium-<rev>/chrome-linux64/chrome headed under Xvfb, so stage
     # the REAL binary there. ARTIFACT_REV is the chromium revision (== browsers.json
     # name==chromium .revision) the dispatch passes.
+    #
+    # vulkan-loader (libvulkan.so.1): headed chrome spins up a GPU process for
+    # window compositing (headless-shell never does). Its ANGLE→Vulkan→SwiftShader
+    # path dlopens the system Vulkan loader to load chrome's bundled SwiftShader
+    # ICD; without it the GPU process aborts (SIGABRT, "Exiting GPU process due to
+    # errors during initialization") → the headed browser dies → ~half the suite
+    # cascades on "Target closed" (run 30284843343). We do NOT add mesa-vulkan-swrast
+    # (lavapipe) — chrome uses its own SwiftShader ICD, matching PW's reference.
     cat > "$TMPDIR/Dockerfile" <<EOF
 FROM alpine:edge
 RUN apk update && apk add --no-cache \\
@@ -49,7 +57,8 @@ RUN apk update && apk add --no-cache \\
     libatk-1.0 libatk-bridge-2.0 at-spi2-core minizip \\
     double-conversion crc32c libxkbcommon mesa-gbm eudev-libs flac \\
     harfbuzz-subset \\
-    gtk+3.0 mesa-dri-gallium xdg-utils
+    gtk+3.0 mesa-dri-gallium xdg-utils \\
+    vulkan-loader
 COPY --from=${IMAGE_REF} \\
      /chrome-linux \\
      /ms-playwright/chromium-${ARTIFACT_REV}/chrome-linux64
