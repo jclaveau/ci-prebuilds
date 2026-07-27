@@ -100,6 +100,7 @@ jobs:
           IMAGE_REF: ${{ inputs.image_ref }}
           PW_VERSION: ${{ inputs.pw_version }}
           ARTIFACT_REV: ${{ inputs.artifact_rev }}
+          HEADED: ${{ inputs.headed && '1' || '0' }}
           IMAGE_TAG_OUT: pw-conformance-runner-${{ inputs.browser }}:${{ github.sha }}
         run: ./playwright/alpine-browsers/conformance/build-runner.sh
 

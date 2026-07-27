@@ -175,12 +175,15 @@ TIMEOUT_FLAG=""
 #             stack, fixed in bundle-dist (exclude gtk4 closure -> runner apk
 #             gtk4.0); smoke Tier-2 headed green in run 29907310889. See
 #             project_webkit_gtk_headed_recursion (RESOLVED).
-# chromium stays off here: chrome-headless-shell has no headed target — the
-# headed full-chrome build (chr-fs artifact) is a separate pipeline; its
-# conformance leg lands once that artifact exists. The leg is small (~16 tests)
-# so it runs UNSHARDED, once, on shard 1.
+# chrome-headless-shell has no headed target; the full-chrome (chr-fs) artifact
+# does. So chromium is headed-capable ONLY in a HEADED=1 dispatch (image_ref=
+# chr-fs-*, whose runner stages the real chrome-linux64/chrome). The headless-
+# shell runner keeps HEADED_ENABLED=0 so the run_headed headful.spec.ts leg —
+# which would launch the headless-shell stub binary headed — stays off.
 case "$BROWSER" in
   firefox|webkit) HEADED_ENABLED=1 ;;
+  chromium)
+    if [ "${HEADED:-0}" = "1" ]; then HEADED_ENABLED=1; else HEADED_ENABLED=0; fi ;;
   *)              HEADED_ENABLED=0 ;;
 esac
 

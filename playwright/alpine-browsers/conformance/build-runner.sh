@@ -28,6 +28,37 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 case "$BROWSER" in
   chromium)
+    if [ "${HEADED:-0}" = "1" ]; then
+    # HEADED conformance: the full from-source chrome (chr-fs-* image, /chrome-linux
+    # layout). It was built on alpine:edge, so it is DT_NEEDED-linked against edge
+    # SONAMEs — the runner base MUST be edge (like FF/WK), not 3.22, or the .so
+    # versions won't resolve. Runtime apks mirror the producer's Tier-1 smoke set
+    # (full-chrome deps: gtk3/mesa-dri/xdg-utils on top of the headless list).
+    # PW launches chromium-<rev>/chrome-linux64/chrome headed under Xvfb, so stage
+    # the REAL binary there. ARTIFACT_REV is the chromium revision (== browsers.json
+    # name==chromium .revision) the dispatch passes.
+    cat > "$TMPDIR/Dockerfile" <<EOF
+FROM alpine:edge
+RUN apk update && apk add --no-cache \\
+    nodejs npm bash git \\
+    ca-certificates font-opensans ttf-freefont xvfb-run \\
+    nss freetype harfbuzz libdrm mesa-gl \\
+    libwebp libwebpdemux libxcomposite libxdamage libxrandr libxscrnsaver libxtst \\
+    libx11 libxcb libxext libxi cups-libs alsa-lib dbus-libs pango cairo \\
+    opus dav1d ffmpeg-libavformat libjpeg-turbo libxslt \\
+    libatk-1.0 libatk-bridge-2.0 at-spi2-core minizip \\
+    double-conversion crc32c libxkbcommon mesa-gbm eudev-libs flac \\
+    harfbuzz-subset \\
+    gtk+3.0 mesa-dri-gallium xdg-utils
+COPY --from=${IMAGE_REF} \\
+     /chrome-linux \\
+     /ms-playwright/chromium-${ARTIFACT_REV}/chrome-linux64
+RUN touch /ms-playwright/chromium-${ARTIFACT_REV}/INSTALLATION_COMPLETE
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN npm install -g playwright@${PW_VERSION}
+RUN playwright install ffmpeg
+EOF
+    else
     # The apk-based chromium bundles most .so files inside the artifact tree so
     # a minimal Alpine runner sufficed. From-source chromium (chs-fs-sha-*) is
     # dynamically linked against system libs — full runtime-dep list per
@@ -69,6 +100,7 @@ RUN PWC_JSON=\$(find /usr/local/lib/node_modules -name browsers.json -path '*pla
 # the PW SDK so the cache layout matches what tests fixture-expect.
 RUN playwright install ffmpeg
 EOF
+    fi
     ;;
 
   firefox)
