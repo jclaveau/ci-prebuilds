@@ -894,11 +894,14 @@ jobs:
   # + repackage into PW's auto-discovery shape. ~5 sec build vs ~12h
   # from-source.
   build-chromium-headless-shell:
-    # PAUSED 2026-07-15 (user request): alpine :3.22 lacks chromium-headless-
-    # shell subpkg (alpine :edge chromium apk broken post-flac-1.5). Only the
-    # from-source path (build_chromium_headless_shell_from_source) matters
-    # going forward; likely to be dropped later. Push/schedule auto-triggers
-    # removed; only fires on explicit workflow_dispatch or PR label.
+    # SUPERSEDED 2026-07-28 by the from-source path
+    # (build-chromium-headless-shell-from-source). Alpine's community
+    # `chromium-headless-shell` subpkg is unusable for PW: broken post-flac-1.5
+    # on :edge (`apk add` fails outright), missing on :3.22, can't be pinned to
+    # PW's exact revision, and shipped a broken UA stylesheet. Kept only as a
+    # label/dispatch-gated escape hatch — no auto-triggers — pending an upstream
+    # Alpine aports issue to make the apk build PW-compatible. Do NOT re-add the
+    # `build-chromium-headless-shell` PR label unless deliberately exercising it.
     if: |
       (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell == 'true')
       || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell'))
