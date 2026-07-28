@@ -84,7 +84,7 @@ jobs:
             -e SHARD_TOTAL \
             -e DISABLE_MUSL_FF_SKIP=1 \
             -e SKIP_DIR=/conformance/skip-list-ubuntu \
-            mcr.microsoft.com/playwright:v${PW_VERSION}-${UBUNTU_RELEASE} \
+            "mcr.microsoft.com/playwright:v${PW_VERSION}-${UBUNTU_RELEASE}" \
             bash /conformance/run.sh
 
       - name: Upload shard report
@@ -111,12 +111,14 @@ jobs:
 
       - name: Print conformance summary
         run: |
-          echo "## PW Conformance (Ubuntu baseline) — ${{ inputs.browser }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Runner image:  \`mcr.microsoft.com/playwright:v${{ inputs.pw_version }}-${{ inputs.ubuntu_release }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "PW version:    \`v${{ inputs.pw_version }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Shard outcomes via the shard job; per-shard html reports uploaded as artifacts." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## PW Conformance (Ubuntu baseline) — ${{ inputs.browser }}"
+            echo ""
+            echo "Runner image:  \`mcr.microsoft.com/playwright:v${{ inputs.pw_version }}-${{ inputs.ubuntu_release }}\`"
+            echo "PW version:    \`v${{ inputs.pw_version }}\`"
+            echo ""
+            echo "Shard outcomes via the shard job; per-shard html reports uploaded as artifacts."
+          } >> "$GITHUB_STEP_SUMMARY"
           ls -la shards/ || true
 
       - name: Fail summary if any shard failed

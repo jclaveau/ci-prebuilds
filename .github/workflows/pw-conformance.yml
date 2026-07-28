@@ -150,6 +150,7 @@ jobs:
             SECURITY_FLAGS="$SECURITY_FLAGS --cap-add SYS_NICE"
           fi
 
+          # shellcheck disable=SC2086  # SECURITY_FLAGS/EXTRA_ENV are flag lists — word-splitting is intended
           docker run --rm $SECURITY_FLAGS \
             -v "$PWD/playwright/alpine-browsers/conformance:/conformance" \
             -e BROWSER \
@@ -186,13 +187,15 @@ jobs:
 
       - name: Print conformance summary
         run: |
-          echo "## PW Conformance — ${{ inputs.browser }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Artifact image: \`${{ inputs.image_ref }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "PW version:     \`v${{ inputs.pw_version }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "Mode:           \`${{ inputs.headed && 'headed — full suite --headed' || 'headless + headful.spec.ts headed leg' }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Shard outcomes via the shard job; per-shard html reports uploaded as artifacts." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## PW Conformance — ${{ inputs.browser }}"
+            echo ""
+            echo "Artifact image: \`${{ inputs.image_ref }}\`"
+            echo "PW version:     \`v${{ inputs.pw_version }}\`"
+            echo "Mode:           \`${{ inputs.headed && 'headed — full suite --headed' || 'headless + headful.spec.ts headed leg' }}\`"
+            echo ""
+            echo "Shard outcomes via the shard job; per-shard html reports uploaded as artifacts."
+          } >> "$GITHUB_STEP_SUMMARY"
           ls -la shards/ || true
 
       - name: Fail summary if any shard failed
