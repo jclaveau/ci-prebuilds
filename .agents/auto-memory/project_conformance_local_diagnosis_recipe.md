@@ -36,5 +36,18 @@ To deep-diagnose a conformance title WITHOUT a ~40min CI dispatch or a multi-hou
 `unicoderange`→`font-liberation` (Modernizr uses `@font-face{src:local("Arial")}`; fontconfig
 aliases Arial→Liberation Sans). Add the apk to the runner + re-run; no rebuild.
 
+**Decide our-gap vs PW/reference-bug with a glibc parity run (no CI):** run the
+SAME PW op against the OFFICIAL glibc browser on the host
+(`npx playwright install <b>` → `firefox.launch()` etc.). If reference ALSO
+fails → PW/upstream bug → parity-skip, no rebuild. If reference passes → genuine
+musl gap. 2026-07-28: glibc FF cleanly threw the correct error where musl FF
+crashed → confirmed musl Juggler gap (not skippable). **Add
+`process.on('unhandledRejection', …)` to the probe** — async crashes (a
+WebError/pageerror listener reading `.url` on undefined) don't surface in a
+`try/catch` around the awaited call; the first glibc run MISSED the crash for
+lack of the handler. To pin a stackless CI `TypeError`, map the bundled frame:
+`unzip omni.ja "*PageAgent.js"` from the artifact + grep the emit.
+
 [[project_conformance_remaining_skips_dispositioned]] [[feedback_diagnose_before_accepting_cant_fix]]
-[[project_ff_genuine_deltas_mostly_stale]]
+[[project_ff_genuine_deltas_mostly_stale]] [[feedback_docker_local_browser_repro]]
+[[project_ff_latest_stale_no_edge_tag]]

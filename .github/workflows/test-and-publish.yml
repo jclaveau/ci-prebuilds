@@ -1178,8 +1178,12 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+      # seccomp=unconfined: WebKit-WPE's bwrap sandbox needs it even with
+      # WEBKIT_DISABLE_SANDBOX baked in the image (see producer Tier-2 smoke).
+      # Harmless for the chromium/firefox legs.
       options: >-
         --env "HOME=/home/runner"
+        --security-opt seccomp=unconfined
     steps:
       - uses: actions/checkout@v7
 

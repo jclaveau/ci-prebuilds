@@ -1,5 +1,4 @@
 import { defineConfig, devices } from '@playwright/test';
-import { existsSync } from 'node:fs';
 
 /**
  * Read environment variables from file.
@@ -13,55 +12,37 @@ import { existsSync } from 'node:fs';
  * See https://playwright.dev/docs/test-configuration.
  */
 
-// On the Alpine flavor, the alpine-...-playwright Dockerfile COPYs the
-// musl-native `chromium-headless-shell` AND the patched Firefox dist from the
-// `playwright-alpine-browsers` producer image and stages them at PW SDK's
-// auto-discovery cache path. No executablePath override needed. WebKit is
-// not shipped yet on alpine (sub-project deferred). Drop the alpine branch
-// once WebKit lands too.
-const isAlpine = existsSync('/etc/alpine-release');
+// Both flavors stage all three musl/glibc browsers at PW SDK's auto-discovery
+// cache path (PLAYWRIGHT_BROWSERS_PATH=/ms-playwright) — on Alpine the
+// alpine-...-playwright Dockerfile COPYs musl-native chromium-headless-shell +
+// patched Firefox + WebKit-WPE from the `playwright-alpine-browsers` producer
+// image; on the standard flavor PW's own glibc browsers apply. No
+// executablePath override needed on either. Same project list everywhere.
+const projects = [
+  { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+  { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+  { name: 'webkit', use: { ...devices['Desktop Safari'] } },
 
-const projects = isAlpine
-  ? [
-      { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
-      { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
-    ]
-  : [
-      {
-        name: 'chromium',
-        use: { ...devices['Desktop Chrome'] },
-      },
+  /* Test against mobile viewports. */
+  // {
+  //   name: 'Mobile Chrome',
+  //   use: { ...devices['Pixel 5'] },
+  // },
+  // {
+  //   name: 'Mobile Safari',
+  //   use: { ...devices['iPhone 12'] },
+  // },
 
-      {
-        name: 'firefox',
-        use: { ...devices['Desktop Firefox'] },
-      },
-
-      {
-        name: 'webkit',
-        use: { ...devices['Desktop Safari'] },
-      },
-
-      /* Test against mobile viewports. */
-      // {
-      //   name: 'Mobile Chrome',
-      //   use: { ...devices['Pixel 5'] },
-      // },
-      // {
-      //   name: 'Mobile Safari',
-      //   use: { ...devices['iPhone 12'] },
-      // },
-
-      /* Test against branded browsers. */
-      // {
-      //   name: 'Microsoft Edge',
-      //   use: { ...devices['Desktop Edge'], channel: 'msedge' },
-      // },
-      // {
-      //   name: 'Google Chrome',
-      //   use: { ...devices['Desktop Chrome'], channel: 'chrome' },
-      // },
-    ];
+  /* Test against branded browsers. */
+  // {
+  //   name: 'Microsoft Edge',
+  //   use: { ...devices['Desktop Edge'], channel: 'msedge' },
+  // },
+  // {
+  //   name: 'Google Chrome',
+  //   use: { ...devices['Desktop Chrome'], channel: 'chrome' },
+  // },
+];
 
 export default defineConfig({
   testDir: './tests',
@@ -84,8 +65,8 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
 
-  /* Configure projects for major browsers. On Alpine: chromium + firefox
-     only (WebKit deferred). See `projects` block above for rationale. */
+  /* Configure projects for major browsers — chromium + firefox + webkit on
+     every flavor. See `projects` block above for rationale. */
   projects,
 
   /* Run your local dev server before starting the tests */
