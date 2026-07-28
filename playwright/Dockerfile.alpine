@@ -40,6 +40,12 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # `linux-musl` but its DOWNLOAD_PATHS table has no entry. Safe because we
 # PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 anyway; no download is attempted.
 ENV PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24
+# PW's pre-launch host-requirements check reads the ubuntu24 nativeDeps list
+# (because of the override above) and false-positives on musl for WebKit — it
+# reports libGLESv2.so.2 + libx264.so "missing" although the MiniBrowser
+# binaries are ldd-clean (verified) and chromium/firefox launch fine. Skip the
+# bogus validation; a genuinely-missing dep would still fail at spawn time.
+ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
 
 # chromium-headless-shell — apk-extracted, self-contained via RPATH=$ORIGIN.
 # Smaller artifact than full chromium; deterministic timing for tests.
