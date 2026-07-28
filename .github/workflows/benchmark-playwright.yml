@@ -9,8 +9,9 @@ name: Benchmark Playwright
 # (each image used as a local act runner) and shown in a separate "Via act" table.
 # OUR images are pulled from GHCR by tag (default: sha of the build that triggered this run; overridable
 # via the image_tag dispatch input) so each run benchmarks the exact images that build pushed; official
-# stays MCR. (alpine-* images are Chromium-only — no firefox/webkit on musl — so they only appear in
-# chromium tables. Our images are compared in both dood and dind flavors, slim and -gyp.)
+# stays MCR. (alpine-* images now ship all three musl-native engines too, so they appear in both the
+# chromium and the full-set tables like ubuntu. Our images are compared in both dood and dind flavors,
+# slim and -gyp.)
 
 on:
   # DEV MODE: dispatch-only — benches Docker Hub :latest, no dependence on a fresh build. For per-commit
@@ -43,8 +44,8 @@ env:
 
 jobs:
   # Emits the container matrix as JSON so the official image tag can embed the chosen Playwright version
-  # (a static matrix.include can't reference inputs). Each scenario runs in both browser modes; alpine is
-  # Chromium-only, so it gets a single cell.
+  # (a static matrix.include can't reference inputs). Each scenario runs in both browser modes
+  # (chromium-only and all) — ubuntu and alpine alike, now that alpine ships all three engines.
   config:
     runs-on: ubuntu-latest
     outputs:
@@ -61,21 +62,23 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "runs=$RUNS" >> "$GITHUB_OUTPUT"
           OFFICIAL="mcr.microsoft.com/playwright:v${PW}-noble"
-          HOME_OPT="--env HOME=/home/runner"
+          # seccomp=unconfined: our alpine images' WebKit-WPE needs it for bwrap (harmless for
+          # chromium/firefox and for ubuntu). Applies to every OUR-image cell via $h below.
+          HOME_OPT="--env HOME=/home/runner --security-opt seccomp=unconfined"
           GHCR="jclaveau"   # DEV MODE: Docker Hub base (public). For sha mode change to "ghcr.io/jclaveau".
-          # Our images come in slim ("") and node-gyp ("-gyp") variants, benched side-by-side. Ubuntu runs
-          # both browser modes; alpine is Chromium-only. Each base cell repeats `runs` times (configurable
-          # via the workflow_dispatch `runs` input; default 1 for fast iteration, 10 for full 95% CI).
+          # Our images come in slim ("") and node-gyp ("-gyp") variants, benched side-by-side. Every image
+          # (ubuntu AND alpine) now runs both browser modes — alpine ships musl-native firefox+webkit too.
+          # Each base cell repeats `runs` times (configurable via the workflow_dispatch `runs` input;
+          # default 1 for fast iteration, 10 for full 95% CI).
           MATRIX="$(jq -cn --arg off "$OFFICIAL" --arg h "$HOME_OPT" --arg ghcr "$GHCR" --arg tag "$TAG" --argjson n "$RUNS" '
             def img($p; $g): $ghcr + "/" + $p + "-playwright" + $g + ":" + $tag;
             ( [ {scenario:"official", image:$off, options:"--env HOME=/root", browsers:"chromium"},
                 {scenario:"official", image:$off, options:"--env HOME=/root", browsers:"all"},
                 {scenario:"official-gyp", image:$off, options:"--env HOME=/root", browsers:"chromium"},
                 {scenario:"official-gyp", image:$off, options:"--env HOME=/root", browsers:"all"} ]
-              + [ ("ubuntu-dood","ubuntu-dind") as $p | ("","-gyp") as $g | ("chromium","all") as $b
+              + [ ("ubuntu-dood","ubuntu-dind","alpine-dood","alpine-dind") as $p
+                  | ("","-gyp") as $g | ("chromium","all") as $b
                   | {scenario:($p+$g), image:img($p;$g), options:$h, browsers:$b} ]
-              + [ ("alpine-dood","alpine-dind") as $p | ("","-gyp") as $g
-                  | {scenario:($p+$g), image:img($p;$g), options:$h, browsers:"chromium"} ]
             ) as $base
             | {include: [ $base[] as $b | range(1; $n + 1) as $r | $b + {run:$r} ]}')"
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
@@ -199,8 +202,8 @@ jobs:
           SCENARIO="${{ matrix.scenario }}"
           BROWSERS="${{ matrix.browsers }}"
           [[ "$SCENARIO" == official* ]] && export HOME=/root
-          # Alpine's config only defines the chromium project, so never ask it for firefox/webkit.
-          if [[ "$SCENARIO" == alpine-* ]] || [ "$BROWSERS" != "all" ]; then
+          # Every image (alpine included) now ships all three engines; pick projects by browser mode.
+          if [ "$BROWSERS" != "all" ]; then
             P=(--project=chromium)
           else
             P=(--project=chromium --project=firefox --project=webkit)
