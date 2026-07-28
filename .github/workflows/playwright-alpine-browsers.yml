@@ -250,6 +250,22 @@ jobs:
           echo "firefox_revision=$REV" >> "$GITHUB_OUTPUT"
           echo "firefox_version=$VER" >> "$GITHUB_OUTPUT"
           echo "PW v${PW_VERSION} → firefox revision=${REV} browserVersion=${VER}"
+          # Content-address the prebuilt-base on the FF patch SET, not just PW's
+          # rev. A source-only patch (e.g. the Juggler location fix in
+          # apply-and-build.sh) leaves the rev unchanged, so a rev-only base tag
+          # lets the iter path reuse a stale pre-patch base and ship an unpatched
+          # ff-latest (shipped exactly that 2026-07-28). Hashing the files baked
+          # INTO the base forces a cold reseed whenever the patch set changes.
+          # Excludes apply-and-build-iter.sh (applied at iter time, not baked in).
+          PATCHSET_HASH=$(cat \
+            playwright/alpine-browsers/versions.env \
+            playwright/alpine-browsers/firefox/scripts/apply-and-build.sh \
+            playwright/alpine-browsers/firefox/scripts/fetch-aports.sh \
+            playwright/alpine-browsers/firefox/scripts/fetch-pw-patches.sh \
+            playwright/alpine-browsers/firefox/mozconfig.overlay \
+            | sha256sum | cut -c1-12)
+          echo "patchset_hash=$PATCHSET_HASH" >> "$GITHUB_OUTPUT"
+          echo "FF patch-set hash=${PATCHSET_HASH}"
 
       - name: Free up runner disk (FF source + obj dir is ~15 GB)
         run: |
@@ -281,8 +297,8 @@ jobs:
       # - workflow_dispatch use_prebuilt=true  → force iter (explicit override)
       # - workflow_dispatch use_prebuilt=false → force cold (explicit override)
       # - PR / push events                     → auto: iter if prebuilt-base-
-      #   ff-${rev} exists on GHCR, else cold. Lets PR iteration loops finish
-      #   in ~10min instead of ~3h, transparently.
+      #   ff-${rev}-${patchset_hash} exists on GHCR, else cold. Lets PR iteration
+      #   loops finish in ~10min instead of ~3h, transparently.
       #
       # Why not always iter: BuildKit's --mount=type=cache mounts don't export
       # via cache-to=registry (verified by inspecting the buildcache config —
@@ -293,7 +309,7 @@ jobs:
       # once to seed it.
       - id: dockerfile-choice
         env:
-          BASE_TAG: ghcr.io/jclaveau/playwright-alpine-browsers:prebuilt-base-ff-${{ steps.pins.outputs.firefox_revision }}
+          BASE_TAG: ghcr.io/jclaveau/playwright-alpine-browsers:prebuilt-base-ff-${{ steps.pins.outputs.firefox_revision }}-${{ steps.pins.outputs.patchset_hash }}
         run: |
           choose_iter() {
             echo "file=playwright/alpine-browsers/Dockerfile.iter" >> "$GITHUB_OUTPUT"
@@ -303,7 +319,7 @@ jobs:
           choose_cold() {
             echo "file=playwright/alpine-browsers/Dockerfile" >> "$GITHUB_OUTPUT"
             echo "base=" >> "$GITHUB_OUTPUT"
-            echo "::notice::cold path: full Dockerfile build (no prebuilt-base for ff-${{ steps.pins.outputs.firefox_revision }})"
+            echo "::notice::cold path: full Dockerfile build (no prebuilt-base for ff-${{ steps.pins.outputs.firefox_revision }}-${{ steps.pins.outputs.patchset_hash }})"
           }
           case "${{ inputs.use_prebuilt }}" in
             true)  choose_iter ;;

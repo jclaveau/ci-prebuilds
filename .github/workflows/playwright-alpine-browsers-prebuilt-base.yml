@@ -56,6 +56,19 @@ jobs:
           echo "firefox_revision=$REV" >> "$GITHUB_OUTPUT"
           echo "firefox_version=$VER" >> "$GITHUB_OUTPUT"
           echo "PW v${PW_VERSION} → firefox revision=${REV} browserVersion=${VER}"
+          # Patch-set hash — MUST match playwright-alpine-browsers.yml's pins step
+          # (the consumer's auto-select checks prebuilt-base-ff-<rev>-<hash>). Same
+          # file list = same tag, so a source-only patch reseeds the base instead
+          # of silently reusing a stale one. Excludes apply-and-build-iter.sh.
+          PATCHSET_HASH=$(cat \
+            playwright/alpine-browsers/versions.env \
+            playwright/alpine-browsers/firefox/scripts/apply-and-build.sh \
+            playwright/alpine-browsers/firefox/scripts/fetch-aports.sh \
+            playwright/alpine-browsers/firefox/scripts/fetch-pw-patches.sh \
+            playwright/alpine-browsers/firefox/mozconfig.overlay \
+            | sha256sum | cut -c1-12)
+          echo "patchset_hash=$PATCHSET_HASH" >> "$GITHUB_OUTPUT"
+          echo "FF patch-set hash=${PATCHSET_HASH}"
 
       - name: Free up runner disk (FF source + obj dir is ~15 GB)
         run: |
@@ -78,7 +91,10 @@ jobs:
           context: playwright/alpine-browsers
           file: playwright/alpine-browsers/Dockerfile.prebuilt-base
           push: true
+          # The hashed tag is the one the consumer auto-select consumes; the
+          # rev-only + latest tags stay as human-readable aliases (not consumed).
           tags: |
+            ghcr.io/jclaveau/playwright-alpine-browsers:prebuilt-base-ff-${{ steps.pins.outputs.firefox_revision }}-${{ steps.pins.outputs.patchset_hash }}
             ghcr.io/jclaveau/playwright-alpine-browsers:prebuilt-base-ff-${{ steps.pins.outputs.firefox_revision }}
             ghcr.io/jclaveau/playwright-alpine-browsers:prebuilt-base-ff-latest
           # Dedicated registry cache for the prebuilt-base lineage — separate
