@@ -1,0 +1,63 @@
+# Test TITLE skip-list for firefox (Alpine/musl, PW-patched).
+# Per line: JS regex matched against PW's `test.title` (BARE innermost test
+# name, NOT the full describe-chain). Joined with `|` into a single regex
+# passed to --grep-invert.
+#
+# Seeded from runs 28952021038 (2026-07-08) + 28954994636. Long-tail
+# Alpine-only fails not covered by whole-file skips in firefox.files.txt.
+#
+# NOTE: `--grep-invert` matches against test.title = bare innermost name.
+# Describe-chain prefixes (e.g. `page screenshot ›`) do NOT match when
+# joined via `|` alternation, even though they match as a single pattern.
+# Always strip describe-chain when adding entries.
+#
+# Clusters:
+#   - cross-process iframe / docShell access (Juggler cross-origin gap)
+#   - file:// subframes / bfcache (musl file:// resolver)
+#   - locale — RECOVERED 2026-07-19: added icu-data-full to the FF runner
+#     apk list (build-runner.sh); browsercontext-locale.spec.ts 6→11 pass
+#     locally. Removed: should format number/date/number-in-popups,
+#     should be isolated between contexts, should not change default locale.
+#   - detached frame handling (Juggler frame lifecycle timing)
+#   - CORS / CSP throw messages (FF error-string variance on musl)
+#   - PW-known upstream fails (webgl @smoke × 3 — also in
+#     skip-list-ubuntu/firefox.titles.txt)
+should ignore page.pause when headed\s*$
+should support webgl 2 @smoke\s*$
+should support webgl @smoke\s*$
+should work for webgl\s*$
+# ── Trace-viewer title-skips REMOVED 2026-07-16 — dead weight ──────────────
+# ~15 trace-viewer/scrubber/playback title-skips deleted alongside the
+# trace-viewer whole-file un-skip probe (chromium :3.23/149 bump). They were
+# the 142-vs-148 whack-a-mole titles. If the whole-file probe shows specific
+# trace-viewer tests still fail on 149, re-add only those as narrow titles.
+
+# detach-child-frames + framesets — RECOVERED 2026-07-21 (deep diagnosis).
+# Isolated probe on ff-prepared:local (frame-hierarchy.spec.ts): both pass. The
+# old "load-flaky" restore predated the pageerror-cascade fix (ef541ad) that was
+# the real poisoner; un-skipped to validate under 20-shard load.
+
+# UN-SKIP PROBE 2026-07-21 — these were labelled "genuine musl deltas" but DEEP
+# DIAGNOSIS (ff-prepared:local from sha-ef541ad, per-title isolated) showed 17/19
+# PASS in isolation on the current FF binary. They were restored during the
+# pageerror-CASCADE era (the `.url`-undefined crash poisoned whole workers); that
+# crash is now FIXED (juggler location patch, ef541ad), so the cascade that made
+# them look genuine is gone. Un-skipped to validate under the real 20-shard load;
+# any that still fail under parallel load get restored per-CI. Confirmed
+# isolated-pass: CORS x3, service-worker x2, subframes, file://, networkidle,
+# nav-dispose, har-postData, expose-dispose, load-state-frame, blocking-CSS,
+# request-cancelled, loading-url-fail.
+
+# hover/fine-pointer for desktop — FIXED 2026-07-21. Headless musl FF's LookAndFeel
+# defaulted pointer/hover to coarse/none; forced fine+hover via FF pref
+# `ui.primaryPointerCapabilities=6`/`ui.allPointerCapabilities=6` (6 = eFine|eHover)
+# in build-runner.sh (01-alpine-pointer.js) + baked into the artifact via
+# apply-and-build.sh. Validated locally (pref combo probe: 6 passes, 2 alone fails).
+# UN-SKIPPED.
+
+# codegen popover (cli-codegen-3.spec.ts) — RECOVERED 2026-07-21: isolated probe
+# on ff-prepared:local passes. Un-skipped.
+
+# trace-viewer "filter actions by text" — RECOVERED 2026-07-21 via the run.sh
+# test-race patch (see run.sh: upstream PW race, fullCount captured before the
+# action tree renders). Un-skipped.

@@ -1,0 +1,137 @@
+# Test TITLE skip-list for chromium-headless-shell (Alpine/musl).
+# Per line: a JS regex matched against PW's `test.titlePath().join(' ')`
+# — describe-chain + test name. NO file path or line number in this string.
+# Joined with `|` into a single regex passed to `--grep-invert`.
+#
+# Use for individual real Alpine/musl conformance gaps. Whole-file
+# divergences (UI subsystems, codecs) go in chromium.files.txt.
+
+# ── OOPIF CDP re-connect — PW-INTENDED headless-shell skip, NOT an Alpine gap ─
+# oopif.spec.ts RECOVERED whole-file 2026-07-17. This ONE test carries its OWN
+# guard `it.skip(!!process.env.PWTEST_CHANNEL, 'Test default channel only')` — it
+# internally launches a hostBrowser via `channel:'chromium'` + connectOverCDP +
+# re-attaches to pre-existing OOPIFs, a headed-oriented path out-of-profile for a
+# chromium-headless-shell GN target (which our from-source artifact IS). PW itself
+# skips it off the default channel. Carried here as a headless-shell-inapplicable
+# skip (does NOT count against browser parity), not a musl bug. Setting
+# PWTEST_CHANNEL globally would fire the guard but has blast radius — kept as a
+# title-skip instead.
+should allow to re-connect to OOPIFs with CDP when iframes were there already
+
+# ── Third-party cookies / CHIPS / Partitioned — UN-SKIP PROBE 2026-07-16 ─────
+# Skip was a defensive CHS-apk-era carryover (seeded 2026-06-26 against the
+# broken apk build, never probed). CHS-apk is now paused (workflow_dispatch-
+# only) — only CHS-fs consumes this skip-list. Chromium 148 from-source ships
+# CHIPS on by default with no cookie-related feature suppression in
+# args.gn.overlay or PW's chromiumSwitches.ts. Mirrors the a437554
+# UA-stylesheet playbook: un-skip as a probe, restore + document if any fail.
+# 11 tests in browsercontext-cookies-third-party.spec.ts:
+#   third party non-partitioned cookies
+#   save/load third party non-partitioned cookies
+#   third party 'Partitioned;' cookies
+#   save/load third party 'Partitioned;' cookies
+#   add 'Partitioned;' cookie via API
+#   same origin third party 'Partitioned;' cookie with different origin intermediate iframe
+#   top level 'Partitioned;' cookie and same origin iframe
+#   should be able to send third party cookies via an iframe
+#   should(not) block third party cookies - persistent context
+#   should(not) block third party cookies - ephemeral context
+#   should not block third party SameSite=None cookies
+
+# Secure cookies over WSS
+
+# HAR security details — headless-shell may strip cert details
+
+# Permissions APIs not in headless-shell
+
+# Capabilities not in headless-shell
+
+# SSL / cert family
+
+# WPT accname + axe-core — depend on fonts/locale stack not in our runner
+
+# Mobile viewport / device-scale-factor / mobile-scale
+
+# Reuse-context mouse position
+
+# Misc isolated gaps
+
+# Hit-target — DOM event dispatching
+
+# browsertype-connect — launchServer / run-server video + headed page.pause
+should ignore page.pause when headed$
+
+# browserType.executablePath path-shape
+
+# defaultbrowsercontext + download
+
+# ── Form-control subcluster — RECOVERED 2026-07-19 (from-source UA stylesheet) ─
+# The APK chromium-headless-shell shipped a UA stylesheet with `appearance:none`
+# on form controls (checkbox/range/color rendered 0px → PW auto-wait `is visible`
+# failed). From-source chromium ships the proper UA stylesheet. Local probe of
+# the whole files (retries=2) — all green — recovered these titles:
+#   elementhandle-misc: check/uncheck the box (+setChecked); locator-convenience:
+#   isChecked indeterminate; locator-misc-2: scroll-into-view / bounding-box;
+#   page-click: checkbox toggle; page-fill: range/color fills + throws +
+#   contenteditable/body/wrong-frame/unsupported; page-focus: checkbox activate.
+# Kept below (different files, NOT the UA cluster):
+
+# ── Drag subcluster siblings ──────────────────────────────────────────────
+# Already file-skipped page-drag.spec.ts; this catches sibling tests that
+# use the same drag synthesis.
+
+# ── Cluster-sibling small leaks (v4 residual) ─────────────────────────────
+# `tracing.spec.ts` "should produce screencast frames" — sibling of the
+# file-skipped screencast/video.spec.ts. Three sub-tests (fit/crop/scale)
+# in one parameterized spec.
+
+# headed-no-xserver — PW-INTENDED headless-shell skip, NOT an Alpine gap.
+# launcher.spec.ts:45 launches headless:false with DISPLAY unset + expects the
+# full-chromium 'launched a headed browser without an XServer' error; the
+# headless-shell binary ignores headed-ness + launches fine → no error. PW's OWN
+# guard `it.skip(channel === 'chromium-headless-shell', 'shell is never headed')`
+# covers this; our runner doesn't declare the channel so the guard is dead, but
+# our artifact IS a headless-shell GN target (browserTest.ts derives isShell=true
+# via !channel && headless). Headless-shell-inapplicable — does NOT count against
+# browser parity.
+should throw a friendly error if its headed and there is no xserver on linux running
+
+# browsercontext-har.spec.ts redirected navigation — all three behave
+# the same (history nav after HAR replay).
+
+# ── Alpine UA-stylesheet cluster — RECOVERED 2026-07-19 (from-source) ────────
+# The 1x1-div hit-target geometry (page-click grid.html), page-mouse dblclick /
+# pointerdown / pressure / tweened, stable-position, and page-fill
+# contenteditable/body titles all shared the APK UA-stylesheet root cause.
+# Local full-file probe (retries=2) — page-click 85, page-mouse 15, page-fill 46,
+# elementhandle-wait-for-element-state 12 — all green. Titles removed.
+# The entries kept below are DIFFERENT files (not the UA cluster), still skipped:
+
+# page-keyboard Escape-dialog contenteditable
+
+# page-autowaiting-no-hang
+
+# page-click-timeout-4
+
+# page-wait-for-selector-2 zero-sized
+
+# retarget
+
+# expect-misc toBeInViewport + expect-boolean toBeVisible
+
+# inspector/cli-codegen-{1,2,3,aria} + pause partials — RECOVERED 2026-07-21
+# (deep diagnosis). Whole-file isolated probe on chs-prepared:local: cli-codegen-1
+# 36 passed, -2 20, -3 31, -aria 7, pause 28 — ALL green. These per-action title
+# skips (fill/check/select/slider/radio/assert-value/popover/multiline-snapshot/
+# pause-record-debugger) were stale recorder-UI carryovers. Un-skipped.
+
+# trace-viewer "filter actions by text" — RECOVERED 2026-07-21 via a run.sh
+# test-race patch (upstream PW race: fullCount captured before the action tree
+# renders → 0 → `< 0`). run.sh injects a `.action-title` waitFor before the
+# baseline count. Un-skipped. See run.sh for the patch + rationale.
+
+# PW-known upstream fails shared with the Ubuntu-chromium baseline (see
+# skip-list-ubuntu/chromium.titles.txt). The parity gate enforces both
+# sides carry these entries.
+should capture full viewport on hidpi$
+should report google.com frame with headed$

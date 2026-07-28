@@ -1,0 +1,128 @@
+name: PW Conformance Ubuntu Baseline (reusable)
+
+# Run microsoft/playwright's tests/library + tests/page suites against PW's
+# own official Ubuntu-based browsers (mcr.microsoft.com/playwright). This is
+# the REFERENCE baseline — what PW's own CI runs against before each release.
+#
+# Compared side-by-side with pw-conformance.yml (our musl-built browsers),
+# divergence = Alpine-side bug (task #13 evidence, task #17 investigation).
+#
+# The mcr image already has browsers preinstalled at /ms-playwright/ + npm +
+# PW SDK — no COPY-from, no runner rebuild. Slimmer than the Alpine variant.
+
+on:
+  workflow_call:
+    inputs:
+      browser:
+        description: 'Browser key: chromium | firefox | webkit'
+        required: true
+        type: string
+      pw_version:
+        description: 'PW version (e.g. 1.60.0) — clone tag + selects mcr image tag'
+        required: true
+        type: string
+      ubuntu_release:
+        description: 'Ubuntu variant of the mcr image: noble | jammy'
+        required: false
+        default: 'noble'
+        type: string
+  workflow_dispatch:
+    inputs:
+      browser:
+        description: 'Browser key: chromium | firefox | webkit'
+        required: true
+        default: 'chromium'
+        type: choice
+        options: ['chromium', 'firefox', 'webkit']
+      pw_version:
+        description: 'PW version (e.g. 1.60.0)'
+        required: true
+        default: '1.60.0'
+        type: string
+      ubuntu_release:
+        description: 'Ubuntu variant: noble | jammy'
+        required: false
+        default: 'noble'
+        type: choice
+        options: ['noble', 'jammy']
+
+permissions:
+  contents: read
+
+jobs:
+  shard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run shard ${{ matrix.shard }}/20 in mcr.microsoft.com/playwright:v${{ inputs.pw_version }}-${{ inputs.ubuntu_release }}
+        env:
+          BROWSER: ${{ inputs.browser }}
+          PW_VERSION: ${{ inputs.pw_version }}
+          UBUNTU_RELEASE: ${{ inputs.ubuntu_release }}
+          SHARD: ${{ matrix.shard }}
+          SHARD_TOTAL: 20
+        run: |
+          # The mcr image ships browsers at /ms-playwright/. PW SDK
+          # auto-discovers them via PLAYWRIGHT_BROWSERS_PATH inheritance.
+          # We only need to clone PW's source at the pinned tag + run tests.
+          #
+          # DISABLE_MUSL_FF_SKIP=1: run.sh has an early-exit for Firefox on
+          # musl (upstream PW #60 Juggler handshake hang). On Ubuntu that
+          # hang doesn't apply — Firefox should run. Override the skip.
+          docker run --rm \
+            --ipc=host \
+            -v "$PWD/playwright/alpine-browsers/conformance:/conformance" \
+            -e BROWSER \
+            -e PW_VERSION \
+            -e SHARD \
+            -e SHARD_TOTAL \
+            -e DISABLE_MUSL_FF_SKIP=1 \
+            -e SKIP_DIR=/conformance/skip-list-ubuntu \
+            "mcr.microsoft.com/playwright:v${PW_VERSION}-${UBUNTU_RELEASE}" \
+            bash /conformance/run.sh
+
+      - name: Upload shard report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pw-conformance-ubuntu-${{ inputs.browser }}-shard-${{ matrix.shard }}
+          path: playwright/alpine-browsers/conformance/report-*
+          if-no-files-found: ignore
+          retention-days: 14
+
+  summary:
+    if: always()
+    needs: shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download all shard reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pw-conformance-ubuntu-${{ inputs.browser }}-shard-*
+          merge-multiple: true
+          path: shards
+
+      - name: Print conformance summary
+        run: |
+          {
+            echo "## PW Conformance (Ubuntu baseline) — ${{ inputs.browser }}"
+            echo ""
+            echo "Runner image:  \`mcr.microsoft.com/playwright:v${{ inputs.pw_version }}-${{ inputs.ubuntu_release }}\`"
+            echo "PW version:    \`v${{ inputs.pw_version }}\`"
+            echo ""
+            echo "Shard outcomes via the shard job; per-shard html reports uploaded as artifacts."
+          } >> "$GITHUB_STEP_SUMMARY"
+          ls -la shards/ || true
+
+      - name: Fail summary if any shard failed
+        if: needs.shard.result != 'success'
+        run: |
+          echo "One or more Ubuntu-baseline conformance shards failed (needs.shard.result=${{ needs.shard.result }})." >&2
+          exit 1

@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1
+#
+# chromium-from-source multi-job STAGE 2..N-1: one resumable ninja round.
+#
+# Consumes a prior stage image (BASE_IMAGE) and runs `timeout 18000 ninja || true`
+# for up to 5h. The RUN exits with rc=0 regardless of whether ninja completed
+# (ninja-resume.sh strips its rc for non-final rounds). Any obj/ files written
+# BEFORE the timeout kill are captured in the resulting Docker layer, which
+# this job pushes as its output tag (e.g. `chs-build-r1-sha-<sha>`). Next job
+# takes THIS tag as BASE_IMAGE and continues.
+#
+# BASE_IMAGE — prior stage image (e.g. chs-build-setup-sha-<sha>, then r1, r2, ...)
+# ROUND_LABEL — "round-1" | "round-2" | "round-3" (log tag only; ninja is content-addressable)
+#
+# See project_buildkit_cacheto_commit_semantics for why we can't use a single
+# BuildKit resumable-RUN split — cache-to=registry only pushes on successful
+# buildx exit; cap-cancelled buildx pushes NOTHING.
+
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ARG ROUND_LABEL=round-1
+
+RUN --mount=type=cache,target=/root/.cache/sccache,id=chr-sccache,sharing=locked \
+    --mount=type=secret,id=actions_runtime_token \
+    --mount=type=secret,id=actions_results_url \
+    bash /work/chromium-headless-shell/scripts/ninja-resume.sh /work ${ROUND_LABEL}

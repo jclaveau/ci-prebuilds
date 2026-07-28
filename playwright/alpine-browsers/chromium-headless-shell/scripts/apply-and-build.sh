@@ -121,7 +121,13 @@ if [[ -f "$APORTS/APKBUILD" ]]; then
   if [[ ! -d "$COPIUM_DIR" ]]; then
     mkdir -p "$COPIUM_DIR"
     echo "  fetch copium-${COPIUM_TAG}.tar.gz from codeberg"
-    curl -fsSL "https://codeberg.org/selfisekai/copium/archive/${COPIUM_TAG}.tar.gz" \
+    # Codeberg occasionally has sustained 503 outages (runs 28305464435,
+    # 28306163932, 28306825928, 28307474833). Retry up to 20 × 60s = ~20min
+    # to ride out the outage. No alternate mirror exists — copium is
+    # codeberg-hosted only (gitlab.alpinelinux.org/aports's APKBUILD pulls
+    # the same URL); searched github + alpine distfiles, both 404.
+    curl -fsSL --retry 20 --retry-delay 60 --retry-all-errors \
+      "https://codeberg.org/selfisekai/copium/archive/${COPIUM_TAG}.tar.gz" \
       | tar -xz -C "$COPIUM_DIR" --strip-components=1
   fi
   for p in $COPIUM_PATCHES; do
@@ -136,7 +142,40 @@ if [[ -f "$APORTS/APKBUILD" ]]; then
   done
 fi
 
-# 4b. Aports' prepare() does several bootstrap steps Chromium's build expects
+# 4b. Musl/clang22 host-tool link fix — chromium 148 host tools (e.g.
+#     character_data_generator) reference `base::debug::StackTrace::
+#     OutputToStreamWithPrefixImpl` but our libbase.a doesn't carry the
+#     symbol. Most likely a copium patch (cr147-is-musl-libcxx) flips a
+#     build-conditional that excludes the real impl from stack_trace_posix.cc.
+#     Without source access we can't pinpoint the exact #ifdef; append a
+#     weak-symbol stub to base/debug/stack_trace.cc so the link resolves.
+#     The real impl, if compiled, wins over the weak fallback.
+#     See ci-prebuilds run 28255952380 + task #15.
+echo "===== Musl host-tool link fix: append weak StackTrace::OutputToStreamWithPrefixImpl stub ====="
+if grep -q '^// musl-host-tool-link-fix$' base/debug/stack_trace.cc 2>/dev/null; then
+  echo "  already patched (sentinel found)"
+else
+  cat >> base/debug/stack_trace.cc <<'STACK_TRACE_EOF'
+
+// musl-host-tool-link-fix
+// Weak fallback for OutputToStreamWithPrefixImpl. Some musl/clang22 build
+// paths in chromium 148 emit libbase.a without the real impl (compiled out
+// of stack_trace_posix.cc), causing host-tool links to fail with
+// `undefined symbol`. Weak storage class means: if the real impl is
+// present, it wins; if not, this no-op stub keeps the link alive. Host
+// tools (character_data_generator, transport_security_state_generator)
+// only call OutputToStreamWithPrefix during crash paths, so silently
+// dropping the prefix-string output is acceptable for them.
+namespace base::debug {
+__attribute__((weak))
+void StackTrace::OutputToStreamWithPrefixImpl(
+    std::ostream* /*os*/, base::cstring_view /*prefix_string*/) const {}
+}  // namespace base::debug
+STACK_TRACE_EOF
+  echo "  appended weak stub"
+fi
+
+# 4c. Aports' prepare() does several bootstrap steps Chromium's build expects
 #     but our environment doesn't have. Replicate the ones headless_shell
 #     actually needs. Skipping the headless-irrelevant ones (usb.ids sed,
 #     OFFICIAL_BUILD sed, replace_gn_files.py for system libs — we keep
@@ -189,7 +228,8 @@ if [[ -d third_party/devtools-frontend/src/node_modules ]] && [[ -f "$APORTS/APK
     ROLLUP_TGZ="$WORK/rollup-wasm-${ROLLUP_VER}.tgz"
     if [[ ! -f "$ROLLUP_TGZ" ]]; then
       echo "  fetch @rollup/wasm-node@${ROLLUP_VER} from npm"
-      curl -fsSL "https://registry.npmjs.org/@rollup/wasm-node/-/wasm-node-${ROLLUP_VER}.tgz" -o "$ROLLUP_TGZ"
+      curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+        "https://registry.npmjs.org/@rollup/wasm-node/-/wasm-node-${ROLLUP_VER}.tgz" -o "$ROLLUP_TGZ"
     fi
     rm -rf third_party/devtools-frontend/src/node_modules/rollup
     mkdir third_party/devtools-frontend/src/node_modules/rollup
@@ -227,8 +267,18 @@ USE_SYSTEM_LIBS=(
   crc32c
   dav1d
   double-conversion
-  ffmpeg
-  flac
+  # ffmpeg + flac REMOVED from system-libs 2026-07-13 — alpine SONAME skew:
+  #   - flac: alpine:edge shipped flac 1.5.0 (libFLAC.so.14) which drops the
+  #     encoder_get_* public exports. Chromium 148 links against them; ld.so
+  #     runtime: "Error relocating: FLAC__stream_encoder_get_sample_rate:
+  #     symbol not found".
+  #   - ffmpeg: alpine:edge ships ffmpeg 8.x (libavformat.so.62), alpine:3.22
+  #     runtime image ships ffmpeg 6.x (libavformat.so.60). SONAME mismatch
+  #     → runtime "Error relocating chrome-headless-shell: av_strerror:
+  #     symbol not found". (Runner base is 3.22 because alpine:edge chromium
+  #     apk needs libFLAC.so.12 — see conformance/build-runner.sh comment.)
+  # Use chromium's bundled third_party/{flac,ffmpeg}/ instead — matched to
+  # chromium's link expectations.
   fontconfig
   freetype
   harfbuzz
@@ -295,11 +345,13 @@ echo "  AR=$AR  CC=$CC  CXX=$CXX  NM=$NM"
 export RUSTC_BOOTSTRAP=1
 echo "  RUSTC_BOOTSTRAP=1 (allow -Z flags on stable rust)"
 
-OUT_DIR="out/headless"
+# VARIANT (headless|headed) selects the out dir, args overlay + ninja target.
+. "$WORK/chromium-headless-shell/scripts/variant-config.sh"
+OUT_DIR="$VARIANT_OUT_DIR"
 mkdir -p "$OUT_DIR"
 
 {
-  cat "$WORK/chromium-headless-shell/args.gn.overlay"
+  cat "$WORK/chromium-headless-shell/$VARIANT_OVERLAY"
   echo ""
   echo "# Injected at build time"
   echo "clang_base_path = \"$CLANG_BASE\""
@@ -334,10 +386,19 @@ echo "  using gn at: $GN"
 
 # 6. Build. headless_shell is the canonical chrome-headless-shell binary
 #    target. ninja parallelism caps to the runner's CPU count automatically.
-echo "===== START ninja headless_shell ====="
+#
+# PW_CHROMIUM_SKIP_NINJA=1 splits ninja into its own Dockerfile RUN(s) so each
+# partial-build layer caches independently (GHA hosted runner 6h cap exceeds a
+# single-RUN cold build; multi-RUN with cache-to=registry lets later iters
+# resume from the last completed layer). When set, this script ends here.
+if [[ "${PW_CHROMIUM_SKIP_NINJA:-0}" == "1" ]]; then
+  echo "===== SKIP ninja (PW_CHROMIUM_SKIP_NINJA=1; Dockerfile owns ninja) ====="
+  exit 0
+fi
+echo "===== START ninja $VARIANT_TARGET ====="
 ninja_rc=0
-ninja -C "$OUT_DIR" -j "${NINJA_JOBS:-$(nproc)}" headless_shell || ninja_rc=$?
-echo "===== END ninja headless_shell (rc=$ninja_rc) ====="
+ninja -C "$OUT_DIR" -j "${NINJA_JOBS:-$(nproc)}" $VARIANT_TARGET || ninja_rc=$?
+echo "===== END ninja $VARIANT_TARGET (rc=$ninja_rc) ====="
 
 if [[ $ninja_rc -ne 0 ]]; then
   echo "ERROR: ninja failed with rc=$ninja_rc" >&2
@@ -365,20 +426,29 @@ fi
 echo "  version matches PW's pinned $CHS_VER ✓"
 
 # 9. Stage to /work/chromium-dist/ for the artifact stage.
+# File list mirrors what PW's official chromium-headless-shell-linux64
+# ships under mcr.microsoft.com/playwright — verified by ls against
+# v1.60.0-noble. Missing any of these produces:
+#   - headless_lib_data.pak absent → UA stylesheet not applied → every
+#     <div>/<p>/<input> reports display:inline + rect.width=0 → PW auto-wait
+#     fails "element is not visible" (see project_pw_conformance_visibility_cluster).
+#   - locales/ absent → i18n init warning + a few tests skip.
+#   - libvulkan.so.1 + vk_swiftshader_icd.json absent → GPU fallback broken.
 DIST="$WORK/chromium-dist"
 mkdir -p "$DIST"
-# Files chrome-headless-shell needs at runtime. From Chromium's
-# install_headless_shell_*.txt manifests / aports' chromium-headless.post-install.
-# Copy the binary plus its data dependencies.
 cp -a "$BIN" "$DIST/"
-for f in icudtl.dat snapshot_blob.bin v8_context_snapshot.bin chrome_100_percent.pak chrome_200_percent.pak resources.pak; do
+for f in icudtl.dat snapshot_blob.bin v8_context_snapshot.bin \
+         headless_command_resources.pak headless_lib_data.pak headless_lib_strings.pak \
+         vk_swiftshader_icd.json; do
   [[ -f "$OUT_DIR/$f" ]] && cp -a "$OUT_DIR/$f" "$DIST/"
 done
-[[ -d "$OUT_DIR/locales" ]] && cp -a "$OUT_DIR/locales" "$DIST/"
-[[ -d "$OUT_DIR/headless_lib_data" ]] && cp -a "$OUT_DIR/headless_lib_data" "$DIST/"
+for d in locales hyphen-data; do
+  [[ -d "$OUT_DIR/$d" ]] && cp -a "$OUT_DIR/$d" "$DIST/"
+done
 
-# Also any .so it links to (locally-bundled libs Chromium produces).
-find "$OUT_DIR" -maxdepth 1 -name '*.so' -exec cp -a {} "$DIST/" \;
+# Bundled .so + .so.N shared libs (libEGL.so, libGLESv2.so, libvk_swiftshader.so,
+# libvulkan.so.1). Match .so and .so.<any> — glob *.so does NOT match libvulkan.so.1.
+find "$OUT_DIR" -maxdepth 1 \( -name '*.so' -o -name '*.so.*' \) -exec cp -a {} "$DIST/" \;
 
 echo "===== DIST staged at $DIST ====="
 ls -lh "$DIST" | head -20

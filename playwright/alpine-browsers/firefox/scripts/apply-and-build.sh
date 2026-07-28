@@ -168,6 +168,95 @@ patch -p1 -i /tmp/bootstrap-linux.diff
 mkdir -p juggler
 cp -a "$PW/juggler/." juggler/
 
+# FIX (2026-07-20): PW v1.60.0's juggler omits `location` on Page.uncaughtError,
+# but the v1.60.0 CLIENT (browserContextDispatcher.ts) reads
+# `pageError.location.url` UNCONDITIONALLY → "Cannot read properties of undefined
+# (reading 'url')" crashes the test worker on EVERY page-level uncaught error
+# (pageerror / weberror / worker error / CSP-blocked eval), cascading via
+# "Test ended". This is a version-skew inside the pinned tag (upstream `main`
+# added the location plumbing), NOT a musl divergence. Port main's location field
+# through the two emit paths + the protocol type. Assertive replacements so a
+# future juggler reformat fails the build loudly instead of re-shipping the crash.
+echo "  FIX: thread location through Page.uncaughtError (ports microsoft/playwright main)"
+python3 - <<'PYEOF'
+import pathlib
+def patch(path, pairs):
+    p = pathlib.Path(path); s = p.read_text()
+    for old, new in pairs:
+        assert old in s, f"anchor not found in {path}:\n{old!r}"
+        s = s.replace(old, new, 1)
+    p.write_text(s)
+
+patch('juggler/content/Runtime.js', [
+  ("        const errorWindow = Services.wm.getOuterWindowWithId(message.outerWindowID);\n"
+   "        if (message.category === 'Web Worker' && message.logLevel === Ci.nsIConsoleMessage.error) {\n"
+   "          emitEvent(this.events.onErrorFromWorker, errorWindow, message.message, '' + message.stack);",
+   "        const errorWindow = Services.wm.getOuterWindowWithId(message.outerWindowID);\n"
+   "        const errorLocation = {\n"
+   "          lineNumber: message.lineNumber - 1,\n"
+   "          columnNumber: message.columnNumber - 1,\n"
+   "          url: message.sourceName,\n"
+   "        };\n"
+   "        if (message.category === 'Web Worker' && message.logLevel === Ci.nsIConsoleMessage.error) {\n"
+   "          emitEvent(this.events.onErrorFromWorker, errorWindow, message.message, '' + message.stack, errorLocation);"),
+  ("          emitEvent(this.events.onRuntimeError, {\n"
+   "            executionContext,\n"
+   "            message: message.errorMessage,\n"
+   "            stack: message.stack ? message.stack.toString() : '',\n"
+   "          });",
+   "          emitEvent(this.events.onRuntimeError, {\n"
+   "            executionContext,\n"
+   "            message: message.errorMessage,\n"
+   "            stack: message.stack ? message.stack.toString() : '',\n"
+   "            location: errorLocation,\n"
+   "          });"),
+])
+
+patch('juggler/content/PageAgent.js', [
+  ("      this._runtime.events.onErrorFromWorker((domWindow, message, stack) => {",
+   "      this._runtime.events.onErrorFromWorker((domWindow, message, stack, location) => {"),
+  ("        this._browserPage.emit('pageUncaughtError', {\n"
+   "          frameId: frame.id(),\n"
+   "          message,\n"
+   "          stack,\n"
+   "        });",
+   "        this._browserPage.emit('pageUncaughtError', {\n"
+   "          frameId: frame.id(),\n"
+   "          message,\n"
+   "          stack,\n"
+   "          location,\n"
+   "        });"),
+  ("  _onRuntimeError({ executionContext, message, stack }) {\n"
+   "    this._browserPage.emit('pageUncaughtError', {\n"
+   "      frameId: executionContext.auxData().frameId,\n"
+   "      message: message.toString(),\n"
+   "      stack: stack.toString(),\n"
+   "    });",
+   "  _onRuntimeError({ executionContext, message, stack, location }) {\n"
+   "    this._browserPage.emit('pageUncaughtError', {\n"
+   "      frameId: executionContext.auxData().frameId,\n"
+   "      message: message.toString(),\n"
+   "      stack: stack.toString(),\n"
+   "      location,\n"
+   "    });"),
+])
+
+patch('juggler/protocol/Protocol.js', [
+  ("    'uncaughtError': {\n"
+   "      frameId: t.String,\n"
+   "      message: t.String,\n"
+   "      stack: t.String,\n"
+   "    },",
+   "    'uncaughtError': {\n"
+   "      frameId: t.String,\n"
+   "      message: t.String,\n"
+   "      stack: t.String,\n"
+   "      location: runtimeTypes.ScriptLocation,\n"
+   "    },"),
+])
+print("  juggler location patch applied (Runtime.js + PageAgent.js + Protocol.js)")
+PYEOF
+
 # Preferences: PW lays them under browser/app/profile/firefox.js by appending,
 # but the modern convention is to ship them as a separate prefs file Firefox
 # loads at runtime. PW's `preferences/` tree contains the canonical layout.
@@ -390,6 +479,44 @@ mach_rc=0
 ./mach build || mach_rc=$?
 echo "===== END ./mach build (rc=$mach_rc) ====="
 
+# cbindgen 0.29.4 (Alpine edge) has a regression where impl-associated
+# constants used in Rust array-size expressions (e.g. `[BudgetType;
+# BudgetType::COUNT]`) get emitted as bare `[COUNT]` in the generated
+# C++ header, breaking clang-22 compilation:
+#   webrender_ffi_generated.h:6735:53: error: use of undeclared identifier 'COUNT'
+# The header is regenerated on every `./mach build` invocation, so we
+# patch it in-place BETWEEN mach's first pass (which generated it) and
+# any retry. Fix is idempotent + narrow — targets only the specific
+# BudgetType_VALUES + PRESSURE_COUNTERS + bytes_per_texture_of_type
+# array bounds.
+#
+# The array size is `BudgetType::COUNT`. We DERIVE the real count from the
+# header's OWN `BudgetType_VALUES[COUNT] = { ... }` initializer — a
+# `[BudgetType; COUNT]` array holding exactly COUNT `BudgetType::` elements —
+# rather than hardcoding it. A future Firefox bump that adds a BudgetType
+# variant would still emit `[COUNT]`, and a hardcoded size would then silently
+# under-size the array (no compile error, wrong runtime bound). Deriving from
+# the emitted initializer is self-consistent (matches the elements cbindgen
+# actually wrote) and independent of the Rust source's `const COUNT` form,
+# which varies across revisions. If the initializer can't be found, FAIL LOUD
+# instead of guessing.
+FFI_HDR="/work/firefox-src/obj/dist/include/mozilla/webrender/webrender_ffi_generated.h"
+if [[ "$mach_rc" != "0" && -f "$FFI_HDR" ]] && grep -q '\[COUNT\]' "$FFI_HDR"; then
+  BUDGET_COUNT=$(awk '/BudgetType_VALUES\[COUNT\] = \{/ { print gsub(/BudgetType::/, "&"); exit }' "$FFI_HDR")
+  if [[ -z "$BUDGET_COUNT" || "$BUDGET_COUNT" -lt 1 ]]; then
+    echo "ERROR: cbindgen [COUNT] patch: could not derive BudgetType::COUNT from" >&2
+    echo "       $FFI_HDR (BudgetType_VALUES initializer moved/reshaped?)." >&2
+    echo "       Refusing to guess an array size — inspect the generated header." >&2
+    exit 1
+  fi
+  echo "===== Patching webrender_ffi_generated.h — cbindgen bare-COUNT bug (COUNT=$BUDGET_COUNT) ====="
+  sed -i "s/\[COUNT\]/[$BUDGET_COUNT]/g" "$FFI_HDR"
+  echo "===== Retry ./mach build after webrender FFI patch ====="
+  mach_rc=0
+  ./mach build || mach_rc=$?
+  echo "===== END ./mach build retry (rc=$mach_rc) ====="
+fi
+
 # `./mach build` populates obj/dist/bin/ but NOT obj/dist/firefox/ — the
 # unpacked dist tree consumers expect is produced by the package step. Mach's
 # package subcommand creates a Python "common" venv that's unreliable on
@@ -475,6 +602,29 @@ echo "===== Staging dist to /work/firefox-dist ====="
 mkdir -p /work/firefox-dist
 cp -aL "$DIST"/. /work/firefox-dist/ 2>/dev/null || cp -a "$DIST"/. /work/firefox-dist/
 echo "Staged: $(du -sh /work/firefox-dist | cut -f1)"
+
+# PW SDK prefs — Ubuntu FF ships them at these exact paths inside the
+# packaged dist tree. The earlier `cp -a "$PW/preferences/." browser/app/profile/`
+# at line 175 puts them in the SOURCE tree where they get dropped during
+# packaging. Copy into the packaged DIST here so they survive to the artifact.
+# Missing these means `dom.security.https_first=false` never applies, PW's
+# proxy filter never attaches, and every proxy / client-cert / third-party
+# cookie test fails. Diagnosed 2026-07-09 via agent-3 investigation.
+if [[ -d "$PW/preferences" ]]; then
+  echo "===== Copying PW prefs into DIST (client-cert + proxy fix) ====="
+  mkdir -p /work/firefox-dist/browser/defaults/preferences
+  [[ -f "$PW/preferences/00-playwright-prefs.js" ]] && \
+    cp "$PW/preferences/00-playwright-prefs.js" /work/firefox-dist/browser/defaults/preferences/
+  [[ -f "$PW/preferences/playwright.cfg" ]] && \
+    cp "$PW/preferences/playwright.cfg" /work/firefox-dist/
+  # Headless musl FF's LookAndFeel defaults pointer/hover to coarse/none, so
+  # `(hover: hover)` + `(pointer: fine)` don't match on the default desktop
+  # context (Ubuntu FF reports fine+hover by default). PW forces this for chromium
+  # via --blink-settings but has no firefox equivalent → set FF's own pref
+  # (6 = eFine|eHover) as a baked default so the artifact matches Ubuntu FF.
+  printf 'pref("ui.primaryPointerCapabilities", 6);\npref("ui.allPointerCapabilities", 6);\n' \
+    > /work/firefox-dist/browser/defaults/preferences/01-alpine-pointer.js
+fi
 
 # Self-contained-bundle step (ldd-walk + RPATH=$ORIGIN + ICU data). Shared
 # with apply-and-build-iter.sh so the iter path also produces a correctly-

@@ -1,0 +1,93 @@
+# syntax=docker/dockerfile:1
+#
+# chromium-from-source multi-job STAGE 1: setup.
+#
+# Installs the toolchain, fetches Chromium source + aports patches, and runs
+# apply-and-build.sh through `gn gen` (skips ninja via PW_CHROMIUM_SKIP_NINJA=1).
+# Output image is tagged as `chs-build-setup-sha-<sha>` and consumed as
+# BASE_IMAGE by Dockerfile.round for subsequent ninja rounds.
+#
+# See project_buildkit_cacheto_commit_semantics for why we split across JOBS
+# (each pushing a tagged intermediate image) instead of resumable RUNs.
+
+FROM alpine:edge AS chromium-builder
+
+RUN apk add --no-cache \
+        bash curl git patch patchutils tar xz gzip jq make perl \
+        bison flex gperf findutils elfutils elfutils-dev pax-utils \
+        clang22 clang22-dev clang22-rtlib lld22 llvm22 \
+        rust cargo rust-bindgen rustfmt \
+        gn ninja-build samurai \
+        python3 py3-setuptools \
+        nodejs npm esbuild \
+        binutils file unzip linux-headers \
+        bsd-compat-headers sccache \
+        alsa-lib-dev brotli-dev bzip2-dev cairo-dev crc32c-dev curl-dev \
+        dav1d-dev dbus-dev dbus-glib-dev double-conversion-dev \
+        eudev-dev ffmpeg-dev flac-dev flatbuffers-dev fontconfig-dev \
+        freetype-dev gdk-pixbuf-dev gtk+3.0-dev harfbuzz-dev highway-dev \
+        hwdata-dev jpeg-dev jsoncpp-dev krb5-dev lcms2-dev libbsd-dev \
+        libcap-dev libdrm-dev libevdev-dev libevent-dev libexif-dev \
+        libffi-dev libgcrypt-dev libjpeg-turbo-dev libpng-dev libusb-dev \
+        libva-dev libwebp-dev libxml2-dev libxslt-dev mesa-dev minizip-dev \
+        nspr-dev nss-dev openh264-dev opus-dev pango-dev pciutils-dev \
+        simdutf-dev snappy-dev speex-dev sqlite-dev wayland-dev \
+        libxcomposite-dev libxcursor-dev libxdamage-dev libxi-dev \
+        libxinerama-dev libxrandr-dev libxscrnsaver-dev libxt-dev libxtst-dev
+
+# Alpine edge ships sccache 0.15.0-r0 which has a broken GHA v1 cache backend
+# under GHA runners v18 (writes to deprecated /_apis/artifactcache path, 100%
+# 404s → opendal flips to RO, "Cannot write to read-only storage"). Override
+# with upstream prebuilt musl binary sccache 0.16.0 which uses v2 backend.
+# See project_sccache_ghac_readonly_v18. /usr/local/bin takes priority over
+# apk's /usr/bin/sccache in PATH so the upgrade is transparent.
+RUN curl -sSL "https://github.com/mozilla/sccache/releases/download/v0.16.0/sccache-v0.16.0-x86_64-unknown-linux-musl.tar.gz" \
+      | tar xz -C /tmp \
+ && install -m755 /tmp/sccache-v0.16.0-x86_64-unknown-linux-musl/sccache /usr/local/bin/sccache \
+ && rm -rf /tmp/sccache-v0.16.0-x86_64-unknown-linux-musl \
+ && sccache --version
+
+WORKDIR /work
+
+# VARIANT (headless|headed) baked as ENV so it flows through Dockerfile.round
+# and Dockerfile.finalize (both FROM this image) — the scripts source
+# variant-config.sh to pick target/out-dir/overlay/layout. Default headless
+# keeps the existing chrome-headless-shell build byte-identical.
+ARG VARIANT=headless
+ENV VARIANT=${VARIANT}
+
+COPY versions.env /work/versions.env
+COPY chromium-headless-shell/args.gn.overlay /work/chromium-headless-shell/args.gn.overlay
+COPY chromium-headless-shell/args.gn.headed.overlay /work/chromium-headless-shell/args.gn.headed.overlay
+COPY chromium-headless-shell/scripts /work/chromium-headless-shell/scripts
+
+RUN set -a && . /work/versions.env && set +a \
+    && bash /work/chromium-headless-shell/scripts/fetch-pw-browsers-json.sh chromium-headless-shell \
+       > /work/derived.env \
+    && cat /work/derived.env
+
+RUN set -a && . /work/versions.env && set +a \
+    && bash /work/chromium-headless-shell/scripts/fetch-aports.sh /work/aports
+
+RUN set -a && . /work/versions.env && . /work/derived.env && set +a \
+    && bash /work/chromium-headless-shell/scripts/fetch-chromium-src.sh /work/chromium-src
+
+ARG PW_CHROMIUM_SKIP_APORTS=false
+ARG PW_CHROMIUM_ENABLE_DEBUG=false
+
+RUN --mount=type=cache,target=/root/.cache/sccache,id=chr-sccache,sharing=locked \
+    --mount=type=secret,id=actions_runtime_token \
+    --mount=type=secret,id=actions_results_url \
+    set -a && . /work/versions.env && . /work/derived.env && set +a \
+    && export SCCACHE_GHA_ENABLED=true \
+    && export ACTIONS_CACHE_SERVICE_V2=1 \
+    && export ACTIONS_RUNTIME_TOKEN="$(cat /run/secrets/actions_runtime_token 2>/dev/null || echo)" \
+    && export ACTIONS_RESULTS_URL="$(cat /run/secrets/actions_results_url 2>/dev/null || echo)" \
+    && if [ -z "$ACTIONS_RUNTIME_TOKEN" ] || [ -z "$ACTIONS_RESULTS_URL" ]; then \
+         echo "WARN: GHA cache env not provided — sccache will use local mount only" >&2; \
+         unset SCCACHE_GHA_ENABLED; \
+       fi \
+    && PW_CHROMIUM_SKIP_APORTS="$PW_CHROMIUM_SKIP_APORTS" \
+       PW_CHROMIUM_ENABLE_DEBUG="$PW_CHROMIUM_ENABLE_DEBUG" \
+       PW_CHROMIUM_SKIP_NINJA=1 \
+       bash /work/chromium-headless-shell/scripts/apply-and-build.sh /work

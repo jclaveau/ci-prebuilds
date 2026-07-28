@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+#
+# chromium-from-source multi-job STAGE N: final ninja + artifact staging.
+#
+# Consumes the last round's image (BASE_IMAGE) and runs the final `ninja
+# <target>` (headless_shell | chrome, from the inherited ENV VARIANT) WITHOUT a
+# timeout — this call MUST complete or the job (rightly) fails. Then stages the
+# binary/pak tree via stage-cache-layout.sh and copies the result into a FROM
+# scratch artifact stage.
+#
+# ARTIFACT_LAYOUT is the PW-discovery dir name stage-cache-layout.sh produced
+# (chrome-headless-shell-linux64 for headless, chrome-linux for headed). It
+# must match VARIANT — the caller passes both. Default keeps headless
+# byte-identical.
+
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE} AS chromium-builder
+
+# TEMP warm-fix gate — only the standalone chromium-headed-finalize-warm.yml
+# dispatch sets this to 1, to re-enable print-preview on a stale r14 obj/ image
+# built before the overlay was fixed. Default off: a clean rebuild (path A) runs
+# finalize with the corrected overlay and needs no patch.
+# TODO(headed-printing-cold-rebuild): remove with the ninja-resume.sh block.
+ARG PATCH_HEADED_PRINTING=
+ENV PATCH_HEADED_PRINTING=${PATCH_HEADED_PRINTING}
+
+# ninja-resume.sh is baked into BASE_IMAGE at setup time, so an edit to it on
+# the branch would NOT reach this container — overlay the fresh copy from the
+# (checked-out) build context so its PATCH_HEADED_PRINTING block actually runs.
+# Harmless for the unpatched paths: the fresh script == what setup baked.
+COPY chromium-headless-shell/scripts/ninja-resume.sh /work/chromium-headless-shell/scripts/ninja-resume.sh
+
+RUN --mount=type=cache,target=/root/.cache/sccache,id=chr-sccache,sharing=locked \
+    --mount=type=secret,id=actions_runtime_token \
+    --mount=type=secret,id=actions_results_url \
+    bash /work/chromium-headless-shell/scripts/ninja-resume.sh /work final final
+
+RUN bash /work/chromium-headless-shell/scripts/stage-cache-layout.sh /work
+
+FROM scratch AS artifact
+ARG ARTIFACT_LAYOUT=chrome-headless-shell-linux64
+COPY --from=chromium-builder /work/${ARTIFACT_LAYOUT} /${ARTIFACT_LAYOUT}

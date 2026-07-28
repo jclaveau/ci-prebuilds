@@ -12,6 +12,11 @@ is_debug = false
 symbol_level = 0
 is_official_build = false  # set true if we want PGO + maximum optimization; significantly slower build
 
+# sccache compiler wrapper. Mirrors aports' cc_wrapper=ccache strategy.
+# SCCACHE_GHA_ENABLED env (set in the Dockerfile RUN) picks the GitHub Actions
+# Cache backend so warm-cache rebuilds finish in ~30min instead of cold ~7h.
+cc_wrapper = "sccache"
+
 # musl libc — without this Chromium picks a glibc-only codepath and the build
 # fails at link with undefined refs against glibc-specific symbols (e.g.
 # __libc_dlopen_mode). aports' chromium APKBUILD sets the same flag.
@@ -81,6 +86,33 @@ enable_print_preview = false
 # v24.16.0. cr138-node-version-check.patch (copium) makes the check gateable
 # via this GN arg.
 node_version_check = false
+
+# SwiftShader (software Vulkan) links libvk_swiftshader.so which needs
+# libffi_pic.a — Chromium expects to find it in third_party/libffi when
+# use_system_libffi=false, but it's not shipped. Alpine has libffi-dev (system).
+# Aports sets use_system_libffi=true gated on is_official_build=true; setting
+# it standalone here. v12 (run 28366063015) failed at SOLINK libvk_swiftshader.so
+# with `ld.lld: error: unable to find library -lffi_pic`.
+use_system_libffi = true
+
+# Aggressive feature cuts to fit chrome-headless-shell build under GHA's 6h
+# hosted-runner cap. v9-v15 all hit the cap mid-compile (37k uncached compiles
+# in v15 round-1 → ~35% in 5h). cache-to=registry only commits when buildx
+# build exits normally, so cap-cancelled iters never publish their layers →
+# each iter starts cold. Cutting headless-shell-irrelevant features below
+# (WebRTC, WebGPU/Dawn, ML/XNNPACK) trims the compile graph.
+# Drops biggest compile-count subdirs by [obj/third_party/X] grep on v15 logs:
+#   xnnpack=1093  webrtc=875  dawn=720  angle=467  vulkan-vl=231  swiftshader=185
+#
+# WebGL requires Vulkan-backed rendering — v29 shipped without it and
+# chromium reported "Initialization of all (0) EGL display types failed" at
+# runtime, breaking capabilities.spec.ts::should support webgl(2). Left
+# skia_use_vulkan / angle_enable_vulkan at their DEFAULT true so SwiftShader
+# has a Vulkan target to render on. Adds ~416 compiles (vulkan-vl + swiftshader)
+# = ~5-8 min once sccache is warm; single-digit MB image bloat.
+enable_webrtc = false
+skia_use_dawn = false
+use_dawn = false
 
 # More aports-aligned defaults that headless_shell doesn't conflict with:
 chrome_pgo_phase = 0                       # no PGO (build wall-clock); aports same

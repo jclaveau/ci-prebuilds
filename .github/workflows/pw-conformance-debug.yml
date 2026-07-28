@@ -1,0 +1,120 @@
+name: PW Conformance — visibility cluster probe
+
+# One-shot dispatcher for the chromium-headless-shell visibility cluster
+# investigation. Pulls the latest chromium artifact image, runs the
+# probe-visibility-cluster.cjs script with the chosen launch-arg
+# overrides, and prints PASS/FAIL lines per probe to the step summary.
+#
+# Iterate via re-dispatch with different `ignore_default_args` /
+# `extra_args` values to bisect the cluster cause without queueing a
+# full 10-shard conformance run (~30-45 min).
+#
+# See playwright/alpine-browsers/conformance/debug/probe-visibility-cluster.cjs
+# for what each probe asserts.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_ref:
+        description: 'Chromium artifact ref to probe (default: chs-latest)'
+        required: false
+        default: 'ghcr.io/jclaveau/playwright-alpine-browsers:chs-latest'
+        type: string
+      pw_version:
+        description: 'PW SDK version to install in the runner'
+        required: false
+        default: '1.60.0'
+        type: string
+      artifact_rev:
+        description: 'CHS_REV to stage at PW cache path (chromium browsers.json revision)'
+        required: false
+        default: '1223'
+        type: string
+      ignore_default_args:
+        description: 'Comma/space-separated default PW chromium argv to OMIT'
+        required: false
+        default: '--no-startup-window'
+        type: string
+      extra_args:
+        description: 'Space-separated extra chromium args to ADD'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build probe runner (alpine + node + chromium artifact)
+        env:
+          IMAGE_REF: ${{ inputs.image_ref }}
+          ARTIFACT_REV: ${{ inputs.artifact_rev }}
+          PW_VERSION: ${{ inputs.pw_version }}
+        run: |
+          cat > /tmp/Dockerfile.probe <<EOF
+          FROM alpine:edge
+          RUN apk update && apk add --no-cache \\
+              nodejs npm bash \\
+              ca-certificates font-opensans ttf-freefont
+          COPY --from=${IMAGE_REF} \\
+               /chrome-headless-shell-linux64 \\
+               /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/chrome-headless-shell-linux64
+          RUN touch /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/INSTALLATION_COMPLETE
+          ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+          WORKDIR /probe
+          RUN npm install -g playwright@${PW_VERSION}
+          EOF
+          docker build -t probe-runner:${{ github.sha }} -f /tmp/Dockerfile.probe /tmp
+
+      - name: Run probe
+        env:
+          IGNORE_DEFAULT_ARGS: ${{ inputs.ignore_default_args }}
+          EXTRA_ARGS: ${{ inputs.extra_args }}
+        run: |
+          set -o pipefail
+          docker run --rm \
+            --security-opt seccomp=unconfined \
+            -v "$PWD/playwright/alpine-browsers/conformance/debug:/probe" \
+            -w /probe \
+            -e NODE_PATH=/usr/local/lib/node_modules \
+            -e IGNORE_DEFAULT_ARGS \
+            -e EXTRA_ARGS \
+            -e DEBUG=pw:browser \
+            -e PW_DEBUG_API=1 \
+            probe-runner:${{ github.sha }} \
+            node probe-visibility-cluster.cjs 2>&1 | tee /tmp/probe.log
+
+          {
+            echo "## PW visibility-cluster probe"
+            echo ""
+            echo "image_ref:           \`${{ inputs.image_ref }}\`"
+            echo "pw_version:          \`${{ inputs.pw_version }}\`"
+            echo "ignore_default_args: \`${{ inputs.ignore_default_args }}\`"
+            echo "extra_args:          \`${{ inputs.extra_args }}\`"
+            echo ""
+            echo '```'
+            grep -E '^(PASS|FAIL|INFO):' /tmp/probe.log || cat /tmp/probe.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload full debug log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pw-visibility-cluster-probe-log
+          path: /tmp/probe.log
+          if-no-files-found: ignore
+          retention-days: 14

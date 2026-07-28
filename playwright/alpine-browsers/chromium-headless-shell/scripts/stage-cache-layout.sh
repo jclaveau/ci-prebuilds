@@ -22,15 +22,18 @@
 set -euo pipefail
 
 WORK="${1:?usage: stage-cache-layout.sh <work_dir>}"
+# VARIANT (headless|headed) selects the PW-discovery layout dir + binary name.
+. "$WORK/chromium-headless-shell/scripts/variant-config.sh"
 DIST="$WORK/chromium-dist"
-OUT="$WORK/chrome-headless-shell-linux64"
+OUT="$WORK/$VARIANT_LAYOUT"
 
 [[ -d "$DIST" ]] || { echo "missing $DIST (apply-and-build.sh ran?)" >&2; exit 1; }
 
-# Chromium's GN target outputs `headless_shell` as the binary name; PW expects
-# `chrome-headless-shell`. Rename + create the wrapper layout.
-if [[ -f "$DIST/headless_shell" && ! -f "$DIST/chrome-headless-shell" ]]; then
-  mv "$DIST/headless_shell" "$DIST/chrome-headless-shell"
+# headless: GN outputs `headless_shell`; PW expects `chrome-headless-shell`.
+# headed: GN outputs `chrome`; PW expects `chrome` (no rename → this is a no-op
+# since $VARIANT_DIST_BIN == $VARIANT_BIN).
+if [[ -f "$DIST/$VARIANT_BIN" && ! -f "$DIST/$VARIANT_DIST_BIN" ]]; then
+  mv "$DIST/$VARIANT_BIN" "$DIST/$VARIANT_DIST_BIN"
 fi
 
 rm -rf "$OUT"

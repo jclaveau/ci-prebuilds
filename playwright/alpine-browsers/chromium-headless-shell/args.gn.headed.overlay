@@ -1,0 +1,100 @@
+# GN args for the musl HEADED full-chrome build (VARIANT=chrome).
+#
+# Strategy: MINIMAL-headed. Build the real `chrome` target (headed window via
+# Ozone/X11 + GTK) but keep the same lean cuts as the headless-shell overlay
+# (is_official_build=false, no webrtc/dawn/codecs/audio; printing stays on — the
+# chrome target hard-requires print-preview) so the compile
+# stays as small as a headed browser allows. This proves headed chrome
+# builds+runs on musl and passes headed conformance; heavier features
+# (webrtc/vaapi/proprietary codecs/pulseaudio) can be re-enabled later per
+# aports if a headful test needs them.
+#
+# Reference: Alpine aports community/chromium (a full-browser musl build).
+# Its is_official_build=true + all-features config is the maximal target;
+# this overlay is the minimal subset that still yields a headed browser.
+#
+# Sourced into args.gn by apply-and-build.sh (VARIANT=chrome selects this file
+# over args.gn.overlay). Lines OVERRIDE earlier ones.
+
+# Release build, no debuginfo (lean binary, link fits the runner memory budget).
+is_debug = false
+symbol_level = 0
+# false = dev optimization, MUCH faster to compile than aports' official build.
+# We ship a test browser, not a distro package — parity is behavioral, not perf.
+is_official_build = false
+
+# sccache wrapper (GHA backend, warm-cache resumes). Same as headless overlay.
+cc_wrapper = "sccache"
+
+# musl toolchain (unbundle system clang). Identical to the headless overlay —
+# these are browser-agnostic and required for any musl chromium build.
+is_musl = true
+is_clang = true
+clang_use_chrome_plugins = false
+custom_toolchain = "//build/toolchain/linux/unbundle:default"
+host_toolchain = "//build/toolchain/linux/unbundle:default"
+enable_rust = true
+rust_sysroot_absolute = "/usr"
+rust_bindgen_root = "/usr"
+rustc_version = "yes"
+use_sysroot = false
+use_custom_libcxx = true
+use_lld = true
+use_system_libffi = true
+node_version_check = false
+
+# HEADED essentials — the window path headless_shell never compiles.
+# use_ozone / ozone_platform_x11 / use_gtk default true on Linux, but we set
+# them explicitly so is_official_build=false can't drop them: chrome needs a
+# platform window backend (X11, driven under Xvfb in CI) + GTK for the frame.
+# Wayland backend left off (no compositor in CI); X11 is the runtime default.
+use_ozone = true
+ozone_platform_x11 = true
+ozone_platform_wayland = false
+use_gtk = true
+
+# The chrome target pulls the whole //chrome/browser graph (extensions, pdf,
+# remoting, full UI) — DO NOT disable enable_extensions / enable_pdf: they
+# assert when the chrome target is in the build graph (unlike headless_shell).
+# Leaving them at their official-desktop defaults (on) is what makes `chrome`
+# link.
+
+# Lean cuts kept from the headless overlay — none block the chrome target,
+# they just trim the compile graph. Re-enable per aports if a headful test
+# needs the feature (webrtc screen-share, proprietary codecs, HW video, audio).
+is_component_build = false
+enable_nacl = false
+enable_webrtc = false
+skia_use_dawn = false
+use_dawn = false
+proprietary_codecs = false
+ffmpeg_branding = "Chromium"
+rtc_use_pipewire = false
+use_pulseaudio = false
+use_alsa = false
+# Printing MUST stay on for the chrome target. Unlike the lean cuts below, the
+# full //chrome/browser graph references printing::mojom::RequestPrintPreviewParams
+# (print_preview_dialog_controller.h, pulled by chrome_content_browser_client.cc)
+# unconditionally — that mojom is generated only when enable_print_preview=true.
+# Disabling it passes `gn gen` but fails the compile at the very last finalize
+# TU (cost us a 5-day build, run 29946711140). Same "can't cut from chrome"
+# class as extensions/pdf above. use_cups stays false: print-to-PDF needs no
+# CUPS backend (and cups-dev in Dockerfile.setup would cold-invalidate the whole
+# round chain), which is all conformance drives.
+use_cups = false
+enable_basic_printing = true
+enable_print_preview = true
+enable_vr = false
+chrome_pgo_phase = 0
+disable_fieldtrial_testing_config = true
+enable_nocompile_tests = false
+is_cfi = false
+treat_warnings_as_errors = false
+fatal_linker_warnings = false
+safe_browsing_use_unrar = false
+
+# FORTIFY: headed pulls in MORE Skia/Blink paths than headless_shell, and the
+# musl _FORTIFY_SOURCE __memcpy_chk trap (SkDescriptor etc.) fires across them
+# — aports carries several cr14x-*-unfortify-* patches for exactly this. Our
+# build disables FORTIFY at the compiler level via apply-and-build.sh's
+# CFLAGS/CXXFLAGS injection; keep that broad, not SkDescriptor-only.

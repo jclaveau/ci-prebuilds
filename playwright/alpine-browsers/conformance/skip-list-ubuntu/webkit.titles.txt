@@ -1,0 +1,8 @@
+# PW-known upstream fails on the Ubuntu-webkit baseline (mcr.microsoft.com/
+# playwright:v<PW>-noble image). Same tests are also skipped on Alpine — the
+# parity gate (`scripts/check-skip-parity.sh`) asserts every entry here
+# appears in `skip-list/webkit.titles.txt` too.
+#
+# Seeded from run 28830225815 (2026-07-06):
+should ignore page.pause when headed$
+should capture navigation$

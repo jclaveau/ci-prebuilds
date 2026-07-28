@@ -1,0 +1,56 @@
+# Spec FILE skip-list for firefox (Alpine/musl, PW-patched).
+# POSIX-extended regex per line. Matched against PW spec paths relative to
+# pw-src. Files matching are DELETED before tests run.
+#
+# Prior "recorder-dependent" file skips (inspector/*, selector-generator,
+# trace-viewer*, debug-controller, slowmo) were REMOVED after diagnosing the
+# root cause: PW's recorder subsystem launches an INTERNAL headed chromium
+# as its UI harness, decoupled from the browser under test.
+#
+# 2026-07-14 → 2026-07-15: chromium RE-ADDED via multi-stage :3.22 bundle
+# at /opt/chromium-322/ (see conformance/build-runner.sh). Isolated from
+# :edge system libs via RPATH $ORIGIN. FF binary keeps libFLAC.so.14; the
+# bundled chromium uses its own libFLAC.so.12 under $ORIGIN. Recorder-UI
+# skips REMOVED again below to run inspector/* + slowmo + debug-controller
+# + selector-generator + trace-viewer + cli-codegen-* on the FF leg.
+
+# Prior client-certificates + proxy stack file-skips REMOVED after diagnosing
+# the root cause (agent 3, 2026-07-09): Alpine FF build was missing PW's
+# `00-playwright-prefs.js` + `playwright.cfg` at the correct dist paths
+# (Ubuntu FF ships them there). Missing prefs meant `dom.security.https_first`
+# stayed on, PW's proxy filter never attached, and every proxied navigation
+# broke. Fixed both at BUILD time (`firefox/scripts/apply-and-build.sh` post-
+# build DIST copy) AND at RUNNER-image time (`conformance/build-runner.sh`
+# curls the prefs into the FF dist) so pre-built artifacts also benefit.
+# Recovers ~56 tests: client-certs (45) + proxy.spec.ts (11) + likely
+# browsercontext-proxy / -cookies-third-party / -reuse siblings.
+
+# browsertype-connect: OUT OF SCOPE for now (remote-browser-server path —
+# launchServer wsEndpoint + connect() over the network). This image ships a
+# browser BINARY for local launch (firefox.launch()); nobody consumes it as a
+# remote ws:// endpoint, so these tests exercise a mode outside the image's job.
+#
+# TODO(fix-later): recover this properly instead of skipping. Evidence so far:
+# BUCKET-C PROBE 2026-07-17 (iter 29565116253) un-skipped the file keeping the
+# 6 structural titles (reconnect/wss/ipv6×2/headed) grep-inverted — shard 6
+# HUNG 38min+ (vs ~2-4min normal) rather than clean-failing, so the hang reaches
+# PAST those 6 titles and title-level grep-invert can't contain it. Root cause
+# UNCONFIRMED. Dig-sites when we pick this up: (1) confirm shard-6 attribution
+# (the hang wasn't proven to be this file); (2) single-spec local repro
+# `run.sh` with only browsertype-connect; (3) bisect launchServer WS spawn vs
+# reconnect loop vs the video/artifactsDir sub-tests. Until then: whole-file
+# skipped — a hanging shard is worse than the missing coverage.
+
+# Recorder-UI whole-file skips REMOVED 2026-07-15 — chromium bundle unblocks
+# _enableRecorder for inspector/* + slowmo + debug-controller + selector-
+# generator (~270 tests recovered).
+#
+# Trace-viewer + cli-codegen — UN-SKIP PROBE 2026-07-20 (stale, CHS-proven).
+# Both the "viewer out of scope" and "codegen writes zero bytes" rationales were
+# STALE — re-probed on chs-prepared:local (same bundled-chromium runner recipe):
+# all 7 codegen files pass (~59 tests) + trace-viewer 102/104 + trace-viewer-scrub
+# 9/9. Codegen's recorder-UI is browser-agnostic (records via the bundled chromium,
+# not the browser-under-test), so the FF leg should mirror CHS. Un-skipped as a
+# probe; validated via conformance-firefox dispatch. The single CHS residual
+# `should filter actions by text` is a title-skip in firefox.titles.txt; any
+# FF-trace-specific residuals get restored from the dispatch.

@@ -31,6 +31,11 @@ on:
         description: 'Browser revision (chs CHS_REV / ff revision / wk revision) for PW cache-path layout'
         required: true
         type: string
+      headed:
+        description: 'Run the FULL suite headed (--headed on every leg), not just headful.spec.ts. FF/WK only.'
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     # Standalone dispatch — useful when re-running conformance against an
     # already-published artifact without re-firing the producer's smoke
@@ -55,6 +60,11 @@ on:
         description: 'Browser revision (CHS_REV / firefox_revision / webkit_revision)'
         required: true
         type: string
+      headed:
+        description: 'Run the FULL suite headed (--headed on every leg). FF/WK only — chromium needs the chrome (not headless-shell) artifact.'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -63,14 +73,18 @@ permissions:
 jobs:
   shard:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Bumped from 60 → 90 after landing recorder-UI (xvfb-run) + PW-prefs
+    # fixes recovered ~450 previously-skipped tests, which pushed some shards
+    # past the 60min cap when combined with `--retries=2`. Real completion
+    # time on the fully-populated suite is 45-70min per shard.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         # 10 shards matches microsoft/playwright's CI lower-bound. Wall-clock
         # ~15-30 min per shard depending on browser; ~30-45 min total per
         # browser per producer publish.
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     steps:
       - uses: actions/checkout@v7
 
@@ -86,15 +100,17 @@ jobs:
           IMAGE_REF: ${{ inputs.image_ref }}
           PW_VERSION: ${{ inputs.pw_version }}
           ARTIFACT_REV: ${{ inputs.artifact_rev }}
+          HEADED: ${{ inputs.headed && '1' || '0' }}
           IMAGE_TAG_OUT: pw-conformance-runner-${{ inputs.browser }}:${{ github.sha }}
         run: ./playwright/alpine-browsers/conformance/build-runner.sh
 
-      - name: Run shard ${{ matrix.shard }}/10
+      - name: Run shard ${{ matrix.shard }}/20
         env:
           BROWSER: ${{ inputs.browser }}
           PW_VERSION: ${{ inputs.pw_version }}
           SHARD: ${{ matrix.shard }}
-          SHARD_TOTAL: 10
+          SHARD_TOTAL: 20
+          HEADED: ${{ inputs.headed && '1' || '0' }}
         run: |
           # --security-opt seccomp=unconfined: PW's browser renderers use
           # clone(CLONE_NEWUSER) which is blocked by default seccomp on FF,
@@ -107,17 +123,41 @@ jobs:
             # Peel-by-error layers per project_webkit_smoke_sandbox_strip_layers
             # memory: WebKit's bwrap on Alpine needs both seccomp +
             # apparmor unconfined AND SYS_ADMIN + NET_ADMIN caps AND the
-            # WEBKIT_DISABLE_SANDBOX=1 escape hatch.
+            # sandbox-disable escape hatch.
+            #
+            # The escape-hatch env var MUST be the upstream WebKitGTK/WPE
+            # spelling WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS (+ FORCE_SANDBOX=0)
+            # — the same the smoke jobs use. The old `WEBKIT_DISABLE_SANDBOX=1`
+            # here was a TYPO WebKit silently ignores, so bwrap stayed LIVE (the
+            # SYS_ADMIN cap above proves it runs). A live bwrap namespaces the FS
+            # and doesn't mount PW's host tmp dirs, so file-upload sources +
+            # download destinations were invisible to the Web/NetworkProcess →
+            # webkitRelativePath="", lastModified=now(), downloads not written.
+            # Root-caused via iter 29565116253 bucket-C + 3-agent source dive.
             SECURITY_FLAGS="$SECURITY_FLAGS --security-opt apparmor=unconfined --cap-add SYS_ADMIN --cap-add NET_ADMIN"
-            EXTRA_ENV="-e WEBKIT_DISABLE_SANDBOX=1"
+            EXTRA_ENV="-e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 -e WEBKIT_FORCE_SANDBOX=0"
+          fi
+          if [ "$BROWSER" = "chromium" ]; then
+            # chr-fs (and chs-fs) are DCHECK_ALWAYS_ON builds. Chrome raises a
+            # foreground renderer's priority via setpriority(PRIO_PROCESS, .., <)
+            # which returns EPERM without CAP_SYS_NICE; the DPCHECK(result==0) is
+            # FATAL in this build (release chrome ignores the failure) → the
+            # browser SIGABRTs on new-renderer ops (navigation, cross-process
+            # iframes), surfacing as "Target closed" on ~23 tests/shard. Grant
+            # SYS_NICE so the priority call succeeds. Headless chromium never hit
+            # it (headless-shell doesn't reprioritize renderers) but the cap is
+            # harmless there. base/process/process_linux.cc:201; run 30293866890.
+            SECURITY_FLAGS="$SECURITY_FLAGS --cap-add SYS_NICE"
           fi
 
+          # shellcheck disable=SC2086  # SECURITY_FLAGS/EXTRA_ENV are flag lists — word-splitting is intended
           docker run --rm $SECURITY_FLAGS \
             -v "$PWD/playwright/alpine-browsers/conformance:/conformance" \
             -e BROWSER \
             -e PW_VERSION \
             -e SHARD \
             -e SHARD_TOTAL \
+            -e HEADED \
             $EXTRA_ENV \
             pw-conformance-runner-${{ inputs.browser }}:${{ github.sha }} \
             sh /conformance/run.sh
@@ -147,12 +187,15 @@ jobs:
 
       - name: Print conformance summary
         run: |
-          echo "## PW Conformance — ${{ inputs.browser }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Artifact image: \`${{ inputs.image_ref }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "PW version:     \`v${{ inputs.pw_version }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Shard outcomes via the shard job; per-shard html reports uploaded as artifacts." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## PW Conformance — ${{ inputs.browser }}"
+            echo ""
+            echo "Artifact image: \`${{ inputs.image_ref }}\`"
+            echo "PW version:     \`v${{ inputs.pw_version }}\`"
+            echo "Mode:           \`${{ inputs.headed && 'headed — full suite --headed' || 'headless + headful.spec.ts headed leg' }}\`"
+            echo ""
+            echo "Shard outcomes via the shard job; per-shard html reports uploaded as artifacts."
+          } >> "$GITHUB_STEP_SUMMARY"
           ls -la shards/ || true
 
       - name: Fail summary if any shard failed
