@@ -144,6 +144,17 @@
       "depNameTemplate": "ghcr.io/jclaveau/playwright-alpine-browsers",
       "extractVersionTemplate": "^chs-(?<version>\\d+)$",
       "versioningTemplate": "loose"
+    },
+    {
+      "customType": "regex",
+      "fileMatch": ["^playwright/Dockerfile\\.alpine$"],
+      "matchStrings": [
+        "ARG WK_REV=(?<currentValue>\\d+)"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "ghcr.io/jclaveau/playwright-alpine-browsers",
+      "extractVersionTemplate": "^wk-(?<version>\\d+)$",
+      "versioningTemplate": "loose"
     }
   ],
   "schedule": [

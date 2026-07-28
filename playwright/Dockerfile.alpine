@@ -5,18 +5,21 @@
 # named build stages and COPY --from that name later.
 ARG CHS_REV=1223
 ARG FF_REV=1522
+ARG WK_REV=2287
 ARG BASE_IMAGE=jclaveau/alpine-dood-pnpm:latest
 
 # Producer-image stage aliases — Renovate's custom manager bumps the tag
 # revision in lockstep with PLAYWRIGHT_VERSION below.
 FROM ghcr.io/jclaveau/playwright-alpine-browsers:chs-${CHS_REV} AS chs-source
 FROM ghcr.io/jclaveau/playwright-alpine-browsers:ff-${FF_REV} AS ff-source
+FROM ghcr.io/jclaveau/playwright-alpine-browsers:wk-${WK_REV} AS wk-source
 
 FROM ${BASE_IMAGE}
 
-# Re-declare so ${CHS_REV} / ${FF_REV} expand in this stage's paths.
+# Re-declare so ${CHS_REV} / ${FF_REV} / ${WK_REV} expand in this stage's paths.
 ARG CHS_REV
 ARG FF_REV
+ARG WK_REV
 
 # Renovate will update this in lockstep with the producer image's published
 # tag. Same PW_VERSION drives `pnpm install -g playwright@…` AND the
@@ -24,7 +27,7 @@ ARG FF_REV
 # browsers.json to know the expected revision in the cache path).
 ARG PLAYWRIGHT_VERSION=1.60.0
 
-LABEL org.opencontainers.image.description="Playwright (musl-native chromium-headless-shell + Firefox) in Alpine based DinD as Github Actions Container"
+LABEL org.opencontainers.image.description="Playwright (musl-native chromium-headless-shell + Firefox + WebKit) in Alpine based DinD as Github Actions Container"
 
 # Playwright's bundled browsers are glibc-only and `playwright install
 # --with-deps` runs apt — neither works on Alpine/musl. We stage both
@@ -90,15 +93,36 @@ RUN sudo mv /ms-playwright/firefox-${FF_REV}/firefox/firefox \
   | sudo tee /ms-playwright/firefox-${FF_REV}/firefox/firefox >/dev/null \
  && sudo chmod +x /ms-playwright/firefox-${FF_REV}/firefox/firefox
 
+# WebKit — musl-built WPE (headless) + GTK (headed) MiniBrowser, from source.
+# The producer ships the PW-layout dist tree at /webkit
+# (pw_run.sh + minibrowser-{wpe,gtk}/ + peer .so); stage it at PW SDK's
+# auto-discovery path /ms-playwright/webkit-${WK_REV}/. PW's webkit driver
+# execs pw_run.sh directly — no launch shim needed (unlike Firefox).
+COPY --from=wk-source /webkit /ms-playwright/webkit-${WK_REV}
+RUN sudo touch /ms-playwright/webkit-${WK_REV}/INSTALLATION_COMPLETE \
+ && sudo chmod 755 /ms-playwright/webkit-${WK_REV}
+
+# WebKit's bwrap sandbox can't nest inside a container's default seccomp/user-ns
+# profile on musl. Disable it so headless WPE launches; the consumer must ALSO
+# run the container with `--security-opt seccomp=unconfined` (documented in the
+# image README) — the two are required together (see the producer Tier-2 smoke).
+ENV WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
+
 # Runtime libs. chromium-headless-shell is RPATH=$ORIGIN self-contained,
 # Firefox bundles its peer .so + ICU data but still needs the universal-
 # runtime libs (libstdc++, libgcc_s, musl) to resolve from the consumer
-# base. Apk list union of aports' community/chromium + community/firefox
-# `depends=`, trimmed to what headless actually loads.
+# base. WebKit-WPE loads libwpe + GTK4 + a full gstreamer stack at runtime.
+# Apk list union of aports' community/chromium + community/firefox `depends=`
+# plus the WebKit deps proven by the producer Tier-2 smoke, trimmed to what
+# headless actually loads.
 RUN sudo apk add --no-cache \
         ca-certificates font-opensans ttf-freefont \
         alsa-lib dbus-libs fontconfig glib gtk+3.0 harfbuzz \
         libdrm libevent libffi libjpeg-turbo libnotify libogg libtheora \
         libvorbis libvpx libwebp libwebpdemux libxcomposite libxt mesa-gl \
         nspr nss pipewire-libs libpulse libstdc++ libgcc \
+        libwpe libwpebackend-fdo gtk4.0 at-spi2-core cairo pango gdk-pixbuf \
+        mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \
+        gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \
+        opus libsecret \
  && pnpm install -g playwright@${PLAYWRIGHT_VERSION}
