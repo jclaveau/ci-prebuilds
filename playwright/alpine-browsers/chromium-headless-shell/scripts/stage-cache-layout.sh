@@ -40,5 +40,20 @@ rm -rf "$OUT"
 mkdir -p "$OUT"
 cp -a "$DIST/." "$OUT/"
 
+# Strip symbol tables from the shipped ELF binaries, matching PW's official
+# prebuilt (which ships stripped). GN `symbol_level = 0` already omits DWARF
+# debug info, but the linker still emits `.symtab`/`.strtab`; strip removes them
+# with no runtime effect — the dynamic symbol table (`.dynsym`) that loading
+# needs is left untouched by `--strip-all`. `binutils` (strip) + `file` come
+# from the builder base (Dockerfile setup). Non-ELF files (.pak/.dat/.bin,
+# locales) are skipped via the `file` type check.
+before=$(du -sh "$OUT" | cut -f1)
+find "$OUT" -type f -print0 | while IFS= read -r -d '' f; do
+  case "$(file -b "$f" 2>/dev/null)" in
+    *ELF*) strip --strip-all "$f" 2>/dev/null || true ;;
+  esac
+done
+echo "Stripped ELF binaries in $OUT: ${before} -> $(du -sh "$OUT" | cut -f1)"
+
 echo "Staged cache layout at $OUT:"
 ls -lh "$OUT" | head -20
