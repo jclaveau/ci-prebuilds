@@ -114,10 +114,13 @@ RUN sudo touch /ms-playwright/webkit-${WK_REV}/INSTALLATION_COMPLETE \
 # image README) — the two are required together (see the producer Tier-2 smoke).
 ENV WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
 
-# Runtime libs. chromium-headless-shell is RPATH=$ORIGIN self-contained,
-# Firefox bundles its peer .so + ICU data but still needs the universal-
-# runtime libs (libstdc++, libgcc_s, musl) to resolve from the consumer
-# base. WebKit-WPE loads libwpe + GTK4 + a full gstreamer stack at runtime.
+# Runtime libs. chromium-headless-shell has RPATH=$ORIGIN but the FROM-SOURCE
+# build (unlike the old apk one) is NOT fully self-contained — it dynamically
+# links Alpine's libxslt + double-conversion + minizip + crc32c (aports chromium
+# builds these use_system_*), so the consumer must supply them or the binary
+# dies at load with `Error relocating … symbol not found`. Firefox bundles its
+# peer .so + ICU data but still needs the universal runtime libs (libstdc++,
+# libgcc_s, musl). WebKit-WPE loads libwpe + GTK4 + a full gstreamer stack.
 # Apk list union of aports' community/chromium + community/firefox `depends=`
 # plus the WebKit deps proven by the producer Tier-2 smoke, trimmed to what
 # headless actually loads.
@@ -131,4 +134,5 @@ RUN sudo apk add --no-cache \
         mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \
         gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \
         opus libsecret \
+        libxslt double-conversion minizip crc32c \
  && pnpm install -g playwright@${PLAYWRIGHT_VERSION}
