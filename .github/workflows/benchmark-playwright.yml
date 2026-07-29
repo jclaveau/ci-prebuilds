@@ -232,15 +232,8 @@ jobs:
         scenario: [official, official-gyp, ubuntu-dood, ubuntu-dood-gyp, ubuntu-dind, ubuntu-dind-gyp, alpine-dood, alpine-dood-gyp, alpine-dind, alpine-dind-gyp]
         browsers: [chromium, all]
         run: [1, 2, 3, 4, 5]
-        exclude:
-          - scenario: alpine-dood       # Chromium-only on musl
-            browsers: all
-          - scenario: alpine-dood-gyp
-            browsers: all
-          - scenario: alpine-dind
-            browsers: all
-          - scenario: alpine-dind-gyp
-            browsers: all
+        # Every image (alpine included) now ships all three engines — no exclude. WebKit under act needs
+        # seccomp=unconfined, passed via --container-options on the act invocation below.
         # baseline is intentionally not in this matrix: a true bare-runner manual install inside nested
         # act+DinD pays >15 min for the apt unpack of ~70 GUI/Mesa libs. The act tables show the row with
         # a hardcoded `> 15mn` placeholder and compare every other scenario to the `official` PW image.
@@ -282,6 +275,7 @@ jobs:
           # set -x inside .github/act/bench.yml echoes every inner command before it runs.
           timeout --kill-after=5 900 act --verbose push -W .github/act/bench.yml --bind \
             -P ubuntu-latest="$IMG" \
+            --container-options "--security-opt seccomp=unconfined" \
             --env SCENARIO="${{ matrix.scenario }}" --env BROWSERS="${{ matrix.browsers }}" 2>&1 | tee "$LOG"
           rc=${PIPESTATUS[0]}
           set -e
