@@ -35,6 +35,11 @@ RUN --mount=type=cache,target=/root/.cache/sccache,id=chr-sccache,sharing=locked
     --mount=type=secret,id=actions_results_url \
     bash /work/chromium-headless-shell/scripts/ninja-resume.sh /work final final
 
+# Same overlay rationale as ninja-resume.sh above: stage-cache-layout.sh is baked
+# into BASE_IMAGE at setup time, so a branch edit (e.g. the ELF strip pass) only
+# reaches this incremental finalize via a fresh COPY from the build context.
+# Harmless for a clean rebuild: the fresh script == what setup baked.
+COPY chromium-headless-shell/scripts/stage-cache-layout.sh /work/chromium-headless-shell/scripts/stage-cache-layout.sh
 RUN bash /work/chromium-headless-shell/scripts/stage-cache-layout.sh /work
 
 FROM scratch AS artifact
