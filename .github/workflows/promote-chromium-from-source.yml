@@ -1,0 +1,90 @@
+name: Promote chromium-from-source → chs-<rev>
+
+# Promotes an ALREADY-BUILT from-source chromium-headless-shell image (chs-fs-*)
+# to the canonical consumer tags chs-<rev> / chs-<version> / chs-latest on both
+# GHCR and Docker Hub — a pure imagetools retag, NO rebuild. The from-source
+# build is the conformance-grade one (the apk fast-path is SUPERSEDED and its
+# chs-<rev> promote is gated off on push); this makes chs-<rev> point at
+# from-source so the alpine-*-playwright consumer (which COPYs chs-<rev>) ships
+# conformance-grade chromium.
+#
+# Reuse-if-exists: because it retags an existing chs-fs image, re-running per PW
+# rev costs seconds. Dispatch it after a from-source build lands (or to promote
+# the current chs-fs-edge). Conformance for the promoted build must be verified
+# out-of-band before dispatching (the from-source pipeline's conformance job, or
+# a triage of the build's last conformance run).
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: Existing from-source image tag to promote (e.g. chs-fs-edge or chs-fs-sha-<sha>)
+        default: chs-fs-edge
+        type: string
+      pw_version:
+        description: Playwright version whose chromium revision/version tags to write
+        default: '1.60.0'
+        type: string
+
+concurrency:
+  group: promote-chromium-from-source
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve chromium rev/version from PW browsers.json
+        id: pins
+        env:
+          PW: ${{ inputs.pw_version }}
+        run: |
+          BJ=$(curl -sL --fail "https://cdn.jsdelivr.net/npm/playwright-core@${PW}/browsers.json") \
+            || { echo "::error::could not fetch browsers.json for PW ${PW}"; exit 1; }
+          REV=$(jq -r '.browsers[] | select(.name=="chromium-headless-shell") | .revision' <<<"$BJ")
+          VER=$(jq -r '.browsers[] | select(.name=="chromium-headless-shell") | .browserVersion' <<<"$BJ")
+          if [ -z "$REV" ] || [ "$REV" = "null" ]; then
+            echo "::error::failed to resolve chromium-headless-shell revision"; exit 1
+          fi
+          echo "rev=$REV" >> "$GITHUB_OUTPUT"
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+          echo "PW ${PW} → chromium-headless-shell rev=${REV} version=${VER}"
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Pre-flight — source from-source image must exist
+        env:
+          SRC: ghcr.io/jclaveau/playwright-alpine-browsers:${{ inputs.source_tag }}
+        run: |
+          docker manifest inspect "$SRC" >/dev/null \
+            || { echo "::error::source image $SRC not found on GHCR"; exit 1; }
+          echo "source OK: $SRC"
+
+      - name: Promote from-source → chs-<rev> (GHCR + Docker Hub)
+        env:
+          SRC: ghcr.io/jclaveau/playwright-alpine-browsers:${{ inputs.source_tag }}
+          REV: ${{ steps.pins.outputs.rev }}
+          VER: ${{ steps.pins.outputs.ver }}
+        run: |
+          docker buildx imagetools create \
+            -t "ghcr.io/jclaveau/playwright-alpine-browsers:chs-${REV}" \
+            -t "ghcr.io/jclaveau/playwright-alpine-browsers:chs-${VER}" \
+            -t ghcr.io/jclaveau/playwright-alpine-browsers:chs-latest \
+            -t "jclaveau/playwright-alpine-browsers:chs-${REV}" \
+            -t "jclaveau/playwright-alpine-browsers:chs-${VER}" \
+            -t jclaveau/playwright-alpine-browsers:chs-latest \
+            "$SRC"
+          echo "::notice::promoted $SRC → chs-${REV} / chs-${VER} / chs-latest (from-source, conformance-grade)"
