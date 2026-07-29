@@ -864,13 +864,18 @@ jobs:
     secrets: inherit
 
   promote-chromium-headless-shell:
-    # Parallel promote for the apk-fast-path chromium artifact. Same dual-
-    # target shape as FF promote: GHCR for CI consumption, DH for external.
+    # Promote for the apk-fast-path chromium artifact into an ISOLATED
+    # `chs-apk-<rev>` namespace — it does NOT own the canonical consumer tags
+    # `chs-<rev>` / `chs-latest` (those belong to the conformance-grade
+    # from-source build, promoted by promote-chromium-from-source.yml). apk is
+    # SUPERSEDED + conformance-limited (task #13); keeping it on a separate
+    # namespace means exercising the escape hatch can never clobber the
+    # from-source chs-<rev> the alpine-*-playwright consumer COPYs.
     # Triggers:
-    # - push to main (canonical promotion path; uses versions.env default PW)
+    # - push to main (uses versions.env default PW)
     # - workflow_dispatch with build_chromium_headless_shell=true (on-demand
     #   catalog accumulation: dispatcher can pass pw_version to publish the
-    #   chs-${rev} tag matching a non-default PW pin)
+    #   chs-apk-${rev} tag matching a non-default PW pin)
     needs: [build-chromium-headless-shell, smoke-chromium-headless-shell, conformance-chromium-headless-shell]
     if: |
       (github.event_name == 'push' && github.ref == 'refs/heads/main')
@@ -888,19 +893,20 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Promote chromium-headless-shell → GHCR + Docker Hub
+      - name: Promote chromium-headless-shell (apk) → chs-apk-<rev> (GHCR + Docker Hub)
+        # ISOLATED namespace — NOT chs-<rev>/chs-latest (those are from-source's,
+        # see promote-chromium-from-source.yml). Prevents the superseded apk path
+        # from clobbering the conformance-grade chromium the consumer COPYs.
         env:
           SRC: ghcr.io/jclaveau/playwright-alpine-browsers:chs-sha-${{ github.sha }}
           REV: ${{ needs.build-chromium-headless-shell.outputs.chromium_revision }}
           VER: ${{ needs.build-chromium-headless-shell.outputs.chromium_version }}
         run: |
           docker buildx imagetools create \
-            -t "ghcr.io/jclaveau/playwright-alpine-browsers:chs-${REV}" \
-            -t "ghcr.io/jclaveau/playwright-alpine-browsers:chs-${VER}" \
-            -t ghcr.io/jclaveau/playwright-alpine-browsers:chs-latest \
-            -t "jclaveau/playwright-alpine-browsers:chs-${REV}" \
-            -t "jclaveau/playwright-alpine-browsers:chs-${VER}" \
-            -t jclaveau/playwright-alpine-browsers:chs-latest \
+            -t "ghcr.io/jclaveau/playwright-alpine-browsers:chs-apk-${REV}" \
+            -t "ghcr.io/jclaveau/playwright-alpine-browsers:chs-apk-${VER}" \
+            -t "jclaveau/playwright-alpine-browsers:chs-apk-${REV}" \
+            -t "jclaveau/playwright-alpine-browsers:chs-apk-${VER}" \
             -t "jclaveau/playwright-alpine-browsers:chs-sha-${{ github.sha }}" \
             "$SRC"
 
