@@ -99,12 +99,20 @@ RUN sudo mv /ms-playwright/firefox-${FF_REV}/firefox/firefox \
   | sudo tee /ms-playwright/firefox-${FF_REV}/firefox/firefox >/dev/null \
  && sudo chmod +x /ms-playwright/firefox-${FF_REV}/firefox/firefox
 
-# WebKit — musl-built WPE (headless) + GTK (headed) MiniBrowser, from source.
-# The producer ships the PW-layout dist tree at /webkit
-# (pw_run.sh + minibrowser-{wpe,gtk}/ + peer .so); stage it at PW SDK's
-# auto-discovery path /ms-playwright/webkit-${WK_REV}/. PW's webkit driver
-# execs pw_run.sh directly — no launch shim needed (unlike Firefox).
-COPY --from=wk-source /webkit /ms-playwright/webkit-${WK_REV}
+# WebKit — musl-built WPE MiniBrowser, from source. The producer ships the
+# PW-layout dist tree at /webkit (pw_run.sh + minibrowser-{wpe,gtk}/ + peer .so);
+# stage it at PW SDK's auto-discovery path /ms-playwright/webkit-${WK_REV}/. PW's
+# webkit driver execs pw_run.sh directly — no launch shim needed (unlike Firefox).
+#
+# We COPY ONLY minibrowser-wpe (+ pw_run.sh), NOT minibrowser-gtk. pw_run.sh
+# picks the port by flag: `--headless` → minibrowser-wpe, else minibrowser-gtk.
+# PW always launches headless here, so gtk (~167 MB compressed, ~400 MB on disk)
+# is never execed — headed WebKit is unsupported on musl (libgtk-4 self-recursion
+# crash; producer Tier-2 headed is `if: false`). Dropping it is pure dead-weight
+# removal; the producer artifact still ships both for when headed lands. See
+# project_webkit_gtk_headed_recursion.
+COPY --from=wk-source /webkit/minibrowser-wpe /ms-playwright/webkit-${WK_REV}/minibrowser-wpe
+COPY --from=wk-source /webkit/pw_run.sh /ms-playwright/webkit-${WK_REV}/pw_run.sh
 RUN sudo touch /ms-playwright/webkit-${WK_REV}/INSTALLATION_COMPLETE \
  && sudo chmod 755 /ms-playwright/webkit-${WK_REV}
 
