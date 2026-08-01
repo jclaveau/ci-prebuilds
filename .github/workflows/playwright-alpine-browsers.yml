@@ -144,6 +144,12 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
+      build_webkit_gtk:
+        description: 'Also build the WebKit GTK port (headed) — default off; WPE-only ships, ~halves the WebKit build'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
       webkit_enable_jit:
         description: 'WebKit ENABLE_JIT (default ON; flip OFF if JSC+musl JIT blocks)'
         required: false
@@ -2666,6 +2672,13 @@ jobs:
   # so the two chains don't deadlock the locked mount on overlapping clang
   # invocations.
   build-webkit-gtk-1:
+    # GTK port gated OFF by default — headed WebKit is unsupported on musl today,
+    # and the WPE-only artifact ships without it. Skipping GTK ~halves the WebKit
+    # build. Flip on via the build_webkit_gtk dispatch input or a `build-webkit-gtk`
+    # PR label. When skipped, finalize substitutes an empty gtk dir (GTK_STAGE=none).
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_webkit == 'true' && inputs.build_webkit_gtk == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-webkit-gtk'))
     needs: [build-webkit-source-prep]
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -2693,6 +2706,9 @@ jobs:
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
 
   build-webkit-gtk-2:
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_webkit == 'true' && inputs.build_webkit_gtk == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-webkit-gtk'))
     needs: [build-webkit-gtk-1]
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -2720,6 +2736,9 @@ jobs:
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
 
   build-webkit-gtk-3:
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_webkit == 'true' && inputs.build_webkit_gtk == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-webkit-gtk'))
     needs: [build-webkit-gtk-2]
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -2747,6 +2766,9 @@ jobs:
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
 
   build-webkit-gtk-4:
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_webkit == 'true' && inputs.build_webkit_gtk == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-webkit-gtk'))
     needs: [build-webkit-gtk-3]
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -2774,6 +2796,14 @@ jobs:
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
 
   build-webkit-finalize:
+    # Runs when WPE + source-prep succeed, whether or not GTK was built — a
+    # skipped `needs` job would otherwise skip this one too. GTK skipped →
+    # GTK_STAGE=none (WPE-only artifact); GTK built → stripped + shipped.
+    if: |
+      !cancelled()
+      && needs.build-webkit-source-prep.result == 'success'
+      && needs.build-webkit-wpe-4.result == 'success'
+      && (needs.build-webkit-gtk-4.result == 'success' || needs.build-webkit-gtk-4.result == 'skipped')
     needs: [build-webkit-source-prep, build-webkit-wpe-4, build-webkit-gtk-4]
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -2782,6 +2812,9 @@ jobs:
       pw_version: ${{ needs.build-webkit-source-prep.outputs.pw_version }}
       webkit_revision: ${{ needs.build-webkit-source-prep.outputs.webkit_revision }}
       webkit_version: ${{ needs.build-webkit-source-prep.outputs.webkit_version }}
+      # Whether the artifact carries the GTK port (headed) — gates the Tier-2
+      # headed smoke below; false → WPE-only (empty gtk dir).
+      gtk_built: ${{ needs.build-webkit-gtk-4.result == 'success' }}
     steps:
       - uses: actions/checkout@v4
       - name: Free up runner disk
@@ -2810,7 +2843,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             BASE_WPE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-wpe-4.outputs.tag }}
-            BASE_GTK=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-gtk-4.outputs.tag }}
+            BASE_GTK=${{ needs.build-webkit-gtk-4.result == 'success' && format('ghcr.io/jclaveau/playwright-alpine-browsers:{0}', needs.build-webkit-gtk-4.outputs.tag) || 'scratch' }}
+            GTK_STAGE=${{ needs.build-webkit-gtk-4.result == 'success' && 'real' || 'none' }}
             BASE_SOURCE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-source-prep.outputs.tag }}
 
       - name: Tier-1 smoke (ELF + ldd integrity for MiniBrowser-wpe + MiniBrowser-gtk)
@@ -2832,6 +2866,11 @@ jobs:
             ls -la /opt/webkit/ /opt/webkit/minibrowser-wpe /opt/webkit/minibrowser-gtk
             for port in wpe gtk; do
               BIN=/opt/webkit/minibrowser-$port/MiniBrowser
+              # GTK is gated off by default (empty dir) — WPE is required, GTK optional.
+              if [ ! -f "$BIN" ]; then
+                [ "$port" = wpe ] && { echo "FAIL: wpe MiniBrowser missing"; exit 1; }
+                echo "skip: $port MiniBrowser not built (GTK port gated off)"; continue
+              fi
               file "$BIN"
               file "$BIN" | grep -q "ELF.*executable" \
                 || { echo "FAIL: $BIN is not an ELF executable"; exit 1; }
@@ -2945,6 +2984,9 @@ jobs:
             '
 
       - name: Run Tier-2 headed smoke (PW SDK → MiniBrowser-gtk via Xvfb)
+        # Only when the GTK port was built — WPE-only artifacts have no
+        # MiniBrowser-gtk (build_webkit_gtk gated off by default).
+        if: needs.build-webkit-finalize.outputs.gtk_built == 'true'
         # Re-enabled 2026-07-22: the GTK4 infinite-recursion SIGSEGV at newPage
         # was root-caused to the artifact's hand-assembled bundled gtk4 stack
         # (a version-skewed transitive lib in the flat ldd-walk), NOT a

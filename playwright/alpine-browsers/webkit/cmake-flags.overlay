@@ -37,6 +37,13 @@ CMAKE_SHARED_FLAGS=(
   # Sampling profiler relies on glibc-ish signal/timer plumbing; aports turns it off.
   -DENABLE_SAMPLING_PROFILER=OFF
 
+  # LTO (thin) — shrinks the shipped libs meaningfully, but the link step's
+  # memory + wall-time balloon, risking the GHA build cap on this already
+  # multi-hour build (same reason chromium skips is_official_build's PGO/LTO).
+  # Kept wired-but-OFF: uncomment when building on a higher-cap / self-hosted
+  # runner. Values: thin | full.
+  # -DLTO_MODE=thin
+
   # Docs need gi-docgen which isn't a CI dep; we don't ship them anyway.
   -DENABLE_DOCUMENTATION=OFF
 

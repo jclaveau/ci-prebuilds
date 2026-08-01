@@ -11,11 +11,32 @@
 #     pw_run.sh          (from source-prep, copied verbatim from PW)
 
 ARG BASE_WPE
-ARG BASE_GTK
+ARG BASE_GTK=scratch
 ARG BASE_SOURCE
+ARG GTK_STAGE=real
 
+# WebKit Release keeps ELF symbol tables (no strip flag); PW's upstream
+# webkit-*.zip ships stripped. Strip .symtab/.strtab from the bundled dist
+# before the scratch COPY — .dynsym + the $ORIGIN RPATH bundle-dist sets stay,
+# so loading is unaffected (same basis as the chromium from-source strip). WPE
+# is the combined image's single biggest layer (~252 MB compressed).
 FROM ${BASE_WPE} AS wpe
-FROM ${BASE_GTK} AS gtk
+RUN before=$(du -sh /work/minibrowser-wpe-dist | cut -f1); \
+    find /work/minibrowser-wpe-dist -type f -exec strip --strip-all {} + 2>/dev/null || true; \
+    echo "wpe strip: ${before} -> $(du -sh /work/minibrowser-wpe-dist | cut -f1)"
+# GTK provider. `real` strips + ships the built GTK port; `none` substitutes an
+# empty dir so the COPY below is a no-op and the artifact is WPE-only. GTK is
+# gated off by default (build_webkit_gtk input) — headed WebKit is unsupported
+# on musl today; the port + its plumbing are kept for when headed lands. When
+# off, BASE_GTK defaults to `scratch` so the unused real stage still parses.
+FROM ${BASE_GTK} AS gtk_real
+RUN before=$(du -sh /work/minibrowser-gtk-dist | cut -f1); \
+    find /work/minibrowser-gtk-dist -type f -exec strip --strip-all {} + 2>/dev/null || true; \
+    echo "gtk strip: ${before} -> $(du -sh /work/minibrowser-gtk-dist | cut -f1)"
+FROM alpine AS gtk_none
+RUN mkdir -p /work/minibrowser-gtk-dist
+FROM gtk_${GTK_STAGE} AS gtk
+
 FROM ${BASE_SOURCE} AS source
 
 # Patch pw_run.sh to export WebKit path overrides for the flat-bundle layout:
