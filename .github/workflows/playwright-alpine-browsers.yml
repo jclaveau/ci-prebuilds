@@ -2892,6 +2892,13 @@ jobs:
     # route, screenshot). If RemoteInspector handshake misalignment on musl
     # bites us, launch() / newContext() will hang and the 15-min job timeout
     # fires — same shape as the Firefox #60 land-disabled pattern.
+    # `!cancelled()` breaks GHA's transitive-needs skip cascade: when GTK is
+    # gated off (build_webkit_gtk=false), gtk-4 is skipped and a bare-`if` job
+    # downstream is auto-skipped (actions/runner#491). Keep explicit so smoke
+    # still runs on the WPE-only artifact.
+    if: |
+      !cancelled()
+      && needs.build-webkit-finalize.result == 'success'
     needs: [build-webkit-finalize]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -3062,9 +3069,12 @@ jobs:
     # Promote the artifact to wk-${REV} / wk-${VER} / wk-latest on both
     # registries (GHCR for CI consumption; Docker Hub for external catalog).
     needs: [build-webkit-finalize, smoke-webkit]
+    # `!cancelled()` prefix: a skipped gtk-4 (GTK gated off) cascade-skips
+    # dependents without an always/!cancelled conditional (actions/runner#491).
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.build_webkit == 'true')
-      || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      !cancelled()
+      && ((github.event_name == 'workflow_dispatch' && inputs.build_webkit == 'true')
+          || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
     steps:
       - uses: docker/setup-buildx-action@v3
