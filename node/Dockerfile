@@ -3,7 +3,7 @@ ARG BASE_IMAGE=jclaveau/ubuntu-dood:latest
 FROM ${BASE_IMAGE}
 
 # Renovate will update this
-ARG NODE_VERSION=22.23.1
+ARG NODE_VERSION=22.23.2
 
 
 LABEL org.opencontainers.image.description="Node + npm (slim, no compiler) in Ubuntu based DinD as Github Actions Container"
