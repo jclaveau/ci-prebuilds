@@ -4,11 +4,24 @@
 # final-resume image, and the source-prep image (for pw_run.sh), composes
 # them into a single FROM-scratch artifact at /webkit.
 #
+# Two targets:
+#   artifact-wpe — WPE-only artifact (minibrowser-wpe + patched pw_run.sh +
+#                  the strip-mesa-closure.sh consumer helper). The slim tag
+#                  (wk-sha-<sha> / wk-<rev> / wk-latest) that consumers pull
+#                  when they never exec gtk: the combined image COPYs only
+#                  minibrowser-wpe anyway, so a WPE-only tag cuts the pulled
+#                  layers in half. Artifact stays Mesa-intact (self-contained
+#                  on a scratch base — no apk to fall back to).
+#   artifact     — WPE + GTK artifact, for anything that drives headed WebKit
+#                  (wk-gtk-* tags). gtk stays published so the headed
+#                  capability is preserved (see project_webkit_gtk_headed_recursion).
+#
 # The result matches PW's published webkit-*.zip layout:
 #   /webkit/
 #     minibrowser-wpe/   (from WPE chain)
-#     minibrowser-gtk/   (from GTK chain)
+#     minibrowser-gtk/   (from GTK chain, artifact target only)
 #     pw_run.sh          (from source-prep, copied verbatim from PW)
+#     scripts/           (strip-mesa-closure.sh, consumer-side Mesa dedup helper)
 
 ARG BASE_WPE
 ARG BASE_GTK
@@ -30,7 +43,11 @@ FROM ${BASE_SOURCE} AS pw_run_patched
 RUN sed -i 's|WEBKIT_FORCE_COMPLEX_TEXT="1" "$MINIBROWSER"|WEBKIT_EXEC_PATH="$SCRIPT_PATH/$MINIBROWSER_FOLDER" WEBKIT_INJECTED_BUNDLE_PATH="$SCRIPT_PATH/$MINIBROWSER_FOLDER" WEBKIT_INSPECTOR_RESOURCES_PATH="$SCRIPT_PATH/$MINIBROWSER_FOLDER" WEBKIT_FORCE_COMPLEX_TEXT="1" "$MINIBROWSER"|' \
     /work/pw-webkit/pw_run.sh
 
-FROM scratch AS artifact
+FROM scratch AS artifact-wpe
+COPY webkit/scripts/strip-mesa-closure.sh /webkit/scripts/strip-mesa-closure.sh
 COPY --from=wpe /work/minibrowser-wpe-dist /webkit/minibrowser-wpe
-COPY --from=gtk /work/minibrowser-gtk-dist /webkit/minibrowser-gtk
 COPY --from=pw_run_patched /work/pw-webkit/pw_run.sh /webkit/pw_run.sh
+
+FROM scratch AS artifact
+COPY --from=artifact-wpe /webkit /webkit
+COPY --from=gtk /work/minibrowser-gtk-dist /webkit/minibrowser-gtk

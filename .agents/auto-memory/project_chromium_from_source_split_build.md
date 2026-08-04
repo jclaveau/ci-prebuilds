@@ -20,4 +20,8 @@ NOT a chunk-by-target approach (e.g. ninja's `-t deps` partitioning) — that re
 
 Self-hosted runner approach explicitly REJECTED by user (2026-06-28). Stay on GHA hosted, take however many iters cold-warm takes.
 
+**"Warm rebuild" is still ~2-4h, NOT 30-40min.** Even with obj/ registry cache hot, a dispatch runs setup→r1..r8→finalize SEQUENTIALLY as separate jobs, each paying runner spin-up + multi-GB cache-image pull + ninja delta. I twice mis-quoted "30-40min" (2026-07-29) — the actual re-run to reach finalize is multiple hours. Live ninja progress isn't visible mid-job (job-logs API returns empty until completion; [[reference_gh_run_tests_log_via_zip]]). The finalize is the LAST stage, so any finalize-only change (e.g. strip) only pays off after all rounds replay.
+
+**Binary is NOT stripped by default.** GN `symbol_level = 0` drops DWARF debug info but the linker still emits `.symtab`/`.strtab`; PW's official prebuilt ships stripped. A `strip --strip-all` pass in `stage-cache-layout.sh` (finalize stage) removes them (`.dynsym` kept, loading unaffected). Bigger lever = `is_official_build=true` (PGO/LTO) but that risks the 6h cap → deliberately not taken. NOTE the finalize-overlay dependency: editing stage-cache-layout.sh requires a fresh COPY in Dockerfile.finalize or the edit is inert on incremental dispatch ([[project_finalize_overlay_baked_scripts]]).
+
 Related: [[project_pw_conformance_visibility_cluster]] runs against the eventually-built from-source binary to verify whether `--no-startup-window` / UA-stylesheet bug exists in the apk only.

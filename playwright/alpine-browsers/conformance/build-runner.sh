@@ -249,7 +249,8 @@ EOF
     # around the upstream PW musl-ldconfig false-positive (musl rejects
     # /sbin/ldconfig -p so PW thinks libGLESv2/libx264 are missing).
     # `/webkit` artifact maps directly to `webkit-${REV}/` (no nested
-    # subdir) and contains `pw_run.sh` + `minibrowser-{wpe,gtk}/`.
+    # subdir) and contains `pw_run.sh` + `minibrowser-{wpe,gtk}/` +
+    # `scripts/strip-mesa-closure.sh`.
     #
     # 2026-07-15: chromium re-added via multi-stage self-contained bundle at
     # /opt/chromium-bundle/ (isolated from :edge system libs via RPATH
@@ -346,7 +347,13 @@ COPY --from=webrtc-build /webrtc-dist/libgstwebrtcnice-1.0.so*   /usr/lib/
 COPY --from=webrtc-build /webrtc-dist/gstreamer-1.0/             /usr/lib/gstreamer-1.0/
 COPY --from=chromium-fetch /opt/chromium-bundle /opt/chromium-bundle
 COPY --from=${IMAGE_REF} /webkit /ms-playwright/webkit-${ARTIFACT_REV}
-RUN touch /ms-playwright/webkit-${ARTIFACT_REV}/INSTALLATION_COMPLETE
+COPY --from=${IMAGE_REF} /webkit/scripts/strip-mesa-closure.sh /tmp/strip-mesa-closure.sh
+# The bundle's bundled Mesa closure (libgallium→libLLVM, ~225 MB) duplicates
+# the apk mesa-* above; strip it so the runner exercises the same dedup'd
+# layout the combined image ships. Same gate: fails if a removed lib is still
+# DT_NEEDED and the apk Mesa can't supply it.
+RUN bash /tmp/strip-mesa-closure.sh /ms-playwright/webkit-${ARTIFACT_REV}/minibrowser-wpe \
+ && touch /ms-playwright/webkit-${ARTIFACT_REV}/INSTALLATION_COMPLETE
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1

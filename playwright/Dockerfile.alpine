@@ -144,3 +144,14 @@ RUN sudo apk add --no-cache \
         opus libsecret \
         libxslt double-conversion minizip crc32c \
  && pnpm install -g playwright@${PLAYWRIGHT_VERSION}
+
+# WebKit's bundle carries Mesa's software-GL closure (libgallium → libLLVM +
+# EGL/GL/gbm/drm/X11/xcb, ~225 MB on-disk) copied in by the producer's
+# bundle-dist.sh ldd-walk. The apk Mesa above (mesa-gl/-gles/-gbm/
+# -dri-gallium/-vulkan-swrast) already provides that closure at /usr/lib, so
+# the bundle copy is pure duplication — the bundle's RPATH=$ORIGIN falls back
+# to /usr/lib for anything it no longer carries. Strip it (consumer-side dedup,
+# script shipped in the artifact); its ldd gate fails the build if any remaining
+# ELF can't resolve against the apk Mesa.
+COPY --from=wk-source /webkit/scripts/strip-mesa-closure.sh /usr/local/bin/strip-mesa-closure.sh
+RUN sudo bash /usr/local/bin/strip-mesa-closure.sh /ms-playwright/webkit-${WK_REV}/minibrowser-wpe
