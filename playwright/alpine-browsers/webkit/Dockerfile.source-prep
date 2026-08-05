@@ -33,7 +33,7 @@ RUN apk add --no-cache \
         mesa-dev libdrm-dev libepoxy-dev libxkbcommon-dev \
         libxcomposite-dev libxt-dev \
         libseccomp-dev libmanette-dev \
-        geoclue-dev \
+        flite-dev geoclue-dev \
         \
         libwpe-dev libwpebackend-fdo-dev \
         bubblewrap xdg-dbus-proxy \

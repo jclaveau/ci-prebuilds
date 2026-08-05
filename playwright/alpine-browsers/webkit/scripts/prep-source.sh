@@ -112,32 +112,6 @@ force_webrtc_option() {
 force_webrtc_option Source/cmake/OptionsWPE.cmake
 force_webrtc_option Source/cmake/OptionsGTK.cmake
 
-# Drop flite TTS voices (~11 MB shipped per port): PW's bootstrap.diff force-
-# enables ENABLE_SPEECH_SYNTHESIS (PRIVATE ON) for both ports, dragging the
-# flite engine + 4 voice-data libs into every bundle. Headless automation never
-# synthesizes speech (PW's speech tests are chromium-only), so flip the port
-# default OFF. PRIVATE makes it non-user-toggleable — a CLI -D can't override,
-# hence the source edit (same shape as force_webrtc_option above).
-force_speech_synthesis_off() {
-  local cmake_file="$1"
-  if grep -q 'ENABLE_SPEECH_SYNTHESIS PRIVATE ON' "$cmake_file"; then
-    echo "  force ENABLE_SPEECH_SYNTHESIS OFF in $(basename "$cmake_file")"
-    awk '
-      /WEBKIT_OPTION_DEFAULT_PORT_VALUE\(ENABLE_SPEECH_SYNTHESIS PRIVATE ON\)/ {
-        print "WEBKIT_OPTION_DEFAULT_PORT_VALUE(ENABLE_SPEECH_SYNTHESIS PRIVATE OFF)"; next
-      }
-      { print }
-    ' "$cmake_file" > "${cmake_file}.new"
-    mv "${cmake_file}.new" "$cmake_file"
-  fi
-  if grep -q 'ENABLE_SPEECH_SYNTHESIS PRIVATE ON' "$cmake_file"; then
-    echo "ERROR: failed to force ENABLE_SPEECH_SYNTHESIS OFF in $(basename "$cmake_file")" >&2
-    exit 1
-  fi
-}
-force_speech_synthesis_off Source/cmake/OptionsWPE.cmake
-force_speech_synthesis_off Source/cmake/OptionsGTK.cmake
-
 # GTK defaults USE_LIBRICE ON (Rust librice ICE backend); Alpine has no librice →
 # GStreamerChecks.cmake FATAL_ERRORs at configure. Force OFF so the GStreamer WebRTC
 # backend uses libnice. WPE has no USE_LIBRICE port default (uses libnice already).

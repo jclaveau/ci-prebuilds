@@ -43,17 +43,17 @@ CMAKE_SHARED_FLAGS=(
   # Alpine/musl has no journald; libsystemd journal hooks fail to link.
   -DENABLE_JOURNALD_LOG=OFF
 
-  # Speech synthesis — PW's bootstrap.diff turns this ON for both ports via
-  # WEBKIT_OPTION_DEFAULT_PORT_VALUE; prep-source.sh now flips that port
-  # default OFF to shed the flite TTS engine + voice data (~11 MB per bundle).
-  # This explicit flag mirrors it (PRIVATE port value wins regardless, but keep
-  # both consistent so the intent reads from either file). SPELLCHECK is NOT
-  # enabled: the WPE port's TextChecker doesn't implement
+  # Speech synthesis — PW's bootstrap.diff already turns this ON for both ports
+  # via WEBKIT_OPTION_DEFAULT_PORT_VALUE; the explicit flag is belt-and-braces.
+  # Turning it OFF sheds flite + voice data (~11 MB) but makes Modernizr report
+  # `speechsynthesis: false`, which fails the modernizr Safari Desktop / Mobile
+  # Safari conformance suites — so it stays ON.
+  # SPELLCHECK is NOT enabled: the WPE port's TextChecker doesn't implement
   # loadedSpellCheckingLanguages/setSpellCheckingLanguages (gated by
   # `#if PLATFORM(GTK)` in TextChecker.h), but WebKitWebContext.cpp's call
   # site is gated only by `#if ENABLE(SPELLCHECK)`, so enabling SPELLCHECK on
   # WPE breaks the build. PW doesn't need spellcheck for headless automation.
-  -DENABLE_SPEECH_SYNTHESIS=OFF
+  -DENABLE_SPEECH_SYNTHESIS=ON
 
   # PW's bootstrap.diff sets these GTK-port defaults via WEBKIT_OPTION_DEFAULT_
   # PORT_VALUE(... PRIVATE ON) — PRIVATE makes them non-user-toggleable, so
