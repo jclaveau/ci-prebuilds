@@ -40,6 +40,12 @@ rm -rf "$OUT"
 mkdir -p "$OUT"
 cp -a "$DIST/." "$OUT/"
 
+# libVkLayer_khronos_validation.so is a Vulkan debug layer: only dlopen'd when
+# the loader is explicitly told to enable validation (VK_INSTANCE_LAYERS /
+# VK_LOADER_LAYERS_ENABLE), which neither PW nor our conformance suite does —
+# the binary doesn't NEED it. ~22M of dead weight per artifact.
+rm -f "$OUT/libVkLayer_khronos_validation.so"
+
 # Strip symbol tables from the shipped ELF binaries, matching PW's official
 # prebuilt (which ships stripped). GN `symbol_level = 0` already omits DWARF
 # debug info, but the linker still emits `.symtab`/`.strtab`; strip removes them
