@@ -24,15 +24,15 @@ set -euo pipefail
 DST="${1:?usage: strip-mesa-closure.sh <bundle_dir>}"
 [ -d "$DST" ] || { echo "strip-mesa-closure: $DST is not a directory" >&2; exit 1; }
 
-# Exact Mesa software-GL closure as bundled by bundle-dist.sh. Versioned
-# sonames (libgallium embeds the Mesa version, libLLVM the LLVM major) must be
-# bumped with the build image's Mesa/LLVM. libgallium is dlopen'd by
-# libEGL/libGL (never DT_NEEDED), so the consumer's newer apk soname is
-# invisible to the ldd gate below. Everything else in the bundle is WebKit's
-# own set or universal-runtime libs and stays.
+# Exact Mesa software-GL closure as bundled by bundle-dist.sh. libLLVM.so.22.1
+# is stable across Mesa builds (LLVM major); libgallium's soname embeds the
+# FULL Mesa version (26.1.x bumps every Mesa patch) so it is matched as a glob.
+# libgallium is dlopen'd by libEGL/libGL (never DT_NEEDED), so the consumer's
+# newer apk soname is invisible to the ldd gate below. Everything else in the
+# bundle is WebKit's own set or universal-runtime libs and stays.
 MESA_CLOSURE="
 libLLVM.so.22.1
-libgallium-26.1.1.so
+libgallium-*.so
 libSPIRV-Tools.so
 libEGL.so.1
 libGL.so.1
@@ -61,10 +61,12 @@ libxshmfence.so.1
 
 removed=0
 for f in $MESA_CLOSURE; do
-  if [ -f "$DST/$f" ]; then
-    rm -f "$DST/$f"
-    removed=$((removed + 1))
-  fi
+  for hit in "$DST"/$f; do
+    if [ -f "$hit" ]; then
+      rm -f "$hit"
+      removed=$((removed + 1))
+    fi
+  done
 done
 echo "strip-mesa-closure: removed $removed Mesa-closure libs from $(basename "$DST")"
 
@@ -74,7 +76,7 @@ echo "strip-mesa-closure: removed $removed Mesa-closure libs from $(basename "$D
 missing=0
 for f in "$DST"/*; do
   [ -f "$f" ] || continue
-  [ "$(head -c 4 "$f" 2>/dev/null || true)" = "$(printf '\177ELF')" ] || continue
+  [ "$(od -An -N4 -tx1 "$f" 2>/dev/null | tr -d ' \n')" = "7f454c46" ] || continue
   notfound=$(ldd "$f" 2>&1 | grep -c 'not found' || true)
   if [ "$notfound" -gt 0 ]; then
     echo "ERROR: $(basename "$f") has $notfound unresolved deps after Mesa strip:" >&2

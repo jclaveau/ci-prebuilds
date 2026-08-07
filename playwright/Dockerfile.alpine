@@ -155,3 +155,15 @@ RUN sudo apk add --no-cache \
 # ELF can't resolve against the apk Mesa.
 COPY --from=wk-source /webkit/scripts/strip-mesa-closure.sh /usr/local/bin/strip-mesa-closure.sh
 RUN sudo bash /usr/local/bin/strip-mesa-closure.sh /ms-playwright/webkit-${WK_REV}/minibrowser-wpe
+
+# Same dedup for the universal runtime libs (glib/gtk3/cairo for Firefox,
+# glib/soup/gstreamer/sqlite for WebKit, ~60 MB) — every entry is in the apk
+# set above, RPATH=$ORIGIN falls back to /usr/lib, and the recursive ldd gate
+# fails the build on any lib the apk doesn't provide. Codecs/ICU/NSS/crypto/
+# flite/WPE-core stay bundled (exclusion policy in the script header). Applied
+# only here, NOT in the conformance runner: that image's apk set lacks gtk3
+# (the firefox runner relies on the bundle's own copy), so the strip's
+# apk-provides-everything premise doesn't hold there.
+COPY --from=wk-source /webkit/scripts/strip-bundled-libs.sh /usr/local/bin/strip-bundled-libs.sh
+RUN sudo bash /usr/local/bin/strip-bundled-libs.sh /ms-playwright/firefox-${FF_REV}/firefox firefox \
+ && sudo bash /usr/local/bin/strip-bundled-libs.sh /ms-playwright/webkit-${WK_REV}/minibrowser-wpe webkit
