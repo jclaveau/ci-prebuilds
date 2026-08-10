@@ -21,7 +21,7 @@
 # rebuilds chromium against flac 1.5, `apk add chromium-headless-shell`
 # from :edge fails. Pin to :3.22 which has a matching flac 1.4 chromium
 # build. Same treatment as conformance/build-runner.sh runner base.
-FROM alpine:3.22 AS chromium-fetcher
+FROM alpine:3.24 AS chromium-fetcher
 
 # Pin the alpine repo via apk-tools cache so the package version doesn't
 # silently drift on each rebuild. apk update freshens the index; subsequent
