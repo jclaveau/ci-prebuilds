@@ -164,6 +164,12 @@ RUN sudo bash /usr/local/bin/strip-mesa-closure.sh /ms-playwright/webkit-${WK_RE
 # only here, NOT in the conformance runner: that image's apk set lacks gtk3
 # (the firefox runner relies on the bundle's own copy), so the strip's
 # apk-provides-everything premise doesn't hold there.
-COPY --from=wk-source /webkit/scripts/strip-bundled-libs.sh /usr/local/bin/strip-bundled-libs.sh
+#
+# COPY'd from the build context (./playwright), not wk-source: the script must
+# not depend on the wk producer artifact carrying it — wk-<rev> only rebuilds
+# on dispatch/PR-label, so a fresh script would fail the COPY until a ~6h
+# producer run. The strip runs against THIS image's apk base, so the repo
+# HEAD's copy is the right content.
+COPY alpine-browsers/webkit/scripts/strip-bundled-libs.sh /usr/local/bin/strip-bundled-libs.sh
 RUN sudo bash /usr/local/bin/strip-bundled-libs.sh /ms-playwright/firefox-${FF_REV}/firefox firefox \
  && sudo bash /usr/local/bin/strip-bundled-libs.sh /ms-playwright/webkit-${WK_REV}/minibrowser-wpe webkit
