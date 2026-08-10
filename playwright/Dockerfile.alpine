@@ -159,11 +159,13 @@ RUN sudo bash /usr/local/bin/strip-mesa-closure.sh /ms-playwright/webkit-${WK_RE
 # Same dedup for the universal runtime libs (glib/gtk3/cairo for Firefox,
 # glib/soup/gstreamer/sqlite for WebKit, ~60 MB) — every entry is in the apk
 # set above, RPATH=$ORIGIN falls back to /usr/lib, and the recursive ldd gate
-# fails the build on any lib the apk doesn't provide. Codecs/ICU/NSS/crypto/
-# flite/WPE-core stay bundled (exclusion policy in the script header). Applied
-# only here, NOT in the conformance runner: that image's apk set lacks gtk3
-# (the firefox runner relies on the bundle's own copy), so the strip's
-# apk-provides-everything premise doesn't hold there.
+# fails the build on any lib the apk doesn't provide. Only the browser's own
+# libs + ICU/flite/avif/hyphen/woff2 stay bundled (exclusion policy in the
+# script header). The conformance runner applies the SAME strip
+# (build-runner.sh), so the tested layout == the shipped layout; libvpx is
+# the lone exception (stays bundled — the edge apk libvpx lacks mozilla's
+# symbol set, so the edge-based runner can't validate a vpx-stripped layout,
+# see the script header).
 #
 # COPY'd from the build context (./playwright), not wk-source: the script must
 # not depend on the wk producer artifact carrying it — wk-<rev> only rebuilds

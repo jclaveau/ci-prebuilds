@@ -26,6 +26,13 @@ IMAGE_TAG_OUT="${IMAGE_TAG_OUT:-pw-conformance-runner:latest}"
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
+# Strip scripts come from the repo checkout (context COPY), NOT the artifact:
+# the runner must apply the CURRENT script to the artifact it COPYs, and the
+# wk artifact only rebuilds on dispatch/PR-label (same reasoning as the
+# combined image's Dockerfile.alpine context COPY).
+cp "$(dirname "$0")/../webkit/scripts/strip-bundled-libs.sh" "$TMPDIR/"
+cp "$(dirname "$0")/../webkit/scripts/strip-mesa-closure.sh" "$TMPDIR/"
+
 case "$BROWSER" in
   chromium)
     if [ "${HEADED:-0}" = "1" ]; then
@@ -167,17 +174,32 @@ RUN mkdir -p /opt/chromium-bundle \\
  && "\$DEST"/chrome --version
 
 FROM alpine:edge
+# Strip parity: everything strip-bundled-libs.sh removes from the FF bundle
+# must be apk-provided here so the runner exercises the SAME dedup'd layout
+# the combined image ships (validated on the edge closure). libvpx is the
+# lone exception — edge's apk libvpx lacks mozilla's symbol set, so it stays
+# bundled (see strip-bundled-libs.sh header).
 RUN apk update && apk add --no-cache \\
     nodejs npm bash git build-base python3 \\
     alsa-lib dbus-libs fontconfig freetype glib gtk+3.0 harfbuzz \\
     icu-libs icu-data-full libevent libffi libjpeg-turbo libnotify libogg \\
-    libtheora libvorbis libvpx libwebp libwebp-tools libxcomposite \\
+    libtheora libvorbis libvpx libwebp libwebp-tools libwebpdemux libxcomposite \\
     libxt mesa-gl mesa-dri-gallium nspr nss pipewire-libs libpulse \\
     ttf-freefont xvfb xvfb-run jq \\
-    ffmpeg-libs
+    ffmpeg-libs \\
+    at-spi2-core libatk-1.0 cairo gdk-pixbuf pango pixman fribidi brotli bzip2 \\
+    libeconf expat libepoxy gettext-libs graphite2 lcms2 libmd pcre2 libpng \\
+    libseccomp wayland libxkbcommon libx11 libxcb libxau libxdmcp libxext libxi \\
+    libxinerama libxrandr libxrender libxcursor libxdamage libxfixes libglycin \\
+    libmount libblkid xz zlib ca-certificates
 COPY --from=chromium-fetch /opt/chromium-bundle /opt/chromium-bundle
 COPY --from=${IMAGE_REF} /firefox /ms-playwright/firefox-${ARTIFACT_REV}/firefox
 RUN touch /ms-playwright/firefox-${ARTIFACT_REV}/INSTALLATION_COMPLETE
+# Strip parity with the combined image (see apk additions above): remove the
+# bundle's apk-provided universal libs so the conformance layout == shipped.
+# The gate fails the build on any lib the apk base doesn't satisfy.
+COPY strip-bundled-libs.sh /tmp/strip-bundled-libs.sh
+RUN bash /tmp/strip-bundled-libs.sh /ms-playwright/firefox-${ARTIFACT_REV}/firefox firefox
 # musl Juggler workaround, applied at the BINARY (not via PW args): the FF Juggler
 # stays dormant unless launched with --remote-debugging-port=0 (wakes RemoteAgent).
 # The conformance config injects that arg, but PW's PlaywrightServer.filterLaunchOptions
@@ -320,6 +342,9 @@ RUN set -e; GSTVER=\$(pkg-config --modversion gstreamer-1.0); cd /tmp \\
  && cp -a /usr/lib/libnice.so.10*                                /webrtc-dist/
 
 FROM alpine:edge
+# Strip parity: every lib strip-bundled-libs.sh removes from the WK bundle
+# must be apk-provided here so the conformance layout == the shipped dedup'd
+# layout (validated on the edge closure).
 RUN apk update && apk add --no-cache \\
     nodejs npm bash git \\
     file binutils ca-certificates ttf-freefont \\
@@ -332,7 +357,12 @@ RUN apk update && apk add --no-cache \\
     cairo pango gdk-pixbuf libnotify dbus-libs opus libsecret \\
     nss icu-data-full \\
     xvfb xvfb-run jq \\
-    font-noto-emoji font-liberation
+    font-noto-emoji font-liberation \\
+    alsa-lib libatk-1.0 libblkid libmount brotli libbsd libmd bzip2 libeconf \\
+    expat libepoxy fontconfig freetype graphite2 harfbuzz libjpeg-turbo lcms2 \\
+    pcre2 libpng libseccomp libwebp libwebpdemux wayland libxkbcommon zlib \\
+    aom-libs dav1d libjxl libyuv openssl libhwy libidn2 xz nghttp2 libpsl \\
+    libsoup3 sqlite libtasn1 libunistring libxml2 libxslt zstd
 # WebRTC runtime: our libnice 0.1.23 + the built 'webrtc' plugin (webrtcbin) +
 # updated nice element. gst-plugins-bad (above) ships the dtls/srtp/sctp plugins +
 # libgstwebrtc-1.0 the plugin links; GST_PLUGIN_SYSTEM_PATH_1_0 (set below) points
@@ -347,12 +377,19 @@ COPY --from=webrtc-build /webrtc-dist/libgstwebrtcnice-1.0.so*   /usr/lib/
 COPY --from=webrtc-build /webrtc-dist/gstreamer-1.0/             /usr/lib/gstreamer-1.0/
 COPY --from=chromium-fetch /opt/chromium-bundle /opt/chromium-bundle
 COPY --from=${IMAGE_REF} /webkit /ms-playwright/webkit-${ARTIFACT_REV}
-COPY --from=${IMAGE_REF} /webkit/scripts/strip-mesa-closure.sh /tmp/strip-mesa-closure.sh
-# The bundle's bundled Mesa closure (libgallium→libLLVM, ~225 MB) duplicates
-# the apk mesa-* above; strip it so the runner exercises the same dedup'd
-# layout the combined image ships. Same gate: fails if a removed lib is still
-# DT_NEEDED and the apk Mesa can't supply it.
-RUN bash /tmp/strip-mesa-closure.sh /ms-playwright/webkit-${ARTIFACT_REV}/minibrowser-wpe \
+# Strip scripts from the repo checkout (context COPY), not the artifact — the
+# wk artifact only rebuilds on dispatch/PR-label, so a stale script copy in it
+# would silently ship un-stripped. Same reasoning as Dockerfile.alpine.
+COPY strip-mesa-closure.sh /tmp/strip-mesa-closure.sh
+COPY strip-bundled-libs.sh /tmp/strip-bundled-libs.sh
+# Strip parity with the combined image: the bundle's bundled Mesa closure
+# (libgallium→libLLVM, ~225 MB) duplicates the apk mesa-* above, and the
+# bundle's apk-provided universal libs (soup/ICU-free codecs/WPE core/…) also
+# have apk twins here — so strip both, making the runner exercise the SAME
+# dedup'd layout the combined image ships. Each gate fails the build if a
+# removed lib is still DT_NEEDED and the apk base can't supply it.
+RUN bash /tmp/strip-mesa-closure.sh /ms-playwright/webkit-${ARTIFACT_REV}/minibrowser-wpe \\
+ && bash /tmp/strip-bundled-libs.sh /ms-playwright/webkit-${ARTIFACT_REV}/minibrowser-wpe webkit \\
  && touch /ms-playwright/webkit-${ARTIFACT_REV}/INSTALLATION_COMPLETE
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright

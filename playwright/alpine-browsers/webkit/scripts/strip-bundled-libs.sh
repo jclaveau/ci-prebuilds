@@ -8,19 +8,31 @@
 # image + the conformance runner) carry pure duplication: the bundle's
 # RPATH=$ORIGIN resolution falls back to /usr/lib for anything it no longer
 # carries, so the apk build (a fresh edge snapshot, newer than the build-time
-# one) satisfies every dep. ~60 MB on-disk saved across the firefox+webkit
+# one) satisfies every dep. ~110 MB on-disk saved across the firefox+webkit
 # bundles, on top of strip-mesa-closure.sh's ~225 MB.
 #
 # The producer artifacts stay intact (FROM scratch, no apk to fall back to) —
 # this script is applied to the COPY'd bundles on the consumer side, after the
 # apk install.
 #
-# Exclusion policy — these stay bundled and are NOT worth the risk:
-#   - codecs (libvpx/libaom/libdav1d/libjxl/libyuv/libglycin): media output
-#     determinism + musl symbol coverage diverge between versions
-#   - ICU (libicu*) + NSS/nspr (Firefox Juggler): ABI/behavior coupling
-#   - libcrypto/libssl: TLS handshake must match the bundled NSS/WebKit build
-#   - flite* (WPE speech) + libWPEBackend-fdo/libwpe: WPE core coupling
+# Every lib with an apk twin is stripped — including NSS/nspr (Firefox Juggler),
+# codecs (libglycin for FF, libaom/libdav1d/libjxl/libyuv for WebKit), WPE core
+# (libwpe/libWPEBackend-fdo) and libcrypto/libgstwebrtc. The apk soname major
+# matches the edge build-time one (verified per-family before enabling);
+# behavioral parity is covered by the conformance runner, which applies the SAME
+# strip so the tested layout == the shipped layout.
+#
+# Exception: libvpx stays bundled. It was enabled briefly but Firefox's libxul
+# needs the mozilla-built vpx symbol set, which the alpine:edge libvpx apk does
+# not export (22 unresolved symbols at launch) while alpine 3.24's does — so the
+# conformance runner (edge-based) can't validate a vpx-stripped layout, and
+# shipping one would leave it unvalidated. ~7 MB stays duplicated instead.
+#
+# Exclusion policy — these stay bundled:
+#   - the browser's OWN libs (libxul, libmoz*, libgkcodecs, libclearkey,
+#     libWPEWebKit, libWPEInjectedBundle): no apk equivalent
+#   - libs the apk base does NOT provide (ICU libicu*, flite*, libavif,
+#     libhyphen, libwoff2*, libatomic, libharfbuzz-icu): no /usr/lib fallback
 #
 # Usage: strip-bundled-libs.sh <bundle_dir> firefox|webkit
 # Idempotent (no-op when the libs are absent). Fails if any remaining ELF still
@@ -80,7 +92,9 @@ libxkbcommon.so.0
 libz.so.1
 "
 
-# Firefox-only additions: the gtk3 widget stack + cairo/pango/X11 closure.
+# Firefox-only additions: the gtk3 widget stack + cairo/pango/X11 closure, plus
+# NSS/nspr (Juggler TLS + crypto) and the glycin codec the apk ships. libvpx
+# is NOT here — see the header exception.
 STRIP_FIREFOX="
 libX11-xcb.so.1
 libX11.so.6
@@ -101,19 +115,33 @@ libevent-2.1.so.7
 libfribidi.so.0
 libgdk-3.so.0
 libgdk_pixbuf-2.0.so.0
+libglycin-2.so.0
 libgtk-3.so.0
+libnspr4.so
+libnss3.so
+libnssutil3.so
 libpango-1.0.so.0
 libpangocairo-1.0.so.0
 libpangoft2-1.0.so.0
 libpixman-1.so.0
+libplc4.so
+libplds4.so
+libsmime3.so
+libssl3.so
 libxcb-render.so.0
 libxcb-shm.so.0
 libxcb.so.1
 "
 
-# WebKit-only additions: gstreamer core + soup/sqlite/xml network stack.
+# WebKit-only additions: gstreamer core + soup/sqlite/xml network stack, the
+# image/codec decoders the apk provides (aom/dav1d/jxl/yuv), WPE core and
+# libcrypto (soup/TLS) + the gstreamer webrtc lib.
 STRIP_WEBKIT="
+libWPEBackend-fdo-1.0.so.1
+libaom.so.3
 libbrotlienc.so.1
+libcrypto.so.3
+libdav1d.so.7
 libgcrypt.so.20
 libgpg-error.so.0
 libgstallocators-1.0.so.0
@@ -131,6 +159,8 @@ libgstvideo-1.0.so.0
 libgstwebrtc-1.0.so.0
 libhwy.so.1
 libidn2.so.0
+libjxl.so.0.11
+libjxl_cms.so.0.11
 liblzma.so.5
 libnghttp2.so.14
 liborc-0.4.so.0
@@ -142,8 +172,10 @@ libtasn1.so.6
 libunistring.so.5
 libwayland-server.so.0
 libwebpmux.so.3
+libwpe-1.0.so.1
 libxml2.so.2
 libxslt.so.1
+libyuv.so
 libzstd.so.1
 "
 
