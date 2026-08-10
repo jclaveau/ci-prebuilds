@@ -735,9 +735,11 @@ jobs:
     secrets: inherit
 
   conformance-webkit:
-    # PW upstream conformance against the just-built WebKit artifact
-    # (WPE + GTK from Branch C). Triggered by `run_webkit_conformance=true`
-    # workflow_dispatch input or the `run-webkit-conformance` PR label.
+    # PW upstream conformance against the just-built WebKit artifact (WPE +
+    # GTK from Branch C, pulled from wk-gtk-sha-<sha> so the runner's
+    # minibrowser-{wpe,gtk}/ is complete). Triggered by
+    # `run_webkit_conformance=true` workflow_dispatch input or the
+    # `run-webkit-conformance` PR label.
     # The FORTIFY_SOURCE Skia trap fix has landed in source-prep so the
     # WPE binary should at least launch under PW SDK; expect the same
     # form-control / display-block UA-stylesheet class of failures as
@@ -749,7 +751,7 @@ jobs:
     uses: ./.github/workflows/pw-conformance.yml
     with:
       browser: webkit
-      image_ref: ghcr.io/jclaveau/playwright-alpine-browsers:wk-sha-${{ github.sha }}
+      image_ref: ghcr.io/jclaveau/playwright-alpine-browsers:wk-gtk-sha-${{ github.sha }}
       pw_version: ${{ needs.build-webkit-finalize.outputs.pw_version }}
       artifact_rev: ${{ needs.build-webkit-finalize.outputs.webkit_revision }}
     secrets: inherit
@@ -2499,8 +2501,10 @@ jobs:
   #   build-webkit-gtk-{1..4}: same shape, in parallel with the WPE chain.
   #
   #   build-webkit-finalize (needs both port chains' final stage + source-prep):
-  #     - FROM-scratch artifact COPYing both ports' dists + pw_run.sh
-  #     - publishes wk-sha-<sha>, runs Tier-1 smoke
+  #     - FROM-scratch artifacts: artifact-wpe (minibrowser-wpe + pw_run.sh +
+  #       scripts/strip-mesa-closure.sh) → wk-sha-<sha>; artifact (WPE + GTK)
+  #       → wk-gtk-sha-<sha>. Runs Tier-1 smoke on the gtk artifact (superset —
+  #       it contains the exact wpe bytes the slim tag ships).
   #
   # No push/main trigger; explicit dispatch or PR-label only. promote-webkit
   # gates on finalize success.
@@ -2825,22 +2829,42 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
+      - id: meta-wpe
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/jclaveau/playwright-alpine-browsers
           tags: |
             type=raw,value=wk-sha-${{ github.sha }}
             type=raw,value=wk-edge,enable=${{ github.event_name != 'pull_request' }}
-      - name: Build final artifact image (compose WPE + GTK)
+      - id: meta-gtk
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/jclaveau/playwright-alpine-browsers
+          tags: |
+            type=raw,value=wk-gtk-sha-${{ github.sha }}
+            type=raw,value=wk-gtk-edge,enable=${{ github.event_name != 'pull_request' }}
+      - name: Build WPE-only artifact (wk-sha-<sha>)
+        uses: docker/build-push-action@v5
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/webkit/Dockerfile.finalize
+          target: artifact-wpe
+          push: true
+          tags: ${{ steps.meta-wpe.outputs.tags }}
+          labels: ${{ steps.meta-wpe.outputs.labels }}
+          build-args: |
+            BASE_WPE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-wpe-4.outputs.tag }}
+            BASE_GTK=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-gtk-4.outputs.tag }}
+            BASE_SOURCE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-source-prep.outputs.tag }}
+      - name: Build WPE+GTK artifact (wk-gtk-sha-<sha>)
         uses: docker/build-push-action@v5
         with:
           context: playwright/alpine-browsers
           file: playwright/alpine-browsers/webkit/Dockerfile.finalize
           target: artifact
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta-gtk.outputs.tags }}
+          labels: ${{ steps.meta-gtk.outputs.labels }}
           build-args: |
             BASE_WPE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-wpe-4.outputs.tag }}
             BASE_GTK=${{ needs.build-webkit-gtk-4.result == 'success' && format('ghcr.io/jclaveau/playwright-alpine-browsers:{0}', needs.build-webkit-gtk-4.outputs.tag) || 'scratch' }}
@@ -2857,7 +2881,7 @@ jobs:
               libwpe libwpebackend-fdo \\
               gtk4.0 at-spi2-core \\
               libgcc libstdc++
-          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:wk-sha-${{ github.sha }} /webkit /opt/webkit
+          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:wk-gtk-sha-${{ github.sha }} /webkit /opt/webkit
           EOF
           docker build -t wk-t1:${{ github.sha }} -f /tmp/Dockerfile.wk-t1 /tmp
           docker run --rm wk-t1:${{ github.sha }} sh -c '
@@ -2939,7 +2963,7 @@ jobs:
               xvfb xvfb-run gdb
           # PW expects /\${PLAYWRIGHT_BROWSERS_PATH}/webkit-\${REV}/ with
           # pw_run.sh + minibrowser-{wpe,gtk}/ + INSTALLATION_COMPLETE.
-          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:wk-sha-${{ github.sha }} /webkit /opt/playwright/webkit-${WEBKIT_REV}
+          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:wk-gtk-sha-${{ github.sha }} /webkit /opt/playwright/webkit-${WEBKIT_REV}
           RUN touch /opt/playwright/webkit-${WEBKIT_REV}/INSTALLATION_COMPLETE
           ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
           ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
@@ -3066,8 +3090,10 @@ jobs:
           retention-days: 7
 
   promote-webkit:
-    # Promote the artifact to wk-${REV} / wk-${VER} / wk-latest on both
-    # registries (GHCR for CI consumption; Docker Hub for external catalog).
+    # Promote both artifacts on both registries (GHCR for CI consumption;
+    # Docker Hub for external catalog):
+    #   wk-sha-<sha> (WPE-only) → wk-${REV} / wk-${VER} / wk-latest
+    #   wk-gtk-sha-<sha> (WPE+GTK) → wk-gtk-${REV} / wk-gtk-${VER} / wk-gtk-latest
     needs: [build-webkit-finalize, smoke-webkit]
     # `!cancelled()` prefix: a skipped gtk-4 (GTK gated off) cascade-skips
     # dependents without an always/!cancelled conditional (actions/runner#491).
@@ -3087,7 +3113,7 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Promote WebKit → GHCR + Docker Hub
+      - name: Promote WebKit WPE → GHCR + Docker Hub
         env:
           SRC: ghcr.io/jclaveau/playwright-alpine-browsers:wk-sha-${{ github.sha }}
           REV: ${{ needs.build-webkit-finalize.outputs.webkit_revision }}
@@ -3101,4 +3127,18 @@ jobs:
             -t "jclaveau/playwright-alpine-browsers:wk-${VER}" \
             -t jclaveau/playwright-alpine-browsers:wk-latest \
             -t "jclaveau/playwright-alpine-browsers:wk-sha-${{ github.sha }}" \
+            "$SRC"
+      - name: Promote WebKit GTK → GHCR + Docker Hub
+        env:
+          SRC: ghcr.io/jclaveau/playwright-alpine-browsers:wk-gtk-sha-${{ github.sha }}
+          REV: ${{ needs.build-webkit-finalize.outputs.webkit_revision }}
+          VER: ${{ needs.build-webkit-finalize.outputs.webkit_version }}
+        run: |
+          docker buildx imagetools create \
+            -t "ghcr.io/jclaveau/playwright-alpine-browsers:wk-gtk-${REV}" \
+            -t "ghcr.io/jclaveau/playwright-alpine-browsers:wk-gtk-${VER}" \
+            -t ghcr.io/jclaveau/playwright-alpine-browsers:wk-gtk-latest \
+            -t "jclaveau/playwright-alpine-browsers:wk-gtk-${REV}" \
+            -t "jclaveau/playwright-alpine-browsers:wk-gtk-${VER}" \
+            -t jclaveau/playwright-alpine-browsers:wk-gtk-latest \
             "$SRC"

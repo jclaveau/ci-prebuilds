@@ -52,6 +52,9 @@ CMAKE_SHARED_FLAGS=(
 
   # Speech synthesis — PW's bootstrap.diff already turns this ON for both ports
   # via WEBKIT_OPTION_DEFAULT_PORT_VALUE; the explicit flag is belt-and-braces.
+  # Turning it OFF sheds flite + voice data (~11 MB) but makes Modernizr report
+  # `speechsynthesis: false`, which fails the modernizr Safari Desktop / Mobile
+  # Safari conformance suites — so it stays ON.
   # SPELLCHECK is NOT enabled: the WPE port's TextChecker doesn't implement
   # loadedSpellCheckingLanguages/setSpellCheckingLanguages (gated by
   # `#if PLATFORM(GTK)` in TextChecker.h), but WebKitWebContext.cpp's call
