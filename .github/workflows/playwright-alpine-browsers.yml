@@ -3097,8 +3097,13 @@ jobs:
     needs: [build-webkit-finalize, smoke-webkit]
     # `!cancelled()` prefix: a skipped gtk-4 (GTK gated off) cascade-skips
     # dependents without an always/!cancelled conditional (actions/runner#491).
+    # `build-webkit-finalize.result == 'success'`: on a push where build_webkit
+    # is off (the default — webkit is dispatch/PR-label-gated only), the whole
+    # chain is skipped and `!cancelled()` alone would still fire this job and
+    # fail on the missing wk-sha-<sha> (red main on every push).
     if: |
       !cancelled()
+      && needs.build-webkit-finalize.result == 'success'
       && ((github.event_name == 'workflow_dispatch' && inputs.build_webkit == 'true')
           || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
