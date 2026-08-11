@@ -72,9 +72,7 @@ jobs:
             [ -n "$PW" ] || { echo "config: no pw_version input and no playwright dep in playwright/package.json" >&2; exit 1; }
           fi
           TAG="${{ github.event.inputs.image_tag || 'latest' }}"
-          echo "pw=$PW" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "runs=$RUNS" >> "$GITHUB_OUTPUT"
+          { echo "pw=$PW"; echo "tag=$TAG"; echo "runs=$RUNS"; } >> "$GITHUB_OUTPUT"
           OFFICIAL="mcr.microsoft.com/playwright:v${PW}-noble"
           # seccomp=unconfined: our alpine images' WebKit-WPE needs it for bwrap (harmless for
           # chromium/firefox and for ubuntu). Applies to every OUR-image cell via $h below.
