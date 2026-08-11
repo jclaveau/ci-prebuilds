@@ -167,9 +167,9 @@ RUN sudo bash /usr/local/bin/strip-mesa-closure.sh /ms-playwright/webkit-${WK_RE
 # mozilla's symbol set, so the edge-based runner can't validate a vpx-stripped
 # layout, see the script header). ICU too stays bundled (the 3.24 apk ships
 # only the en-only icu-data-en set), but since both bundles carry byte-identical
-# ICU 78, webkit's copy is hardlinked to firefox's here — one copy instead of
+# ICU 78, webkit's copy is symlinked to firefox's here — one copy instead of
 # two. The per-browser runners keep real ICU copies (each runs a single bundle);
-# the loader loads the same inode either way, so the parity holds.
+# the loader resolves the same bytes either way, so the parity holds.
 #
 # COPY'd from the build context (./playwright), not wk-source: the script must
 # not depend on the wk producer artifact carrying it — wk-<rev> only rebuilds

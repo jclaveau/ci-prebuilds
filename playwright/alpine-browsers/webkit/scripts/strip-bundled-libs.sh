@@ -34,10 +34,10 @@
 # English-only icu-data-en set — full coverage would need icu-data-full
 # (+31.6 MB), a net loss against the ~11.4 MB stripping both bundles saves.
 # Firefox additionally ships its own icudt78l.dat. Both bundles carry
-# byte-identical ICU 78, so the combined image hardlinks webkit's libicu* to
+# byte-identical ICU 78, so the combined image symlinks webkit's libicu* to
 # firefox's (3rd arg below) — one copy, ~5.7 MB saved. The per-browser
 # conformance runners keep real copies (each image runs a single bundle); the
-# loader loads the same inode either way, so tested == shipped holds by
+# loader resolves the same bytes either way, so tested == shipped holds by
 # byte-equality.
 #
 # Exclusion policy — these stay bundled:
@@ -47,11 +47,14 @@
 #     libwoff2*, libatomic, libharfbuzz-icu): no /usr/lib fallback
 #
 # Usage: strip-bundled-libs.sh <bundle_dir> firefox|webkit [<dedup_src_dir>]
-#   - <dedup_src_dir> (webkit only): hardlink webkit's still-bundled libs that
+#   - <dedup_src_dir> (webkit only): symlink webkit's still-bundled libs that
 #     are byte-identical in the source bundle (currently the ICU triplet) to
 #     the source dir's copies, dropping the duplicate. md5-gated: a skew
 #     between the bundles' versions skips that lib with a warning instead of
 #     silently switching webkit onto firefox's build.
+#     A relative symlink (not a hardlink): buildkit's docker-container driver
+#     (CI) degrades cross-layer hardlinks to regular copies during layer
+#     export, silently undoing the dedup; symlinks serialize as metadata.
 # Idempotent (no-op when the libs are absent). Fails if any remaining ELF still
 # has unresolved deps — a removed lib the apk doesn't provide surfaces here
 # instead of at browser launch.
@@ -215,9 +218,10 @@ for f in $STRIP_LIST; do
 done
 echo "strip-bundled-libs: removed $removed bundled libs from $(basename "$DST") ($FAMILY)"
 
-# Cross-bundle dedup (combined image only): hardlink webkit's still-bundled
+# Cross-bundle dedup (combined image only): symlink webkit's still-bundled
 # libs that the other bundle carries byte-identical (ICU 78 today) to the
-# source dir's copy. Same filesystem, so one inode serves both bundles.
+# source dir's copy. Relative symlink (not hardlink — see the usage note) so
+# one physical copy serves both bundles.
 # md5-gated so a version skew between the two bundles keeps webkit's own copy.
 dedup=0
 if [ -n "$DEDUP_SRC" ]; then
@@ -230,10 +234,18 @@ if [ -n "$DEDUP_SRC" ]; then
       continue
     }
     rm -f "$f"
-    ln "$DEDUP_SRC/$base" "$f"
+    # Relative path from $DST to the shared copy (pure bash, no coreutils).
+    rel=""
+    src="$DEDUP_SRC/$base"
+    dst="$DST"
+    while [ "${src#"$dst"/}" = "$src" ] && [ "$dst" != "/" ]; do
+      rel="$rel../"
+      dst="${dst%/*}"
+    done
+    ln -s "$rel${src#"$dst"/}" "$f"
     dedup=$((dedup + 1))
   done
-  echo "strip-bundled-libs: hardlinked $dedup identical lib(s) from $(basename "$DST") to $(basename "$DEDUP_SRC")"
+  echo "strip-bundled-libs: deduped $dedup identical lib(s) from $(basename "$DST") to $(basename "$DEDUP_SRC")"
 fi
 
 # Gate: every remaining ELF in the bundle must resolve against the consumer's
