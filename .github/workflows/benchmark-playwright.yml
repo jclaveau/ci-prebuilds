@@ -19,8 +19,8 @@ on:
   workflow_dispatch:
     inputs:
       pw_version:
-        description: Playwright version to benchmark (must match the published image tags)
-        default: '1.50.1'
+        description: Playwright version to benchmark (must match the published image tags). Empty = bench the repo's own playwright/package.json version, so the official MCR control's bundled browser revs always match what the local tests request.
+        default: ''
       image_tag:
         description: Tag for OUR images on Docker Hub (e.g. latest, or a pinned tag).
         default: 'latest'
@@ -52,13 +52,27 @@ jobs:
       matrix: ${{ steps.c.outputs.matrix }}
       tag: ${{ steps.c.outputs.tag }}
       runs: ${{ steps.c.outputs.runs }}
+      pw: ${{ steps.c.outputs.pw }}
     steps:
+      - uses: actions/checkout@v7
       - id: c
         env:
           RUNS: ${{ github.event.inputs.runs || '1' }}
         run: |
-          PW="${{ github.event.inputs.pw_version || '1.50.1' }}"
+          # Empty pw_version = bench the repo's own playwright, so the official MCR control's bundled
+          # browser revs always match what `pnpm exec playwright test` requests. A drift between the two
+          # fails every official + bench-act-official cell with "Executable doesn't exist at
+          # …/chromium_headless_shell-<rev>/…" (bit us when Renovate bumped 1.50.1→1.60.0 without the
+          # old hardcoded default following).
+          INPUT_PW="${{ github.event.inputs.pw_version }}"
+          if [ -n "$INPUT_PW" ]; then
+            PW="$INPUT_PW"
+          else
+            PW="$(jq -r '.devDependencies.playwright // .dependencies.playwright // empty' playwright/package.json)"
+            [ -n "$PW" ] || { echo "config: no pw_version input and no playwright dep in playwright/package.json" >&2; exit 1; }
+          fi
           TAG="${{ github.event.inputs.image_tag || 'latest' }}"
+          echo "pw=$PW" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "runs=$RUNS" >> "$GITHUB_OUTPUT"
           OFFICIAL="mcr.microsoft.com/playwright:v${PW}-noble"
@@ -248,7 +262,7 @@ jobs:
       - name: Resolve runner image
         id: img
         run: |
-          PW="${{ github.event.inputs.pw_version || '1.50.1' }}"
+          PW="${{ needs.config.outputs.pw }}"
           TAG="${{ needs.config.outputs.tag }}"
           SC="${{ matrix.scenario }}"
           case "$SC" in
@@ -348,7 +362,7 @@ jobs:
       # DEV MODE: image manifests pulled from Docker Hub (public) — no registry login needed.
       - name: Compute image sizes (compressed amd64)
         env:
-          PW: ${{ github.event.inputs.pw_version || '1.50.1' }}
+          PW: ${{ needs.config.outputs.pw }}
           TAG: ${{ needs.config.outputs.tag }}
         run: |
           OFFICIAL="mcr.microsoft.com/playwright:v${PW}-noble"
