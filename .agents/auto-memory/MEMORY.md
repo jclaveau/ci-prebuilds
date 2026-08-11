@@ -1,3 +1,4 @@
+- [ICU dedup must be a relative symlink, not a hardlink](project_icu_dedup_symlink_not_hardlink.md) — CI buildkitd v0.31.2 (docker-container driver) exports cross-layer hardlinks as regular copies, undoing the ~5.7M dedup; fixed af6a232 via pure-bash relative `ln -s`; strip layer 2,028,594→2,525 B; default builder hides the bug
 - [Autonomous CI-fix loop](feedback_autonomous_ci_loop.md) — iterate amend + `push --force-with-lease` to main until CI green without checking in; monitor prompt-free via the allow-listed `pnpm ci:watch`; keep amends file-scoped
 - [Prefer pnpm ci:logs](feedback_prefer_pnpm_ci_logs.md) — for diagnosing latest CI failures, `pnpm ci:logs` (no args, auto-detects latest failed job in latest run) is preferred over raw `gh api .../jobs/<id>/logs` which prompts every time
 - [Bench baseline is load-bearing](feedback_bench_baseline_load_bearing.md) — never drop `baseline` from the PW bench matrix; it's the comparison reference for every Δ column
