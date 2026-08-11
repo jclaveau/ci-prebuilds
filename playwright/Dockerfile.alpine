@@ -163,9 +163,13 @@ RUN sudo bash /usr/local/bin/strip-mesa-closure.sh /ms-playwright/webkit-${WK_RE
 # libs + ICU/flite/avif/hyphen/woff2 stay bundled (exclusion policy in the
 # script header). The conformance runner applies the SAME strip
 # (build-runner.sh), so the tested layout == the shipped layout; libvpx is
-# the lone exception (stays bundled — the edge apk libvpx lacks mozilla's
-# symbol set, so the edge-based runner can't validate a vpx-stripped layout,
-# see the script header).
+# the lone apk-strip exception (stays bundled — the edge apk libvpx lacks
+# mozilla's symbol set, so the edge-based runner can't validate a vpx-stripped
+# layout, see the script header). ICU too stays bundled (the 3.24 apk ships
+# only the en-only icu-data-en set), but since both bundles carry byte-identical
+# ICU 78, webkit's copy is hardlinked to firefox's here — one copy instead of
+# two. The per-browser runners keep real ICU copies (each runs a single bundle);
+# the loader loads the same inode either way, so the parity holds.
 #
 # COPY'd from the build context (./playwright), not wk-source: the script must
 # not depend on the wk producer artifact carrying it — wk-<rev> only rebuilds
@@ -174,4 +178,4 @@ RUN sudo bash /usr/local/bin/strip-mesa-closure.sh /ms-playwright/webkit-${WK_RE
 # HEAD's copy is the right content.
 COPY alpine-browsers/webkit/scripts/strip-bundled-libs.sh /usr/local/bin/strip-bundled-libs.sh
 RUN sudo bash /usr/local/bin/strip-bundled-libs.sh /ms-playwright/firefox-${FF_REV}/firefox firefox \
- && sudo bash /usr/local/bin/strip-bundled-libs.sh /ms-playwright/webkit-${WK_REV}/minibrowser-wpe webkit
+ && sudo bash /usr/local/bin/strip-bundled-libs.sh /ms-playwright/webkit-${WK_REV}/minibrowser-wpe webkit /ms-playwright/firefox-${FF_REV}/firefox

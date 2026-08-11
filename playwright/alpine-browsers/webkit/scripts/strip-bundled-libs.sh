@@ -8,8 +8,9 @@
 # image + the conformance runner) carry pure duplication: the bundle's
 # RPATH=$ORIGIN resolution falls back to /usr/lib for anything it no longer
 # carries, so the apk build (a fresh edge snapshot, newer than the build-time
-# one) satisfies every dep. ~110 MB on-disk saved across the firefox+webkit
-# bundles, on top of strip-mesa-closure.sh's ~225 MB.
+# one) satisfies every dep. Measured savings: firefox 342→306 MB, webkit
+# 760→483 MB (webkit incl. strip-mesa-closure.sh's ~225 MB), plus ~5.7 MB more
+# from the cross-bundle ICU dedup below.
 #
 # The producer artifacts stay intact (FROM scratch, no apk to fall back to) —
 # this script is applied to the COPY'd bundles on the consumer side, after the
@@ -28,26 +29,47 @@
 # conformance runner (edge-based) can't validate a vpx-stripped layout, and
 # shipping one would leave it unvalidated. ~7 MB stays duplicated instead.
 #
+# ICU stays bundled for the opposite reason: the apk soname matches (icu-libs
+# ships .so.78 on both edge and 3.24) but the 3.24 consumer installs only the
+# English-only icu-data-en set — full coverage would need icu-data-full
+# (+31.6 MB), a net loss against the ~11.4 MB stripping both bundles saves.
+# Firefox additionally ships its own icudt78l.dat. Both bundles carry
+# byte-identical ICU 78, so the combined image hardlinks webkit's libicu* to
+# firefox's (3rd arg below) — one copy, ~5.7 MB saved. The per-browser
+# conformance runners keep real copies (each image runs a single bundle); the
+# loader loads the same inode either way, so tested == shipped holds by
+# byte-equality.
+#
 # Exclusion policy — these stay bundled:
 #   - the browser's OWN libs (libxul, libmoz*, libgkcodecs, libclearkey,
 #     libWPEWebKit, libWPEInjectedBundle): no apk equivalent
-#   - libs the apk base does NOT provide (ICU libicu*, flite*, libavif,
-#     libhyphen, libwoff2*, libatomic, libharfbuzz-icu): no /usr/lib fallback
+#   - libs the apk base does NOT provide (flite*, libavif, libhyphen,
+#     libwoff2*, libatomic, libharfbuzz-icu): no /usr/lib fallback
 #
-# Usage: strip-bundled-libs.sh <bundle_dir> firefox|webkit
+# Usage: strip-bundled-libs.sh <bundle_dir> firefox|webkit [<dedup_src_dir>]
+#   - <dedup_src_dir> (webkit only): hardlink webkit's still-bundled libs that
+#     are byte-identical in the source bundle (currently the ICU triplet) to
+#     the source dir's copies, dropping the duplicate. md5-gated: a skew
+#     between the bundles' versions skips that lib with a warning instead of
+#     silently switching webkit onto firefox's build.
 # Idempotent (no-op when the libs are absent). Fails if any remaining ELF still
 # has unresolved deps — a removed lib the apk doesn't provide surfaces here
 # instead of at browser launch.
 
 set -euo pipefail
 
-DST="${1:?usage: strip-bundled-libs.sh <bundle_dir> firefox|webkit}"
-FAMILY="${2:?usage: strip-bundled-libs.sh <bundle_dir> firefox|webkit}"
+DST="${1:?usage: strip-bundled-libs.sh <bundle_dir> firefox|webkit [<dedup_src_dir>]}"
+FAMILY="${2:?usage: strip-bundled-libs.sh <bundle_dir> firefox|webkit [<dedup_src_dir>]}"
+DEDUP_SRC="${3:-}"
 [ -d "$DST" ] || { echo "strip-bundled-libs: $DST is not a directory" >&2; exit 1; }
 case "$FAMILY" in
   firefox|webkit) ;;
   *) echo "strip-bundled-libs: unknown family '$FAMILY'" >&2; exit 1;;
 esac
+if [ -n "$DEDUP_SRC" ]; then
+  [ "$FAMILY" = webkit ] || { echo "strip-bundled-libs: <dedup_src_dir> only applies to webkit" >&2; exit 1; }
+  [ -d "$DEDUP_SRC" ] || { echo "strip-bundled-libs: dedup src '$DEDUP_SRC' is not a directory" >&2; exit 1; }
+fi
 
 # Universal runtime libs present in BOTH bundles and provided by the consumer's
 # apk base. Sonames are apk-stable (glib/gtk/gstreamer keep their major).
@@ -192,6 +214,27 @@ for f in $STRIP_LIST; do
   fi
 done
 echo "strip-bundled-libs: removed $removed bundled libs from $(basename "$DST") ($FAMILY)"
+
+# Cross-bundle dedup (combined image only): hardlink webkit's still-bundled
+# libs that the other bundle carries byte-identical (ICU 78 today) to the
+# source dir's copy. Same filesystem, so one inode serves both bundles.
+# md5-gated so a version skew between the two bundles keeps webkit's own copy.
+dedup=0
+if [ -n "$DEDUP_SRC" ]; then
+  for f in "$DST"/*.so*; do
+    [ -f "$f" ] || continue
+    base=$(basename "$f")
+    [ -f "$DEDUP_SRC/$base" ] || continue
+    [ "$(md5sum "$f" | cut -d' ' -f1)" = "$(md5sum "$DEDUP_SRC/$base" | cut -d' ' -f1)" ] || {
+      echo "  WARN: $base differs between bundles — keeping $(basename "$DST")'s own copy" >&2
+      continue
+    }
+    rm -f "$f"
+    ln "$DEDUP_SRC/$base" "$f"
+    dedup=$((dedup + 1))
+  done
+  echo "strip-bundled-libs: hardlinked $dedup identical lib(s) from $(basename "$DST") to $(basename "$DEDUP_SRC")"
+fi
 
 # Gate: every remaining ELF in the bundle must resolve against the consumer's
 # libs (RPATH=$ORIGIN + default /usr/lib, where the apk runtime now lives) —

@@ -177,8 +177,11 @@ FROM alpine:edge
 # Strip parity: everything strip-bundled-libs.sh removes from the FF bundle
 # must be apk-provided here so the runner exercises the SAME dedup'd layout
 # the combined image ships (validated on the edge closure). libvpx is the
-# lone exception — edge's apk libvpx lacks mozilla's symbol set, so it stays
-# bundled (see strip-bundled-libs.sh header).
+# lone apk-strip exception — edge's apk libvpx lacks mozilla's symbol set, so
+# it stays bundled. ICU stays bundled too (3.24 apk data is en-only); the
+# combined image additionally hardlinks webkit's byte-identical ICU to
+# firefox's, which can't apply in these single-bundle runners — parity holds
+# by byte-equality (see strip-bundled-libs.sh header).
 RUN apk update && apk add --no-cache \\
     nodejs npm bash git build-base python3 \\
     alsa-lib dbus-libs fontconfig freetype glib gtk+3.0 harfbuzz \\
@@ -344,7 +347,9 @@ RUN set -e; GSTVER=\$(pkg-config --modversion gstreamer-1.0); cd /tmp \\
 FROM alpine:edge
 # Strip parity: every lib strip-bundled-libs.sh removes from the WK bundle
 # must be apk-provided here so the conformance layout == the shipped dedup'd
-# layout (validated on the edge closure).
+# layout (validated on the edge closure). No 3rd arg passed: this image runs a
+# single bundle, so webkit keeps its real ICU copy (the combined image's
+# hardlink to firefox's can't apply) — loader bytes are identical either way.
 RUN apk update && apk add --no-cache \\
     nodejs npm bash git \\
     file binutils ca-certificates ttf-freefont \\
