@@ -64,6 +64,11 @@ fi
 #    re-porting aports' patches to a different commit. Cross-check that the
 #    Firefox major.minor matches PW's pinned version.
 PW_FF_VER=$(cat "$PW/.firefox-version")
+
+# Used by the aports check below AND by the post-checkout source check, which runs
+# even when PW_SKIP_APORTS=1 — so it cannot live inside that branch.
+majmin() { echo "$1" | awk -F. '{print $1"."$2}'; }
+
 if [[ "$PW_SKIP_APORTS" == "1" ]]; then
   echo "PW_SKIP_APORTS=1 — skipping aports version check; PW pins firefox $PW_FF_VER"
 else
@@ -73,7 +78,6 @@ else
   # PW's pinned source is normal (e.g. aports pins 150.0.2 dot release while PW
   # tracks 150.0). FF internal APIs are stable across patch releases on the same
   # release branch, so Juggler patches apply cleanly.
-  majmin() { echo "$1" | awk -F. '{print $1"."$2}'; }
   aports_majmin=$(majmin "$PKGVER")
   pw_majmin=$(majmin "$PW_FF_VER")
 
@@ -108,6 +112,31 @@ git -C "$SRC" remote add origin https://github.com/mozilla-firefox/firefox
 git -C "$SRC" fetch --depth=1 origin "$PW_SHA"
 git -C "$SRC" reset --hard FETCH_HEAD --quiet
 git -C "$SRC" log -1 --format='%h %s' || true
+
+# The CHECKOUT decides what we ship — not either version pin — and Playwright's own
+# release tag can disagree with itself. At v1.60.0, browsers.json says firefox
+# 150.0.2 while browser_patches' BASE_REVISION is 4eb5a4f7, whose version.txt reads
+# 147.0.1. The aports check above compares two pins that both said 150.0.2, passed,
+# and the build then spent 3h10m producing a 147.0.1 binary that got published as
+# ff-150.0.2. Nothing compared the source tree to anything until a perf probe read
+# browser.version() weeks later.
+#
+# major.minor, like the aports check: patch drift between a release-branch tip and
+# the published build is normal, a major.minor gap means the wrong source tree.
+SRC_VERSION_FILE="$SRC/browser/config/version.txt"
+[[ -f "$SRC_VERSION_FILE" ]] || { echo "ERROR: no $SRC_VERSION_FILE in the checkout" >&2; exit 2; }
+SRC_FF_VER=$(tr -d '[:space:]' < "$SRC_VERSION_FILE")
+echo "cloned source is firefox $SRC_FF_VER; PW v${PW_VERSION:-?} publishes $PW_FF_VER"
+
+if [[ "$(majmin "$SRC_FF_VER")" != "$(majmin "$PW_FF_VER")" ]]; then
+  echo "ERROR: the source at $PW_SHA is firefox $SRC_FF_VER, but PW publishes $PW_FF_VER." >&2
+  echo "       PW's browsers.json and its browser_patches/firefox/UPSTREAM_CONFIG.sh" >&2
+  echo "       disagree at this tag. Building would ship a $SRC_FF_VER binary under a" >&2
+  echo "       $PW_FF_VER tag. Reconcile by pinning BASE_REVISION to a commit whose" >&2
+  echo "       browser/config/version.txt matches, or by tagging the artifact for the" >&2
+  echo "       version actually built." >&2
+  exit 2
+fi
 
 cd "$SRC"
 
