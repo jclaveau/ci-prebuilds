@@ -1288,95 +1288,90 @@ jobs:
   # test stayed green — only the wall clock moved. The probe's kernels catch that
   # class of regression on the first run after it lands.
   #
-  # Matrix: dood + slim only. The dind and -gyp variants ship byte-identical
-  # browser binaries, so they carry no runtime-perf signal. `official` is the
-  # upstream MCR control, probed on a sibling runner in the same run — the
-  # reportable number is the ratio against it, because absolute milliseconds swing
-  # 20-30% between hosted runners.
+  # Matrix: one job per browser, probing EVERY target inside it. The targets have
+  # to share a runner — hosted runners hand out different CPU models per job
+  # (EPYC 9V74, Xeon 8370C and Xeon 6973P-C all turned up in a single run), so a
+  # control measured on a sibling runner is not a control, and the first run of
+  # this probe produced ubuntu ratios of 0.62-0.90x that were mostly CPU luck.
+  #
+  # dood + slim only: the dind and -gyp variants ship byte-identical browser
+  # binaries, so they carry no runtime-perf signal.
   # ----------------------------------------------------------------------------
 
   perf-probe:
-    name: perf-${{ matrix.target }}-${{ matrix.browser }}
+    name: perf-${{ matrix.browser }}
     runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).playwright
     needs: [github-context, build-playwright-dood]
-    timeout-minutes: 20
+    timeout-minutes: 30
     continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJSON(needs.github-context.outputs.perf_targets) }}
         browser: [chromium, firefox, webkit]
     steps:
       - uses: actions/checkout@v7
 
       - uses: docker/login-action@v3
-        if: matrix.target != 'official'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve image
-        id: img
+      - name: Probe every target on this runner
         env:
-          TARGET: ${{ matrix.target }}
-          TAG: ${{ needs.github-context.outputs.build_tag }}
-          PW: ${{ needs.github-context.outputs.pw_version }}
-        run: |
-          if [ "$TARGET" = official ]; then
-            # The MCR image runs as root; ours run as `runner`.
-            {
-              echo "image=mcr.microsoft.com/playwright:v${PW}-noble"
-              echo "home=/root"
-            } >> "$GITHUB_OUTPUT"
-          else
-            {
-              echo "image=ghcr.io/jclaveau/${TARGET}-dood-playwright:${TAG}"
-              echo "home=/home/runner"
-            } >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Probe
-        env:
-          IMAGE: ${{ steps.img.outputs.image }}
-          HOME_IN: ${{ steps.img.outputs.home }}
           BROWSER: ${{ matrix.browser }}
-          TARGET: ${{ matrix.target }}
+          TARGETS: ${{ needs.github-context.outputs.perf_targets }}
+          TAG: ${{ needs.github-context.outputs.build_tag }}
           PW: ${{ needs.github-context.outputs.pw_version }}
         run: |
           set -o pipefail
           mkdir -p perf-out && chmod 777 perf-out   # the container writes as its own uid
-          # seccomp=unconfined: WebKit-WPE's bwrap needs it on our alpine images
-          # (no-op for the chromium/firefox legs and for the MCR control).
-          docker run --rm \
-            --security-opt seccomp=unconfined \
-            --env "HOME=$HOME_IN" \
-            --env "PROBE_BROWSER=$BROWSER" \
-            --env "PROBE_TARGET=$TARGET" \
-            --env "PW_VERSION=$PW" \
-            -v "$PWD/playwright/bench:/probe:ro" \
-            -v "$PWD/perf-out:/out" \
-            "$IMAGE" \
-            sh -c '
-              # `playwright` is a global install in all of these images (pnpm -g on
-              # ours, npm -g on the control), and the probe is CommonJS precisely so
-              # NODE_PATH resolution applies — ESM ignores NODE_PATH. The npm
-              # fallback covers a control image that stops baking it in.
-              for r in "$(pnpm root -g 2>/dev/null)" "$(npm root -g 2>/dev/null)"; do
-                [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
-              done
-              export NODE_PATH
-              node -e "require(\"playwright\")" 2>/dev/null \
-                || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
-              node /probe/runtime-probe.cjs \
-                --browser "$PROBE_BROWSER" --target "$PROBE_TARGET" --out /out
-            ' 2>&1 | tee "perf-out/probe-${TARGET}-${BROWSER}.log"
+          rc=0
+          for target in $(jq -r '.[]' <<< "$TARGETS"); do
+            if [ "$target" = official ]; then
+              image="mcr.microsoft.com/playwright:v${PW}-noble"
+              home=/root                            # the MCR image runs as root
+            else
+              image="ghcr.io/jclaveau/${target}-dood-playwright:${TAG}"
+              home=/home/runner
+            fi
+            echo "::group::probe $target/$BROWSER ($image)"
+            # seccomp=unconfined: WebKit-WPE's bwrap needs it on our alpine images
+            # (no-op for the chromium/firefox legs and for the MCR control).
+            # One target failing must not cost us the others' measurements, so the
+            # loop records the failure and carries on; `rc` is re-raised at the end.
+            docker run --rm \
+              --security-opt seccomp=unconfined \
+              --env "HOME=$home" \
+              --env "PROBE_BROWSER=$BROWSER" \
+              --env "PROBE_TARGET=$target" \
+              --env "PW_VERSION=$PW" \
+              -v "$PWD/playwright/bench:/probe:ro" \
+              -v "$PWD/perf-out:/out" \
+              "$image" \
+              sh -c '
+                # `playwright` is a global install in all of these images (pnpm -g on
+                # ours, npm -g on the control), and the probe is CommonJS precisely so
+                # NODE_PATH resolution applies — ESM ignores NODE_PATH. The npm
+                # fallback covers a control image that stops baking it in.
+                for r in "$(pnpm root -g 2>/dev/null)" "$(npm root -g 2>/dev/null)"; do
+                  [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
+                done
+                export NODE_PATH
+                node -e "require(\"playwright\")" 2>/dev/null \
+                  || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
+                node /probe/runtime-probe.cjs \
+                  --browser "$PROBE_BROWSER" --target "$PROBE_TARGET" --out /out
+              ' 2>&1 | tee "perf-out/probe-${target}-${BROWSER}.log" || rc=1
+            echo "::endgroup::"
+          done
+          exit "$rc"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: perf-${{ matrix.target }}-${{ matrix.browser }}
+          name: perf-${{ matrix.browser }}
           path: perf-out/
           if-no-files-found: warn
           retention-days: 30

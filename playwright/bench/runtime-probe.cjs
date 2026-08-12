@@ -68,6 +68,23 @@ async function sample(iters, fn) {
   return { median_ms: median(samples), samples, value: last };
 }
 
+/*
+ * Clicks every button once and asserts the page saw all of them — a click that
+ * silently misses would otherwise turn this into a measurement of nothing.
+ */
+async function clickAll(page, options) {
+  await page.evaluate(() => {
+    window.__clicks = 0;
+  });
+  for (let i = 0; i < BUTTONS; i++) {
+    await page.locator(`#b${i}`).click(options);
+  }
+  const clicks = await page.evaluate(() => window.__clicks);
+  if (clicks !== BUTTONS) {
+    throw new Error(`registered ${clicks} clicks, expected ${BUTTONS}`);
+  }
+}
+
 const PAGE_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>probe</title><style>
   body { margin: 0; font: 12px/1.2 sans-serif; }
@@ -234,21 +251,19 @@ async function main() {
     }
   });
 
-  // 6. locator actionability — the dominant real-world cost: each click re-runs
-  // the injected query plus the visible/stable/enabled checks, and each of those
-  // re-pays layout. Asserted non-vacuous below.
-  metrics.locator_click = await sample(3, async () => {
-    await page.evaluate(() => {
-      window.__clicks = 0;
-    });
-    for (let i = 0; i < BUTTONS; i++) {
-      await page.locator(`#b${i}`).click();
-    }
-    const clicks = await page.evaluate(() => window.__clicks);
-    if (clicks !== BUTTONS) {
-      throw new Error(`locator_click registered ${clicks} clicks, expected ${BUTTONS}`);
-    }
-  });
+  // 6a. full actionability — what a real suite pays per action. Measured, this is
+  // FRAME-CADENCE BOUND, not CPU bound: the stability check waits for the bounding
+  // box to be identical across consecutive animation frames, so a healthy build
+  // pins to a whole number of frames (chromium 33.3ms = 2 frames at 60Hz, webkit
+  // 32.2, firefox 50.0) no matter which libc or CPU it runs on. That constant is
+  // the point: it only moves when a build is too slow to hit its frame budget —
+  // the DCHECK chromium sat at 1.5x here while every healthy engine was flat.
+  metrics.locator_click = await sample(3, () => clickAll(page, {}));
+
+  // 6b. the same clicks with `force`, which skips the visible/stable/enabled
+  // waiting entirely. No frame quantization left, so this one moves with the
+  // injected query + hit test + event dispatch — the CPU half of an action.
+  metrics.click_force = await sample(3, () => clickAll(page, { force: true }));
 
   // 7. screenshot — CI configs capture these on failure and on retry. Viewport
   // rather than fullPage on purpose: that is Playwright's default, and a fullPage
