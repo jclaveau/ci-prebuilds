@@ -516,7 +516,7 @@ jobs:
               st = stats95(xs)
               return (st[1] / st[0] * 100) if (st and st[1] is not None and st[0]) else None
 
-          def delta_cell(m, base, cv_xs):
+          def delta_cell(m, base, cv_xs, base_xs=None):
               # Δ seconds (carrying the CV of the underlying metric) + Δ %
               if m is None or not base:
                   return "—", "—"
@@ -525,6 +525,17 @@ jobs:
               c = cv(cv_xs)
               if c is not None:
                   ds += f" (CV {c:.0f}%)"
+              # Flag a Δ that is smaller than the noise of the two means it subtracts.
+              # `pull` dominates time-to-tests for every prebuilt image and is registry
+              # variance, not image property: near-identical images measured 22s and 42s
+              # in the same run at n=3. Without this marker those gaps read as findings —
+              # they were quoted as one before this was added.
+              a = stats95(cv_xs)
+              b = stats95(base_xs) if base_xs else None
+              if a and b and a[2] is not None and b[2] is not None:
+                  noise = (a[2] ** 2 + b[2] ** 2) ** 0.5
+                  if abs(d) < noise:
+                      ds += " n.s."
               return ds, f"{'−' if d < 0 else '+'}{abs(d / base * 100):.0f}%"
 
           # Per-Δ-cell shields.io badge: the label IS the value, the color encodes sign + magnitude
@@ -589,7 +600,7 @@ jobs:
                   if sc == ref or ttt_m is None or not base:
                       d_str, p_str, d_num, p_num = "—", "—", None, None
                   else:
-                      d_str, p_str = delta_cell(ttt_m, base, agg[key]["ttt"])
+                      d_str, p_str = delta_cell(ttt_m, base, agg[key]["ttt"], agg[(ref, mode)]["ttt"])
                       d_num = ttt_m - base
                       p_num = d_num / base * 100
                   ok, n = oks[key]
@@ -690,8 +701,8 @@ jobs:
                       d, p, wd, wp, du = "—", "—", "—", "—", "—"
                       d_num = p_num = wd_num = wp_num = du_num = None
                   else:
-                      d, p = delta_cell(ttt_m, base, act[key]["ttt"])
-                      wd, wp = delta_cell(warm_m, warm_base, act[key]["install"])
+                      d, p = delta_cell(ttt_m, base, act[key]["ttt"], act[bkey]["ttt"])
+                      wd, wp = delta_cell(warm_m, warm_base, act[key]["install"], act[bkey]["install"])
                       d_num  = (ttt_m - base) if (ttt_m is not None and base) else None
                       p_num  = (d_num / base * 100) if (d_num is not None and base) else None
                       wd_num = (warm_m - warm_base) if (warm_m is not None and warm_base) else None
