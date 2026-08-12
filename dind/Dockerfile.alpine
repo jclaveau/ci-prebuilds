@@ -2,9 +2,17 @@
 ARG BASE_IMAGE=jclaveau/alpine-docker:latest
 FROM ${BASE_IMAGE}
 
-# True DinD variant on Alpine: boots an inner dockerd (from the Alpine docker package in the base)
-# instead of relying on a shared host socket. Built on the docker base (and on each *-dood-<layer>).
+# True DinD variant on Alpine: boots an inner dockerd instead of relying on a shared host socket.
+# Built on the docker base (and on each *-dood-<layer>).
 LABEL org.opencontainers.image.description="True DinD variant (boots an inner dockerd) of the alpine *-dood images"
+
+# The engine lives here, not in the shared docker base: dood can never run a local daemon, so
+# carrying docker-engine + containerd there was ~144 MiB of pull weight in every dood image.
+# iptables is a dockerd runtime need (bridge networking), so it moves with the daemon.
+# /var/lib/docker likewise — only the inner daemon has a graph driver dir.
+RUN sudo apk add --no-cache docker-engine iptables
+
+VOLUME /var/lib/docker
 
 ENV DOCKER_MODE=dind
 # DinD's inner dockerd publishes services on the runner container's loopback.

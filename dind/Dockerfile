@@ -12,6 +12,25 @@ ENV DOCKER_MODE=dind
 # have historically surfaced when stacks resolved localhost to ::1.
 ENV HOST_ADDRESS=127.0.0.1
 
+# The engine lives here, not in the shared docker base: dood talks to the HOST daemon over the
+# bind-mounted socket and can never run a local one, so docker-ce + containerd.io were ~144 MiB of
+# pull weight in every dood image — and for a prebuilt image, time-to-tests is almost entirely image
+# pull. iptables is a dockerd runtime need (bridge networking) so it moves with the daemon.
+#
+# The version is read back from the docker-ce-cli the base pinned, rather than re-declaring
+# DOCKER_VERSION here: engine and CLI must match, and a second ARG would be a second thing for
+# Renovate to bump and for the two to drift on. The base cleared the apt lists, hence the update.
+RUN echo "Install the Docker Engine matching the base's pinned CLI" \
+    && VERSION_STRING="$(dpkg-query -W -f='${Version}' docker-ce-cli)" \
+    && sudo apt-get update \
+    && sudo apt-get install -y \
+         docker-ce="$VERSION_STRING" \
+         containerd.io \
+         iptables \
+    && sudo rm -rf /var/lib/apt/lists/*
+
+VOLUME /var/lib/docker
+
 COPY start-dockerd.sh /usr/local/bin/start-dockerd
 RUN sudo chmod 0755 /usr/local/bin/start-dockerd
 

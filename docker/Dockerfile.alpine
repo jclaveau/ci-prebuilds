@@ -4,19 +4,24 @@ FROM ${BASE_IMAGE}
 
 ARG DOCKER_GROUP_ID=${DOCKER_GROUP_ID}
 
-# Alpine counterpart of docker/Dockerfile: Docker Engine + Compose from Alpine's own repos (no
+# Alpine counterpart of docker/Dockerfile: Docker CLI + Compose from Alpine's own repos (no
 # docker-ce apt repo, no compose binary download). Unpublished shared base for the dood/dind variants.
 # No daemon.json here: dood ignores a local daemon (host socket), and dind writes its own.
+#
+# CLI only, deliberately. dood talks to the HOST daemon over the bind-mounted socket and can never
+# run a local one, so the `docker` meta-package's engine (docker-engine 94 MiB + containerd 50 MiB)
+# was pure pull weight in every dood image — and time-to-tests for a prebuilt image is almost
+# entirely image pull, so that weight is the metric. dind installs the engine itself.
 #
 # Note: docker version follows whatever Alpine's repo ships (Alpine 3.21 has docker 27.3.1,
 # vs Ubuntu's docker-ce 28.x). The two version trains are independent — pinning to Ubuntu's
 # DOCKER_VERSION via `apk add 'docker>=${V}'` fails because Alpine's repo doesn't carry the
 # Ubuntu-side version. Consumers requiring exact-version parity across OS variants should
 # pin to a specific image tag rather than `:latest`.
-LABEL org.opencontainers.image.description="alpine-gha-tools + Docker Engine & Compose (shared base for dood/dind)"
+LABEL org.opencontainers.image.description="alpine-gha-tools + Docker CLI & Compose (shared base for dood/dind)"
 
-RUN echo "Install Docker Engine (dockerd) + CLI + Compose plugin from Alpine's repos" \
-    && sudo apk add --no-cache docker docker-cli-compose iptables \
+RUN echo "Install the Docker CLI + Compose plugin from Alpine's repos (no daemon — see above)" \
+    && sudo apk add --no-cache docker-cli docker-cli-compose \
     \
     && echo "Align the docker group GID with GitHub's host GID so dood can reach the mounted host" \
     && echo "socket. -o allows a duplicate GID (Alpine may already use it for another group)." \
@@ -25,5 +30,3 @@ RUN echo "Install Docker Engine (dockerd) + CLI + Compose plugin from Alpine's r
     \
     && sudo usermod -aG docker runner \
     && sudo usermod -aG docker packer
-
-VOLUME /var/lib/docker
