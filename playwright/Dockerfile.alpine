@@ -14,55 +14,51 @@ FROM ghcr.io/jclaveau/playwright-alpine-browsers:chs-${CHS_REV} AS chs-source
 FROM ghcr.io/jclaveau/playwright-alpine-browsers:ff-${FF_REV} AS ff-source
 FROM ghcr.io/jclaveau/playwright-alpine-browsers:wk-${WK_REV} AS wk-source
 
-FROM ${BASE_IMAGE}
+# Runtime libs. chromium-headless-shell has RPATH=$ORIGIN but the FROM-SOURCE
+# build (unlike the old apk one) is NOT fully self-contained — it dynamically
+# links Alpine's libxslt + double-conversion + minizip + crc32c (aports chromium
+# builds these use_system_*), so the consumer must supply them or the binary
+# dies at load with `Error relocating … symbol not found`. Firefox bundles its
+# peer .so + ICU data but still needs the universal runtime libs (libstdc++,
+# libgcc_s, musl). WebKit-WPE loads libwpe + GTK4 + a full gstreamer stack.
+# Apk list union of aports' community/chromium + community/firefox `depends=`
+# plus the WebKit deps proven by the producer Tier-2 smoke, trimmed to what
+# headless actually loads.
+#
+# Own stage because BOTH the final image and the strip stage below need this
+# exact apk set — the strip scripts' ldd gate resolves the bundles' remaining
+# ELFs against it, so a divergence between the two would let the strip stage
+# validate a layout the final image can't load.
+FROM ${BASE_IMAGE} AS runtime-libs
+RUN sudo apk add --no-cache \
+        ca-certificates font-opensans ttf-freefont \
+        alsa-lib dbus-libs fontconfig glib gtk+3.0 harfbuzz \
+        libdrm libevent libffi libjpeg-turbo libnotify libogg libtheora \
+        libvorbis libvpx libwebp libwebpdemux libxcomposite libxt mesa-gl \
+        nspr nss pipewire-libs libpulse libstdc++ libgcc \
+        libwpe libwpebackend-fdo gtk4.0 at-spi2-core cairo pango gdk-pixbuf \
+        mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \
+        gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \
+        opus libsecret \
+        libxslt double-conversion minizip crc32c
 
-# Re-declare so ${CHS_REV} / ${FF_REV} / ${WK_REV} expand in this stage's paths.
-ARG CHS_REV
+# Firefox + WebKit staging: the bundles are COPY'd in, shimmed and stripped
+# HERE, and the final image COPYs the finished trees out.
+#
+# The strip MUST happen before the final image's COPY. Layer blobs are
+# immutable: `rm`-ing a bundled lib in a RUN layer that follows the COPY only
+# writes a whiteout into that later layer — the bytes stay paid for in the COPY
+# blob, so the published (and benchmarked) image size doesn't move at all. With
+# the strip in its own stage, the final image's COPY layers carry only the
+# post-strip bytes and the strip RUN layers never reach it.
+#
+# Both bundles share one stage because the cross-bundle ICU dedup symlinks
+# webkit's libicu* at firefox's copies — they have to be stripped side by side,
+# at the paths they'll occupy in the final image (the symlinks are relative).
+FROM runtime-libs AS browsers-staged
+
 ARG FF_REV
 ARG WK_REV
-
-# Renovate will update this in lockstep with the producer image's published
-# tag. Same PW_VERSION drives `pnpm install -g playwright@…` AND the
-# COPY --from tag above — they must match (PW SDK reads its bundled
-# browsers.json to know the expected revision in the cache path).
-ARG PLAYWRIGHT_VERSION=1.60.0
-
-LABEL org.opencontainers.image.description="Playwright (musl-native chromium-headless-shell + Firefox + WebKit) in Alpine based DinD as Github Actions Container"
-
-# Playwright's bundled browsers are glibc-only and `playwright install
-# --with-deps` runs apt — neither works on Alpine/musl. We stage both
-# musl-native browsers from our producer image at PW SDK's auto-discovery
-# cache path; the SDK finds them via PLAYWRIGHT_BROWSERS_PATH lookup at
-# launch time. No executablePath override required in playwright.config.ts.
-ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-# Suppresses PW's "musl not supported" warning — its hostPlatform.ts detects
-# `linux-musl` but its DOWNLOAD_PATHS table has no entry. Safe because we
-# PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 anyway; no download is attempted.
-ENV PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24
-# PW's pre-launch host-requirements check reads the ubuntu24 nativeDeps list
-# (because of the override above) and false-positives on musl for WebKit — it
-# reports libGLESv2.so.2 + libx264.so "missing" although the MiniBrowser
-# binaries are ldd-clean (verified) and chromium/firefox launch fine. Skip the
-# bogus validation; a genuinely-missing dep would still fail at spawn time.
-ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
-
-# chromium-headless-shell — apk-extracted, self-contained via RPATH=$ORIGIN.
-# Smaller artifact than full chromium; deterministic timing for tests.
-COPY --from=chs-source /chrome-headless-shell-linux64 /ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64
-RUN sudo touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_COMPLETE \
- && sudo chmod 755 /ms-playwright/chromium_headless_shell-${CHS_REV} \
- # Drift warning: the producer bakes /chrome-headless-shell-linux64/.version-drift-warning
- # when alpine:edge's chromium pkgver doesn't match PW's pinned browserVersion.
- # PW SDK doesn't validate version at launch (path-name match is enough), but
- # tests on version-sensitive APIs may behave differently. Echo the file at
- # image build time so the drift is visible in build logs; image still ships.
- && WARN=/ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64/.version-drift-warning \
- && if [ -f "$WARN" ]; then \
-      echo "===== chromium-headless-shell version drift warning =====" >&2; \
-      cat "$WARN" >&2; \
-      echo "==========================================================" >&2; \
-    fi
 
 # Firefox — musl-built, PW-patched. The producer artifact ships the dist tree
 # at /firefox; stage it at PW SDK's auto-discovery path
@@ -116,35 +112,6 @@ COPY --from=wk-source /webkit/pw_run.sh /ms-playwright/webkit-${WK_REV}/pw_run.s
 RUN sudo touch /ms-playwright/webkit-${WK_REV}/INSTALLATION_COMPLETE \
  && sudo chmod 755 /ms-playwright/webkit-${WK_REV}
 
-# WebKit's bwrap sandbox can't nest inside a container's default seccomp/user-ns
-# profile on musl. Disable it so headless WPE launches; the consumer must ALSO
-# run the container with `--security-opt seccomp=unconfined` (documented in the
-# image README) — the two are required together (see the producer Tier-2 smoke).
-ENV WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
-
-# Runtime libs. chromium-headless-shell has RPATH=$ORIGIN but the FROM-SOURCE
-# build (unlike the old apk one) is NOT fully self-contained — it dynamically
-# links Alpine's libxslt + double-conversion + minizip + crc32c (aports chromium
-# builds these use_system_*), so the consumer must supply them or the binary
-# dies at load with `Error relocating … symbol not found`. Firefox bundles its
-# peer .so + ICU data but still needs the universal runtime libs (libstdc++,
-# libgcc_s, musl). WebKit-WPE loads libwpe + GTK4 + a full gstreamer stack.
-# Apk list union of aports' community/chromium + community/firefox `depends=`
-# plus the WebKit deps proven by the producer Tier-2 smoke, trimmed to what
-# headless actually loads.
-RUN sudo apk add --no-cache \
-        ca-certificates font-opensans ttf-freefont \
-        alsa-lib dbus-libs fontconfig glib gtk+3.0 harfbuzz \
-        libdrm libevent libffi libjpeg-turbo libnotify libogg libtheora \
-        libvorbis libvpx libwebp libwebpdemux libxcomposite libxt mesa-gl \
-        nspr nss pipewire-libs libpulse libstdc++ libgcc \
-        libwpe libwpebackend-fdo gtk4.0 at-spi2-core cairo pango gdk-pixbuf \
-        mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \
-        gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \
-        opus libsecret \
-        libxslt double-conversion minizip crc32c \
- && pnpm install -g playwright@${PLAYWRIGHT_VERSION}
-
 # WebKit's bundle carries Mesa's software-GL closure (libgallium → libLLVM +
 # EGL/GL/gbm/drm/X11/xcb, ~225 MB on-disk) copied in by the producer's
 # bundle-dist.sh ldd-walk. The apk Mesa above (mesa-gl/-gles/-gbm/
@@ -179,3 +146,66 @@ RUN sudo bash /usr/local/bin/strip-mesa-closure.sh /ms-playwright/webkit-${WK_RE
 COPY alpine-browsers/webkit/scripts/strip-bundled-libs.sh /usr/local/bin/strip-bundled-libs.sh
 RUN sudo bash /usr/local/bin/strip-bundled-libs.sh /ms-playwright/firefox-${FF_REV}/firefox firefox \
  && sudo bash /usr/local/bin/strip-bundled-libs.sh /ms-playwright/webkit-${WK_REV}/minibrowser-wpe webkit /ms-playwright/firefox-${FF_REV}/firefox
+
+FROM runtime-libs
+
+# Re-declare so ${CHS_REV} / ${FF_REV} / ${WK_REV} expand in this stage's paths.
+ARG CHS_REV
+ARG FF_REV
+ARG WK_REV
+
+# Renovate will update this in lockstep with the producer image's published
+# tag. Same PW_VERSION drives `pnpm install -g playwright@…` AND the
+# COPY --from tag above — they must match (PW SDK reads its bundled
+# browsers.json to know the expected revision in the cache path).
+ARG PLAYWRIGHT_VERSION=1.60.0
+
+LABEL org.opencontainers.image.description="Playwright (musl-native chromium-headless-shell + Firefox + WebKit) in Alpine based DinD as Github Actions Container"
+
+# Playwright's bundled browsers are glibc-only and `playwright install
+# --with-deps` runs apt — neither works on Alpine/musl. We stage both
+# musl-native browsers from our producer image at PW SDK's auto-discovery
+# cache path; the SDK finds them via PLAYWRIGHT_BROWSERS_PATH lookup at
+# launch time. No executablePath override required in playwright.config.ts.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+# Suppresses PW's "musl not supported" warning — its hostPlatform.ts detects
+# `linux-musl` but its DOWNLOAD_PATHS table has no entry. Safe because we
+# PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 anyway; no download is attempted.
+ENV PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24
+# PW's pre-launch host-requirements check reads the ubuntu24 nativeDeps list
+# (because of the override above) and false-positives on musl for WebKit — it
+# reports libGLESv2.so.2 + libx264.so "missing" although the MiniBrowser
+# binaries are ldd-clean (verified) and chromium/firefox launch fine. Skip the
+# bogus validation; a genuinely-missing dep would still fail at spawn time.
+ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
+# WebKit's bwrap sandbox can't nest inside a container's default seccomp/user-ns
+# profile on musl. Disable it so headless WPE launches; the consumer must ALSO
+# run the container with `--security-opt seccomp=unconfined` (documented in the
+# image README) — the two are required together (see the producer Tier-2 smoke).
+ENV WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
+
+RUN pnpm install -g playwright@${PLAYWRIGHT_VERSION}
+
+# chromium-headless-shell — apk-extracted, self-contained via RPATH=$ORIGIN.
+# Smaller artifact than full chromium; deterministic timing for tests. Copied
+# straight from the producer (no strip stage): it bundles no apk-provided libs.
+COPY --from=chs-source /chrome-headless-shell-linux64 /ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64
+RUN sudo touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_COMPLETE \
+ && sudo chmod 755 /ms-playwright/chromium_headless_shell-${CHS_REV} \
+ # Drift warning: the producer bakes /chrome-headless-shell-linux64/.version-drift-warning
+ # when alpine:edge's chromium pkgver doesn't match PW's pinned browserVersion.
+ # PW SDK doesn't validate version at launch (path-name match is enough), but
+ # tests on version-sensitive APIs may behave differently. Echo the file at
+ # image build time so the drift is visible in build logs; image still ships.
+ && WARN=/ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64/.version-drift-warning \
+ && if [ -f "$WARN" ]; then \
+      echo "===== chromium-headless-shell version drift warning =====" >&2; \
+      cat "$WARN" >&2; \
+      echo "==========================================================" >&2; \
+    fi
+
+# Firefox first: webkit's ICU libs are relative symlinks into the firefox tree,
+# so its target must already be in place when the webkit layer lands.
+COPY --from=browsers-staged /ms-playwright/firefox-${FF_REV} /ms-playwright/firefox-${FF_REV}
+COPY --from=browsers-staged /ms-playwright/webkit-${WK_REV} /ms-playwright/webkit-${WK_REV}
