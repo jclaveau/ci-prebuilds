@@ -12,6 +12,17 @@ is_debug = false
 symbol_level = 0
 is_official_build = false  # set true if we want PGO + maximum optimization; significantly slower build
 
+# Chromium's own default is
+# `dcheck_always_on = (build_with_chromium && !is_official_build) || dcheck_is_configurable`
+# (build/config/dcheck_always_on.gni), so is_official_build=false above silently
+# turns DCHECKs ON in a release build. Measured cost against the official glibc
+# headless-shell: layout 9.3x, DOM churn 7.2x, JS heap 2.9x, int JIT loop 1.9x —
+# Blink's layout/DOM paths are DCHECK-dense. It also made `DPCHECK(setpriority)`
+# fatal, which is why headed conformance needed --cap-add SYS_NICE. Turning it
+# off costs nothing at build time (it removes code) and shrinks the binary
+# (305 MB -> ~185 MB, the official build's size).
+dcheck_always_on = false
+
 # sccache compiler wrapper. Mirrors aports' cc_wrapper=ccache strategy.
 # SCCACHE_GHA_ENABLED env (set in the Dockerfile RUN) picks the GitHub Actions
 # Cache backend so warm-cache rebuilds finish in ~30min instead of cold ~7h.
