@@ -10,7 +10,12 @@
 # the hosted runner's memory budget).
 is_debug = false
 symbol_level = 0
-is_official_build = false  # set true if we want PGO + maximum optimization; significantly slower build
+# aports' community/chromium builds musl chromium with is_official_build=true and
+# disables the expensive/unsupported sub-features one by one (chrome_pgo_phase=0,
+# use_thin_lto=false, is_cfi=false — all mirrored below). So "official" here buys
+# the optimization level and the DCHECK-off default WITHOUT the PGO/LTO build
+# cost, on a config Alpine ships. Costs build wall-clock vs a plain release build.
+is_official_build = true
 
 # Chromium's own default is
 # `dcheck_always_on = (build_with_chromium && !is_official_build) || dcheck_is_configurable`
@@ -131,6 +136,7 @@ enable_vr = false                          # no VR/XR
 disable_fieldtrial_testing_config = true   # skip field-trial test configs
 enable_nocompile_tests = false             # no nocompile testing
 is_cfi = false                             # CFI off (no IFUNC support on alpine clang)
+use_thin_lto = false                       # aports same; is_official_build would default it ON
 fatal_linker_warnings = false              # match aports — alpine's lld trips a few warnings
 safe_browsing_use_unrar = false            # no unrar (we don't ship)
 
