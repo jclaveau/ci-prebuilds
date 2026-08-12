@@ -9,6 +9,14 @@ Headed chromium (chr-fs full-chrome) PW conformance had ~23 deterministic
 "Target page/context/browser has been closed" failures per shard (navigation,
 cross-process iframes, base-url, cookies) — 0/20 shards green.
 
+**UPDATE 2026-08-12 — the DCHECK build was UNINTENTIONAL.** `DCHECK_ALWAYS_ON`
+was never asked for: `is_official_build = false` flips Chromium's
+`dcheck_always_on` default to true. See
+[[project_chromium_dcheck_from_is_official_build]]. Once a DCHECK-off build
+ships, **re-test whether `--cap-add SYS_NICE` is still required** — the
+`DPCHECK(setpriority)` below is only fatal in a DCHECK build, so the workaround
+may be removable.
+
 **Root cause (source-verified):** chr-fs is built with `DCHECK_ALWAYS_ON=1`.
 Chrome raises a foreground renderer's priority via
 `setpriority(PRIO_PROCESS, ..., <lower nice>)` (base/process/process_linux.cc:201),
