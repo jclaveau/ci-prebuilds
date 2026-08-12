@@ -378,9 +378,15 @@ jobs:
       # against system libs (--with-system-*) so the runtime needs the same
       # ABI. LD_LIBRARY_PATH points at the firefox dir because our build's
       # RUNPATH is currently /usr/lib/firefox (a leftover from aports' install
-      # layout — fix-up later). The version reported is Playwright's pinned
-      # browserVersion, not necessarily Mozilla's release name (PW maintains
-      # its own version string), so we only assert "Mozilla Firefox" prefix.
+      # layout — fix-up later).
+      #
+      # The version is asserted EXACTLY against browsers.json's browserVersion.
+      # That is the invariant ALPINE_APORTS_REF is pinned for ("the commit whose
+      # APKBUILD pkgver matches PW's pin"), and nothing else checks it: the
+      # `ff-<version>` tag is derived from the pin, never from the binary, so a
+      # re-promotion of a stale artifact publishes `ff-150.0.2` over a Firefox
+      # 147.0.1 — which is exactly what shipped until the perf probe read
+      # browser.version() and noticed.
       - name: Tier-1 smoke (firefox --version)
         run: |
           cat > /tmp/Dockerfile.t1 <<EOF
@@ -398,8 +404,9 @@ jobs:
           OUT=$(docker run --rm t1-smoke:${{ github.sha }} /opt/playwright/firefox/firefox --version 2>&1 || true)
           echo "firefox --version output:"
           echo "$OUT"
-          echo "$OUT" | grep -E "Mozilla Firefox [0-9]+\\." \
-            || { echo "Tier-1: firefox didn't self-identify"; exit 1; }
+          EXPECTED="${{ steps.pins.outputs.firefox_version }}"
+          echo "$OUT" | grep -qE "^Mozilla Firefox ${EXPECTED}\\b" \
+            || { echo "Tier-1: firefox reported '$OUT', expected 'Mozilla Firefox $EXPECTED' (PW's browsers.json pin). Either ALPINE_APORTS_REF points at a different pkgver, or this artifact was carried forward from an older build."; exit 1; }
 
   smoke-firefox:
     # Tier-2: drive Firefox through the Playwright SDK enough to exercise
