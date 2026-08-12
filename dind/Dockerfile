@@ -45,7 +45,21 @@ RUN sudo chmod 0755 /usr/local/bin/start-dockerd
 # the bind-mounted host socket (the inode is shared with the host; chowning it
 # writes the in-container `docker` GID to the host's inode and locks the host
 # user out of their own socket when the host's docker GID differs).
-RUN echo "runner ALL=(root) NOPASSWD: /usr/sbin/dockerd, /usr/bin/chown root\:docker /var/run/dind.sock, /usr/bin/chmod 660 /var/run/dind.sock, /usr/bin/docker, /usr/bin/tee /etc/docker/daemon.json" \
+# Paths are resolved here rather than written literally. sudo matches a rule against the
+# ABSOLUTE path it resolves the command to, so a rule naming a path the binary does not occupy
+# simply never matches — silently, with no error at build time and none at runtime either while
+# the broad NOPASSWD of the non-hardened flavour still covers the call. Three of these were wrong
+# on Alpine (dockerd is /usr/bin/dockerd, chown and chmod are busybox applets under /bin) and
+# dockerd was wrong on Ubuntu too; the only reason dind worked is that nothing depended on the
+# narrow rules until the hardened flavour stripped the broad one. The `-x` guard makes a future
+# package move fail the build instead of quietly re-opening the same hole.
+RUN DOCKERD="$(command -v dockerd)" \
+    && DOCKER="$(command -v docker)" \
+    && CHOWN="$(command -v chown)" \
+    && CHMOD="$(command -v chmod)" \
+    && TEE="$(command -v tee)" \
+    && for p in "$DOCKERD" "$DOCKER" "$CHOWN" "$CHMOD" "$TEE"; do [ -x "$p" ] || { echo "sudoers: '$p' is not an executable path"; exit 1; }; done \
+    && echo "runner ALL=(root) NOPASSWD: ${DOCKERD}, ${CHOWN} root\:docker /var/run/dind.sock, ${CHMOD} 660 /var/run/dind.sock, ${DOCKER}, ${TEE} /etc/docker/daemon.json" \
       | sudo install -m 0440 /dev/stdin /etc/sudoers.d/dind \
     && sudo visudo -c -f /etc/sudoers.d/dind
 
