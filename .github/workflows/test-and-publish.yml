@@ -92,6 +92,11 @@ jobs:
       os_matrix:     ${{ steps.matrices.outputs.os_matrix }}
       image_matrix:  ${{ steps.matrices.outputs.image_matrix }}
       flavor_matrix: ${{ steps.matrices.outputs.flavor_matrix }}
+      # perf-probe axis: os_matrix + the `official` MCR control it is compared to.
+      perf_targets:  ${{ steps.matrices.outputs.perf_targets }}
+      # Playwright version the `official` control must pull, so its bundled browser
+      # revisions match the ones our images bake.
+      pw_version:    ${{ steps.pw.outputs.pw_version }}
       # JSON object {gha_tools, dind_hardened, dood_dind, node, pnpm,
       # pnpm_gyp, playwright} → bool. Each test job gates on the relevant
       # key via fromJSON(); skipped tests don't block the `promote` gate.
@@ -182,10 +187,17 @@ jobs:
 
           # OS axis (every job with matrix.os). Empty OR 'All' → full default.
           if [ -z "$ONLY_OS" ] || has_all "$ONLY_OS"; then
-            echo 'os_matrix=["ubuntu", "alpine"]' >> "$GITHUB_OUTPUT"
+            os_matrix='["ubuntu", "alpine"]'
           else
-            echo "os_matrix=$(csv_to_json "$ONLY_OS")" >> "$GITHUB_OUTPUT"
+            os_matrix="$(csv_to_json "$ONLY_OS")"
           fi
+          {
+            echo "os_matrix=$os_matrix"
+            # perf-probe targets = every OS this run actually builds, plus the
+            # upstream MCR control it is measured against. Derived from os_matrix
+            # so a narrowed on-demand run never probes an image it never pushed.
+            echo "perf_targets=$(jq -c '. + ["official"]' <<< "$os_matrix")"
+          } >> "$GITHUB_OUTPUT"
 
           # Image axis (build-hardened-variants + promote). On the issue path the
           # form requires ≥1 explicit pick; on push/PR inputs.* is null so we fall
@@ -248,6 +260,23 @@ jobs:
           else
             echo "flavor_matrix=$(csv_to_json "$ONLY_FLAVOR" "hardened= sudoer=-sudoer")" >> "$GITHUB_OUTPUT"
           fi
+
+      # The perf-probe's `official` control is `mcr.microsoft.com/playwright:v<pw>-noble`,
+      # and a control whose bundled browser revisions differ from ours is not a control.
+      # The on-demand path passes the version explicitly; every other path takes the
+      # repo's own fixture version, which is also what the images are built against.
+      - name: Resolve Playwright version
+        id: pw
+        env:
+          INPUT_PW: ${{ inputs.pw_version }}
+        run: |
+          PW="$INPUT_PW"
+          if [ -z "$PW" ]; then
+            PW="$(jq -r '.devDependencies.playwright // .dependencies.playwright // empty' playwright/package.json)"
+          fi
+          PW="${PW#[\^~]}"
+          [ -n "$PW" ] || { echo "no pw_version input and no playwright dep in playwright/package.json" >&2; exit 1; }
+          echo "pw_version=$PW" >> "$GITHUB_OUTPUT"
 
       # Structural lint: any smoke YAML that issues a `docker` command must bind the
       # host socket. Without it, act-on-GHA's inherited bridge gives a false-positive
@@ -1245,6 +1274,167 @@ jobs:
           test('hello', async ({ page }) => { await page.goto('about:blank'); });
           TS
           pnpm playwright test
+
+
+  # ----------------------------------------------------------------------------
+  # Runtime perf probe — how fast the browsers we SHIP execute, as opposed to
+  # `benchmark-playwright.yml` which measures cold start ("time until tests
+  # begin"). Observe-only: absent from `promote`'s `needs:` and marked
+  # continue-on-error, so it can never gate a merge.
+  #
+  # Why: our chromium shipped with DCHECKs compiled in for months
+  # (is_official_build=false silently flips Chromium's `dcheck_always_on`
+  # default), costing 9.3x on layout and making alpine suites ~50% slower. Every
+  # test stayed green — only the wall clock moved. The probe's kernels catch that
+  # class of regression on the first run after it lands.
+  #
+  # Matrix: dood + slim only. The dind and -gyp variants ship byte-identical
+  # browser binaries, so they carry no runtime-perf signal. `official` is the
+  # upstream MCR control, probed on a sibling runner in the same run — the
+  # reportable number is the ratio against it, because absolute milliseconds swing
+  # 20-30% between hosted runners.
+  # ----------------------------------------------------------------------------
+
+  perf-probe:
+    name: perf-${{ matrix.target }}-${{ matrix.browser }}
+    runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).playwright
+    needs: [github-context, build-playwright-dood]
+    timeout-minutes: 20
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.github-context.outputs.perf_targets) }}
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/login-action@v3
+        if: matrix.target != 'official'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve image
+        id: img
+        env:
+          TARGET: ${{ matrix.target }}
+          TAG: ${{ needs.github-context.outputs.build_tag }}
+          PW: ${{ needs.github-context.outputs.pw_version }}
+        run: |
+          if [ "$TARGET" = official ]; then
+            # The MCR image runs as root; ours run as `runner`.
+            {
+              echo "image=mcr.microsoft.com/playwright:v${PW}-noble"
+              echo "home=/root"
+            } >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "image=ghcr.io/jclaveau/${TARGET}-dood-playwright:${TAG}"
+              echo "home=/home/runner"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Probe
+        env:
+          IMAGE: ${{ steps.img.outputs.image }}
+          HOME_IN: ${{ steps.img.outputs.home }}
+          BROWSER: ${{ matrix.browser }}
+          TARGET: ${{ matrix.target }}
+          PW: ${{ needs.github-context.outputs.pw_version }}
+        run: |
+          set -o pipefail
+          mkdir -p perf-out && chmod 777 perf-out   # the container writes as its own uid
+          # seccomp=unconfined: WebKit-WPE's bwrap needs it on our alpine images
+          # (no-op for the chromium/firefox legs and for the MCR control).
+          docker run --rm \
+            --security-opt seccomp=unconfined \
+            --env "HOME=$HOME_IN" \
+            --env "PROBE_BROWSER=$BROWSER" \
+            --env "PROBE_TARGET=$TARGET" \
+            --env "PW_VERSION=$PW" \
+            -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/perf-out:/out" \
+            "$IMAGE" \
+            sh -c '
+              # `playwright` is a global install in all of these images (pnpm -g on
+              # ours, npm -g on the control), and the probe is CommonJS precisely so
+              # NODE_PATH resolution applies — ESM ignores NODE_PATH. The npm
+              # fallback covers a control image that stops baking it in.
+              for r in "$(pnpm root -g 2>/dev/null)" "$(npm root -g 2>/dev/null)"; do
+                [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
+              done
+              export NODE_PATH
+              node -e "require(\"playwright\")" 2>/dev/null \
+                || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
+              node /probe/runtime-probe.cjs \
+                --browser "$PROBE_BROWSER" --target "$PROBE_TARGET" --out /out
+            ' 2>&1 | tee "perf-out/probe-${TARGET}-${BROWSER}.log"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-${{ matrix.target }}-${{ matrix.browser }}
+          path: perf-out/
+          if-no-files-found: warn
+          retention-days: 30
+
+  perf-report:
+    runs-on: ubuntu-latest
+    # `!cancelled()` rather than `success()`: a browser that fails to launch is
+    # itself the finding, and the report names the cells that produced nothing.
+    if: ${{ !cancelled() && fromJSON(needs.github-context.outputs.test_filters).playwright }}
+    needs: [github-context, perf-probe]
+    timeout-minutes: 10
+    continue-on-error: true
+    permissions:
+      contents: read
+      actions: read   # `gh run download` of the previous main run's report artifact
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: perf-*
+          path: perf-current
+          merge-multiple: true
+
+      # Drift is only readable against a prior run, and only as a ratio-vs-ratio:
+      # each run divides out its own runner. Fail-soft — the first run after this
+      # lands has no predecessor, and the report just drops the Δ column.
+      - name: Fetch the previous main report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p perf-previous
+          ids="$(gh run list --workflow "${{ github.workflow }}" --branch main \
+                   --status success --limit 15 --json databaseId \
+                   --jq '.[].databaseId')"
+          for id in $ids; do
+            # `[ x ] && continue` would trip `bash -e` on the false branch.
+            if [ "$id" != "$GITHUB_RUN_ID" ] \
+               && gh run download "$id" -n runtime-perf -D perf-previous 2>/dev/null; then
+              echo "comparing against run $id"
+              break
+            fi
+          done
+          ls -1 perf-previous || echo "no previous report found — Δ column will be empty"
+
+      - name: Report
+        run: |
+          python3 playwright/bench/perf-report.py perf-current perf-previous \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Published under a stable name so the NEXT run can find it by artifact name.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runtime-perf
+          path: perf-current/*.json
+          if-no-files-found: warn
+          retention-days: 90
 
 
   # ----------------------------------------------------------------------------
