@@ -19,6 +19,18 @@ const ok = (cond, msg) => { if (!cond) { console.error('FAIL:', msg); process.ex
   const browser = await webkit.launch();
   ok(browser, 'webkit.launch() returned a browser');
 
+  // WebKit has no Tier-1 `--version` leg — MiniBrowser-wpe reports none — so
+  // this is the only place the artifact's version gets checked at all, and
+  // promote-webkit needs this job, so it gates the `wk-<version>` tag. Without
+  // it that tag is derived purely from PW's pin and will happily label a stale
+  // binary, which is precisely how `ff-150.0.2` ended up on a Firefox 147.0.1.
+  // Required rather than skip-if-unset: an unset env would make the assertion
+  // vacuous and nothing would say so.
+  const expected = process.env.EXPECTED_WEBKIT_VERSION;
+  ok(expected, 'EXPECTED_WEBKIT_VERSION is set');
+  const actual = browser.version();
+  ok(actual === expected, `browser.version() = ${actual}, expected ${expected}`);
+
   const ctx = await browser.newContext();
   ok(ctx, 'browser.newContext()');
 

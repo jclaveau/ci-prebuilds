@@ -73,6 +73,40 @@ jobs:
             || { echo "::error::source image $SRC not found on GHCR"; exit 1; }
           echo "source OK: $SRC"
 
+      # Every other promote in this repo inherits a verified artifact through
+      # `needs:` on the build job whose Tier-1 asserts the version. This workflow
+      # has no build to inherit from — it retags whatever `source_tag` names — and
+      # it owns the CANONICAL consumer tags (`chs-<rev>` / `chs-latest`, what
+      # playwright/Dockerfile.alpine COPYs). So it has to do its own Tier-1: an
+      # existence check proves a manifest is there, not that it is this version.
+      # Skipping this is how `ff-150.0.2` came to name a Firefox 147.0.1 build.
+      - name: Pre-flight — source binary must report the pinned version
+        env:
+          SRC: ghcr.io/jclaveau/playwright-alpine-browsers:${{ inputs.source_tag }}
+          VER: ${{ steps.pins.outputs.ver }}
+        run: |
+          # The artifact is FROM scratch, so borrow a shell and the runtime deps
+          # the same way the producer's Tier-1 does.
+          cat > /tmp/Dockerfile.verify <<EOF
+          FROM alpine:edge
+          RUN apk update && apk add --no-cache \\
+              nss freetype harfbuzz ca-certificates ttf-freefont libdrm mesa-gl \\
+              libwebp libwebpdemux libxcomposite libxdamage libxrandr libxscrnsaver libxtst \\
+              libx11 libxcb libxext libxi cups-libs alsa-lib dbus-libs pango cairo \\
+              opus dav1d ffmpeg-libavformat libjpeg-turbo libxslt \\
+              libatk-1.0 libatk-bridge-2.0 at-spi2-core minizip \\
+              double-conversion crc32c libxkbcommon mesa-gbm eudev-libs flac \\
+              harfbuzz-subset
+          COPY --from=${SRC} /chrome-headless-shell-linux64 /opt/chs
+          EOF
+          docker build -t chs-promote-verify:${{ github.run_id }} -f /tmp/Dockerfile.verify /tmp
+          OUT=$(docker run --rm chs-promote-verify:${{ github.run_id }} \
+                  /opt/chs/chrome-headless-shell --version 2>&1)
+          echo "chrome-headless-shell --version output:"
+          echo "$OUT"
+          echo "$OUT" | grep -q "$VER" \
+            || { echo "::error::$SRC reports '$OUT' but would be promoted as chs-${VER}"; exit 1; }
+
       - name: Promote from-source → chs-<rev> (GHCR + Docker Hub)
         env:
           SRC: ghcr.io/jclaveau/playwright-alpine-browsers:${{ inputs.source_tag }}

@@ -1020,8 +1020,14 @@ jobs:
           OUT=$(docker run --rm chs-t1:${{ github.sha }} /opt/chs/chrome-headless-shell --version 2>&1)
           echo "chrome-headless-shell --version output:"
           echo "$OUT"
-          echo "$OUT" | grep -q "HeadlessChrome\|Chromium" \
-            || { echo "Tier-1: binary didn't self-identify"; exit 1; }
+          # Assert the pinned version, not merely "it is a Chromium": the
+          # `chs-apk-<version>` tag is derived from the pin, so a self-identifying
+          # binary of the WRONG version still publishes under the right tag. The
+          # from-source and headed legs below already assert this way; this leg
+          # was the outlier, and the identical hole on the firefox leg is how
+          # `ff-150.0.2` came to point at a Firefox 147.0.1 build.
+          echo "$OUT" | grep -q "${{ steps.pins.outputs.chromium_version }}" \
+            || { echo "Tier-1: chrome-headless-shell reported '$OUT', expected ${{ steps.pins.outputs.chromium_version }}"; exit 1; }
 
   # ── Chromium-headless-shell — from-source pipeline (DISABLED) ──────────────
   # This job builds chromium-headless-shell from source on alpine:edge using
@@ -3014,6 +3020,7 @@ jobs:
             -e LIBGL_ALWAYS_SOFTWARE=1 \
             -e GALLIUM_DRIVER=llvmpipe \
             -e MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
+            -e EXPECTED_WEBKIT_VERSION="${{ needs.build-webkit-finalize.outputs.webkit_version }}" \
             wk-candidate-runner:${{ github.sha }} \
             sh -c '
               ulimit -c unlimited 2>/dev/null || true

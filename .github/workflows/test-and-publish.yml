@@ -1277,6 +1277,54 @@ jobs:
 
 
   # ----------------------------------------------------------------------------
+  # Do the browsers staged in the image match the image's own Playwright?
+  #
+  # The producer verifies each artifact against Playwright's pin at build time,
+  # but the consumer re-states that pin independently through the hand-maintained
+  # CHS_REV / FF_REV / WK_REV build-args, and Playwright resolves a browser by
+  # DIRECTORY NAME — so a stale rev is found, launched, and never questioned. The
+  # alpine image shipped Firefox 147.0.1 out of a `firefox-1522/` directory whose
+  # Playwright pinned 150.0.2, undetected until the perf probe printed
+  # browser.version().
+  #
+  # TODO: this is deliberately NOT in `promote`'s `needs:` yet — it is red today
+  # for that exact Firefox gap, and gating every image publish on an in-flight
+  # 6-hour rebuild helps nobody. Fold it into `test-playwright-usage` (and thus
+  # the promote gate) once the FF 150.0.2 rebuild has shipped.
+  # ----------------------------------------------------------------------------
+
+  test-playwright-browser-versions:
+    runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).playwright
+    needs: [github-context, build-playwright-dood]
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+    container:
+      image: ghcr.io/jclaveau/${{ matrix.os }}-dood-playwright:${{ needs.github-context.outputs.build_tag }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      # seccomp=unconfined: WebKit-WPE's bwrap sandbox needs it even with
+      # WEBKIT_DISABLE_SANDBOX baked into the image.
+      options: >-
+        --env "HOME=/home/runner"
+        --security-opt seccomp=unconfined
+    steps:
+      - uses: actions/checkout@v7
+      - name: Every staged browser reports the version its Playwright pins
+        run: |
+          # `playwright` is installed globally in these images; the script is
+          # CommonJS so this resolution applies (ESM ignores NODE_PATH).
+          for r in "$(pnpm root -g 2>/dev/null)" "$(npm root -g 2>/dev/null)"; do
+            [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
+          done
+          export NODE_PATH
+          node playwright/scripts/assert-browser-versions.cjs
+
+  # ----------------------------------------------------------------------------
   # Runtime perf probe — how fast the browsers we SHIP execute, as opposed to
   # `benchmark-playwright.yml` which measures cold start ("time until tests
   # begin"). Observe-only: absent from `promote`'s `needs:` and marked
