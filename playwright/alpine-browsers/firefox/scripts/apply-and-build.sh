@@ -384,10 +384,17 @@ if [[ "$PW_SKIP_APORTS" != "1" ]]; then
   [[ -f "$APORTS/mozilla-location.keys" ]] && base64 -d "$APORTS/mozilla-location.keys" > "$SRC/mozilla-api-key"
   # vendor checksum clearing for rust crates aports' patches modify (cargo
   # refuses to build with modified crates unless their cargo-checksum.json
-  # is cleared)
-  for crate in audio_thread_priority libc cc; do
+  # is cleared). Read the crate list out of APKBUILD's prepare() rather than
+  # snapshotting it: aports adds crates as its patches grow (zeitstempel,
+  # wgpu-hal and alsa arrived with time64.patch), and a missing one fails the
+  # build ~4 min in with "the listed checksum of ... has changed".
+  CRATES=$(awk '$1 ~ /^_clear_vendor_checksums$/ { print $2 }' "$APORTS/APKBUILD")
+  [[ -n "$CRATES" ]] || { echo "no _clear_vendor_checksums calls found in APKBUILD" >&2; exit 1; }
+  echo "  clear vendor checksums: $(echo $CRATES | tr '\n' ' ')"
+  for crate in $CRATES; do
     cksum="third_party/rust/$crate/.cargo-checksum.json"
-    [[ -f "$cksum" ]] && sed -i 's/\("files":{\)[^}]*/\1/' "$cksum"
+    [[ -f "$cksum" ]] || { echo "  no vendored crate third_party/rust/$crate" >&2; continue; }
+    sed -i 's/\("files":{\)[^}]*/\1/' "$cksum"
   done
 fi
 
