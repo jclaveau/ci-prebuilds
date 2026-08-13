@@ -3322,9 +3322,15 @@ jobs:
     # is off (the default — webkit is dispatch/PR-label-gated only), the whole
     # chain is skipped and `!cancelled()` alone would still fire this job and
     # fail on the missing wk-sha-<sha> (red main on every push).
+    #
+    # `smoke-webkit.result == 'success'`: `!cancelled()` waives the default
+    # "a failed need skips this job" for EVERY need, not just the gtk one it
+    # was added for — so the smoke gate has to be spelled out. Without it, run
+    # 31724164357 promoted a WebKit that cannot open a page to wk-latest.
     if: |
       !cancelled()
       && needs.build-webkit-finalize.result == 'success'
+      && needs.smoke-webkit.result == 'success'
       && ((github.event_name == 'workflow_dispatch' && inputs.build_webkit == 'true')
           || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
