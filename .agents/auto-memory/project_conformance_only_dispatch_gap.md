@@ -1,6 +1,6 @@
 ---
 name: conformance-only-dispatch-gap
-description: A skip-list-only conformance probe still forces a full browser rebuild because conformance image_ref is pinned to same-run github.sha; add a conformance-only path against stable -edge tags
+description: RESOLVED — pw-conformance.yml takes a free-form image_ref on workflow_dispatch, so a skip-list probe (or an A/B winner) runs against any published tag with no rebuild; only the producer's OWN conformance jobs pin same-run github.sha
 metadata:
   type: project
 ---
@@ -19,11 +19,26 @@ chromium-fs ~hours across its 8 rounds, WK ~hours across wpe/gtk rounds. Iter
 29565116253 (2026-07-17 bucket-C probe) hit this: r1 alone ran 49min. ~8h of
 CI to validate 6 skip-list line changes.
 
-**How to apply:** for a skip-list-only probe, DON'T rebuild the browser. Options:
-(1) add a `conformance_only` dispatch input that points the conformance jobs'
-`image_ref` at a stable published tag (`chs-fs-edge` / `wk-edge` / `ff-latest`)
-and drops the `needs: [build-*]` gate; (2) or run the reusable `pw-conformance.
-yml` against a stable tag via a thin dispatch wrapper. Either cuts a probe from
-~8h to ~40min (conformance shards only). Only rebuild when the browser SOURCE
-changed. Relates to [[iterate-deps-locally-before-ci-rebuild]] (same "don't
-rebuild to test a consumer-side change" principle).
+**RESOLVED — option (2) already exists.** `pw-conformance.yml` carries its own
+`workflow_dispatch` block taking `browser` / `image_ref` (free-form string) /
+`pw_version` / `artifact_rev` / `headed`. So:
+
+```
+gh workflow run pw-conformance.yml --ref <branch> \
+  -f browser=chromium -f image_ref=ghcr.io/jclaveau/playwright-alpine-browsers:chs-fs-<rev> \
+  -f pw_version=1.60.0 -f artifact_rev=<rev>
+```
+
+runs the shards alone (~40min) against any published tag — a skip-list probe, a
+re-check of an old artifact, or a fresh A/B winner. The producer's own
+conformance jobs still pin `<tag>-sha-${{ github.sha }}`, which is correct
+there; the gap was only ever in how I reached them.
+
+**How to apply:** only rebuild when the browser SOURCE changed. Reach for the
+standalone dispatch for everything else. Relates to
+[[iterate-deps-locally-before-ci-rebuild]] (same "don't rebuild to test a
+consumer-side change" principle).
+
+**Also:** a workflow's `workflow_dispatch` inputs are worth reading before
+concluding a capability is missing — this one was reusable-called from the
+producer, and I only ever saw it through that call site.
