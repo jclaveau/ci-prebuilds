@@ -115,6 +115,11 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
+      resume_from:
+        description: 'chromium from-source: last round image of a previous chain (e.g. ghcr.io/…:chs-build-r8-sha-<sha>) — skips setup and continues its obj/ instead of starting cold'
+        required: false
+        default: ''
+        type: string
       build_chromium_headed:
         description: 'Build HEADED full chromium (VARIANT=headed, ninja chrome) FROM SOURCE — currently setup+r1 only, to validate the config (~90min+5h)'
         required: false
@@ -1056,8 +1061,10 @@ jobs:
   # a follow-up dispatch adds another round.
 
   build-chromium-headless-shell-from-source-setup:
+    # Skipped when resuming: the source tree and gn config already live in the
+    # image `resume_from` points at.
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true' && inputs.resume_from == '')
       || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -1098,10 +1105,21 @@ jobs:
             actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
 
   build-chromium-headless-shell-from-source-r1:
+    # Round images are tagged with THIS run's sha and each round consumes the
+    # previous one, so obj/ only survives inside a single run — there is no
+    # registry buildcache on this chain. A run that runs out of rounds would
+    # therefore have to start over from zero, which is what `resume_from` is
+    # for: point r1 at a previous chain's last round image and the rounds pick
+    # up where that one stopped. Rounds are interchangeable (each is "run ninja
+    # for 5h from wherever we are"), so no round-skipping is needed — the ones
+    # past the end of the work exit immediately.
     needs: build-chromium-headless-shell-from-source-setup
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
-      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+      !cancelled()
+      && (needs.build-chromium-headless-shell-from-source-setup.result == 'success'
+          || needs.build-chromium-headless-shell-from-source-setup.result == 'skipped')
+      && ((github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+          || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source')))
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
@@ -1134,7 +1152,7 @@ jobs:
           push: true
           tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r1-sha-${{ github.sha }}
           build-args: |
-            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-setup-sha-${{ github.sha }}
+            BASE_IMAGE=${{ inputs.resume_from || format('ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-setup-sha-{0}', github.sha) }}
             ROUND_LABEL=round-1
           secrets: |
             actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
