@@ -10,9 +10,13 @@ name: Promote chromium-from-source → chs-<rev>
 #
 # Reuse-if-exists: because it retags an existing chs-fs image, re-running per PW
 # rev costs seconds. Dispatch it after a from-source build lands (or to promote
-# the current chs-fs-edge). Conformance for the promoted build must be verified
-# out-of-band before dispatching (the from-source pipeline's conformance job, or
-# a triage of the build's last conformance run).
+# the current chs-fs-edge).
+#
+# Conformance used to be "verified out-of-band before dispatching", i.e. by
+# whoever remembered to look. It is now an input: `conformance_run_id` names the
+# run that passed, and the pre-flight checks that run's conformance jobs really
+# succeeded AND that its head sha matches the image's revision label — so the
+# conformance that passed is conformance of THIS artifact, not of a neighbour.
 
 on:
   workflow_dispatch:
@@ -25,6 +29,10 @@ on:
         description: Playwright version whose chromium revision/version tags to write
         default: '1.60.0'
         type: string
+      conformance_run_id:
+        description: Run id of the conformance run that passed for THIS image (its head sha must match the image's revision label)
+        required: true
+        type: string
 
 concurrency:
   group: promote-chromium-from-source
@@ -33,6 +41,7 @@ concurrency:
 permissions:
   contents: read
   packages: write
+  actions: read
 
 jobs:
   promote:
@@ -106,6 +115,36 @@ jobs:
           echo "$OUT"
           echo "$OUT" | grep -q "$VER" \
             || { echo "::error::$SRC reports '$OUT' but would be promoted as chs-${VER}"; exit 1; }
+
+      # A run can conclude `success` with every conformance job skipped, and a
+      # passing conformance run for a DIFFERENT build says nothing about this
+      # one — so check the jobs, and tie the run to the artifact by sha.
+      - name: Pre-flight — conformance must have passed for this exact image
+        env:
+          SRC: ghcr.io/jclaveau/playwright-alpine-browsers:${{ inputs.source_tag }}
+          RUN_ID: ${{ inputs.conformance_run_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -o pipefail
+          HEAD_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" -q .head_sha)
+          echo "conformance run ${RUN_ID} ran on ${HEAD_SHA}"
+
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs?per_page=100" \
+            -q '.jobs[] | select(.name | test("conformance")) | "\(.conclusion)\t\(.name)"' > /tmp/conf-jobs.txt
+          cat /tmp/conf-jobs.txt
+          [ -s /tmp/conf-jobs.txt ] \
+            || { echo "::error::run ${RUN_ID} has no conformance job"; exit 1; }
+          if grep -qvE '^success\b' /tmp/conf-jobs.txt; then
+            echo "::error::run ${RUN_ID} has conformance jobs that did not succeed"; exit 1
+          fi
+
+          IMG_SHA=$(docker buildx imagetools inspect "$SRC" --format '{{ json .Image }}' \
+            | jq -r '[.. | objects | ."org.opencontainers.image.revision"? // empty] | first // empty')
+          [ -n "$IMG_SHA" ] \
+            || { echo "::error::$SRC carries no org.opencontainers.image.revision label"; exit 1; }
+          [ "$IMG_SHA" = "$HEAD_SHA" ] \
+            || { echo "::error::$SRC was built from ${IMG_SHA}, but run ${RUN_ID} tested ${HEAD_SHA}"; exit 1; }
+          echo "conformance OK: run ${RUN_ID} passed on the sha this image was built from"
 
       - name: Promote from-source → chs-<rev> (GHCR + Docker Hub)
         env:

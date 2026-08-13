@@ -673,7 +673,10 @@ jobs:
   promote-firefox:
     # Only on main pushes: copy the GHCR sha tag to Docker Hub under
     # version-pinned + moving tags. Imagetools server-side copy — no rebuild.
-    needs: [build-firefox, smoke-firefox, smoke-firefox-library]
+    # Every gate the artifact has to clear is in `needs:` — a failed or skipped
+    # need skips this job, which is the intended answer for both. Nothing ships
+    # without smoke AND conformance.
+    needs: [build-firefox, smoke-firefox, smoke-firefox-library, conformance-firefox]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -734,9 +737,14 @@ jobs:
     # / 2 skip in 17.7s (was 11h before). Source-side fix (renaming
     # juggler/components/components.conf's m-remote category) is the
     # follow-up; requires FF rebuild.
+    #
+    # Also runs unconditionally on main pushes, because promote-firefox gates on
+    # it: nothing ships without conformance, so conformance has to be reachable
+    # on the path that ships.
     needs: [build-firefox, smoke-firefox-library]
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.run_firefox_conformance == 'true')
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || (github.event_name == 'workflow_dispatch' && inputs.run_firefox_conformance == 'true')
       || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-firefox-conformance'))
     uses: ./.github/workflows/pw-conformance.yml
     with:
@@ -756,9 +764,13 @@ jobs:
     # WPE binary should at least launch under PW SDK; expect the same
     # form-control / display-block UA-stylesheet class of failures as
     # chromium plus WebKit-specific divergences.
+    #
+    # Runs on any dispatch that builds WebKit, and on main pushes, because
+    # promote-webkit gates on it — see conformance-firefox for the same reason.
     needs: [build-webkit-finalize, smoke-webkit]
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.run_webkit_conformance == 'true')
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || (github.event_name == 'workflow_dispatch' && (inputs.run_webkit_conformance == 'true' || inputs.build_webkit == 'true'))
       || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-webkit-conformance'))
     uses: ./.github/workflows/pw-conformance.yml
     with:
@@ -3349,7 +3361,7 @@ jobs:
     # Docker Hub for external catalog):
     #   wk-sha-<sha> (WPE-only) → wk-${REV} / wk-${VER} / wk-latest
     #   wk-gtk-sha-<sha> (WPE+GTK) → wk-gtk-${REV} / wk-gtk-${VER} / wk-gtk-latest
-    needs: [build-webkit-finalize, smoke-webkit]
+    needs: [build-webkit-finalize, smoke-webkit, conformance-webkit]
     # `!cancelled()` prefix: a skipped gtk-4 (GTK gated off) cascade-skips
     # dependents without an always/!cancelled conditional (actions/runner#491).
     # `build-webkit-finalize.result == 'success'`: on a push where build_webkit
@@ -3357,14 +3369,15 @@ jobs:
     # chain is skipped and `!cancelled()` alone would still fire this job and
     # fail on the missing wk-sha-<sha> (red main on every push).
     #
-    # `smoke-webkit.result == 'success'`: `!cancelled()` waives the default
-    # "a failed need skips this job" for EVERY need, not just the gtk one it
-    # was added for — so the smoke gate has to be spelled out. Without it, run
-    # 31724164357 promoted a WebKit that cannot open a page to wk-latest.
+    # `smoke-webkit` / `conformance-webkit` spelled out: `!cancelled()` waives
+    # the default "a failed need skips this job" for EVERY need, not just the
+    # gtk one it was added for. Without it, run 31724164357 promoted a WebKit
+    # that cannot open a page to wk-latest.
     if: |
       !cancelled()
       && needs.build-webkit-finalize.result == 'success'
       && needs.smoke-webkit.result == 'success'
+      && needs.conformance-webkit.result == 'success'
       && ((github.event_name == 'workflow_dispatch' && inputs.build_webkit == 'true')
           || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
