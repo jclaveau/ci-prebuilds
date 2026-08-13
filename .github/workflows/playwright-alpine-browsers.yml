@@ -1441,12 +1441,194 @@ jobs:
             actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
             actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
 
-  build-chromium-headless-shell-from-source:
-    # Final job — runs `ninja headless_shell` without timeout. Consumes r8 output.
-    # v19 (28675077027) died at 84.7% (ninja step 13152/15531) after 5h40m of
-    # finalize compile. r8 knocks out the remaining ~2379 compiles in isolation
-    # so finalize gets ~4h+ of headroom for the link step + any residual work.
+  build-chromium-headless-shell-from-source-r9:
     needs: build-chromium-headless-shell-from-source-r8
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v9
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build round-9 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r9-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r8-sha-${{ github.sha }}
+            ROUND_LABEL=round-9
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headless-shell-from-source-r10:
+    needs: build-chromium-headless-shell-from-source-r9
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v9
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build round-10 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r10-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r9-sha-${{ github.sha }}
+            ROUND_LABEL=round-10
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headless-shell-from-source-r11:
+    needs: build-chromium-headless-shell-from-source-r10
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v9
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build round-11 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r11-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r10-sha-${{ github.sha }}
+            ROUND_LABEL=round-11
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headless-shell-from-source-r12:
+    needs: build-chromium-headless-shell-from-source-r11
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v9
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Build round-12 image
+        uses: docker/build-push-action@v5
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
+          ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r12-sha-${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r11-sha-${{ github.sha }}
+            ROUND_LABEL=round-12
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-chromium-headless-shell-from-source:
+    # Final job — runs `ninja headless_shell` without timeout, so every compile
+    # has to be done by the time it starts; it only has headroom for the link.
+    #
+    # Rounds are boxed by TIME (5h each), not by work, and per-round yield decays
+    # hard as the cheap TUs run out — measured on the is_official_build A/B
+    # (31596578641), targets built per round:
+    #
+    #   r1 13976 | r2 9148 | r3 2926 | r4 1735 | r5 2046   → 8330 still to go
+    #
+    # so the tail runs at ~2200/round, not the ~14k the first round suggests.
+    # Eight rounds covered the old DCHECK build and no more; sizing off r1 is
+    # what left 2379 compiles for finalize in v19 (28675077027), which then died
+    # at 84.7% after 5h40m. Twelve covers the LTO-enabled build with slack.
+    # Surplus rounds are nearly free — ninja exits at once with nothing to do.
+    needs: build-chromium-headless-shell-from-source-r12
     if: |
       (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
       || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
@@ -1517,7 +1699,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           target: artifact
           build-args: |
-            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r8-sha-${{ github.sha }}
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r12-sha-${{ github.sha }}
           secrets: |
             actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
             actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
