@@ -209,12 +209,24 @@ cp -a "$PW/juggler/." juggler/
 echo "  FIX: thread location through Page.uncaughtError (ports microsoft/playwright main)"
 python3 - <<'PYEOF'
 import pathlib
+import sys
+
 def patch(path, pairs):
     p = pathlib.Path(path); s = p.read_text()
     for old, new in pairs:
         assert old in s, f"anchor not found in {path}:\n{old!r}"
         s = s.replace(old, new, 1)
     p.write_text(s)
+
+# Upstream landed this plumbing between 1.60 and 1.62: v1.62.0's Runtime.js builds
+# `errorLocation` itself, so the anchors below no longer match and the port is
+# redundant. Detect the fix rather than the version — the patch has to keep
+# applying to older pins and no-op on newer ones. If NEITHER the fix nor the
+# anchor is present the asserts below still fail loudly, which is the property
+# this block was written for.
+if 'const errorLocation = {' in pathlib.Path('juggler/content/Runtime.js').read_text():
+    print("  SKIP: juggler already threads location upstream — nothing to port")
+    sys.exit(0)
 
 patch('juggler/content/Runtime.js', [
   ("        const errorWindow = Services.wm.getOuterWindowWithId(message.outerWindowID);\n"
