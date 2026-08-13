@@ -1118,14 +1118,22 @@ jobs:
             actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
 
   build-chromium-headless-shell-from-source-r1:
+    # Each round carries its own buildcache ref (buildcache-chs-round-N) so a
+    # round that has to be re-run — runner flake, a rerun of the job, a retried
+    # dispatch — restores its 5h of ninja instead of redoing it. One ref per
+    # round, not one shared ref: a single ref would be rewritten twelve times
+    # per run and keep only the last round's entry. This is retry insurance and
+    # nothing more: cache keys include the base image digest, and a fresh run
+    # builds a fresh setup image, so a new sha still starts cold. Continuing a
+    # chain across runs is what `resume_from` below is for.
+    #
     # Round images are tagged with THIS run's sha and each round consumes the
-    # previous one, so obj/ only survives inside a single run — there is no
-    # registry buildcache on this chain. A run that runs out of rounds would
-    # therefore have to start over from zero, which is what `resume_from` is
-    # for: point r1 at a previous chain's last round image and the rounds pick
-    # up where that one stopped. Rounds are interchangeable (each is "run ninja
-    # for 5h from wherever we are"), so no round-skipping is needed — the ones
-    # past the end of the work exit immediately.
+    # previous one, so obj/ only survives inside a single run. A run that runs
+    # out of rounds would otherwise start over from zero: `resume_from` points
+    # r1 at a previous chain's last round image and the rounds pick up where
+    # that one stopped. Rounds are interchangeable (each is "run ninja for 5h
+    # from wherever we are"), so no round-skipping is needed — the ones past
+    # the end of the work exit immediately.
     needs: build-chromium-headless-shell-from-source-setup
     if: |
       !cancelled()
@@ -1164,6 +1172,8 @@ jobs:
           file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
           push: true
           tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r1-sha-${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-1
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-1,mode=max
           build-args: |
             BASE_IMAGE=${{ inputs.resume_from || format('ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-setup-sha-{0}', github.sha) }}
             ROUND_LABEL=round-1
@@ -1207,6 +1217,8 @@ jobs:
           file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
           push: true
           tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r2-sha-${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-2
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-2,mode=max
           build-args: |
             BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r1-sha-${{ github.sha }}
             ROUND_LABEL=round-2
@@ -1250,6 +1262,8 @@ jobs:
           file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
           push: true
           tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r3-sha-${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-3
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-3,mode=max
           build-args: |
             BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r2-sha-${{ github.sha }}
             ROUND_LABEL=round-3
@@ -1293,6 +1307,8 @@ jobs:
           file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
           push: true
           tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r4-sha-${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-4
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-4,mode=max
           build-args: |
             BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r3-sha-${{ github.sha }}
             ROUND_LABEL=round-4
@@ -1336,6 +1352,8 @@ jobs:
           file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
           push: true
           tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r5-sha-${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-5
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-5,mode=max
           build-args: |
             BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r4-sha-${{ github.sha }}
             ROUND_LABEL=round-5
@@ -1379,6 +1397,8 @@ jobs:
           file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
           push: true
           tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r6-sha-${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-6
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-6,mode=max
           build-args: |
             BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r5-sha-${{ github.sha }}
             ROUND_LABEL=round-6
@@ -1422,6 +1442,8 @@ jobs:
           file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
           push: true
           tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r7-sha-${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-7
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-7,mode=max
           build-args: |
             BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r6-sha-${{ github.sha }}
             ROUND_LABEL=round-7
@@ -1465,6 +1487,8 @@ jobs:
           file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
           push: true
           tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r8-sha-${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-8
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-8,mode=max
           build-args: |
             BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r7-sha-${{ github.sha }}
             ROUND_LABEL=round-8
@@ -1508,6 +1532,8 @@ jobs:
           file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
           push: true
           tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r9-sha-${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-9
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-9,mode=max
           build-args: |
             BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r8-sha-${{ github.sha }}
             ROUND_LABEL=round-9
@@ -1551,6 +1577,8 @@ jobs:
           file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
           push: true
           tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r10-sha-${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-10
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-10,mode=max
           build-args: |
             BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r9-sha-${{ github.sha }}
             ROUND_LABEL=round-10
@@ -1594,6 +1622,8 @@ jobs:
           file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
           push: true
           tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r11-sha-${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-11
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-11,mode=max
           build-args: |
             BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r10-sha-${{ github.sha }}
             ROUND_LABEL=round-11
@@ -1637,6 +1667,8 @@ jobs:
           file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.round
           push: true
           tags: ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r12-sha-${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-12
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-round-12,mode=max
           build-args: |
             BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r11-sha-${{ github.sha }}
             ROUND_LABEL=round-12
@@ -1729,6 +1761,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           target: artifact
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-finalize
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-finalize,mode=max
           build-args: |
             BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r12-sha-${{ github.sha }}
           secrets: |
