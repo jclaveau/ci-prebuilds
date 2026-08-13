@@ -66,3 +66,13 @@ payload vs what PW-core `packages/playwright-core/src/server/firefox` expects fo
 Related: [[project_ff_conformance_skip_seed_v1]],
 [[feedback_unskip_regression_beyond_target]],
 [[project_pw_upstream_juggler_handshake_hang]].
+
+**SUPERSEDED UPSTREAM at PW 1.62 (2026-08-13).** v1.62.0's
+`juggler/content/Runtime.js` builds `errorLocation` itself, three lines below our
+anchor — so the port's asserts fired with `anchor not found` ten seconds into the
+first 1.62 build. Fixed `65bc655` by **detecting the fix rather than the version**
+(`'const errorLocation = {' in Runtime.js` → skip), so the patch still applies to
+older pins, no-ops forward, and a tree with NEITHER the fix nor the anchor still
+fails loudly. Verified against both real juggler trees: 1.60.0 → APPLY,
+1.62.0 → SKIP. Generalises: a port whose own comment says "ports upstream main"
+has an expiry date — guard it on the presence of what it adds.

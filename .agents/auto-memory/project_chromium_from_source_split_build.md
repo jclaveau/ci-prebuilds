@@ -25,3 +25,20 @@ Self-hosted runner approach explicitly REJECTED by user (2026-06-28). Stay on GH
 **Binary is NOT stripped by default.** GN `symbol_level = 0` drops DWARF debug info but the linker still emits `.symtab`/`.strtab`; PW's official prebuilt ships stripped. A `strip --strip-all` pass in `stage-cache-layout.sh` (finalize stage) removes them (`.dynsym` kept, loading unaffected). Bigger lever = `is_official_build=true` (PGO/LTO) but that risks the 6h cap → deliberately not taken. NOTE the finalize-overlay dependency: editing stage-cache-layout.sh requires a fresh COPY in Dockerfile.finalize or the edit is inert on incremental dispatch ([[project_finalize_overlay_baked_scripts]]).
 
 Related: [[project_pw_conformance_visibility_cluster]] runs against the eventually-built from-source binary to verify whether `--no-startup-window` / UA-stylesheet bug exists in the apk only.
+
+**Per-round yield DECAYS sharply, and ninja's total shrinks as it goes.** Read the
+counter from each round's log (`grep -oE '\[[0-9]+/[0-9]+\]' | tail -1`) — the
+denominator is targets REMAINING at that round's start, not the whole graph:
+
+```
+r1  13976 of 37258  → 23282 left
+r2   9148 of 23501  → 14353 left
+r3   2926 of 14590  → 11664 left      (~5h11m per round, metronomic)
+```
+
+Cheap translation units go first; the expensive ones and the link steps remain, so
+throughput fell 13976 → 9148 → 2926 at constant wall-clock. **Estimate completion
+from the counter, never from "round N of 8"** — at r3's rate the 11664 remaining
+needed ~4 more rounds, but a continued decay would exceed the r1..r8 budget
+entirely and finalize would run against an incomplete tree. Watch the yield of each
+round as it lands; that is the early warning.
