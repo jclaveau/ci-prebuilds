@@ -2832,6 +2832,13 @@ jobs:
       # Whether the artifact carries the GTK port (headed) — gates the Tier-2
       # headed smoke below; false → WPE-only (empty gtk dir).
       gtk_built: ${{ needs.build-webkit-gtk-4.result == 'success' }}
+    # Both build steps below read the same GTK base, including the WPE-only one:
+    # BuildKit parses every stage in the file, so `FROM ${BASE_GTK} AS gtk_real`
+    # has to resolve even when that stage goes unused. Held in one place because
+    # the two steps carried the same ternary and only one of them got fixed.
+    env:
+      BASE_GTK: ${{ needs.build-webkit-gtk-4.result == 'success' && format('ghcr.io/jclaveau/playwright-alpine-browsers:{0}', needs.build-webkit-gtk-4.outputs.tag) || 'scratch' }}
+      GTK_STAGE: ${{ needs.build-webkit-gtk-4.result == 'success' && 'real' || 'none' }}
     steps:
       - uses: actions/checkout@v4
       - name: Free up runner disk
@@ -2867,7 +2874,7 @@ jobs:
           labels: ${{ steps.meta-wpe.outputs.labels }}
           build-args: |
             BASE_WPE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-wpe-4.outputs.tag }}
-            BASE_GTK=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-gtk-4.outputs.tag }}
+            BASE_GTK=${{ env.BASE_GTK }}
             BASE_SOURCE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-source-prep.outputs.tag }}
       - name: Build WPE+GTK artifact (wk-gtk-sha-<sha>)
         uses: docker/build-push-action@v5
@@ -2880,8 +2887,8 @@ jobs:
           labels: ${{ steps.meta-gtk.outputs.labels }}
           build-args: |
             BASE_WPE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-wpe-4.outputs.tag }}
-            BASE_GTK=${{ needs.build-webkit-gtk-4.result == 'success' && format('ghcr.io/jclaveau/playwright-alpine-browsers:{0}', needs.build-webkit-gtk-4.outputs.tag) || 'scratch' }}
-            GTK_STAGE=${{ needs.build-webkit-gtk-4.result == 'success' && 'real' || 'none' }}
+            BASE_GTK=${{ env.BASE_GTK }}
+            GTK_STAGE=${{ env.GTK_STAGE }}
             BASE_SOURCE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-source-prep.outputs.tag }}
 
       - name: Tier-1 smoke (ELF + ldd integrity for MiniBrowser-wpe + MiniBrowser-gtk)
