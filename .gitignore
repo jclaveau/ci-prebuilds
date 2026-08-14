@@ -1,2 +1,5 @@
 .claude/
 metrics/.*.lock
+# Derived from the JSONL by metrics-report.py. The tables are committed as
+# report.md; the chart is a binary that would churn on every snapshot.
+metrics/report.png
