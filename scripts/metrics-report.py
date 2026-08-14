@@ -24,7 +24,9 @@ import argparse
 import collections
 import datetime as dt
 import glob
+import itertools
 import json
+import math
 import pathlib
 import statistics
 import sys
@@ -134,6 +136,89 @@ def ghcr_cost(images):
     return series, events
 
 
+# Rates read from GitHub's docs on 2026-08-14. This repo is public and pays
+# none of it — these are the counterfactual for the same workload run privately.
+#
+#   docs.github.com/en/billing/reference/actions-runner-pricing
+#   docs.github.com/en/billing/concepts/product-billing/github-actions
+#   docs.github.com/en/billing/concepts/product-billing/github-packages
+#
+# The January 2026 repricing cut runner rates ~40% and introduced a $0.002/min
+# platform charge; per GitHub, "The new listed GitHub-runner rates include this
+# charge", so 0.006 is the whole price and the fee is not added on top.
+RUNNER_USD_PER_MINUTE = {"ubuntu-latest": 0.006}   # Linux 2-core x64
+STORAGE_USD_PER_GB_MONTH = 0.25                    # artifacts + Packages, shared pool
+INCLUDED_MINUTES = {"Free": 2000, "Pro": 3000, "Team": 3000, "Enterprise": 50000}
+
+# The registry is exempt, not cheap: "Container image storage and bandwidth for
+# the Container registry is currently free." The exemption is revocable —
+# "you'll be informed at least one month in advance of any change to this
+# policy" — so the report prices the exposure rather than treating it as zero
+# forever. Applied at the Packages rate, since that is the pool it would join.
+CONTAINER_REGISTRY_IS_FREE = True
+
+
+def billed(jobs, bucket):
+    """(bucket -> billed minutes, bucket -> USD, unpriced labels).
+
+    Billing rounds *each job* up to a whole minute, so this is deliberately not
+    the raw sum: across tens of thousands of mostly-short jobs the round-up is a
+    real line item (+13%), not a rounding detail. Dollars are accumulated per
+    job rather than by multiplying the total, so a future mixed-runner matrix
+    prices correctly without touching this.
+    """
+    minutes, usd = collections.Counter(), collections.Counter()
+    unpriced = collections.Counter()
+    for job in jobs:
+        secs = duration_s(job.get("started_at"), job.get("completed_at"))
+        if not secs:
+            continue  # never ran: skipped, or still in flight
+        labels = job.get("labels") or []
+        rate = next((RUNNER_USD_PER_MINUTE[x] for x in labels
+                     if x in RUNNER_USD_PER_MINUTE), None)
+        if rate is None:
+            unpriced[tuple(labels)] += 1
+            continue
+        key = bucket(job)
+        if not key:
+            continue
+        whole = math.ceil(secs / 60)
+        minutes[key] += whole
+        usd[key] += whole * rate
+    return minutes, usd, unpriced
+
+
+def artifact_gb_months(artifacts):
+    """GB-months of artifact storage, from each artifact's own retention.
+
+    Charged on what was actually held: size times its own lifetime, not a
+    snapshot of today's total. Artifacts that already expired still cost money
+    while they existed, which is why the expired ones are counted too.
+    """
+    total = 0.0
+    for art in artifacts:
+        size = art.get("size_in_bytes") or 0
+        held = duration_s(art.get("created_at"), art.get("expires_at"))
+        if size and held:
+            total += (size / 1024 ** 3) * (held / 86400) / 30.0
+    return total
+
+
+def carry_forward(series, weeks):
+    """A stock's value at every week, held flat where nothing was published.
+
+    Storage is a stock, not a rate: bytes published in June are still stored in
+    July. Reading a gap as 0 — which is right for the runner-hours bars — made
+    the curve collapse to zero and climb back. Carrying the level forward is
+    what the data says; the markers still only sit on weeks that had an event.
+    """
+    out, last = [], 0
+    for w in weeks:
+        last = series.get(w, last)
+        out.append(last)
+    return out
+
+
 def pull_sizes(images):
     """tag-family -> [(created_at, bytes)] — what a consumer actually downloads.
 
@@ -227,15 +312,62 @@ def write_report(jobs, runs, images, artifacts):
         "| week | runner-hours | top workflow | GHCR added | GHCR live |",
         "|---|---:|---|---:|---:|",
     ]
-    for w in sorted(set(cost) | set(ghcr)):
+    table_weeks = sorted(set(cost) | set(ghcr))
+    live = carry_forward(ghcr, table_weeks)
+    for w, held in zip(table_weeks, live):
         wf = cost.get(w) or collections.Counter()
         top = wf.most_common(1)
         lines.append(
             f"| {w} | {sum(wf.values()) / 60:.1f} "
             f"| {top[0][0][:34] if top else '-'} "
             f"| {fmt_gb(weekly_add.get(w, 0))} "
-            f"| {fmt_gb(ghcr.get(w, 0))} |"
+            f"| {fmt_gb(held)} |"
         )
+
+    minutes, dollars, unpriced = billed(
+        jobs, lambda j: (j.get("started_at") or "")[:7])
+    gb_months = artifact_gb_months(artifacts)
+    months = len(minutes) or 1
+    lines += [
+        "", "## What this would cost as a private repo", "",
+        "Standard runners are free on public repos, so today this is all $0. "
+        "Privately it is almost entirely Actions minutes, because the registry "
+        "is exempt: *\"Container image storage and bandwidth for the Container "
+        "registry is currently free.\"*", "",
+        "| month | billed minutes | Actions $ |", "|---|---:|---:|",
+    ]
+    for month in sorted(minutes):
+        lines.append(f"| {month} | {minutes[month]:,} | ${dollars[month]:,.0f} |")
+    total_min = sum(minutes.values())
+    lines += [
+        f"| **total** | **{total_min:,}** | **${sum(dollars.values()):,.0f}** |",
+        "",
+        f"Artifact storage: **{gb_months:,.1f} GB-months** "
+        f"= **${gb_months * STORAGE_USD_PER_GB_MONTH:,.0f}** at "
+        f"${STORAGE_USD_PER_GB_MONTH}/GB/month.",
+        "",
+        "Net of each plan's included minutes, per month averaged over the "
+        f"{months} month(s) on record:", "",
+        "| plan | included | billed over | $/month |", "|---|---:|---:|---:|",
+    ]
+    avg = total_min / months
+    rate = RUNNER_USD_PER_MINUTE["ubuntu-latest"]
+    for plan, included in INCLUDED_MINUTES.items():
+        over = max(0, avg - included)
+        lines.append(f"| {plan} | {included:,} | {over:,.0f} | ${over * rate:,.0f} |")
+    live_gb = (max(ghcr.values()) if ghcr else 0) / 1024 ** 3
+    lines += [
+        "",
+        f"Registry exposure if the exemption ends: **{live_gb:,.0f} GB** at "
+        f"${STORAGE_USD_PER_GB_MONTH}/GB/month = "
+        f"**${live_gb * STORAGE_USD_PER_GB_MONTH:,.0f}/month**, which would "
+        "roughly double the bill. GitHub commits to one month's notice, so it "
+        "is a watch item rather than a plan.",
+    ]
+    if unpriced:
+        lines += ["", "Unpriced runner labels (not in the rate table): "
+                  + ", ".join(f"`{lbl or '(none)'}` x{n}"
+                              for lbl, n in unpriced.most_common(5))]
 
     lines += ["", "## Image pull size, per package", "",
               "| package | images | first | latest | min | max |",
@@ -260,23 +392,31 @@ def write_report(jobs, runs, images, artifacts):
 
     (OUT / "report.md").write_text("\n".join(x for x in lines if x is not None) + "\n")
     print(f"wrote {OUT / 'report.md'}")
-    return cost, ghcr, bench
+    _, weekly_usd, _ = billed(jobs, lambda j: week(j.get("started_at")))
+    return cost, ghcr, bench, weekly_usd
 
 
 def plot_lines(ax, weeks, bench, pick, field, title, ylabel):
-    """One line per series `pick` accepts. A series needs two weeks to be a
-    trend; a lone point is dropped rather than drawn as a flat segment."""
+    """One line per series `pick` accepts, broken wherever a week has no data.
+
+    The y value is None on weeks with no measurement, which makes matplotlib
+    lift the pen. Plotting only the weeks that HAVE data joins them with a
+    straight segment, so the two-month stretch when nobody dispatched the
+    benchmark read as a smooth trend between two unrelated campaigns — a
+    different Playwright version and different images on either side of it.
+    Markers still land only on real samples, so an isolated campaign shows as
+    points rather than vanishing.
+    """
     drawn = 0
     for label in sorted(bench):
         if not pick(label):
             continue
-        pts = [(weeks.index(w), v[field])
-               for w, v in sorted(bench[label].items())
-               if w in weeks and field in v]
-        if len(pts) < 2:
+        series = bench[label]
+        ys = [series[w][field] if w in series and field in series[w] else None
+              for w in weeks]
+        if sum(y is not None for y in ys) < 2:
             continue
-        ax.plot([p[0] for p in pts], [p[1] for p in pts],
-                marker="o", ms=3, lw=1.2, label=label)
+        ax.plot(range(len(weeks)), ys, marker="o", ms=3, lw=1.2, label=label)
         drawn += 1
     ax.set_title(title, fontsize=10)
     ax.set_ylabel(ylabel)
@@ -284,25 +424,51 @@ def plot_lines(ax, weeks, bench, pick, field, title, ylabel):
         ax.legend(fontsize=6, loc="center left", bbox_to_anchor=(1.01, 0.5))
 
 
-def write_charts(cost, ghcr, bench):
+def write_charts(cost, ghcr, bench, weekly_usd):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    weeks = sorted(set(cost) | set(ghcr) | {w for s in bench.values() for w in s})
+    weeks = sorted(set(cost) | set(ghcr) | set(weekly_usd)
+                   | {w for s in bench.values() for w in s})
     x = range(len(weeks))
-    fig, (ax_cost, ax_ttt, ax_test) = plt.subplots(
-        3, 1, figsize=(15, 12), sharex=True,
-        gridspec_kw={"right": 0.72, "hspace": 0.32})
+    fig, (ax_cost, ax_ghcr, ax_ttt, ax_test) = plt.subplots(
+        4, 1, figsize=(15, 15), sharex=True,
+        gridspec_kw={"right": 0.72, "hspace": 0.34})
 
-    ax_cost.bar(x, [sum(cost.get(w, {}).values()) / 60 for w in weeks],
-                color="#4c72b0")
-    ax_cost.set_ylabel("runner-hours / week", color="#4c72b0")
-    ax_cost.set_title("CI cost and registry footprint", fontsize=10)
-    ghcr_ax = ax_cost.twinx()
-    ghcr_ax.plot(x, [ghcr.get(w, 0) / 1024 ** 3 for w in weeks],
-                 color="#c44e52", marker="o", ms=3)
-    ghcr_ax.set_ylabel("GHCR live GB", color="#c44e52")
+    # Actions cost. The bars are what a private repo would be invoiced that
+    # week; the line is the running total, which is the question "what has this
+    # project cost so far" and does not fall just because a week was quiet.
+    spend = [weekly_usd.get(w, 0) for w in weeks]
+    ax_cost.bar(x, spend, color="#4c72b0")
+    ax_cost.set_ylabel("Actions $ / week", color="#4c72b0")
+    ax_cost.set_title(
+        "Actions cost if this repo were private — $0 as a public repo",
+        fontsize=10)
+    cum_ax = ax_cost.twinx()
+    cum_ax.plot(x, list(itertools.accumulate(spend)), color="#55a868", lw=1.6)
+    cum_ax.set_ylabel("cumulative $", color="#55a868")
+    cum_ax.set_ylim(bottom=0)
+
+    # Registry: bytes on the left, what they WOULD cost on the right. The two
+    # axes are the same series rescaled, because the registry is exempt today
+    # and the dollar figure is only the exposure if that policy ends.
+    held_gb = [b / 1024 ** 3 for b in carry_forward(ghcr, weeks)]
+    ax_ghcr.plot(x, held_gb, color="#c44e52", lw=1.6)
+    sampled = [i for i, w in enumerate(weeks) if w in ghcr]
+    ax_ghcr.plot(sampled, [held_gb[i] for i in sampled],
+                 color="#c44e52", ls="none", marker="o", ms=3.5)
+    ax_ghcr.set_ylabel("GHCR live GB", color="#c44e52")
+    ax_ghcr.set_ylim(bottom=0)
+    ax_ghcr.set_title(
+        "Registry footprint — free today; right axis is the exposure "
+        "if the exemption ends", fontsize=10)
+    usd_ax = ax_ghcr.twinx()
+    usd_ax.set_ylim(0, max(held_gb or [0]) * STORAGE_USD_PER_GB_MONTH * 1.05 or 1)
+    # Escaped: a pair of bare $ in a matplotlib label is parsed as mathtext and
+    # the text comes out italic with the dollar signs eaten.
+    usd_ax.set_ylabel(
+        rf"\$/month at \${STORAGE_USD_PER_GB_MONTH}/GB", color="#8172b2")
 
     # The consumer-facing wait is the whole-suite `all` bench; the per-browser
     # and gyp variants repeat its shape and would only crowd the panel.
@@ -333,9 +499,10 @@ def main():
     if not jobs:
         sys.exit("no jobs collected yet — run collect-metrics.py runs first")
     images = load("images", key=lambda r: (r.get("package"), r.get("digest")))
-    cost, ghcr, bench = write_report(jobs, runs, images, load("artifacts"))
+    cost, ghcr, bench, weekly_usd = write_report(
+        jobs, runs, images, load("artifacts"))
     if not args.text:
-        write_charts(cost, ghcr, bench)
+        write_charts(cost, ghcr, bench, weekly_usd)
 
 
 if __name__ == "__main__":

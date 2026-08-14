@@ -14,7 +14,15 @@ name: Benchmark Playwright
 # slim and -gyp.)
 
 on:
-  # DEV MODE: dispatch-only — benches Docker Hub :latest, no dependence on a fresh build. For per-commit
+  # Daily so the series is continuous. It used to be dispatch-only, and nobody dispatched it between
+  # 2026-05-30 and 2026-07-28 — a two-month hole with a Playwright bump and new images inside it, which
+  # left the two campaigns on either side uncomparable. A cadence is what makes the numbers a trend.
+  # 03:00 UTC = 05:00 Paris in summer, 04:00 in winter; GitHub cron has no timezone, so it drifts an hour
+  # across DST rather than moving the hour it lands in Paris. Every input below falls back to a default,
+  # so a scheduled run benches :latest at runs=1 against the repo's own Playwright version.
+  schedule:
+    - cron: '0 3 * * *'
+  # DEV MODE: benches Docker Hub :latest, no dependence on a fresh build. For per-commit
   # stats restore the workflow_run trigger + GHCR sha tags + credentials/login steps below.
   workflow_dispatch:
     inputs:
