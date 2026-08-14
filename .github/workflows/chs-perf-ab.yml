@@ -26,7 +26,7 @@ on:
         default: 'control'
         type: string
       image_b:
-        description: 'Candidate artifact'
+        description: 'Candidate artifact, or the literal `official` for PW''s published image as reference'
         required: true
         type: string
       label_b:
@@ -78,8 +78,34 @@ jobs:
           # Runtime deps for a from-source musl chrome-headless-shell. Same list
           # the from-source promote's Tier-1 uses: aports builds these
           # use_system_*, so the binary dies at load without them.
+          # `official` names PW's own published image rather than one of our
+          # artifacts: it already carries chromium and a global playwright, so it
+          # needs no staging. It is the reference for "how far off the official
+          # build are we", which is a different question from arm-vs-arm and the
+          # reason the probe reports ratios at all.
+          probe_official() {
+            local label="$1" image="mcr.microsoft.com/playwright:v${PW}-noble"
+            echo "::group::probe ${label} (${image})"
+            docker run --rm \
+              --env "PROBE_TARGET=${label}" \
+              --env HOME=/root \
+              -v "$PWD/playwright/bench:/probe:ro" \
+              -v "$PWD/perf-out:/out" \
+              "$image" \
+              sh -c '
+                export NODE_PATH="$(npm root -g)"
+                node /probe/runtime-probe.cjs \
+                  --browser chromium --target "$PROBE_TARGET" --out /out
+              ' 2>&1 | tee "perf-out/probe-${label}.log"
+            echo "::endgroup::"
+          }
+
           probe_one() {
             local image="$1" label="$2"
+            if [ "$image" = official ]; then
+              probe_official "$label"
+              return
+            fi
             echo "::group::stage + probe ${label} (${image})"
             cat > /tmp/Dockerfile."${label}" <<EOF
           FROM alpine:edge
