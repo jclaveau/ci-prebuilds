@@ -2,7 +2,7 @@
 """Turn the per-cell runtime-probe JSONs into a markdown report.
 
 The only trustworthy number here is the RATIO of each of our images against the
-`official` MCR control probed in the same workflow run: hosted runners vary by
+`official` control (the PW official image) probed in the same workflow run: hosted runners vary by
 20-30% between jobs, so absolute milliseconds move on their own. Ratios are also
 what makes a delta against a previous run meaningful, since both runs divide out
 their own runner.
@@ -63,7 +63,7 @@ def ratios(browser_data):
 def render(current, previous):
     lines = ["## Runtime perf probe", ""]
     lines += [
-        "Browser execution speed of the images this run built, against the official MCR",
+        "Browser execution speed of the images this run built, against PW official",
         "image probed **on the same runner, in the same job** — hosted runners hand out",
         "different CPU models per job (EPYC 9V74, Xeon 8370C and Xeon 6973P-C all showed",
         "up in one run), so a control on a sibling runner is not a control.",

@@ -15,7 +15,7 @@
  *   - CommonJS on purpose: `playwright` is a GLOBAL install in these images and
  *     ESM ignores NODE_PATH, so `import` could not resolve it.
  *   - Absolute milliseconds on a GHA runner are worthless (±20-30% between jobs).
- *     The consumer of this output is the RATIO against the `official` MCR control
+ *     The consumer of this output is the RATIO against the `official` control (the PW official image)
  *     probed in the same workflow run — see the perf-report job.
  *   - Every kernel measures ONE subsystem. The `libm_fmod` kernel is split out
  *     explicitly because a `%` on a value past 2^53 compiles to an fmod() libm

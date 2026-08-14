@@ -97,7 +97,7 @@ jobs:
       os_matrix:     ${{ steps.matrices.outputs.os_matrix }}
       image_matrix:  ${{ steps.matrices.outputs.image_matrix }}
       flavor_matrix: ${{ steps.matrices.outputs.flavor_matrix }}
-      # perf-probe axis: os_matrix + the `official` MCR control it is compared to.
+      # perf-probe axis: os_matrix + the `official` control (PW official) it is compared to.
       perf_targets:  ${{ steps.matrices.outputs.perf_targets }}
       # Playwright version the `official` control must pull, so its bundled browser
       # revisions match the ones our images bake.
@@ -199,7 +199,7 @@ jobs:
           {
             echo "os_matrix=$os_matrix"
             # perf-probe targets = every OS this run actually builds, plus the
-            # upstream MCR control it is measured against. Derived from os_matrix
+            # PW official control it is measured against. Derived from os_matrix
             # so a narrowed on-demand run never probes an image it never pushed.
             echo "perf_targets=$(jq -c '. + ["official"]' <<< "$os_matrix")"
           } >> "$GITHUB_OUTPUT"
@@ -1384,14 +1384,14 @@ jobs:
           for target in $(jq -r '.[]' <<< "$TARGETS"); do
             if [ "$target" = official ]; then
               image="mcr.microsoft.com/playwright:v${PW}-noble"
-              home=/root                            # the MCR image runs as root
+              home=/root                            # the PW official image runs as root
             else
               image="ghcr.io/jclaveau/${target}-dood-playwright:${TAG}"
               home=/home/runner
             fi
             echo "::group::probe $target/$BROWSER ($image)"
             # seccomp=unconfined: WebKit-WPE's bwrap needs it on our alpine images
-            # (no-op for the chromium/firefox legs and for the MCR control).
+            # (no-op for the chromium/firefox legs and for the PW official control).
             # One target failing must not cost us the others' measurements, so the
             # loop records the failure and carries on; `rc` is re-raised at the end.
             docker run --rm \

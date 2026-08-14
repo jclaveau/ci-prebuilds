@@ -9,7 +9,7 @@ name: Benchmark Playwright
 # (each image used as a local act runner) and shown in a separate "Via act" table.
 # OUR images are pulled from GHCR by tag (default: sha of the build that triggered this run; overridable
 # via the image_tag dispatch input) so each run benchmarks the exact images that build pushed; official
-# stays MCR. (alpine-* images now ship all three musl-native engines too, so they appear in both the
+# stays PW official. (alpine-* images now ship all three musl-native engines too, so they appear in both the
 # chromium and the full-set tables like ubuntu. Our images are compared in both dood and dind flavors,
 # slim and -gyp.)
 
@@ -27,7 +27,7 @@ on:
   workflow_dispatch:
     inputs:
       pw_version:
-        description: Playwright version to benchmark (must match the published image tags). Empty = bench the repo's own playwright/package.json version, so the official MCR control's bundled browser revs always match what the local tests request.
+        description: Playwright version to benchmark (must match the published image tags). Empty = bench the repo's own playwright/package.json version, so the PW official control's bundled browser revs always match what the local tests request.
         default: ''
       image_tag:
         description: Tag for OUR images on Docker Hub (e.g. latest, or a pinned tag).
@@ -67,7 +67,7 @@ jobs:
         env:
           RUNS: ${{ github.event.inputs.runs || '1' }}
         run: |
-          # Empty pw_version = bench the repo's own playwright, so the official MCR control's bundled
+          # Empty pw_version = bench the repo's own playwright, so the PW official control's bundled
           # browser revs always match what `pnpm exec playwright test` requests. A drift between the two
           # fails every official + bench-act-official cell with "Executable doesn't exist at
           # …/chromium_headless_shell-<rev>/…" (bit us when Renovate bumped 1.50.1→1.60.0 without the
@@ -185,7 +185,7 @@ jobs:
     container:
       image: ${{ matrix.image }}
       options: ${{ matrix.options }}
-      # DEV MODE: all images public (Docker Hub jclaveau/... + MCR official); no credentials needed.
+      # DEV MODE: all images public (Docker Hub jclaveau/... + PW official); no credentials needed.
     steps:
       - uses: actions/checkout@v7
       - name: Capture pre-install rx bytes
