@@ -56,39 +56,43 @@ fi
 #   browserContext.newPage: Protocol error (Page.overrideSetting):
 #   Unknown setting: PushAPIEnabled
 #
-# WebKit 5e67bf8293 (2026-07-13) upstreamed five of PW's settings and added two
-# more — PushAPIEnabled and FixedBackgroundsPaintRelativeToDocument — and the PW
-# client started sending all seven. But browser_patches/webkit/UPSTREAM_CONFIG.sh
-# at tag v1.62.0 still names 343e13bf (2026-04-28), three months before that
-# commit, and bootstrap.diff only adds the five it always did. PW's own
-# webkit-2336 build ships 21 settings (its protocol.json says so); base + the
-# tag's patch series yields 19, missing exactly these two. So the pinned SHA
-# cannot reproduce the browser PW ships against — see
+# WebKit 5e67bf8293 (2026-07-13) upstreamed five of PW's settings and added
+# PushAPIEnabled, and the PW client started sending all seven of what it now
+# had. But browser_patches/webkit/UPSTREAM_CONFIG.sh at tag v1.62.0 still names
+# 343e13bf (2026-04-28), three months before that commit. PW's own webkit-2336
+# build carries 21 settings (the protocol.json inside their zip says so); the
+# pinned base plus the tag's patch series yields 20, missing exactly this one.
+# So the pinned SHA cannot reproduce the browser PW ships against — see
 # project_pw_release_tag_pins_disagree for the same disease on firefox.
 #
-# Both preferences already exist at the pinned base (PushAPIEnabled in
-# UnifiedWebPreferences.yaml with a WebCore default, FixedBackgrounds… in
-# Settings.yaml), so their Settings getters/setters are generated and only the
-# inspector plumbing is missing. Upstream routes these through
-# overrideSettingByModifyingValue / …InspectorOverride, which needs yaml changes
-# that collide with how bootstrap.diff implements its own five; PW's plain
+# The preference itself already exists at the pinned base (UnifiedWebPreferences
+# .yaml, with a WebCore default, so Settings::setPushAPIEnabled is generated);
+# only the inspector plumbing is missing. Upstream routes it through
+# overrideSettingByModifyingValue, which needs yaml changes that collide with
+# how bootstrap.diff implements its own five; PW's plain
 # `setX(value.value_or(false))` idiom needs nothing and is what the neighbouring
 # cases already use. Drop this block once PW rolls its base past 5e67bf8293 (at
-# which point bootstrap.diff has to stop adding the five, so it will be obvious).
+# which point bootstrap.diff has to stop adding the five, so it will be
+# obvious).
+#
+# Verified by applying bootstrap.diff's Page.json hunk to the pinned base and
+# reading the enum, NOT by grepping the diff: an earlier version of this patch
+# also added FixedBackgroundsPaintRelativeToDocument, which bootstrap.diff
+# already adds, and the duplicate enumerator only surfaced as a compile error
+# four WPE rounds later. Hence the exactly-once assertions below.
 patch_page_override_settings() {
   local json=Source/JavaScriptCore/inspector/protocol/Page.json
   local agent=Source/WebCore/inspector/agents/InspectorPageAgent.cpp
 
-  if grep -q "PushAPIEnabled" "$json"; then
+  if grep -q '"PushAPIEnabled"' "$json"; then
     echo "  Page.Setting already carries PushAPIEnabled — PW rolled its base, drop patch_page_override_settings"
     return 0
   fi
 
-  echo "  add PushAPIEnabled + FixedBackgroundsPaintRelativeToDocument to Page.Setting"
+  echo "  add PushAPIEnabled to Page.Setting"
   awk '
     /"AuthorAndUserStylesEnabled",/ && !done {
       print
-      print "                \"FixedBackgroundsPaintRelativeToDocument\","
       print "                \"PushAPIEnabled\","
       done = 1
       next
@@ -98,10 +102,6 @@ patch_page_override_settings() {
 
   awk '
     /^    case Inspector::Protocol::Page::Setting::ScriptEnabled:/ && !done {
-      print "    case Inspector::Protocol::Page::Setting::FixedBackgroundsPaintRelativeToDocument:"
-      print "        inspectedPageSettings.setFixedBackgroundsPaintRelativeToDocument(value.value_or(false));"
-      print "        return { };"
-      print ""
       print "    case Inspector::Protocol::Page::Setting::PushAPIEnabled:"
       print "        inspectedPageSettings.setPushAPIEnabled(value.value_or(false));"
       print "        return { };"
@@ -111,13 +111,13 @@ patch_page_override_settings() {
     { print }
   ' "$agent" > "$agent.new" && mv "$agent.new" "$agent"
 
-  local n
-  for n in PushAPIEnabled FixedBackgroundsPaintRelativeToDocument; do
-    grep -q "\"$n\"" "$json" \
-      || { echo "ERROR: $n missing from $json after patch" >&2; exit 1; }
-    grep -q "Setting::$n:" "$agent" \
-      || { echo "ERROR: no $n case in $agent after patch" >&2; exit 1; }
-  done
+  local in_json in_agent
+  in_json=$(grep -c '"PushAPIEnabled"' "$json")
+  in_agent=$(grep -c "Setting::PushAPIEnabled:" "$agent")
+  if [[ "$in_json" != 1 ]] || [[ "$in_agent" != 1 ]]; then
+    echo "ERROR: PushAPIEnabled appears $in_json time(s) in $json and $in_agent time(s) in $agent, expected 1 each" >&2
+    exit 1
+  fi
 }
 patch_page_override_settings
 

@@ -110,7 +110,16 @@ if [[ ! -f "$BUILD_DIR/bin/MiniBrowser" ]]; then
   LAST_STEP=$(tac "$BUILD_DIR/.ninja_log" 2>/dev/null | awk -F'\t' 'NR==1 {print}' || echo "(none)")
   echo "ninja last log line: $LAST_STEP"
   if [[ ! -f "$BUILD_DIR/bin/MiniBrowser" ]]; then
-    echo "===== Phase 2 incomplete; next resume continues PORT=$PORT ====="
+    # Only a timeout kill earns a resume. Any other rc means the compile itself
+    # failed, and resuming just burns another round on the same error: a
+    # duplicate enumerator took four rounds to surface as "wpe MiniBrowser
+    # missing" in finalize's Tier-1, with every round green. 143 = BusyBox
+    # timeout's SIGTERM, 124 = GNU coreutils.
+    if [[ "$rc" != 143 ]] && [[ "$rc" != 124 ]]; then
+      echo "ERROR: ninja PORT=$PORT failed with rc=$rc (not a timeout) and built no MiniBrowser" >&2
+      exit 1
+    fi
+    echo "===== Phase 2 incomplete (timed out); next resume continues PORT=$PORT ====="
     mkdir -p "$DIST"
     exit 0
   fi
