@@ -77,6 +77,21 @@ def week(ts):
     return (d - dt.timedelta(days=d.weekday())).strftime("%Y-%m-%d")
 
 
+def week_of_iso(ts):
+    """Monday of the week for a timestamp that may carry milliseconds.
+
+    Claude Code writes `2026-08-05T07:31:10.749Z`, which the fixed-format
+    parser above rejects; the CI stores never have sub-second precision.
+    """
+    if not ts or len(ts) < 10:
+        return None
+    try:
+        d = dt.date.fromisoformat(ts[:10])
+    except ValueError:
+        return None
+    return (d - dt.timedelta(days=d.weekday())).strftime("%Y-%m-%d")
+
+
 def duration_s(start, end):
     a, b = parse(start), parse(end)
     if not a or not b or b < a:
@@ -188,6 +203,27 @@ def billed(jobs, bucket):
     return minutes, usd, unpriced
 
 
+def session_cost(sessions, bucket):
+    """(bucket -> USD, bucket -> output tokens, model -> USD) for the agents.
+
+    The dollars are API-equivalent, not money spent: this work ran on a
+    subscription, where these tokens are not invoiced per request. The figure
+    is what the same conversations would have cost through the API, which is
+    the only way to put agent effort and CI minutes on one axis. opencode's
+    subscription-hosted models report cost 0, which is accurate rather than
+    missing, so they contribute tokens and no dollars.
+    """
+    usd, out, per_model = collections.Counter(), collections.Counter(), collections.Counter()
+    for row in sessions:
+        key = bucket(row)
+        if not key:
+            continue
+        usd[key] += row.get("usd") or 0
+        out[key] += row.get("output") or 0
+        per_model[f"{row.get('source')}/{row.get('model')}"] += row.get("usd") or 0
+    return usd, out, per_model
+
+
 def artifact_gb_months(artifacts):
     """GB-months of artifact storage, from each artifact's own retention.
 
@@ -288,7 +324,7 @@ def fmt_gb(n):
     return f"{n / 1024 ** 3:.1f} GB"
 
 
-def write_report(jobs, runs, images, artifacts):
+def write_report(jobs, runs, images, artifacts, sessions):
     cost = ci_cost(jobs)
     ghcr, weekly_add = ghcr_cost(images)
     bench = bench_series(jobs)
@@ -303,6 +339,9 @@ def write_report(jobs, runs, images, artifacts):
         f"deduped GHCR footprint **{fmt_gb(max(ghcr.values()) if ghcr else 0)}** "
         f"(sum of per-image pull sizes: "
         f"{fmt_gb(sum(i.get('compressed_bytes') or 0 for i in images))})",
+        f"- agent requests: **{len(sessions)}**, "
+        f"**${sum(r.get('usd') or 0 for r in sessions):,.0f}** API-equivalent "
+        f"(subscription work — not money spent)",
         f"- artifacts on record: **{len(artifacts)}**, "
         f"**{fmt_gb(sum(a.get('size_in_bytes') or 0 for a in artifacts))}**, "
         f"**{sum(1 for a in artifacts if a.get('expired'))}** already expired",
@@ -326,6 +365,8 @@ def write_report(jobs, runs, images, artifacts):
 
     minutes, dollars, unpriced = billed(
         jobs, lambda j: (j.get("started_at") or "")[:7])
+    agent_usd, agent_out, agent_models = session_cost(
+        sessions, lambda r: (r.get("ts") or "")[:7])
     gb_months = artifact_gb_months(artifacts)
     months = len(minutes) or 1
     lines += [
@@ -334,13 +375,19 @@ def write_report(jobs, runs, images, artifacts):
         "Privately it is almost entirely Actions minutes, because the registry "
         "is exempt: *\"Container image storage and bandwidth for the Container "
         "registry is currently free.\"*", "",
-        "| month | billed minutes | Actions $ |", "|---|---:|---:|",
+        "| month | billed minutes | Actions $ | agent $ (API-equiv) | agent out Mtok |",
+        "|---|---:|---:|---:|---:|",
     ]
-    for month in sorted(minutes):
-        lines.append(f"| {month} | {minutes[month]:,} | ${dollars[month]:,.0f} |")
+    for month in sorted(set(minutes) | set(agent_usd)):
+        lines.append(f"| {month} | {minutes.get(month, 0):,} "
+                     f"| ${dollars.get(month, 0):,.0f} "
+                     f"| ${agent_usd.get(month, 0):,.0f} "
+                     f"| {agent_out.get(month, 0) / 1e6:.2f} |")
     total_min = sum(minutes.values())
     lines += [
-        f"| **total** | **{total_min:,}** | **${sum(dollars.values()):,.0f}** |",
+        f"| **total** | **{total_min:,}** | **${sum(dollars.values()):,.0f}** "
+        f"| **${sum(agent_usd.values()):,.0f}** "
+        f"| **{sum(agent_out.values()) / 1e6:.2f}** |",
         "",
         f"Artifact storage: **{gb_months:,.1f} GB-months** "
         f"= **${gb_months * STORAGE_USD_PER_GB_MONTH:,.0f}** at "
@@ -393,7 +440,8 @@ def write_report(jobs, runs, images, artifacts):
     (OUT / "report.md").write_text("\n".join(x for x in lines if x is not None) + "\n")
     print(f"wrote {OUT / 'report.md'}")
     _, weekly_usd, _ = billed(jobs, lambda j: week(j.get("started_at")))
-    return cost, ghcr, bench, weekly_usd
+    weekly_agent, _, _ = session_cost(sessions, lambda r: week_of_iso(r.get("ts")))
+    return cost, ghcr, bench, weekly_usd, weekly_agent
 
 
 def plot_lines(ax, weeks, bench, pick, field, title, ylabel):
@@ -424,13 +472,23 @@ def plot_lines(ax, weeks, bench, pick, field, title, ylabel):
         ax.legend(fontsize=6, loc="center left", bbox_to_anchor=(1.01, 0.5))
 
 
-def write_charts(cost, ghcr, bench, weekly_usd):
+def write_charts(cost, ghcr, bench, weekly_usd, weekly_agent, since=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    weeks = sorted(set(cost) | set(ghcr) | set(weekly_usd)
-                   | {w for s in bench.values() for w in s})
+    # EVERY week between the first and last, not only the ones carrying data.
+    # Plotting just the populated weeks makes the axis ordinal, so the seven
+    # months when nothing happened rendered the same width as a single busy
+    # week — a slope read off that axis means nothing. Empty weeks now cost
+    # real horizontal space, which is what they did in life.
+    present = (set(cost) | set(ghcr) | set(weekly_usd) | set(weekly_agent)
+               | {w for s in bench.values() for w in s})
+    first, last = max(min(present), since or ""), max(present)
+    weeks, cursor = [], dt.date.fromisoformat(first)
+    while cursor <= dt.date.fromisoformat(last):
+        weeks.append(cursor.strftime("%Y-%m-%d"))
+        cursor += dt.timedelta(days=7)
     x = range(len(weeks))
     fig, (ax_cost, ax_ghcr, ax_ttt, ax_test) = plt.subplots(
         4, 1, figsize=(15, 15), sharex=True,
@@ -439,15 +497,21 @@ def write_charts(cost, ghcr, bench, weekly_usd):
     # Actions cost. The bars are what a private repo would be invoiced that
     # week; the line is the running total, which is the question "what has this
     # project cost so far" and does not fall just because a week was quiet.
-    spend = [weekly_usd.get(w, 0) for w in weeks]
-    ax_cost.bar(x, spend, color="#4c72b0")
-    ax_cost.set_ylabel("Actions $ / week", color="#4c72b0")
+    ci = [weekly_usd.get(w, 0) for w in weeks]
+    agent = [weekly_agent.get(w, 0) for w in weeks]
+    ax_cost.bar([i - 0.2 for i in x], ci, width=0.4, color="#4c72b0",
+                label="Actions (private-repo counterfactual)")
+    ax_cost.bar([i + 0.2 for i in x], agent, width=0.4, color="#dd8452",
+                label="coding agents (API-equivalent)")
+    ax_cost.set_ylabel("$ / week")
     ax_cost.set_title(
-        "Actions cost if this repo were private — $0 as a public repo",
-        fontsize=10)
+        "What this project costs — neither is money actually spent: the repo "
+        "is public and the agents ran on a subscription", fontsize=10)
+    ax_cost.legend(fontsize=7, loc="upper left")
     cum_ax = ax_cost.twinx()
-    cum_ax.plot(x, list(itertools.accumulate(spend)), color="#55a868", lw=1.6)
-    cum_ax.set_ylabel("cumulative $", color="#55a868")
+    cum_ax.plot(x, list(itertools.accumulate(a + b for a, b in zip(ci, agent))),
+                color="#55a868", lw=1.6)
+    cum_ax.set_ylabel("cumulative $ (both)", color="#55a868")
     cum_ax.set_ylim(bottom=0)
 
     # Registry: bytes on the left, what they WOULD cost on the right. The two
@@ -483,8 +547,11 @@ def write_charts(cost, ghcr, bench, weekly_usd):
                "test", "Test time — our builds vs the glibc control",
                "seconds (median)")
 
-    ax_test.set_xticks(list(x))
-    ax_test.set_xticklabels(weeks, rotation=60, ha="right", fontsize=7)
+    # One label per month or the axis is unreadable at ~44 weeks.
+    ticks = [i for i, w in enumerate(weeks) if i % 4 == 0]
+    ax_test.set_xticks(ticks)
+    ax_test.set_xticklabels([weeks[i] for i in ticks],
+                            rotation=60, ha="right", fontsize=7)
     fig.savefig(OUT / "report.png", dpi=130, bbox_inches="tight")
     print(f"wrote {OUT / 'report.png'}")
 
@@ -492,17 +559,22 @@ def write_charts(cost, ghcr, bench, weekly_usd):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--text", action="store_true", help="skip the charts")
+    ap.add_argument("--since", metavar="YYYY-MM-DD",
+                    help="start the chart here. The axis is time-proportional, "
+                         "so a long dormant stretch squeezes the active weeks "
+                         "into a corner; this zooms without distorting it.")
     args = ap.parse_args()
 
     jobs = load("jobs")
+    sessions = load("sessions", key=lambda r: r.get("key"))
     runs = load("runs", key=lambda r: (r.get("id"), r.get("run_attempt")))
     if not jobs:
         sys.exit("no jobs collected yet — run collect-metrics.py runs first")
     images = load("images", key=lambda r: (r.get("package"), r.get("digest")))
-    cost, ghcr, bench, weekly_usd = write_report(
-        jobs, runs, images, load("artifacts"))
+    cost, ghcr, bench, weekly_usd, weekly_agent = write_report(
+        jobs, runs, images, load("artifacts"), sessions)
     if not args.text:
-        write_charts(cost, ghcr, bench, weekly_usd)
+        write_charts(cost, ghcr, bench, weekly_usd, weekly_agent, args.since)
 
 
 if __name__ == "__main__":

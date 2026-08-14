@@ -11,6 +11,7 @@
     "ci:logs:pab": "bash scripts/ci-logs-one.sh playwright-alpine-browsers.yml",
     "act:smoke": "act push -W tests/act/smoke-dood-bind.yml --bind -P ubuntu-latest=jclaveau/ubuntu-dood:latest --container-options \"--user $(id -u):$(id -g) --group-add 1001 -e HOME=/home/runner\"",
     "metrics:collect": "python3 -u scripts/collect-metrics.py all",
-    "metrics:report": "python3 -u scripts/metrics-report.py"
+    "metrics:report": "python3 -u scripts/metrics-report.py",
+    "metrics:sessions": "python3 -u scripts/collect-sessions.py"
   }
 }

@@ -3,6 +3,7 @@
 - runs: **2110** (2025-10-17 -> 2026-08-14)
 - jobs: **76137**, **2513** runner-hours total
 - tagged image versions priced: **5051**, deduped GHCR footprint **905.4 GB** (sum of per-image pull sizes: 5222.8 GB)
+- agent requests: **9614**, **$2,758** API-equivalent (subscription work — not money spent)
 - artifacts on record: **15144**, **4.7 GB**, **9120** already expired
 
 ## Weekly cost
@@ -28,14 +29,14 @@
 
 Standard runners are free on public repos, so today this is all $0. Privately it is almost entirely Actions minutes, because the registry is exempt: *"Container image storage and bandwidth for the Container registry is currently free."*
 
-| month | billed minutes | Actions $ |
-|---|---:|---:|
-| 2025-10 | 715 | $4 |
-| 2026-05 | 13,464 | $81 |
-| 2026-06 | 80,321 | $482 |
-| 2026-07 | 59,876 | $359 |
-| 2026-08 | 27,852 | $167 |
-| **total** | **182,228** | **$1,093** |
+| month | billed minutes | Actions $ | agent $ (API-equiv) | agent out Mtok |
+|---|---:|---:|---:|---:|
+| 2025-10 | 715 | $4 | $0 | 0.00 |
+| 2026-05 | 13,464 | $81 | $0 | 0.00 |
+| 2026-06 | 80,321 | $482 | $465 | 0.52 |
+| 2026-07 | 59,876 | $359 | $2,098 | 3.61 |
+| 2026-08 | 27,852 | $167 | $194 | 1.08 |
+| **total** | **182,228** | **$1,093** | **$2,758** | **5.21** |
 
 Artifact storage: **2.2 GB-months** = **$1** at $0.25/GB/month.
 
