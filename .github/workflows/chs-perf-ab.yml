@@ -1,0 +1,162 @@
+name: chromium-headless-shell perf A/B
+
+# Runs playwright/bench/runtime-probe.cjs against TWO chromium-headless-shell
+# artifacts and prints the per-metric ratio between them.
+#
+# Built for the is_official_build question: our musl chromium carries DCHECKs
+# because Chromium defaults `dcheck_always_on = !is_official_build`, and the
+# runtime probe measures execution speed rather than the cold start the
+# benchmark workflow covers. Both artifacts are probed IN ONE JOB, because
+# hosted runners hand out different CPU models per job and a control on a
+# sibling runner is not a control -- the first runtime-probe run produced
+# ratios that were pure CPU luck.
+#
+# The artifacts are FROM scratch, so each is staged into a throwaway Alpine
+# runner in PW's own layout before probing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_a:
+        description: 'Baseline artifact (e.g. ghcr.io/…:chs-fs-sha-<sha>)'
+        required: true
+        type: string
+      label_a:
+        description: 'Name for A in the report'
+        default: 'control'
+        type: string
+      image_b:
+        description: 'Candidate artifact'
+        required: true
+        type: string
+      label_b:
+        description: 'Name for B in the report'
+        default: 'candidate'
+        type: string
+      chs_rev:
+        description: 'Chromium revision the artifacts carry (PW browsers.json)'
+        required: true
+        type: string
+      pw_version:
+        description: 'Playwright version to drive the probe'
+        default: '1.62.0'
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Probe both artifacts on this runner
+        env:
+          IMAGE_A: ${{ inputs.image_a }}
+          IMAGE_B: ${{ inputs.image_b }}
+          LABEL_A: ${{ inputs.label_a }}
+          LABEL_B: ${{ inputs.label_b }}
+          CHS_REV: ${{ inputs.chs_rev }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -o pipefail
+          mkdir -p perf-out && chmod 777 perf-out
+
+          # Runtime deps for a from-source musl chrome-headless-shell. Same list
+          # the from-source promote's Tier-1 uses: aports builds these
+          # use_system_*, so the binary dies at load without them.
+          probe_one() {
+            local image="$1" label="$2"
+            echo "::group::stage + probe ${label} (${image})"
+            cat > /tmp/Dockerfile."${label}" <<EOF
+          FROM alpine:edge
+          RUN apk update && apk add --no-cache \\
+              nodejs npm bash \\
+              nss freetype harfbuzz ca-certificates ttf-freefont libdrm mesa-gl \\
+              libwebp libwebpdemux libxcomposite libxdamage libxrandr libxscrnsaver libxtst \\
+              libx11 libxcb libxext libxi cups-libs alsa-lib dbus-libs pango cairo \\
+              opus dav1d ffmpeg-libavformat libjpeg-turbo libxslt \\
+              libatk-1.0 libatk-bridge-2.0 at-spi2-core minizip \\
+              double-conversion crc32c libxkbcommon mesa-gbm eudev-libs flac \\
+              harfbuzz-subset
+          COPY --from=${image} /chrome-headless-shell-linux64 /ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64
+          RUN touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_COMPLETE
+          ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+          ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+          # musl ldconfig rejects -p, so PW's host validator reports false
+          # missing libraries on Alpine.
+          ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
+          RUN npm install -g --no-fund --no-audit playwright@${PW}
+          EOF
+            docker build -t "chs-probe-${label}:${{ github.run_id }}" -f /tmp/Dockerfile."${label}" /tmp
+            docker run --rm \
+              --env "PROBE_TARGET=${label}" \
+              -v "$PWD/playwright/bench:/probe:ro" \
+              -v "$PWD/perf-out:/out" \
+              "chs-probe-${label}:${{ github.run_id }}" \
+              node /probe/runtime-probe.cjs --browser chromium --target "${label}" --out /out \
+              2>&1 | tee "perf-out/probe-${label}.log"
+            echo "::endgroup::"
+          }
+
+          probe_one "$IMAGE_A" "$LABEL_A"
+          probe_one "$IMAGE_B" "$LABEL_B"
+
+      - name: Report
+        env:
+          LABEL_A: ${{ inputs.label_a }}
+          LABEL_B: ${{ inputs.label_b }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os
+
+          a_name, b_name = os.environ['LABEL_A'], os.environ['LABEL_B']
+          a = json.load(open(f'perf-out/{a_name}-chromium.json'))
+          b = json.load(open(f'perf-out/{b_name}-chromium.json'))
+
+          print(f"## chromium runtime probe — {b_name} vs {a_name}\n")
+          print(f"- {a_name}: `{a['browser_version']}` ({a['libc']})")
+          print(f"- {b_name}: `{b['browser_version']}` ({b['libc']})")
+          print(f"- playwright `{a['playwright_version']}`, both probed on "
+                f"`{a['runner']['cpu']}` ({a['runner']['cores']} cores)\n")
+          print(f"| metric | {a_name} (ms) | {b_name} (ms) | {b_name}/{a_name} |")
+          print("|---|---:|---:|---:|")
+
+          am, bm = a['metrics'], b['metrics']
+          for k in sorted(set(am) | set(bm)):
+              if k not in am or k not in bm:
+                  print(f"| {k} | {'—' if k not in am else am[k]['median_ms']} "
+                        f"| {'—' if k not in bm else bm[k]['median_ms']} | — |")
+                  continue
+              av, bv = am[k]['median_ms'], bm[k]['median_ms']
+              # Spread across this metric's own samples, on both sides: a ratio
+              # inside the combined spread is not a measurement of anything.
+              spread = max(max(am[k]['samples']) - min(am[k]['samples']),
+                           max(bm[k]['samples']) - min(bm[k]['samples']))
+              ratio = f"{bv / av:.2f}x" if av else "—"
+              if av and abs(bv - av) < spread:
+                  ratio += " n.s."
+              print(f"| {k} | {av:.1f} | {bv:.1f} | {ratio} |")
+          PY
+          cat "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chs-perf-ab
+          path: perf-out/
+          if-no-files-found: warn
+          retention-days: 30
