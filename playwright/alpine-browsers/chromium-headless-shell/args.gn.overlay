@@ -10,12 +10,34 @@
 # the hosted runner's memory budget).
 is_debug = false
 symbol_level = 0
-is_official_build = false  # set true if we want PGO + maximum optimization; significantly slower build
+# aports' community/chromium builds musl chromium with is_official_build=true and
+# disables the expensive/unsupported sub-features one by one (chrome_pgo_phase=0,
+# use_thin_lto=false, is_cfi=false — all mirrored below). So "official" here buys
+# the optimization level WITHOUT the PGO/LTO build cost, on a config Alpine ships.
+#
+# Measured A/B against the otherwise-identical false build (both with DCHECKs
+# already off), run 31793358409, both artifacts probed on one runner:
+#
+#   screenshot 0.75x | layout 0.93x | everything else inside sample spread
+#   artifact 101.8 -> 85.8 MiB compressed (-16.0 MiB, -15.7%)
+#   build +1h08 (the whole cost lands in the last ninja round)
+#
+# We pay that hour so consumers don't: time-to-tests for a prebuilt image is
+# ~entirely image pull, and the browser runs in every consumer's CI. The trade
+# only makes sense in that direction.
+#
+# WHEN ITERATING ON THIS BUILD, flipping it back to false is worth it: it cuts
+# roughly an hour off each round-trip, and none of the plumbing questions
+# (patches applying, ninja converging, smoke, conformance) depend on the
+# optimization level. Flip it back before the build you intend to publish, and
+# keep dcheck_always_on = false below either way — that one is not tied to this.
+is_official_build = true
 
 # Chromium's own default is
 # `dcheck_always_on = (build_with_chromium && !is_official_build) || dcheck_is_configurable`
-# (build/config/dcheck_always_on.gni), so is_official_build=false above silently
-# turns DCHECKs ON in a release build. Measured cost against the official glibc
+# (build/config/dcheck_always_on.gni), so an is_official_build=false build
+# silently turns DCHECKs ON in a release build — which is why this stays pinned
+# explicitly rather than riding the default. Measured cost against the official glibc
 # headless-shell: layout 9.3x, DOM churn 7.2x, JS heap 2.9x, int JIT loop 1.9x —
 # Blink's layout/DOM paths are DCHECK-dense. It also made `DPCHECK(setpriority)`
 # fatal, which is why headed conformance needed --cap-add SYS_NICE. Turning it
@@ -131,6 +153,7 @@ enable_vr = false                          # no VR/XR
 disable_fieldtrial_testing_config = true   # skip field-trial test configs
 enable_nocompile_tests = false             # no nocompile testing
 is_cfi = false                             # CFI off (no IFUNC support on alpine clang)
+use_thin_lto = false                       # aports same; is_official_build would default it ON
 fatal_linker_warnings = false              # match aports — alpine's lld trips a few warnings
 safe_browsing_use_unrar = false            # no unrar (we don't ship)
 
