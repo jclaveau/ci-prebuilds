@@ -91,9 +91,18 @@ jobs:
               --env HOME=/root \
               -v "$PWD/playwright/bench:/probe:ro" \
               -v "$PWD/perf-out:/out" \
+              --env "PW_VERSION=${PW}" \
               "$image" \
               sh -c '
-                export NODE_PATH="$(npm root -g)"
+                # The reference image bakes playwright somewhere `npm root -g`
+                # alone does not always cover, so try both roots and install as
+                # a last resort — same shape as the probe job in test-and-publish.
+                for r in "$(pnpm root -g 2>/dev/null)" "$(npm root -g 2>/dev/null)"; do
+                  [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
+                done
+                export NODE_PATH
+                node -e "require(\"playwright\")" 2>/dev/null \
+                  || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
                 node /probe/runtime-probe.cjs \
                   --browser chromium --target "$PROBE_TARGET" --out /out
               ' 2>&1 | tee "perf-out/probe-${label}.log"
