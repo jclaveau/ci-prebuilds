@@ -368,10 +368,45 @@ echo "  RUSTC_BOOTSTRAP=1 (allow -Z flags on stable rust)"
 OUT_DIR="$VARIANT_OUT_DIR"
 mkdir -p "$OUT_DIR"
 
+# PGO profile. gn resolves the profile itself only by shelling out to
+# tools/update_pgo_profiles.py, which wants depot_tools + gsutil; setting
+# pgo_data_path skips that path entirely (see build/config/compiler/pgo/BUILD.gn:
+# the script only runs when pgo_data_path is empty). The profile is a public
+# object, no auth, ~83 MB, named by a sha1 recorded in chrome/build/linux.pgo.txt.
+PGO_DATA_PATH=""
+if grep -qE '^chrome_pgo_phase[[:space:]]*=[[:space:]]*2' \
+     "$WORK/chromium-headless-shell/$VARIANT_OVERLAY"; then
+  PGO_STATE="chrome/build/linux.pgo.txt"
+  [[ -f "$PGO_STATE" ]] || { echo "ERROR: $PGO_STATE absent — cannot resolve a PGO profile" >&2; exit 5; }
+  PGO_NAME=$(tr -d '[:space:]' < "$PGO_STATE")
+  PGO_DATA_PATH="$PWD/chrome/build/pgo_profiles/$PGO_NAME"
+  if [[ -f "$PGO_DATA_PATH" ]]; then
+    echo "  PGO profile already in the tree: $PGO_NAME"
+  else
+    echo "  fetch PGO profile $PGO_NAME"
+    mkdir -p "$(dirname "$PGO_DATA_PATH")"
+    curl -fSL --retry 3 \
+      "https://storage.googleapis.com/chromium-optimization-profiles/pgo_profiles/$PGO_NAME" \
+      -o "$PGO_DATA_PATH"
+  fi
+  # curl -f already rejects an HTTP error, but a truncated or redirected body
+  # would still land as a file and only surface as a confusing clang error, so
+  # check the size: the real profile is ~83 MB.
+  PGO_BYTES=$(stat -c%s "$PGO_DATA_PATH")
+  if (( PGO_BYTES < 1048576 )); then
+    echo "ERROR: PGO profile at $PGO_DATA_PATH is only $PGO_BYTES bytes" >&2
+    exit 5
+  fi
+  echo "  PGO profile: $PGO_NAME ($((PGO_BYTES / 1048576)) MB)"
+fi
+
 {
   cat "$WORK/chromium-headless-shell/$VARIANT_OVERLAY"
   echo ""
   echo "# Injected at build time"
+  if [[ -n "$PGO_DATA_PATH" ]]; then
+    echo "pgo_data_path = \"$PGO_DATA_PATH\""
+  fi
   echo "clang_base_path = \"$CLANG_BASE\""
   echo "clang_version = \"${LLVMVER:-22}\""
   echo ""
