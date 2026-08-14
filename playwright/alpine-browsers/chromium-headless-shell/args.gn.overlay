@@ -153,7 +153,13 @@ enable_vr = false                          # no VR/XR
 disable_fieldtrial_testing_config = true   # skip field-trial test configs
 enable_nocompile_tests = false             # no nocompile testing
 is_cfi = false                             # CFI off (no IFUNC support on alpine clang)
-use_thin_lto = false                       # aports same; is_official_build would default it ON
+# EXPERIMENT (perf/chromium-thinlto): is_official_build=true would default this
+# ON; we pinned it false to keep aports' build cost. ThinLTO optimizes across
+# translation units at link time, which should cut both size and speed -- but
+# the link lands in the finalize job, which runs ninja to completion with no
+# timeout headroom, so the failure mode to watch for is a finalize that runs
+# out of time or memory rather than a wrong result.
+use_thin_lto = true
 fatal_linker_warnings = false              # match aports — alpine's lld trips a few warnings
 safe_browsing_use_unrar = false            # no unrar (we don't ship)
 
