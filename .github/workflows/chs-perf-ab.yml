@@ -102,13 +102,19 @@ jobs:
           RUN npm install -g --no-fund --no-audit playwright@${PW}
           EOF
             docker build -t "chs-probe-${label}:${{ github.run_id }}" -f /tmp/Dockerfile."${label}" /tmp
+            # The probe is CommonJS precisely so NODE_PATH resolution applies to
+            # the global playwright install — ESM ignores NODE_PATH, and node
+            # will not find a -g module from /probe without it.
             docker run --rm \
               --env "PROBE_TARGET=${label}" \
               -v "$PWD/playwright/bench:/probe:ro" \
               -v "$PWD/perf-out:/out" \
               "chs-probe-${label}:${{ github.run_id }}" \
-              node /probe/runtime-probe.cjs --browser chromium --target "${label}" --out /out \
-              2>&1 | tee "perf-out/probe-${label}.log"
+              sh -c '
+                export NODE_PATH="$(npm root -g)"
+                node /probe/runtime-probe.cjs \
+                  --browser chromium --target "$PROBE_TARGET" --out /out
+              ' 2>&1 | tee "perf-out/probe-${label}.log"
             echo "::endgroup::"
           }
 
