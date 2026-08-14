@@ -13,11 +13,16 @@ on:
       # runner minutes.
       - 'playwright/alpine-browsers/**'
       - '.github/workflows/playwright-alpine-browsers.yml'
+      # The weekly metrics snapshot commits its JSONL back to main. Publishing
+      # every image again because a measurement was recorded would make the
+      # record more expensive than the thing it measures.
+      - 'metrics/**'
   pull_request:
     branches: [ main ]
     paths-ignore:
       - 'playwright/alpine-browsers/**'
       - '.github/workflows/playwright-alpine-browsers.yml'
+      - 'metrics/**'
   # Reusable entry point: lets `on-demand-build.yml` (issue-triggered) call
   # this workflow with version overrides + matrix filters. Every input defaults
   # to empty / `true` so the push/PR path is byte-identical to today (verified

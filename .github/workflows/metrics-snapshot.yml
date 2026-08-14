@@ -1,0 +1,82 @@
+name: Metrics snapshot
+
+# Records the CI + registry facts GitHub eventually throws away. Job metadata
+# never expires, but GHCR sizes are not retained anywhere and artifacts roll off
+# on their own schedule, so the sampling has to happen while they still exist.
+#
+# Weekly is deliberate: run metadata is fetched incrementally and the monthly
+# JSONL partitioning means a snapshot rewrites only the current month's file.
+
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      price_images:
+        description: Re-price GHCR manifests (slow — ~5k registry round-trips)
+        type: boolean
+        default: true
+
+concurrency:
+  # Never two snapshots at once: both would load the dedup set before either
+  # wrote, and every row would land twice.
+  group: metrics-snapshot
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+  packages: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Collect runs, jobs and artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -u scripts/collect-metrics.py runs
+
+      - name: Collect artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -u scripts/collect-metrics.py artifacts
+
+      # GITHUB_TOKEN cannot list a user's packages, so this leg needs a PAT with
+      # read:packages. Without one the run still records everything else rather
+      # than failing — the image series just stops advancing, which the report
+      # makes visible via snapshot_at.
+      - name: Collect image sizes
+        if: inputs.price_images != false
+        env:
+          GH_TOKEN: ${{ secrets.METRICS_PACKAGES_TOKEN || github.token }}
+        run: |
+          if [ -z "${{ secrets.METRICS_PACKAGES_TOKEN }}" ]; then
+            echo "::warning::METRICS_PACKAGES_TOKEN unset — skipping GHCR sizes;" \
+                 "they are unrecoverable once a version is deleted"
+            exit 0
+          fi
+          echo "${{ secrets.METRICS_PACKAGES_TOKEN }}" \
+            | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          python3 -u scripts/collect-metrics.py images
+
+      - name: Render report
+        run: |
+          pip install --quiet matplotlib
+          python3 -u scripts/metrics-report.py
+
+      - name: Commit
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add metrics/
+          if git diff --cached --quiet; then
+            echo "nothing new"
+            exit 0
+          fi
+          git diff --cached --stat
+          git commit -m 'chore(metrics): weekly snapshot [skip ci]'
+          git push

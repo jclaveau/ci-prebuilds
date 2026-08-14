@@ -9,6 +9,8 @@
     "ci:logs:tp": "bash scripts/ci-logs-one.sh test-and-publish.yml",
     "ci:logs:bench": "bash scripts/ci-logs-one.sh benchmark-playwright.yml",
     "ci:logs:pab": "bash scripts/ci-logs-one.sh playwright-alpine-browsers.yml",
-    "act:smoke": "act push -W tests/act/smoke-dood-bind.yml --bind -P ubuntu-latest=jclaveau/ubuntu-dood:latest --container-options \"--user $(id -u):$(id -g) --group-add 1001 -e HOME=/home/runner\""
+    "act:smoke": "act push -W tests/act/smoke-dood-bind.yml --bind -P ubuntu-latest=jclaveau/ubuntu-dood:latest --container-options \"--user $(id -u):$(id -g) --group-add 1001 -e HOME=/home/runner\"",
+    "metrics:collect": "python3 -u scripts/collect-metrics.py all",
+    "metrics:report": "python3 -u scripts/metrics-report.py"
   }
 }
