@@ -738,14 +738,15 @@ jobs:
     # juggler/components/components.conf's m-remote category) is the
     # follow-up; requires FF rebuild.
     #
-    # Also runs unconditionally on main pushes, because promote-firefox gates on
-    # it: nothing ships without conformance, so conformance has to be reachable
-    # on the path that ships.
+    # Gated on the artifact, not on how the run was triggered — see
+    # conformance-webkit. If firefox built and its library smoke passed, conform
+    # it; promote-firefox requires this job, and a build that never reaches
+    # conformance simply never ships.
     needs: [build-firefox, smoke-firefox-library]
     if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/main')
-      || (github.event_name == 'workflow_dispatch' && inputs.run_firefox_conformance == 'true')
-      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-firefox-conformance'))
+      !cancelled()
+      && needs.build-firefox.result == 'success'
+      && needs.smoke-firefox-library.result == 'success'
     uses: ./.github/workflows/pw-conformance.yml
     with:
       browser: firefox
@@ -765,13 +766,17 @@ jobs:
     # form-control / display-block UA-stylesheet class of failures as
     # chromium plus WebKit-specific divergences.
     #
-    # Runs on any dispatch that builds WebKit, and on main pushes, because
-    # promote-webkit gates on it — see conformance-firefox for the same reason.
+    # Gated on the artifact, not on how the run was triggered: if WebKit built
+    # and smoked, conform it. promote-webkit requires this job to have
+    # succeeded, so re-deriving "should this run?" from the dispatch inputs
+    # gave the gate a second, subtly different answer — run 31759951123 built
+    # and smoked WebKit green with `build_webkit=true` and still skipped this
+    # job (and therefore the promote) at 08:50:15.
     needs: [build-webkit-finalize, smoke-webkit]
     if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/main')
-      || (github.event_name == 'workflow_dispatch' && (inputs.run_webkit_conformance == 'true' || inputs.build_webkit == 'true'))
-      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'run-webkit-conformance'))
+      !cancelled()
+      && needs.build-webkit-finalize.result == 'success'
+      && needs.smoke-webkit.result == 'success'
     uses: ./.github/workflows/pw-conformance.yml
     with:
       browser: webkit
