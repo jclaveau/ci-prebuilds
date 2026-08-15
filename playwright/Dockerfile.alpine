@@ -103,10 +103,12 @@ RUN sudo mv /ms-playwright/firefox-${FF_REV}/firefox/firefox \
 # We COPY ONLY minibrowser-wpe (+ pw_run.sh), NOT minibrowser-gtk. pw_run.sh
 # picks the port by flag: `--headless` → minibrowser-wpe, else minibrowser-gtk.
 # PW always launches headless here, so gtk (~167 MB compressed, ~400 MB on disk)
-# is never execed — headed WebKit is unsupported on musl (libgtk-4 self-recursion
-# crash; producer Tier-2 headed is `if: false`). Dropping it is pure dead-weight
-# removal; the producer artifact still ships both for when headed lands. See
-# project_webkit_gtk_headed_recursion.
+# is never execed. Dropping it is pure dead-weight removal on size grounds
+# alone; the producer artifact still ships both when built with
+# build_webkit_gtk=true. The libgtk-4 self-recursion that once justified this
+# was root-caused to the hand-assembled bundled gtk4 stack and fixed in
+# bundle-dist, and Tier-2 headed smoke is green again — so headed WebKit is no
+# longer the blocker, the 167 MB is. See project_webkit_gtk_headed_recursion.
 COPY --from=wk-source /webkit/minibrowser-wpe /ms-playwright/webkit-${WK_REV}/minibrowser-wpe
 COPY --from=wk-source /webkit/pw_run.sh /ms-playwright/webkit-${WK_REV}/pw_run.sh
 RUN sudo touch /ms-playwright/webkit-${WK_REV}/INSTALLATION_COMPLETE \

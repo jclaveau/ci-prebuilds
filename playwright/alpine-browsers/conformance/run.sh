@@ -180,8 +180,32 @@ TIMEOUT_FLAG=""
 # chr-fs-*, whose runner stages the real chrome-linux64/chrome). The headless-
 # shell runner keeps HEADED_ENABLED=0 so the run_headed headful.spec.ts leg —
 # which would launch the headless-shell stub binary headed — stays off.
+#
+# WebKit's headed port is BUILT ONLY when the producer runs with
+# build_webkit_gtk=true; the default WPE-only artifact carries an empty
+# minibrowser-gtk/ that finalize substitutes. Asserting the capability instead
+# of checking for it cost run 31810572651 its promote: 16 headful.spec.ts titles
+# plus launcher.spec.ts's "no xserver" test failed against a MiniBrowser that
+# was not in the image, and <browser>.headed.titles.txt could not have covered
+# them — that list is only read when HEADED=1, and this leg runs at HEADED=0.
+# Probe the artifact rather than trusting the browser name.
 case "$BROWSER" in
-  firefox|webkit) HEADED_ENABLED=1 ;;
+  firefox) HEADED_ENABLED=1 ;;
+  webkit)
+    # Non-empty rather than a named binary: webkit/Dockerfile.finalize creates
+    # minibrowser-gtk-dist empty when the GTK chain is skipped, so emptiness IS
+    # the signal and this stays correct if the executable is ever renamed.
+    HEADED_ENABLED=0
+    for wk_gtk_entry in \
+        "${PLAYWRIGHT_BROWSERS_PATH:-/ms-playwright}"/webkit-*/minibrowser-gtk/*; do
+      if [ -e "$wk_gtk_entry" ]; then
+        HEADED_ENABLED=1
+        break
+      fi
+    done
+    if [ "$HEADED_ENABLED" -eq 0 ]; then
+      echo "==== WPE-only artifact (empty minibrowser-gtk): headed leg disabled ===="
+    fi ;;
   chromium)
     if [ "${HEADED:-0}" = "1" ]; then HEADED_ENABLED=1; else HEADED_ENABLED=0; fi ;;
   *)              HEADED_ENABLED=0 ;;
