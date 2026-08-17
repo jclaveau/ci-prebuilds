@@ -900,6 +900,69 @@ jobs:
       artifact_rev: ${{ needs.build-chromium-headless-shell-from-source.outputs.chromium_revision }}
     secrets: inherit
 
+  # Ships the from-source chromium as soon as it earns it, the way promote-firefox
+  # and promote-webkit do for theirs. Until now this was the ONLY browser we ship
+  # with no in-run promote: the canonical tags could only be written by dispatching
+  # promote-chromium-from-source.yml by hand afterwards. Nobody did between
+  # 2026-08-10 and 2026-08-17, so `chs-latest` stayed on a 138 MiB DCHECK build for
+  # nine days while an 85.8 MiB conformance-green artifact sat unpromoted.
+  #
+  # `workflow_dispatch` only, deliberately: the from-source build itself never runs
+  # on push (12 rounds, ~40h — that is why it is gated), so "automatic" here can
+  # only mean "at the end of a successful build run". The PR-label path must NOT
+  # promote — that would let a pull request write the tags every consumer pulls.
+  #
+  # No version pre-flight, unlike the standalone workflow: that one retags whatever
+  # `source_tag` names and so has to prove the binary's version itself, while this
+  # inherits the artifact through `needs:` from the build whose Tier-1 already
+  # asserted it, and inherits conformance from a job that tested THIS sha. The
+  # standalone workflow stays for retagging older artifacts by hand.
+  promote-chromium-headless-shell-from-source:
+    needs:
+      - build-chromium-headless-shell-from-source
+      - conformance-chromium-headless-shell-from-source
+    # Gated on the artifact's own results, never re-derived from the dispatch
+    # inputs: conformance-webkit skipped itself that way and took its promote down
+    # with it. If it built and conformed, ship it.
+    if: |
+      !cancelled()
+      && github.event_name == 'workflow_dispatch'
+      && needs.build-chromium-headless-shell-from-source.result == 'success'
+      && needs.conformance-chromium-headless-shell-from-source.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Promote from-source chromium → GHCR + Docker Hub
+        env:
+          # chs-fs-sha-<sha> is what the finalize job actually pushes. Its
+          # `build_tag` output says chs-sha-<sha>, which is not a tag that exists
+          # anywhere — nothing consumes it, so it is dead rather than broken.
+          SRC: ghcr.io/jclaveau/playwright-alpine-browsers:chs-fs-sha-${{ github.sha }}
+          REV: ${{ needs.build-chromium-headless-shell-from-source.outputs.chromium_revision }}
+          VER: ${{ needs.build-chromium-headless-shell-from-source.outputs.chromium_version }}
+        run: |
+          docker buildx imagetools create \
+            -t "ghcr.io/jclaveau/playwright-alpine-browsers:chs-${REV}" \
+            -t "ghcr.io/jclaveau/playwright-alpine-browsers:chs-${VER}" \
+            -t ghcr.io/jclaveau/playwright-alpine-browsers:chs-latest \
+            -t "jclaveau/playwright-alpine-browsers:chs-${REV}" \
+            -t "jclaveau/playwright-alpine-browsers:chs-${VER}" \
+            -t jclaveau/playwright-alpine-browsers:chs-latest \
+            "$SRC"
+          echo "::notice::promoted $SRC → chs-${REV} / chs-${VER} / chs-latest (from-source, conformance-grade)"
+
   promote-chromium-headless-shell:
     # Promote for the apk-fast-path chromium artifact into an ISOLATED
     # `chs-apk-<rev>` namespace — it does NOT own the canonical consumer tags
