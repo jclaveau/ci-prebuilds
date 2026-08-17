@@ -1509,7 +1509,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Install act
-        run: curl -sSL "https://raw.githubusercontent.com/nektos/act/v${ACT_VERSION}/install.sh" | sudo bash -s -- -b /usr/local/bin
+        env:
+          # Without a token the script cannot use `gh release download` and falls
+          # back to the anonymous raw.githubusercontent.com fetch — the very thing
+          # that was answering 429 across every parallel act job.
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/install-act.sh /usr/local/bin
       - name: Pre-pull the container image
         run: docker pull "ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.mode }}:${{ needs.github-context.outputs.build_tag }}"
       - name: Run the smoke workflow through act
@@ -1613,7 +1618,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Install act
-        run: curl -sSL "https://raw.githubusercontent.com/nektos/act/v${ACT_VERSION}/install.sh" | sudo bash -s -- -b /usr/local/bin
+        env:
+          # Without a token the script cannot use `gh release download` and falls
+          # back to the anonymous raw.githubusercontent.com fetch — the very thing
+          # that was answering 429 across every parallel act job.
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/install-act.sh /usr/local/bin
       - name: Pre-pull the container image
         run: docker pull "ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.mode }}:${{ needs.github-context.outputs.build_tag }}"
       - name: Run the prepare smoke workflow through act
@@ -1639,7 +1649,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Install act
-        run: curl -sSL "https://raw.githubusercontent.com/nektos/act/v${ACT_VERSION}/install.sh" | sudo bash -s -- -b /usr/local/bin
+        env:
+          # Without a token the script cannot use `gh release download` and falls
+          # back to the anonymous raw.githubusercontent.com fetch — the very thing
+          # that was answering 429 across every parallel act job.
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/install-act.sh /usr/local/bin
       - name: Run the prepare-vm smoke through act
         run: act push -W tests/act/smoke-prepare-vm.yml -P ubuntu-latest=-self-hosted
 
@@ -1721,7 +1736,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Install act
-        run: curl -sSL "https://raw.githubusercontent.com/nektos/act/v${ACT_VERSION}/install.sh" | sudo bash -s -- -b /usr/local/bin
+        env:
+          # Without a token the script cannot use `gh release download` and falls
+          # back to the anonymous raw.githubusercontent.com fetch — the very thing
+          # that was answering 429 across every parallel act job.
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/install-act.sh /usr/local/bin
       - name: Pre-pull the container image
         run: docker pull "ghcr.io/jclaveau/${{ matrix.os }}-dind:${{ needs.github-context.outputs.build_tag }}"
       - name: Run the autostart smoke workflow through act
