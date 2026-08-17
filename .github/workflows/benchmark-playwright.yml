@@ -439,8 +439,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BENCH_RUNS: ${{ needs.config.outputs.runs }}
+          # Passed as env, NOT interpolated into the run block below. GitHub caps a
+          # single expression at 21000 chars and applies that to the WHOLE run scalar
+          # once it contains any ${{ }} — this block is ~21k of python, so one
+          # interpolation anywhere in it put the workflow over the limit and it
+          # stopped parsing entirely ("Exceeded max expression length 21000",
+          # dispatch rejected with HTTP 422). With no ${{ }} in the scalar there is
+          # no expression to measure and the ceiling does not apply.
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
         run: |
-          gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" --jq '.jobs[]' > jobs.ndjson
+          gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs" --jq '.jobs[]' > jobs.ndjson
           python3 - <<'PY'
           import json, os, glob, statistics, urllib.parse
           from collections import defaultdict
