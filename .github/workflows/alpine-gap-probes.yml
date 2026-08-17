@@ -1,0 +1,185 @@
+name: Alpine gap probes
+
+# Two informational probes for the two DISTINCT gaps the bench and the runtime
+# probe left unexplained. Neither gates anything; both are dispatch-only.
+#
+#   network  bench "Test run" is 14-15s on alpine vs 10s on ubuntu/official, and
+#            runtime-probe's measured launch/goto/context deltas account for only
+#            ~0.76s of that ~4-5s. runtime-probe serves from a local http server,
+#            so DNS and TLS to a public host are the part nothing measures.
+#
+#   spawn    WebKit — the one clean comparison, 26.4 on both sides — is at parity
+#            on engine work (layout 1.01x, dom_churn 1.05x, int_math 1.00x) and
+#            1.3x on everything that spawns a process (launch 1.32x,
+#            context_page 1.36x, click_force 1.33x). Tests whether our
+#            bundle-dist layout is the cost, by forcing system libs via
+#            LD_LIBRARY_PATH — RUNPATH loses to it, the same discriminator that
+#            root-caused the GTK self-recursion.
+#
+# Firefox is deliberately NOT part of the conclusion: our artifact is 147.0.1
+# against official's 150.0.2, so any FF ratio mixes musl with three releases of
+# browser change. It is still probed, to have the number once FF 153 lands.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pw_version:
+        description: Playwright version whose images to probe (must match what they ship)
+        default: '1.60.0'
+        type: string
+      iters:
+        description: Iterations per measurement (medians; +1 warmup dropped where applicable)
+        default: '20'
+        type: string
+      probe_url:
+        description: Public URL for the network probe
+        default: 'https://playwright.dev/'
+        type: string
+
+concurrency:
+  group: alpine-gap-probes-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  network:
+    name: net-${{ matrix.label }}-${{ matrix.browser }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        label: [alpine, ubuntu, official]
+        browser: [chromium, firefox, webkit]
+    container:
+      image: ${{ matrix.label == 'official'
+        && format('mcr.microsoft.com/playwright:v{0}-noble', inputs.pw_version)
+        || format('jclaveau/{0}-dood-playwright:latest', matrix.label) }}
+      # seccomp: WebKit-WPE's bwrap needs it on our images; harmless elsewhere.
+      options: --security-opt seccomp=unconfined --env HOME=/root
+    steps:
+      - uses: actions/checkout@v7
+      - name: Probe
+        working-directory: playwright/bench
+        env:
+          PROBE_URL: ${{ inputs.probe_url }}
+          NODE_PATH: /usr/local/lib/node_modules:/usr/lib/node_modules
+        run: |
+          # Same both-roots resolution test-and-publish uses: playwright is a
+          # GLOBAL install and its root differs between the MS image and ours.
+          for r in "$(pnpm root -g 2>/dev/null)" "$(npm root -g 2>/dev/null)"; do
+            [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
+          done
+          export NODE_PATH
+          node net-probe.cjs \
+            --browser "${{ matrix.browser }}" \
+            --label "${{ matrix.label }}" \
+            --iters "${{ inputs.iters }}" \
+            --out "net-${{ matrix.label }}-${{ matrix.browser }}.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: net-${{ matrix.label }}-${{ matrix.browser }}
+          path: playwright/bench/net-*.json
+          if-no-files-found: ignore
+
+  spawn:
+    name: spawn-${{ matrix.browser }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [webkit, firefox, chromium]
+    container:
+      image: jclaveau/alpine-dood-playwright:latest
+      options: --security-opt seccomp=unconfined --env HOME=/root
+    steps:
+      - uses: actions/checkout@v7
+      - name: Probe bundled vs system libs
+        working-directory: playwright/bench
+        run: |
+          for r in "$(pnpm root -g 2>/dev/null)" "$(npm root -g 2>/dev/null)"; do
+            [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
+          done
+          export NODE_PATH
+          node spawn-probe.cjs \
+            --browser "${{ matrix.browser }}" \
+            --iters 8 \
+            --out "spawn-${{ matrix.browser }}.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spawn-${{ matrix.browser }}
+          path: playwright/bench/spawn-*.json
+          if-no-files-found: ignore
+
+  report:
+    needs: [network, spawn]
+    # Report whatever landed: a probe that fails is itself a result, and losing
+    # the ones that succeeded because a sibling died wastes the whole run.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: probes }
+      - name: Render
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import glob, json
+
+          def load(pat):
+              out = {}
+              for f in glob.glob(f"probes/**/{pat}", recursive=True):
+                  try:
+                      d = json.load(open(f))
+                  except Exception:
+                      continue
+                  out[(d.get("label"), d.get("browser"))] = d
+              return out
+
+          print("## Alpine gap probes\n")
+          net = load("net-*.json")
+          if net:
+              print("### Network — where a public navigation spends its time\n")
+              print("Browser-level Navigation Timing (medians, ms). Chromium and Firefox "
+                    "ship their own DNS clients, so `libc getent` is a control rather than "
+                    "what the test pays.\n")
+              print("| browser | image | libc getent | b: dns | b: connect | b: tls | b: ttfb | b: total |")
+              print("|---|---|---:|---:|---:|---:|---:|---:|")
+              for (label, br) in sorted(net, key=lambda k: (str(k[1]), str(k[0]))):
+                  d = net[(label, br)]
+                  b = d.get("browser_timing") or {}
+                  g = (d.get("libc") or {}).get("getent_ms")
+                  f = lambda v: "—" if v is None else f"{v:.0f}"
+                  print(f"| {br} | {label} | {f(g)} | {f(b.get('dns_ms'))} | "
+                        f"{f(b.get('connect_ms'))} | {f(b.get('tls_ms'))} | "
+                        f"{f(b.get('ttfb_ms'))} | {f(b.get('total_ms'))} |")
+              print()
+
+          spawn = load("spawn-*.json")
+          if spawn:
+              print("### Process spawn — is the bundled .so closure the cost?\n")
+              print("`system` forces LD_LIBRARY_PATH=/usr/lib, which beats RUNPATH and "
+                    "bypasses our bundle. A ratio below 1.0 means the bundle costs us.\n")
+              print("| browser | .so in dist | dist MB | launch bundled | launch system | ratio | ctx bundled | ctx system | ratio |")
+              print("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
+              for (_lab, br) in sorted(spawn, key=lambda k: str(k[1])):
+                  d = spawn[(_lab, br)]
+                  sh, bu, sy = d.get("shape") or {}, d.get("bundled") or {}, d.get("system") or {}
+                  v = d.get("verdict") or {}
+                  f = lambda x: "—" if x is None else (f"{x:.0f}" if isinstance(x, (int, float)) else str(x))
+                  err = sy.get("error")
+                  print(f"| {br} | {f(sh.get('so_count'))} | {f(sh.get('dir_mb'))} | "
+                        f"{f(bu.get('launch_ms'))} | {'failed' if err else f(sy.get('launch_ms'))} | "
+                        f"{f(v.get('launch_ratio_system_over_bundled'))} | "
+                        f"{f(bu.get('context_page_ms'))} | {'failed' if err else f(sy.get('context_page_ms'))} | "
+                        f"{f(v.get('context_ratio_system_over_bundled'))} |")
+              for (_lab, br) in sorted(spawn, key=lambda k: str(k[1])):
+                  e = ((spawn[(_lab, br)].get("system") or {}).get("error"))
+                  if e:
+                      print(f"\n> `{br}` could not run against system libs — itself a result "
+                            f"(the bundle carries versions the system lacks): `{e[:160]}`")
+          PY
