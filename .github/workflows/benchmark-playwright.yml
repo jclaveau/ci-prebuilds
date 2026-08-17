@@ -165,6 +165,23 @@ jobs:
             P=(--project=chromium)
           fi
           pnpm exec playwright test "${P[@]}"
+      # Timed separately from the step above, and the summary reads THIS one for the
+      # "Test run" column. The functional step navigates to the real
+      # playwright.dev, so its duration is DNS + RTT + someone else's CDN; this one
+      # is a fixed local workload (tests-perf/, setContent, no network) with
+      # retries:0 and trace off, so the only thing that moves between scenarios is
+      # how fast the browser did identical work.
+      - name: Run Playwright perf suite
+        working-directory: playwright
+        env:
+          PW_PERF_PROJECTS: '1'
+        run: |
+          if [ "${{ matrix.browsers }}" = "all" ]; then
+            P=(--project=chromium-perf --project=firefox-perf --project=webkit-perf)
+          else
+            P=(--project=chromium-perf)
+          fi
+          pnpm exec playwright test "${P[@]}"
       - name: Upload install download size
         if: always()
         uses: actions/upload-artifact@v4
@@ -227,6 +244,27 @@ jobs:
             P=(--project=chromium)
           else
             P=(--project=chromium --project=firefox --project=webkit)
+          fi
+          pnpm exec playwright test "${P[@]}"
+      # Timed separately from the step above, and the summary reads THIS one for the
+      # "Test run" column. The functional step navigates to the real
+      # playwright.dev, so its duration is DNS + RTT + someone else's CDN; this one
+      # is a fixed local workload (tests-perf/, setContent, no network) with
+      # retries:0 and trace off, so the only thing that moves between scenarios is
+      # how fast the browser did identical work.
+      - name: Run Playwright perf suite
+        working-directory: playwright
+        shell: bash
+        env:
+          PW_PERF_PROJECTS: '1'
+        run: |
+          SCENARIO="${{ matrix.scenario }}"
+          BROWSERS="${{ matrix.browsers }}"
+          [[ "$SCENARIO" == official* ]] && export HOME=/root
+          if [ "$BROWSERS" != "all" ]; then
+            P=(--project=chromium-perf)
+          else
+            P=(--project=chromium-perf --project=firefox-perf --project=webkit-perf)
           fi
           pnpm exec playwright test "${P[@]}"
       - name: Upload install download size
@@ -472,7 +510,9 @@ jobs:
               scenario, mode, _run = parts
               steps = j.get("steps") or []
               by = {s.get("name"): s for s in steps}
-              test = by.get("Run Playwright tests", {})
+              # Prefer the deterministic perf step; fall back to the functional one
+              # so runs recorded before it existed still parse.
+              test = by.get("Run Playwright perf suite") or by.get("Run Playwright tests", {})
               init = by.get("Initialize containers", {})
               install = sum(
                   d for s in steps if s.get("name") in INSTALL

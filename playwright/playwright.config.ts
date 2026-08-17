@@ -18,10 +18,40 @@ import { defineConfig, devices } from '@playwright/test';
 // patched Firefox + WebKit-WPE from the `playwright-alpine-browsers` producer
 // image; on the standard flavor PW's own glibc browsers apply. No
 // executablePath override needed on either. Same project list everywhere.
+// `-perf` twins of each browser, pointed at tests-perf/ and used ONLY by the
+// benchmark's timed step. They exist because the timing has to be deterministic
+// while tests/example.spec.ts deliberately is not — it navigates to the real
+// playwright.dev as test-and-publish's functional smoke.
+//
+// Opt-in via PW_PERF_PROJECTS so `playwright test` with no --project keeps doing
+// exactly what it did before: test-and-publish invokes it that way and would
+// otherwise silently start running the perf workload as part of its smoke.
+//
+// retries:0 + trace:'off' override the CI defaults below on purpose. With
+// retries:2 one flaky iteration tripled the measured time, and
+// trace:'on-first-retry' then added tracing overhead on top — so a retry made the
+// number both wrong and wrong in the direction that looks like a real
+// regression. Here a failure should fail, not quietly become a slow pass.
+const perfProject = (name: string, device: keyof typeof devices) => ({
+  name: `${name}-perf`,
+  testDir: './tests-perf',
+  retries: 0,
+  use: { ...devices[device], trace: 'off' as const },
+});
+
+const perfProjects = process.env.PW_PERF_PROJECTS
+  ? [
+      perfProject('chromium', 'Desktop Chrome'),
+      perfProject('firefox', 'Desktop Firefox'),
+      perfProject('webkit', 'Desktop Safari'),
+    ]
+  : [];
+
 const projects = [
   { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
   { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
   { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+  ...perfProjects,
 
   /* Test against mobile viewports. */
   // {
