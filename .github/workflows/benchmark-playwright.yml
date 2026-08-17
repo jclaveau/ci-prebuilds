@@ -205,6 +205,40 @@ jobs:
       # DEV MODE: all images public (Docker Hub jclaveau/... + PW official); no credentials needed.
     steps:
       - uses: actions/checkout@v7
+
+      # Same invariant guard test-and-publish uses, minus its re-pin. TP aligns the
+      # fixture DOWN to whatever PW the image ships, because its question is "does
+      # this image work as published". The bench's question is different — compare
+      # scenarios at ONE PW version — so re-pinning per image would let it measure
+      # our-1.60 against official-1.62 and report the gap as a scenario effect.
+      # Hence: assert, never adjust.
+      #
+      # Without it the mismatch surfaces as `Executable doesn't exist at
+      # /ms-playwright/chromium_headless_shell-1234/...` on every one of our
+      # scenarios while `official` stays green — because the official image tag is
+      # derived from the same package.json the client comes from, so only OUR images
+      # can fall behind it. That read as a 160-fail/25-pass split with no hint that
+      # the cause was a version pin (run 32036965900).
+      #
+      # No downloads here, so it cannot disturb the rx-bytes accounting below.
+      - name: Assert the image's Playwright matches the benched version
+        working-directory: playwright
+        run: |
+          IMAGE_PW="$(playwright --version 2>/dev/null | awk '{print $2}')" || true
+          FIXTURE_PW="$(node -p "require('./package.json').devDependencies.playwright" 2>/dev/null)"
+          echo "image playwright=${IMAGE_PW:-<none>}  fixture pin=${FIXTURE_PW}"
+          if [ -z "$IMAGE_PW" ]; then
+            echo "::notice::no global playwright in this image — nothing to assert"
+            exit 0
+          fi
+          if [ "$IMAGE_PW" != "$FIXTURE_PW" ]; then
+            echo "::error::image ships Playwright ${IMAGE_PW} but this bench is pinned to ${FIXTURE_PW}." \
+                 "The browser revisions will not match and every launch fails with" \
+                 "\"Executable doesn't exist\". Rebuild+promote the images at ${FIXTURE_PW}," \
+                 "or bench a ref whose playwright/package.json pins ${IMAGE_PW}."
+            exit 1
+          fi
+
       - name: Capture pre-install rx bytes
         # Inside the container's netns — counts only bytes the container's install steps fetch.
         run: awk '/^[ \t]*eth0:/{print $2}' /proc/net/dev > /tmp/nb_rx
