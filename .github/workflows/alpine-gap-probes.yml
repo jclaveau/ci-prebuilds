@@ -67,12 +67,16 @@ jobs:
           PROBE_URL: ${{ inputs.probe_url }}
           NODE_PATH: /usr/local/lib/node_modules:/usr/lib/node_modules
         run: |
-          # Same both-roots resolution test-and-publish uses: playwright is a
-          # GLOBAL install and its root differs between the MS image and ours.
+          # test-and-publish's resolution idiom, in full. Copying only the
+          # both-roots loop and dropping the install fallback is exactly why the
+          # three net-official-* jobs died with "Cannot find module 'playwright'"
+          # in run 32073294621: neither root resolves it on the MS image.
           for r in "$(pnpm root -g 2>/dev/null)" "$(npm root -g 2>/dev/null)"; do
             [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
           done
           export NODE_PATH
+          node -e 'require("playwright")' 2>/dev/null \
+            || npm install -g --no-fund --no-audit "playwright@${{ inputs.pw_version }}" >/dev/null 2>&1
           node net-probe.cjs \
             --browser "${{ matrix.browser }}" \
             --label "${{ matrix.label }}" \
@@ -105,6 +109,8 @@ jobs:
             [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
           done
           export NODE_PATH
+          node -e 'require("playwright")' 2>/dev/null \
+            || npm install -g --no-fund --no-audit "playwright@${{ inputs.pw_version }}" >/dev/null 2>&1
           node spawn-probe.cjs \
             --browser "${{ matrix.browser }}" \
             --iters 8 \
