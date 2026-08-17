@@ -122,8 +122,81 @@ jobs:
           path: playwright/bench/spawn-*.json
           if-no-files-found: ignore
 
+  # Neither probe above found the WebKit 1.3x. Both compared alpine to alpine or
+  # alpine to ubuntu on one runner and came out flat: the bundle costs ~1.00x, and
+  # DNS is at parity. What is NOT flat is runtime-probe's comparison against
+  # OFFICIAL — and the tell is `eval_rtt`, 1.13x on alpine AND 1.15x on ubuntu.
+  # Both of OUR images slow, official fast. No musl or packaging story produces
+  # that grouping; a container-environment one does.
+  #
+  # Our images run with `--security-opt seccomp=unconfined --env HOME=/home/runner`,
+  # official with `--env HOME=/root` and no seccomp strip. This varies ONLY the
+  # options, same image, same browser, same runner — so runner variance, which
+  # swamped earlier cross-run comparisons at ~4%, cannot contribute.
+  #
+  # docker run rather than GHA `container:` because the options under test
+  # (--ipc, --shm-size) are not all accepted there, and one job keeps every arm on
+  # one machine.
+  container-options:
+    name: ctropts-${{ matrix.browser }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [webkit, chromium]
+    steps:
+      - uses: actions/checkout@v7
+      - name: A/B the container options
+        env:
+          PW_VERSION: ${{ inputs.pw_version }}
+          BROWSER: ${{ matrix.browser }}
+        run: |
+          set -u
+          mkdir -p opts-out
+          IMG="jclaveau/alpine-dood-playwright:latest"
+          # name|options — `ours` reproduces what the bench and TP actually use.
+          ARMS='
+          ours|--security-opt seccomp=unconfined --env HOME=/home/runner
+          official-style|--env HOME=/root
+          ours-ipc-host|--security-opt seccomp=unconfined --env HOME=/home/runner --ipc=host
+          ours-shm2g|--security-opt seccomp=unconfined --env HOME=/home/runner --shm-size=2g
+          '
+          rc=0
+          echo "$ARMS" | while IFS='|' read -r name opts; do
+            [ -n "$name" ] || continue
+            echo "::group::$name ($opts)"
+            # shellcheck disable=SC2086  # $opts is a flag list; splitting is intended
+            docker run --rm $opts \
+              --env "PROBE_BROWSER=$BROWSER" \
+              --env "PROBE_TARGET=$name" \
+              --env "PW_VERSION=$PW_VERSION" \
+              -v "$PWD/playwright/bench:/probe:ro" \
+              -v "$PWD/opts-out:/out" \
+              "$IMG" \
+              sh -c '
+                for r in "$(pnpm root -g 2>/dev/null)" "$(npm root -g 2>/dev/null)"; do
+                  [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
+                done
+                export NODE_PATH
+                node -e "require(\"playwright\")" 2>/dev/null \
+                  || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
+                node /probe/runtime-probe.cjs \
+                  --browser "$PROBE_BROWSER" --target "$PROBE_TARGET" --out /out
+              ' || echo "arm $name failed (recorded as absent)"
+            echo "::endgroup::"
+          done
+          ls -la opts-out || true
+          exit $rc
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ctropts-${{ matrix.browser }}
+          path: opts-out/
+          if-no-files-found: warn
+
   report:
-    needs: [network, spawn]
+    needs: [network, spawn, container-options]
     # Report whatever landed: a probe that fails is itself a result, and losing
     # the ones that succeeded because a sibling died wastes the whole run.
     if: always()
@@ -164,6 +237,59 @@ jobs:
                         f"{f(b.get('connect_ms'))} | {f(b.get('tls_ms'))} | "
                         f"{f(b.get('ttfb_ms'))} | {f(b.get('total_ms'))} |")
               print()
+
+          # runtime-probe writes one json per (target, browser); key on target here.
+          opts = {}
+          for f in glob.glob("probes/**/*.json", recursive=True):
+              if "/ctropts-" not in f:
+                  continue
+              try:
+                  d = json.load(open(f))
+              except Exception:
+                  continue
+              opts.setdefault(d.get("browser") or "?", {})[d.get("target") or "?"] = d
+          if opts:
+              print("### Container options — same image, same runner, options varied\n")
+              print("Only the docker options differ. `ours` is what the bench and "
+                    "test-and-publish actually use; `official-style` is how the MS "
+                    "image is launched.\n")
+              for br, arms in sorted(opts.items()):
+                  kernels = sorted({k for a in arms.values() for k in (a.get("metrics") or {})})
+                  if not kernels:
+                      continue
+                  names = sorted(arms)
+                  print(f"**{br}** (ms)\n")
+                  print("| kernel | " + " | ".join(names) + " |")
+                  print("|---" * (len(names) + 1) + "|")
+                  for k in kernels:
+                      cells = []
+                      for n in names:
+                          # runtime-probe emits {median_ms, samples} per kernel,
+                          # not a bare number.
+                          m = (arms[n].get("metrics") or {}).get(k) or {}
+                          v = m.get("median_ms")
+                          cells.append("—" if v is None else f"{v:.1f}")
+                      base = ((arms.get("ours") or {}).get("metrics") or {}).get(k) or {}
+                      b = base.get("median_ms")
+                      ratios = []
+                      for n in names:
+                          m = (arms[n].get("metrics") or {}).get(k) or {}
+                          v = m.get("median_ms")
+                          ratios.append("—" if not (b and v) else f"{v / b:.2f}x")
+                      print(f"| `{k}` | " + " | ".join(cells) + " |")
+                  print()
+                  print("Ratios vs the `ours` arm:\n")
+                  print("| kernel | " + " | ".join(names) + " |")
+                  print("|---" * (len(names) + 1) + "|")
+                  for k in kernels:
+                      base = ((arms.get("ours") or {}).get("metrics") or {}).get(k) or {}
+                      b = base.get("median_ms")
+                      cells = []
+                      for n in names:
+                          v = ((arms[n].get("metrics") or {}).get(k) or {}).get("median_ms")
+                          cells.append("—" if not (b and v) else f"{v / b:.2f}x")
+                      print(f"| `{k}` | " + " | ".join(cells) + " |")
+                  print()
 
           spawn = load("spawn-*.json")
           if spawn:
