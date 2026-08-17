@@ -129,14 +129,27 @@ jobs:
           HEAD_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" -q .head_sha)
           echo "conformance run ${RUN_ID} ran on ${HEAD_SHA}"
 
+          # Only THIS artifact's conformance jobs. Matching every job whose name
+          # contains "conformance" made a run that built one browser unpromotable:
+          # the siblings it never built report `skipped`, and demanding all-success
+          # rejected them as if they had failed. Same skipped-is-not-failed
+          # confusion as actions/runner#491, in the opposite direction.
+          #
+          # Anchored, because `conformance-chromium-headless-shell` (the retired apk
+          # variant, skipped here) is a PREFIX of the from-source name — an
+          # unanchored match drags it back in and re-breaks this.
           gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs?per_page=100" \
-            -q '.jobs[] | select(.name | test("conformance")) | "\(.conclusion)\t\(.name)"' > /tmp/conf-jobs.txt
+            -q '.jobs[]
+                | select(.name | test("^conformance-chromium-headless-shell-from-source"))
+                | "\(.conclusion)\t\(.name)"' > /tmp/conf-jobs.txt
           cat /tmp/conf-jobs.txt
           [ -s /tmp/conf-jobs.txt ] \
-            || { echo "::error::run ${RUN_ID} has no conformance job"; exit 1; }
+            || { echo "::error::run ${RUN_ID} ran no from-source chromium conformance job"; exit 1; }
           if grep -qvE '^success\b' /tmp/conf-jobs.txt; then
-            echo "::error::run ${RUN_ID} has conformance jobs that did not succeed"; exit 1
+            echo "::error::run ${RUN_ID} has from-source chromium conformance jobs that did not succeed"
+            exit 1
           fi
+          echo "from-source chromium conformance: $(wc -l < /tmp/conf-jobs.txt) jobs, all success"
 
           IMG_SHA=$(docker buildx imagetools inspect "$SRC" --format '{{ json .Image }}' \
             | jq -r '[.. | objects | ."org.opencontainers.image.revision"? // empty] | first // empty')
