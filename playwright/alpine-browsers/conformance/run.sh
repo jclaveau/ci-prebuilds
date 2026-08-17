@@ -42,6 +42,31 @@ case "$BROWSER" in
   *) echo "BROWSER must be one of: chromium, firefox, webkit (got: $BROWSER)" >&2; exit 1 ;;
 esac
 
+# Declare the channel for chromium so PW's OWN shell guards fire instead of us
+# re-implementing them as title skips. Both legs get it — ours and the Ubuntu
+# baseline — so the two run the same test set and the skip-lists can be identical.
+#
+# Set here rather than per-workflow because run.sh is the one thing both legs
+# share; splitting it across pw-conformance.yml and pw-conformance-ubuntu.yml is
+# how they would drift apart.
+#
+# Safe because the channel name is not a chromium alias: getExecutableName falls
+# through `if (options.channel) return options.channel`, resolving the SAME
+# executable the headless default already resolves (chromium.ts, chromiumAliases
+# is only ['chrome-for-testing']). And `isHeadlessShell` stays true — its first
+# clause is literally `channel === 'chromium-headless-shell'` — so the 26 specs
+# keyed on it are unaffected.
+#
+# Exact ledger, measured against PW v1.62 sources:
+#   gained  oopif.spec.ts:377    it.skip(!!process.env.PWTEST_CHANNEL)
+#           launcher.spec.ts:48  it.skip(channel === 'chromium-headless-shell')
+#   lost    browsertype-basic.spec.ts:22 test.skip(!!channel) — one test, and it
+#           is lost on BOTH legs, so parity is preserved.
+if [ "$BROWSER" = "chromium" ]; then
+  export PWTEST_CHANNEL=chromium-headless-shell
+  echo "==== PWTEST_CHANNEL=chromium-headless-shell (PW's own shell guards active) ===="
+fi
+
 SKIP_DIR="${SKIP_DIR:-/conformance/skip-list}"
 FILES_LIST="$SKIP_DIR/${BROWSER}.files.txt"
 TITLES_LIST="$SKIP_DIR/${BROWSER}.titles.txt"

@@ -6,17 +6,12 @@
 # Use for individual real Alpine/musl conformance gaps. Whole-file
 # divergences (UI subsystems, codecs) go in chromium.files.txt.
 
-# ── OOPIF CDP re-connect — PW-INTENDED headless-shell skip, NOT an Alpine gap ─
-# oopif.spec.ts RECOVERED whole-file 2026-07-17. This ONE test carries its OWN
-# guard `it.skip(!!process.env.PWTEST_CHANNEL, 'Test default channel only')` — it
-# internally launches a hostBrowser via `channel:'chromium'` + connectOverCDP +
-# re-attaches to pre-existing OOPIFs, a headed-oriented path out-of-profile for a
-# chromium-headless-shell GN target (which our from-source artifact IS). PW itself
-# skips it off the default channel. Carried here as a headless-shell-inapplicable
-# skip (does NOT count against browser parity), not a musl bug. Setting
-# PWTEST_CHANNEL globally would fire the guard but has blast radius — kept as a
-# title-skip instead.
-should allow to re-connect to OOPIFs with CDP when iframes were there already
+# ── OOPIF CDP re-connect — now handled by PW's own guard ────────────────────
+# oopif.spec.ts:377 carries `it.skip(!!process.env.PWTEST_CHANNEL, 'Test default
+# channel only')`. run.sh now exports PWTEST_CHANNEL=chromium-headless-shell for
+# chromium on BOTH legs, so PW skips it itself and the title entry is redundant.
+# The earlier note here judged that "blast radius" too risky; the radius was then
+# measured against PW v1.62 sources and is exactly one test — see run.sh.
 
 # ── Third-party cookies / CHIPS / Partitioned — UN-SKIP PROBE 2026-07-16 ─────
 # Skip was a defensive CHS-apk-era carryover (seeded 2026-06-26 against the
@@ -90,11 +85,10 @@ should ignore page.pause when headed$
 # full-chromium 'launched a headed browser without an XServer' error; the
 # headless-shell binary ignores headed-ness + launches fine → no error. PW's OWN
 # guard `it.skip(channel === 'chromium-headless-shell', 'shell is never headed')`
-# covers this; our runner doesn't declare the channel so the guard is dead, but
-# our artifact IS a headless-shell GN target (browserTest.ts derives isShell=true
-# via !channel && headless). Headless-shell-inapplicable — does NOT count against
-# browser parity.
-should throw a friendly error if its headed and there is no xserver on linux running
+# covers this. run.sh now exports PWTEST_CHANNEL=chromium-headless-shell so that
+# guard (launcher.spec.ts:48) FIRES, and the title entry below is redundant —
+# removed. isHeadlessShell stays true either way: its first clause is
+# `channel === 'chromium-headless-shell'`.
 
 # browsercontext-har.spec.ts redirected navigation — all three behave
 # the same (history nav after HAR replay).
