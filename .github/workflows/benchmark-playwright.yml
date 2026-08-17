@@ -510,9 +510,16 @@ jobs:
               scenario, mode, _run = parts
               steps = j.get("steps") or []
               by = {s.get("name"): s for s in steps}
-              # Prefer the deterministic perf step; fall back to the functional one
-              # so runs recorded before it existed still parse.
-              test = by.get("Run Playwright perf suite") or by.get("Run Playwright tests", {})
+              # Two timed test steps, reported side by side. `Run Playwright tests`
+              # is the functional one and navigates to the real playwright.dev, so
+              # its duration is mostly DNS + RTT + someone else's CDN — kept as a
+              # visible trace, NOT used for Total. `Run Playwright perf suite` runs a
+              # fixed local workload and is what Total counts.
+              # ttt is measured to the FUNCTIONAL step: it is the first one to run,
+              # so "time until tests begin" means that boundary. Measuring it to the
+              # perf step would silently fold the functional run into time-to-tests.
+              func = by.get("Run Playwright tests", {})
+              perf = by.get("Run Playwright perf suite", {})
               init = by.get("Initialize containers", {})
               install = sum(
                   d for s in steps if s.get("name") in INSTALL
@@ -523,10 +530,19 @@ jobs:
               vals = {
                   "pull": dur(init.get("started_at"), init.get("completed_at")),
                   "install": install,
-                  "ttt": dur(j.get("started_at"), test.get("started_at")),
-                  "test": dur(test.get("started_at"), test.get("completed_at")),
-                  "total": dur(j.get("started_at"), j.get("completed_at")),
+                  "ttt": dur(j.get("started_at"), func.get("started_at")),
+                  "test": dur(func.get("started_at"), func.get("completed_at")),
+                  "perf": dur(perf.get("started_at"), perf.get("completed_at")),
               }
+              # Total is time-to-tests + the DETERMINISTIC run, so the unreliable
+              # functional step cannot move it. Job wall-clock is the fallback for
+              # runs recorded before the perf step existed — those Totals are not
+              # comparable with the ones below them.
+              vals["total"] = (
+                  (vals["ttt"] + vals["perf"])
+                  if vals["ttt"] is not None and vals["perf"] is not None
+                  else dur(j.get("started_at"), j.get("completed_at"))
+              )
               for k, v in vals.items():
                   if v is not None:
                       agg[key][k].append(v)
@@ -658,6 +674,7 @@ jobs:
                       "install": mean_of(agg[key]["install"]),
                       "ttt":     ttt_m,
                       "test":    mean_of(agg[key]["test"]),
+                      "perf":    mean_of(agg[key]["perf"]),
                       "total":   mean_of(agg[key]["total"]),
                       "d_num": d_num, "p_num": p_num,
                       "cell_str": cell_str, "d": d_str, "p": p_str, "ok": ok, "n": n,
@@ -670,7 +687,7 @@ jobs:
                   '<thead><tr>'
                   '<th width="240">Scenario</th><th width="60">Runs OK</th><th width="90">Image&nbsp;size</th>'
                   '<th>pull</th><th>install</th><th width="90">full&nbsp;dl&nbsp;size</th><th>time to tests</th>'
-                  '<th>Test run</th><th>Total</th>'
+                  '<th>Test run</th><th>Perf&nbsp;test&nbsp;run</th><th>Total</th>'
                   '<th>Δ</th>'
                   '<th>Δ %</th>'
                   '</tr></thead>',
@@ -687,6 +704,7 @@ jobs:
                       f'<td>{full_dl_cell(r["sc"], mode)}</td>'
                       f'<td>{r["cell_str"]}</td>'
                       f'<td>{fmt(r["test"])}</td>'
+                      f'<td>{fmt(r["perf"])}</td>'
                       f'<td>{fmt(r["total"])}</td>'
                       f'<td>{badge(r["d_num"], *R["d_num"], r["d"])}</td>'
                       f'<td>{badge(r["p_num"], *R["p_num"], r["p"])}</td>'
