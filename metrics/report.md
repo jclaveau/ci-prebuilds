@@ -1,10 +1,10 @@
 # CI + registry metrics
 
-- runs: **2110** (2025-10-17 -> 2026-08-14)
-- jobs: **76137**, **2513** runner-hours total
+- runs: **2138** (2025-10-17 -> 2026-08-17)
+- jobs: **77954**, **2636** runner-hours total
 - tagged image versions priced: **5051**, deduped GHCR footprint **905.4 GB** (sum of per-image pull sizes: 5222.8 GB)
-- agent requests: **9614**, **$2,758** API-equivalent (subscription work — not money spent)
-- artifacts on record: **15144**, **4.7 GB**, **9120** already expired
+- agent requests: **9626**, **$2,760** API-equivalent (subscription work — not money spent)
+- artifacts on record: **15837**, **4.8 GB**, **9172** already expired
 
 ## Weekly cost
 
@@ -23,7 +23,8 @@
 | 2026-07-20 | 154.8 | Playwright Alpine Browsers | 29.2 GB | 670.4 GB |
 | 2026-07-27 | 158.3 | Playwright Alpine Browsers | 76.6 GB | 747.1 GB |
 | 2026-08-03 | 95.8 | Playwright Alpine Browsers | 27.0 GB | 774.0 GB |
-| 2026-08-10 | 254.0 | Playwright Alpine Browsers | 131.4 GB | 905.4 GB |
+| 2026-08-10 | 372.6 | Playwright Alpine Browsers | 131.4 GB | 905.4 GB |
+| 2026-08-17 | 4.6 | Test and Publish | 0.0 GB | 905.4 GB |
 
 ## What this would cost as a private repo
 
@@ -35,18 +36,18 @@ Standard runners are free on public repos, so today this is all $0. Privately it
 | 2026-05 | 13,464 | $81 | $0 | 0.00 |
 | 2026-06 | 80,321 | $482 | $465 | 0.52 |
 | 2026-07 | 59,876 | $359 | $2,098 | 3.61 |
-| 2026-08 | 27,852 | $167 | $194 | 1.08 |
-| **total** | **182,228** | **$1,093** | **$2,758** | **5.21** |
+| 2026-08 | 35,926 | $216 | $197 | 1.09 |
+| **total** | **190,302** | **$1,142** | **$2,760** | **5.22** |
 
-Artifact storage: **2.2 GB-months** = **$1** at $0.25/GB/month.
+Artifact storage: **2.3 GB-months** = **$1** at $0.25/GB/month.
 
 Net of each plan's included minutes, per month averaged over the 5 month(s) on record:
 
 | plan | included | billed over | $/month |
 |---|---:|---:|---:|
-| Free | 2,000 | 34,446 | $207 |
-| Pro | 3,000 | 33,446 | $201 |
-| Team | 3,000 | 33,446 | $201 |
+| Free | 2,000 | 36,060 | $216 |
+| Pro | 3,000 | 35,060 | $210 |
+| Team | 3,000 | 35,060 | $210 |
 | Enterprise | 50,000 | 0 | $0 |
 
 Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/month**, which would roughly double the bill. GitHub commits to one month's notice, so it is a watch item rather than a plan.
@@ -73,145 +74,181 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 |---|---|---:|---:|
 | bench act-alpine-dind-gyp/all | 2026-07-27 | - | 47 |
 | bench act-alpine-dind-gyp/all | 2026-08-03 | - | 44 |
-| bench act-alpine-dind-gyp/all | 2026-08-10 | - | 45 |
+| bench act-alpine-dind-gyp/all | 2026-08-10 | - | 44 |
+| bench act-alpine-dind-gyp/all | 2026-08-17 | - | 42 |
 | bench act-alpine-dind-gyp/chromium | 2026-05-25 | - | 21 |
 | bench act-alpine-dind-gyp/chromium | 2026-07-27 | - | 36 |
 | bench act-alpine-dind-gyp/chromium | 2026-08-03 | - | 34 |
 | bench act-alpine-dind-gyp/chromium | 2026-08-10 | - | 33 |
+| bench act-alpine-dind-gyp/chromium | 2026-08-17 | - | 31 |
 | bench act-alpine-dind/all | 2026-07-27 | - | 43 |
 | bench act-alpine-dind/all | 2026-08-03 | - | 41 |
 | bench act-alpine-dind/all | 2026-08-10 | - | 42 |
+| bench act-alpine-dind/all | 2026-08-17 | - | 40 |
 | bench act-alpine-dind/chromium | 2026-05-25 | - | 19 |
 | bench act-alpine-dind/chromium | 2026-07-27 | - | 33 |
 | bench act-alpine-dind/chromium | 2026-08-03 | - | 30 |
 | bench act-alpine-dind/chromium | 2026-08-10 | - | 31 |
+| bench act-alpine-dind/chromium | 2026-08-17 | - | 28 |
 | bench act-alpine-dood-gyp/all | 2026-07-27 | - | 48 |
 | bench act-alpine-dood-gyp/all | 2026-08-03 | - | 45 |
 | bench act-alpine-dood-gyp/all | 2026-08-10 | - | 44 |
+| bench act-alpine-dood-gyp/all | 2026-08-17 | - | 44 |
 | bench act-alpine-dood-gyp/chromium | 2026-05-25 | - | 21 |
 | bench act-alpine-dood-gyp/chromium | 2026-07-27 | - | 35 |
 | bench act-alpine-dood-gyp/chromium | 2026-08-03 | - | 34 |
-| bench act-alpine-dood-gyp/chromium | 2026-08-10 | - | 34 |
+| bench act-alpine-dood-gyp/chromium | 2026-08-10 | - | 33 |
+| bench act-alpine-dood-gyp/chromium | 2026-08-17 | - | 30 |
 | bench act-alpine-dood/all | 2026-07-27 | - | 43 |
 | bench act-alpine-dood/all | 2026-08-03 | - | 41 |
-| bench act-alpine-dood/all | 2026-08-10 | - | 42 |
+| bench act-alpine-dood/all | 2026-08-10 | - | 40 |
+| bench act-alpine-dood/all | 2026-08-17 | - | 38 |
 | bench act-alpine-dood/chromium | 2026-05-25 | - | 19 |
 | bench act-alpine-dood/chromium | 2026-07-27 | - | 33 |
 | bench act-alpine-dood/chromium | 2026-08-03 | - | 30 |
 | bench act-alpine-dood/chromium | 2026-08-10 | - | 30 |
+| bench act-alpine-dood/chromium | 2026-08-17 | - | 27 |
 | bench act-baseline/all | 2026-05-25 | - | 72 |
 | bench act-baseline/chromium | 2026-05-25 | - | 46 |
 | bench act-official-gyp/all | 2026-05-25 | - | 58 |
 | bench act-official-gyp/all | 2026-07-27 | - | 64 |
 | bench act-official-gyp/all | 2026-08-03 | - | 56 |
-| bench act-official-gyp/all | 2026-08-10 | - | 62 |
+| bench act-official-gyp/all | 2026-08-10 | - | 63 |
+| bench act-official-gyp/all | 2026-08-17 | - | 68 |
 | bench act-official-gyp/chromium | 2026-05-25 | - | 51 |
 | bench act-official-gyp/chromium | 2026-07-27 | - | 54 |
 | bench act-official-gyp/chromium | 2026-08-03 | - | 49 |
 | bench act-official-gyp/chromium | 2026-08-10 | - | 56 |
+| bench act-official-gyp/chromium | 2026-08-17 | - | 56 |
 | bench act-official/all | 2026-05-25 | - | 39 |
 | bench act-official/all | 2026-07-27 | - | 52 |
 | bench act-official/all | 2026-08-03 | - | 47 |
 | bench act-official/all | 2026-08-10 | - | 52 |
+| bench act-official/all | 2026-08-17 | - | 47 |
 | bench act-official/chromium | 2026-05-25 | - | 31 |
 | bench act-official/chromium | 2026-07-27 | - | 45 |
 | bench act-official/chromium | 2026-08-03 | - | 41 |
 | bench act-official/chromium | 2026-08-10 | - | 43 |
+| bench act-official/chromium | 2026-08-17 | - | 43 |
 | bench act-ours-alpine/chromium | 2026-05-25 | - | 21 |
 | bench act-ours-ubuntu/all | 2026-05-25 | - | 43 |
 | bench act-ours-ubuntu/chromium | 2026-05-25 | - | 34 |
 | bench act-ubuntu-dind-gyp/all | 2026-05-25 | - | 43 |
 | bench act-ubuntu-dind-gyp/all | 2026-07-27 | - | 45 |
 | bench act-ubuntu-dind-gyp/all | 2026-08-03 | - | 43 |
-| bench act-ubuntu-dind-gyp/all | 2026-08-10 | - | 44 |
+| bench act-ubuntu-dind-gyp/all | 2026-08-10 | - | 46 |
+| bench act-ubuntu-dind-gyp/all | 2026-08-17 | - | 45 |
 | bench act-ubuntu-dind-gyp/chromium | 2026-05-25 | - | 35 |
 | bench act-ubuntu-dind-gyp/chromium | 2026-07-27 | - | 38 |
 | bench act-ubuntu-dind-gyp/chromium | 2026-08-03 | - | 36 |
 | bench act-ubuntu-dind-gyp/chromium | 2026-08-10 | - | 37 |
+| bench act-ubuntu-dind-gyp/chromium | 2026-08-17 | - | 37 |
 | bench act-ubuntu-dind/all | 2026-05-25 | - | 40 |
 | bench act-ubuntu-dind/all | 2026-07-27 | - | 41 |
 | bench act-ubuntu-dind/all | 2026-08-03 | - | 42 |
 | bench act-ubuntu-dind/all | 2026-08-10 | - | 42 |
+| bench act-ubuntu-dind/all | 2026-08-17 | - | 45 |
 | bench act-ubuntu-dind/chromium | 2026-05-25 | - | 33 |
 | bench act-ubuntu-dind/chromium | 2026-07-27 | - | 34 |
 | bench act-ubuntu-dind/chromium | 2026-08-03 | - | 34 |
-| bench act-ubuntu-dind/chromium | 2026-08-10 | - | 34 |
+| bench act-ubuntu-dind/chromium | 2026-08-10 | - | 35 |
+| bench act-ubuntu-dind/chromium | 2026-08-17 | - | 34 |
 | bench act-ubuntu-dood-gyp/all | 2026-05-25 | - | 43 |
 | bench act-ubuntu-dood-gyp/all | 2026-07-27 | - | 45 |
 | bench act-ubuntu-dood-gyp/all | 2026-08-03 | - | 43 |
 | bench act-ubuntu-dood-gyp/all | 2026-08-10 | - | 44 |
+| bench act-ubuntu-dood-gyp/all | 2026-08-17 | - | 45 |
 | bench act-ubuntu-dood-gyp/chromium | 2026-05-25 | - | 35 |
 | bench act-ubuntu-dood-gyp/chromium | 2026-07-27 | - | 37 |
 | bench act-ubuntu-dood-gyp/chromium | 2026-08-03 | - | 36 |
 | bench act-ubuntu-dood-gyp/chromium | 2026-08-10 | - | 36 |
+| bench act-ubuntu-dood-gyp/chromium | 2026-08-17 | - | 34 |
 | bench act-ubuntu-dood/all | 2026-05-25 | - | 40 |
 | bench act-ubuntu-dood/all | 2026-07-27 | - | 42 |
 | bench act-ubuntu-dood/all | 2026-08-03 | - | 41 |
 | bench act-ubuntu-dood/all | 2026-08-10 | - | 43 |
+| bench act-ubuntu-dood/all | 2026-08-17 | - | 51 |
 | bench act-ubuntu-dood/chromium | 2026-05-25 | - | 32 |
 | bench act-ubuntu-dood/chromium | 2026-07-27 | - | 34 |
 | bench act-ubuntu-dood/chromium | 2026-08-03 | - | 33 |
 | bench act-ubuntu-dood/chromium | 2026-08-10 | - | 33 |
+| bench act-ubuntu-dood/chromium | 2026-08-17 | - | 33 |
 | bench alpine-dind-gyp/all | 2026-07-27 | 35 | 15 |
 | bench alpine-dind-gyp/all | 2026-08-03 | 41 | 11 |
 | bench alpine-dind-gyp/all | 2026-08-10 | 31 | 15 |
+| bench alpine-dind-gyp/all | 2026-08-17 | 29 | 15 |
 | bench alpine-dind-gyp/chromium | 2026-05-25 | 20 | 3 |
 | bench alpine-dind-gyp/chromium | 2026-07-27 | 32 | 4 |
 | bench alpine-dind-gyp/chromium | 2026-08-03 | 31 | 5 |
 | bench alpine-dind-gyp/chromium | 2026-08-10 | 32 | 5 |
+| bench alpine-dind-gyp/chromium | 2026-08-17 | 30 | 5 |
 | bench alpine-dind/all | 2026-07-27 | 33 | 14 |
 | bench alpine-dind/all | 2026-08-03 | 28 | 14 |
 | bench alpine-dind/all | 2026-08-10 | 28 | 16 |
+| bench alpine-dind/all | 2026-08-17 | 43 | 13 |
 | bench alpine-dind/chromium | 2026-05-25 | 18 | 3 |
 | bench alpine-dind/chromium | 2026-07-27 | 35 | 4 |
 | bench alpine-dind/chromium | 2026-08-03 | 31 | 5 |
-| bench alpine-dind/chromium | 2026-08-10 | 28 | 5 |
+| bench alpine-dind/chromium | 2026-08-10 | 28 | 4 |
+| bench alpine-dind/chromium | 2026-08-17 | 28 | 5 |
 | bench alpine-dood-gyp/all | 2026-07-27 | 35 | 15 |
 | bench alpine-dood-gyp/all | 2026-08-03 | 33 | 16 |
 | bench alpine-dood-gyp/all | 2026-08-10 | 29 | 16 |
+| bench alpine-dood-gyp/all | 2026-08-17 | 43 | 11 |
 | bench alpine-dood-gyp/chromium | 2026-05-25 | 20 | 3 |
 | bench alpine-dood-gyp/chromium | 2026-07-27 | 37 | 4 |
 | bench alpine-dood-gyp/chromium | 2026-08-03 | 32 | 4 |
 | bench alpine-dood-gyp/chromium | 2026-08-10 | 28 | 4 |
+| bench alpine-dood-gyp/chromium | 2026-08-17 | 29 | 5 |
 | bench alpine-dood/all | 2026-07-27 | 34 | 15 |
 | bench alpine-dood/all | 2026-08-03 | 29 | 15 |
 | bench alpine-dood/all | 2026-08-10 | 28 | 15 |
+| bench alpine-dood/all | 2026-08-17 | 25 | 16 |
 | bench alpine-dood/chromium | 2026-05-25 | 18 | 3 |
 | bench alpine-dood/chromium | 2026-07-27 | 31 | 4 |
 | bench alpine-dood/chromium | 2026-08-03 | 35 | 4 |
 | bench alpine-dood/chromium | 2026-08-10 | 26 | 5 |
+| bench alpine-dood/chromium | 2026-08-17 | 23 | 5 |
 | bench baseline-gyp/all | 2026-05-25 | 46 | 15 |
 | bench baseline-gyp/all | 2026-07-27 | 58 | 13 |
 | bench baseline-gyp/all | 2026-08-03 | 64 | 10 |
 | bench baseline-gyp/all | 2026-08-10 | 54 | 14 |
+| bench baseline-gyp/all | 2026-08-17 | 44 | 15 |
 | bench baseline-gyp/chromium | 2026-05-25 | 26 | 3 |
 | bench baseline-gyp/chromium | 2026-07-27 | 29 | 3 |
 | bench baseline-gyp/chromium | 2026-08-03 | 25 | 3 |
-| bench baseline-gyp/chromium | 2026-08-10 | 29 | 3 |
+| bench baseline-gyp/chromium | 2026-08-10 | 30 | 3 |
+| bench baseline-gyp/chromium | 2026-08-17 | 31 | 3 |
 | bench baseline/all | 2026-05-25 | 50 | 15 |
 | bench baseline/all | 2026-07-27 | 50 | 15 |
 | bench baseline/all | 2026-08-03 | 53 | 15 |
-| bench baseline/all | 2026-08-10 | 53 | 14 |
+| bench baseline/all | 2026-08-10 | 55 | 15 |
+| bench baseline/all | 2026-08-17 | 60 | 15 |
 | bench baseline/chromium | 2026-05-25 | 26 | 3 |
 | bench baseline/chromium | 2026-07-27 | 28 | 3 |
 | bench baseline/chromium | 2026-08-03 | 24 | 3 |
 | bench baseline/chromium | 2026-08-10 | 26 | 3 |
+| bench baseline/chromium | 2026-08-17 | 27 | 3 |
 | bench official-gyp/all | 2026-05-25 | 48 | 10 |
 | bench official-gyp/all | 2026-07-27 | 62 | 10 |
 | bench official-gyp/all | 2026-08-03 | 46 | 11 |
-| bench official-gyp/all | 2026-08-10 | 54 | 10 |
+| bench official-gyp/all | 2026-08-10 | 56 | 10 |
+| bench official-gyp/all | 2026-08-17 | 49 | 10 |
 | bench official-gyp/chromium | 2026-05-25 | 44 | 3 |
 | bench official-gyp/chromium | 2026-07-27 | 57 | 2 |
 | bench official-gyp/chromium | 2026-08-03 | 54 | 3 |
 | bench official-gyp/chromium | 2026-08-10 | 53 | 3 |
+| bench official-gyp/chromium | 2026-08-17 | 68 | 2 |
 | bench official/all | 2026-05-25 | 30 | 10 |
 | bench official/all | 2026-07-27 | 54 | 9 |
 | bench official/all | 2026-08-03 | 38 | 10 |
 | bench official/all | 2026-08-10 | 43 | 10 |
+| bench official/all | 2026-08-17 | 43 | 10 |
 | bench official/chromium | 2026-05-25 | 30 | 3 |
 | bench official/chromium | 2026-07-27 | 50 | 3 |
 | bench official/chromium | 2026-08-03 | 39 | 3 |
-| bench official/chromium | 2026-08-10 | 42 | 3 |
+| bench official/chromium | 2026-08-10 | 43 | 3 |
+| bench official/chromium | 2026-08-17 | 42 | 3 |
 | bench ours-alpine/chromium | 2026-05-25 | 20 | 3 |
 | bench ours-ubuntu/all | 2026-05-25 | 34 | 10 |
 | bench ours-ubuntu/chromium | 2026-05-25 | 34 | 2 |
@@ -221,34 +258,42 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench ubuntu-dind-gyp/all | 2026-07-27 | 38 | 11 |
 | bench ubuntu-dind-gyp/all | 2026-08-03 | 36 | 10 |
 | bench ubuntu-dind-gyp/all | 2026-08-10 | 37 | 10 |
+| bench ubuntu-dind-gyp/all | 2026-08-17 | 37 | 11 |
 | bench ubuntu-dind-gyp/chromium | 2026-05-25 | 34 | 2 |
 | bench ubuntu-dind-gyp/chromium | 2026-07-27 | 37 | 3 |
 | bench ubuntu-dind-gyp/chromium | 2026-08-03 | 35 | 2 |
 | bench ubuntu-dind-gyp/chromium | 2026-08-10 | 37 | 3 |
+| bench ubuntu-dind-gyp/chromium | 2026-08-17 | 38 | 3 |
 | bench ubuntu-dind/all | 2026-05-25 | 32 | 10 |
 | bench ubuntu-dind/all | 2026-07-27 | 45 | 8 |
 | bench ubuntu-dind/all | 2026-08-03 | 39 | 11 |
 | bench ubuntu-dind/all | 2026-08-10 | 35 | 10 |
+| bench ubuntu-dind/all | 2026-08-17 | 31 | 9 |
 | bench ubuntu-dind/chromium | 2026-05-25 | 32 | 2 |
 | bench ubuntu-dind/chromium | 2026-07-27 | 35 | 3 |
 | bench ubuntu-dind/chromium | 2026-08-03 | 33 | 3 |
 | bench ubuntu-dind/chromium | 2026-08-10 | 34 | 3 |
+| bench ubuntu-dind/chromium | 2026-08-17 | 33 | 3 |
 | bench ubuntu-dood-gyp/all | 2026-05-25 | 34 | 10 |
 | bench ubuntu-dood-gyp/all | 2026-07-27 | 40 | 10 |
 | bench ubuntu-dood-gyp/all | 2026-08-03 | 32 | 10 |
 | bench ubuntu-dood-gyp/all | 2026-08-10 | 36 | 10 |
+| bench ubuntu-dood-gyp/all | 2026-08-17 | 43 | 9 |
 | bench ubuntu-dood-gyp/chromium | 2026-05-25 | 34 | 2 |
 | bench ubuntu-dood-gyp/chromium | 2026-07-27 | 38 | 3 |
 | bench ubuntu-dood-gyp/chromium | 2026-08-03 | 46 | 2 |
 | bench ubuntu-dood-gyp/chromium | 2026-08-10 | 37 | 3 |
+| bench ubuntu-dood-gyp/chromium | 2026-08-17 | 35 | 3 |
 | bench ubuntu-dood/all | 2026-05-25 | 32 | 10 |
 | bench ubuntu-dood/all | 2026-07-27 | 36 | 10 |
 | bench ubuntu-dood/all | 2026-08-03 | 32 | 10 |
 | bench ubuntu-dood/all | 2026-08-10 | 33 | 10 |
+| bench ubuntu-dood/all | 2026-08-17 | 37 | 8 |
 | bench ubuntu-dood/chromium | 2026-05-25 | 32 | 2 |
 | bench ubuntu-dood/chromium | 2026-07-27 | 36 | 3 |
 | bench ubuntu-dood/chromium | 2026-08-03 | 35 | 3 |
 | bench ubuntu-dood/chromium | 2026-08-10 | 34 | 3 |
+| bench ubuntu-dood/chromium | 2026-08-17 | 34 | 3 |
 | conformance chromium-headless-shell | 2026-06-22 | 15 | 100 |
 | conformance chromium-headless-shell | 2026-06-29 | 16 | 81 |
 | conformance chromium-headless-shell | 2026-07-06 | 23 | 81 |
@@ -256,11 +301,11 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | conformance chromium-headless-shell-from-source | 2026-07-13 | 26 | 93 |
 | conformance chromium-headless-shell-from-source | 2026-07-27 | 26 | 144 |
 | conformance chromium-headless-shell-from-source | 2026-08-03 | 26 | 141 |
-| conformance chromium-headless-shell-from-source | 2026-08-10 | 25 | 118 |
+| conformance chromium-headless-shell-from-source | 2026-08-10 | 25 | 119 |
 | conformance firefox | 2026-07-06 | 27 | 136 |
 | conformance firefox | 2026-07-13 | 31 | 126 |
 | conformance firefox | 2026-07-20 | 30 | 148 |
-| conformance firefox | 2026-08-10 | 33 | 201 |
+| conformance firefox | 2026-08-10 | 34 | 195 |
 | conformance ubuntu-chromium | 2026-07-06 | 2 | 119 |
 | conformance ubuntu-chromium | 2026-07-13 | 2 | 115 |
 | conformance ubuntu-chromium | 2026-07-20 | 3 | 123 |
@@ -275,7 +320,9 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | conformance ubuntu-webkit | 2026-07-13 | 2 | 156 |
 | conformance ubuntu-webkit | 2026-07-20 | 3 | 159 |
 | conformance ubuntu-webkit | 2026-08-03 | 3 | 194 |
+| conformance ubuntu-webkit | 2026-08-10 | 3 | 197 |
 | conformance webkit | 2026-07-06 | 34 | 191 |
 | conformance webkit | 2026-07-13 | 38 | 135 |
 | conformance webkit | 2026-07-20 | 66 | 142 |
 | conformance webkit | 2026-08-03 | 61 | 192 |
+| conformance webkit | 2026-08-10 | 60 | 184 |
