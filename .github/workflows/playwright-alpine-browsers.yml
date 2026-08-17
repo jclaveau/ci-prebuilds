@@ -887,11 +887,75 @@ jobs:
   # itself or PW's chromium build recipe) and task #17 investigation
   # widens.
 
+  # Tier-2 smoke for the from-source artifact, so every browser reaches promote
+  # through the same build → smoke → conformance chain. From-source chromium used
+  # to jump from a Tier-1 `--version` straight to the 20-shard conformance suite:
+  # safe (conformance is a strict superset) but slow to fail, where firefox and
+  # webkit find a broken-but-launchable browser in minutes.
+  #
+  # Reuses chromium-headless-shell/smoke/launch.cjs unchanged — it passes no
+  # executablePath, so it asserts PW SDK auto-discovery finds the binary at the
+  # cache path, which is the same contract the apk artifact is held to.
+  #
+  # Deps are the long apk list from the build's Tier-1, not the apk-path smoke's
+  # minimal one: that artifact bundles its own .so closure and this one does not.
+  smoke-chromium-headless-shell-from-source:
+    needs: build-chromium-headless-shell-from-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build a candidate Alpine runner consuming the artifact
+        env:
+          CHS_REV: ${{ needs.build-chromium-headless-shell-from-source.outputs.chromium_revision }}
+        run: |
+          cat > /tmp/Dockerfile.chs-fs-runner <<EOF
+          FROM alpine:edge
+          RUN apk update && apk add --no-cache \\
+              nodejs npm bash \\
+              nss freetype harfbuzz ca-certificates ttf-freefont libdrm mesa-gl \\
+              libwebp libwebpdemux libxcomposite libxdamage libxrandr libxscrnsaver libxtst \\
+              libx11 libxcb libxext libxi cups-libs alsa-lib dbus-libs pango cairo \\
+              opus dav1d ffmpeg-libavformat libjpeg-turbo libxslt \\
+              libatk-1.0 libatk-bridge-2.0 at-spi2-core minizip \\
+              double-conversion crc32c libxkbcommon mesa-gbm eudev-libs flac \\
+              harfbuzz-subset font-opensans
+          COPY --from=ghcr.io/jclaveau/playwright-alpine-browsers:chs-fs-sha-${{ github.sha }} \\
+               /chrome-headless-shell-linux64 \\
+               /ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64
+          RUN touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_COMPLETE
+          ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+          WORKDIR /smoke
+          RUN npm install -g playwright@${{ needs.build-chromium-headless-shell-from-source.outputs.pw_version }}
+          EOF
+          docker build -t chs-fs-runner:${{ github.sha }} -f /tmp/Dockerfile.chs-fs-runner /tmp
+      - name: Run Tier-2 smoke (PW SDK auto-discovery)
+        run: |
+          docker run --rm \
+            --security-opt seccomp=unconfined \
+            -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/smoke:/smoke" \
+            -w /smoke \
+            -e NODE_PATH=/usr/local/lib/node_modules \
+            -e DEBUG=pw:browser \
+            chs-fs-runner:${{ github.sha }} \
+            node launch.cjs
+
   conformance-chromium-headless-shell-from-source:
-    needs: [build-chromium-headless-shell-from-source]
+    needs:
+      - build-chromium-headless-shell-from-source
+      - smoke-chromium-headless-shell-from-source
+    # Gated on the artifact's results rather than re-derived from the dispatch
+    # inputs, matching conformance-webkit: asking the same question a second way
+    # is how that job once skipped itself one second after smoke went green.
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
-      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+      !cancelled()
+      && needs.build-chromium-headless-shell-from-source.result == 'success'
+      && needs.smoke-chromium-headless-shell-from-source.result == 'success'
     uses: ./.github/workflows/pw-conformance.yml
     with:
       browser: chromium
@@ -920,14 +984,19 @@ jobs:
   promote-chromium-headless-shell-from-source:
     needs:
       - build-chromium-headless-shell-from-source
+      - smoke-chromium-headless-shell-from-source
       - conformance-chromium-headless-shell-from-source
     # Gated on the artifact's own results, never re-derived from the dispatch
     # inputs: conformance-webkit skipped itself that way and took its promote down
-    # with it. If it built and conformed, ship it.
+    # with it. Every result relied on is spelled out, because `!cancelled()`
+    # waives the default failed-need skip for the WHOLE needs list — listing a job
+    # without checking it buys nothing, which is how a WebKit that could not open
+    # a page got promoted on 2026-08-13.
     if: |
       !cancelled()
       && github.event_name == 'workflow_dispatch'
       && needs.build-chromium-headless-shell-from-source.result == 'success'
+      && needs.smoke-chromium-headless-shell-from-source.result == 'success'
       && needs.conformance-chromium-headless-shell-from-source.result == 'success'
     runs-on: ubuntu-latest
     permissions:
