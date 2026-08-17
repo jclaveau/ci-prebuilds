@@ -333,10 +333,12 @@ jobs:
       - uses: actions/checkout@v7
       # DEV MODE: Docker Hub public images — no registry login needed.
       - name: Install act
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf "https://raw.githubusercontent.com/nektos/act/v${ACT_VERSION}/install.sh" \
-            | sudo bash -s -- -b /usr/local/bin
-          act --version
+        env:
+          # Without a token the script cannot use `gh release download` and falls
+          # back to the anonymous raw.githubusercontent.com fetch — the very thing
+          # that was answering 429 across every parallel act job.
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/install-act.sh /usr/local/bin
       - name: Resolve runner image
         id: img
         run: |
