@@ -29,6 +29,16 @@ on:
         description: Per-variant timeout
         default: '25000'
         type: string
+      isolated_spec:
+        description: >-
+          Spec file to run ISOLATED inside the same runner, after the variants.
+          Every launchPersistentContext variant passes standalone in ~400ms, yet
+          the same calls time out at 30s in the suite — so the question is no
+          longer whether the API works but whether an earlier test wedges the
+          worker. In shard 7 the first failure was client-certificates.spec.ts
+          and defaultbrowsercontext only failed after it.
+        default: 'tests/library/defaultbrowsercontext-1.spec.ts'
+        type: string
 
 concurrency:
   group: wk-persistent-probe-${{ github.ref }}
@@ -85,5 +95,31 @@ jobs:
             echo
             echo '```'
             grep -E '^(PASS|FAIL|---|  )' /tmp/probe.log || cat /tmp/probe.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Run the spec ISOLATED in the same runner
+        if: inputs.isolated_spec != ''
+        run: |
+          # Passing/failing here is the discriminator:
+          #   passes  -> the spec is fine; something earlier in the shard wedges it
+          #   fails   -> the spec really is broken under the harness, and the
+          #              standalone variants above are not exercising what it does
+          docker run --rm \
+            --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+            --cap-add SYS_ADMIN --cap-add NET_ADMIN \
+            -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
+            -e WEBKIT_FORCE_SANDBOX=0 \
+            -w /pw-src \
+            wkprobe:${{ github.run_id }} \
+            npx playwright test --config=tests/library/playwright.config.ts \
+              --project=webkit-library --workers=1 --retries=0 --reporter=list \
+              "${{ inputs.isolated_spec }}" \
+            2>&1 | tee /tmp/isolated.log || true
+          {
+            echo
+            echo "### Isolated \`${{ inputs.isolated_spec }}\`"
+            echo
+            echo '```'
+            grep -E "^\s+[0-9]+\)|passed|failed|timeout|Error" /tmp/isolated.log | head -40 || tail -30 /tmp/isolated.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
