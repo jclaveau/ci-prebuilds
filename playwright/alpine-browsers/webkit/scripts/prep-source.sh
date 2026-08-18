@@ -121,6 +121,111 @@ patch_page_override_settings() {
 }
 patch_page_override_settings
 
+# Playwright.closePage parity with the browser PW actually ships.
+#
+# playwright-core closes every WebKit page through Playwright.closePage
+# (wkPage.ts, WKPage.closePage), and Page._close() then awaits closedPromise,
+# which settles only when the browser emits Playwright.pageProxyDestroyed. Our
+# build answers -32601 "Unknown method"; sendMayFail swallows that, so the call
+# resolves, the page is never closed, the event never arrives and page.close()
+# blocks until the surrounding timeout. That is the ~2 minute
+# launchPersistentContext and the two live pageProxies where one is expected.
+#
+# The tag's patch series still closes pages the old way, through
+# PageInspectorTargetProxy::close (Target.close). PW's client moved to
+# Playwright.closePage and their webkit-2336 build has the command: the
+# protocol.json inside their zip declares 21 commands, the pinned base plus
+# bootstrap.diff yields 20, and closePage is the whole difference. Same disease
+# as patch_page_override_settings above, same fix shape — the WebPageProxy
+# methods already exist and bootstrap.diff itself calls them in four places,
+# only the inspector plumbing is missing.
+#
+# Not patched here: Cookie/SetCookieParam gained a partitionKey property in the
+# same drift. The client sends it only when set and reads it as optional, so it
+# costs nothing until a partitioned-cookie test runs; adding it needs the
+# WebKit-side cookie plumbing too. Revisit if conformance shows cookie failures.
+#
+# Drop this block once PW rolls its base past the commit that adds closePage —
+# bootstrap.diff will declare it and the early return below will say so.
+patch_playwright_close_page() {
+  local json=Source/JavaScriptCore/inspector/protocol/Playwright.json
+  local agent_h=Source/WebKit/UIProcess/InspectorPlaywrightAgent.h
+  local agent=Source/WebKit/UIProcess/InspectorPlaywrightAgent.cpp
+
+  if grep -q '"closePage"' "$json"; then
+    echo "  Playwright.json already carries closePage — PW rolled its base, drop patch_playwright_close_page"
+    return 0
+  fi
+
+  echo "  add Playwright.closePage (protocol + agent)"
+  awk '
+    /"name": "setPageZoomFactor",/ { seen = 1 }
+    seen && !done && /^        },$/ {
+      print
+      print "        {"
+      print "            \"name\": \"closePage\","
+      print "            \"description\": \"Closes the page, destroying the page proxy. Works for both live and crashed pages.\","
+      print "            \"parameters\": ["
+      print "                { \"name\": \"pageProxyId\", \"$ref\": \"PageProxyID\", \"description\": \"Unique identifier of the page proxy.\" },"
+      print "                { \"name\": \"runBeforeUnload\", \"type\": \"boolean\", \"optional\": true, \"description\": \"Whether to run the beforeunload page handlers.\" }"
+      print "            ]"
+      print "        },"
+      done = 1
+      next
+    }
+    { print }
+  ' "$json" > "$json.new" && mv "$json.new" "$json"
+
+  awk '
+    !done && /setPageZoomFactor\(const String& pageProxyID/ {
+      print
+      print "    Inspector::Protocol::ErrorStringOr<void> closePage(const String& pageProxyID, std::optional<bool>&& runBeforeUnload) override;"
+      done = 1
+      next
+    }
+    { print }
+  ' "$agent_h" > "$agent_h.new" && mv "$agent_h.new" "$agent_h"
+
+  awk '
+    /ErrorStringOr<void> InspectorPlaywrightAgent::setPageZoomFactor/ { seen = 1 }
+    seen && !done && /^}$/ {
+      print
+      print ""
+      print "Inspector::Protocol::ErrorStringOr<void> InspectorPlaywrightAgent::closePage(const String& pageProxyID, std::optional<bool>&& runBeforeUnload)"
+      print "{"
+      print "    auto* pageProxyChannel = m_pageProxyChannels.get(pageProxyID);"
+      print "    if (!pageProxyChannel)"
+      print "        return makeUnexpected(\"Unknown pageProxyID\"_s);"
+      print ""
+      print "    // Mirrors PageInspectorTargetProxy::close: tryClose() runs the"
+      print "    // beforeunload handlers, closePage() skips them."
+      print "    if (runBeforeUnload.value_or(false))"
+      print "        pageProxyChannel->page().tryClose();"
+      print "    else"
+      print "        pageProxyChannel->page().closePage();"
+      print "    return { };"
+      print "}"
+      done = 1
+      next
+    }
+    { print }
+  ' "$agent" > "$agent.new" && mv "$agent.new" "$agent"
+
+  local in_json in_h in_cpp
+  in_json=$(grep -c '"closePage"' "$json")
+  in_h=$(grep -c 'closePage(const String& pageProxyID' "$agent_h")
+  in_cpp=$(grep -c 'InspectorPlaywrightAgent::closePage' "$agent")
+  if [[ "$in_json" != 1 ]] || [[ "$in_h" != 1 ]] || [[ "$in_cpp" != 1 ]]; then
+    echo "ERROR: closePage appears $in_json/$in_h/$in_cpp time(s) in json/h/cpp, expected 1 each" >&2
+    exit 1
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$json" \
+      || { echo "ERROR: $json is not valid JSON after patch" >&2; exit 1; }
+  fi
+}
+patch_playwright_close_page
+
 # PW's bootstrap.diff flips ENABLE_ORIENTATION_EVENTS 0→1 in PlatformEnable.h,
 # but ENABLE_ORIENTATION_EVENTS is a WEBKIT_OPTION_DEFINE'd cmake option, so
 # the generated cmakeconfig.h emits `#define ENABLE_ORIENTATION_EVENTS 0`
