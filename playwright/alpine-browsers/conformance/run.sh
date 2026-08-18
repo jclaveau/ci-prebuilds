@@ -45,6 +45,10 @@ esac
 SKIP_DIR="${SKIP_DIR:-/conformance/skip-list}"
 FILES_LIST="$SKIP_DIR/${BROWSER}.files.txt"
 TITLES_LIST="$SKIP_DIR/${BROWSER}.titles.txt"
+# Deliberately NOT exported: tests/library/playwright.config.ts reads
+# process.env.PW_TAG as a Playwright TEST TAG, which must start with "@".
+# Exporting this git tag makes FullConfigInternal throw at config load
+# ("Tag must start with \"@\" symbol, got \"v1.62.1\"") and no test runs.
 PW_TAG="v${PW_VERSION}"
 PW_SRC="${PW_SRC:-/pw-src}"
 REPORT_DIR="/conformance/report-${BROWSER}-${SHARD}"
