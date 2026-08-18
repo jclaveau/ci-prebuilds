@@ -365,7 +365,7 @@ RUN apk update && apk add --no-cache \\
     font-noto-emoji font-liberation \\
     alsa-lib libatk-1.0 libblkid libmount brotli libbsd libmd bzip2 libeconf \\
     expat libepoxy fontconfig freetype graphite2 harfbuzz libjpeg-turbo lcms2 \\
-    pcre2 libpng libseccomp libwebp libwebpdemux wayland libxkbcommon zlib \\
+    pcre2 libpng libseccomp libwebp libwebpdemux libwebpmux wayland libxkbcommon zlib \\
     aom-libs dav1d libjxl libyuv openssl libhwy libidn2 xz nghttp2 libpsl \\
     libsoup3 sqlite libtasn1 libunistring libxml2 libxslt zstd
 # WebRTC runtime: our libnice 0.1.23 + the built 'webrtc' plugin (webrtcbin) +

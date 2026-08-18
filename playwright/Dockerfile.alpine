@@ -34,7 +34,7 @@ RUN sudo apk add --no-cache \
         ca-certificates font-opensans ttf-freefont \
         alsa-lib dbus-libs fontconfig glib gtk+3.0 harfbuzz \
         libdrm libevent libffi libjpeg-turbo libnotify libogg libtheora \
-        libvorbis libvpx libwebp libwebpdemux libxcomposite libxt mesa-gl \
+        libvorbis libvpx libwebp libwebpdemux libwebpmux libxcomposite libxt mesa-gl \
         nspr nss pipewire-libs libpulse libstdc++ libgcc \
         libwpe libwpebackend-fdo gtk4.0 at-spi2-core cairo pango gdk-pixbuf \
         mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \
