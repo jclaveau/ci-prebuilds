@@ -1,0 +1,99 @@
+name: WebKit persistent-context probe
+
+# One-shot bisection for the launchPersistentContext hang that accounts for 64 of
+# WebKit 26.5's 155 conformance failures (defaultbrowsercontext-1/-2 36,
+# page-close 18, browsercontext-storage-state 10). They all time out on the FIRST
+# line, before a page exists; everything after in the same worker then reports
+# "Test ended", which is what made one hang look like ~90 crashes.
+#
+# Runs against an ALREADY-BUILT artifact, so an iteration is ~10 minutes rather
+# than the ~10h a WebKit rebuild costs. Re-dispatch with a different image_ref to
+# compare builds, or edit the probe to add a variant.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_ref:
+        description: WebKit artifact to probe
+        default: ghcr.io/jclaveau/playwright-alpine-browsers:wk-edge
+        type: string
+      pw_version:
+        description: PW SDK version to install in the runner
+        default: '1.62.1'
+        type: string
+      artifact_rev:
+        description: WK_REV to stage at PW's cache path (webkit browsers.json revision)
+        default: '2336'
+        type: string
+      timeout_ms:
+        description: Per-variant timeout
+        default: '25000'
+        type: string
+
+concurrency:
+  group: wk-persistent-probe-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build a runner staging the artifact
+        env:
+          IMAGE_REF: ${{ inputs.image_ref }}
+          ARTIFACT_REV: ${{ inputs.artifact_rev }}
+          PW_VERSION: ${{ inputs.pw_version }}
+        run: |
+          # Runtime deps mirror the conformance runner's webkit stage, including
+          # libwebpmux — stripped from the bundle and supplied by apk.
+          cat > /tmp/Dockerfile.wkprobe <<DOCKER
+          FROM alpine:edge
+          RUN apk update && apk add --no-cache \\
+              nodejs npm bash \\
+              libwpe libwpebackend-fdo gtk4.0 at-spi2-core \\
+              libgcc libstdc++ mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \\
+              gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \\
+              cairo pango gdk-pixbuf libnotify dbus-libs opus libsecret \\
+              nss icu-data-full ca-certificates ttf-freefont font-liberation \\
+              libjpeg-turbo libpng libwebp libwebpdemux libwebpmux lcms2 \\
+              harfbuzz freetype fontconfig libxkbcommon wayland libsoup3 sqlite \\
+              libxml2 libxslt zstd brotli libtasn1 libunistring openssl xvfb xvfb-run
+          COPY --from=${IMAGE_REF} /webkit /ms-playwright/webkit-${ARTIFACT_REV}
+          RUN touch /ms-playwright/webkit-${ARTIFACT_REV}/INSTALLATION_COMPLETE
+          ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+          ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
+          RUN npm install -g --no-fund --no-audit playwright@${PW_VERSION}
+          DOCKER
+          docker build -t wkprobe:${{ github.run_id }} -f /tmp/Dockerfile.wkprobe /tmp
+      - name: Run the probe
+        run: |
+          # Same sandbox strip the conformance shards use for WebKit — WPE's bwrap
+          # needs seccomp+apparmor unconfined AND the caps AND the escape hatch.
+          docker run --rm \
+            --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+            --cap-add SYS_ADMIN --cap-add NET_ADMIN \
+            -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
+            -e WEBKIT_FORCE_SANDBOX=0 \
+            -v "$PWD/playwright/alpine-browsers/conformance/debug:/debug:ro" \
+            -e NODE_PATH=/usr/local/lib/node_modules \
+            wkprobe:${{ github.run_id }} \
+            node /debug/probe-persistent-context.cjs --timeout ${{ inputs.timeout_ms }} \
+            2>&1 | tee /tmp/probe.log
+          {
+            echo '## WebKit persistent-context probe'
+            echo
+            echo '```'
+            grep -E '^(PASS|FAIL|---|  )' /tmp/probe.log || cat /tmp/probe.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
