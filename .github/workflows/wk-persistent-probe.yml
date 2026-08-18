@@ -29,6 +29,16 @@ on:
         description: Per-variant timeout
         default: '25000'
         type: string
+      apply_strip:
+        description: >-
+          Apply strip-bundled-libs + strip-mesa-closure, as the conformance runner
+          and the consumer image both do. The first probe run did NOT, and every
+          persistent variant passed in ~400ms — so this is the axis that differs.
+          A lib that is dlopen'd rather than linked survives the strip's ldd gate
+          and only fails at runtime, which is exactly how libwebpmux slipped
+          through.
+        default: true
+        type: boolean
 
 concurrency:
   group: wk-persistent-probe-${{ github.ref }}
@@ -54,11 +64,17 @@ jobs:
           IMAGE_REF: ${{ inputs.image_ref }}
           ARTIFACT_REV: ${{ inputs.artifact_rev }}
           PW_VERSION: ${{ inputs.pw_version }}
+          APPLY_STRIP: ${{ inputs.apply_strip }}
         run: |
+          # The strip scripts live in the artifact's source tree; the docker build
+          # context must carry them.
+          cp playwright/alpine-browsers/webkit/scripts/strip-bundled-libs.sh /tmp/
+          cp playwright/alpine-browsers/webkit/scripts/strip-mesa-closure.sh /tmp/
           # Runtime deps mirror the conformance runner's webkit stage, including
           # libwebpmux — stripped from the bundle and supplied by apk.
           cat > /tmp/Dockerfile.wkprobe <<DOCKER
           FROM alpine:edge
+          ARG APPLY_STRIP=true
           RUN apk update && apk add --no-cache \\
               nodejs npm bash \\
               libwpe libwpebackend-fdo gtk4.0 at-spi2-core \\
@@ -70,12 +86,19 @@ jobs:
               harfbuzz freetype fontconfig libxkbcommon wayland libsoup3 sqlite \\
               libxml2 libxslt zstd brotli libtasn1 libunistring openssl xvfb xvfb-run
           COPY --from=${IMAGE_REF} /webkit /ms-playwright/webkit-${ARTIFACT_REV}
+          COPY strip-bundled-libs.sh /tmp/strip-bundled-libs.sh
+          COPY strip-mesa-closure.sh /tmp/strip-mesa-closure.sh
+          RUN if [ "${APPLY_STRIP}" = "true" ]; then \
+                bash /tmp/strip-mesa-closure.sh /ms-playwright/webkit-${ARTIFACT_REV}/minibrowser-wpe && \
+                bash /tmp/strip-bundled-libs.sh /ms-playwright/webkit-${ARTIFACT_REV}/minibrowser-wpe webkit; \
+              else echo 'strip SKIPPED (unstripped bundle)'; fi
           RUN touch /ms-playwright/webkit-${ARTIFACT_REV}/INSTALLATION_COMPLETE
           ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
           ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
           RUN npm install -g --no-fund --no-audit playwright@${PW_VERSION}
           DOCKER
-          docker build -t wkprobe:${{ github.run_id }} -f /tmp/Dockerfile.wkprobe /tmp
+          docker build --build-arg APPLY_STRIP="$APPLY_STRIP" \
+            -t wkprobe:${{ github.run_id }} -f /tmp/Dockerfile.wkprobe /tmp
       - name: Run the probe
         run: |
           # Same sandbox strip the conformance shards use for WebKit — WPE's bwrap
