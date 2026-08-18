@@ -109,12 +109,12 @@ jobs:
             --cap-add SYS_ADMIN --cap-add NET_ADMIN \
             -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
             -e WEBKIT_FORCE_SANDBOX=0 \
-            -e PW_TAG=v${{ inputs.pw_version }} \
+            -e PROBE_PW_TAG=v${{ inputs.pw_version }} \
             -e SPEC="${{ inputs.isolated_spec }}" \
             wkprobe:${{ github.run_id }} \
             bash -c '
               set -e
-              git clone --depth 1 --branch "$PW_TAG" \
+              git clone --depth 1 --branch "$PROBE_PW_TAG" \
                 https://github.com/microsoft/playwright.git /pw-src
               cd /pw-src
               npm ci --no-audit --no-fund --prefer-offline
