@@ -119,9 +119,14 @@ jobs:
               cd /pw-src
               npm ci --no-audit --no-fund --prefer-offline
               npm run build
+              # One test, generous timeout, protocol logging. The 30s timeout tells
+              # us nothing about WHERE it stalls; pw:protocol shows the last
+              # message the driver sent and whether the browser ever answered.
+              DEBUG=pw:browser,pw:protocol \
               npx playwright test --config=tests/library/playwright.config.ts \
                 --project=webkit-library --workers=1 --retries=0 --reporter=list \
-                "$SPEC"
+                --timeout=90000 -g "context.cookies" \
+                "$SPEC" 2>&1 | tail -120
             ' 2>&1 | tee /tmp/isolated.log || true
           {
             echo
