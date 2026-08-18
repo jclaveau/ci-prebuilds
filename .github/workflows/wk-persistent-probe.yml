@@ -29,16 +29,6 @@ on:
         description: Per-variant timeout
         default: '25000'
         type: string
-      apply_strip:
-        description: >-
-          Apply strip-bundled-libs + strip-mesa-closure, as the conformance runner
-          and the consumer image both do. The first probe run did NOT, and every
-          persistent variant passed in ~400ms — so this is the axis that differs.
-          A lib that is dlopen'd rather than linked survives the strip's ldd gate
-          and only fails at runtime, which is exactly how libwebpmux slipped
-          through.
-        default: true
-        type: boolean
 
 concurrency:
   group: wk-persistent-probe-${{ github.ref }}
@@ -59,46 +49,23 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build a runner staging the artifact
+      - name: Build the CONFORMANCE runner (not a hand-rolled one)
         env:
+          BROWSER: webkit
           IMAGE_REF: ${{ inputs.image_ref }}
-          ARTIFACT_REV: ${{ inputs.artifact_rev }}
           PW_VERSION: ${{ inputs.pw_version }}
-          APPLY_STRIP: ${{ inputs.apply_strip }}
-        run: |
-          # The strip scripts live in the artifact's source tree; the docker build
-          # context must carry them.
-          cp playwright/alpine-browsers/webkit/scripts/strip-bundled-libs.sh /tmp/
-          cp playwright/alpine-browsers/webkit/scripts/strip-mesa-closure.sh /tmp/
-          # Runtime deps mirror the conformance runner's webkit stage, including
-          # libwebpmux — stripped from the bundle and supplied by apk.
-          cat > /tmp/Dockerfile.wkprobe <<DOCKER
-          FROM alpine:edge
-          ARG APPLY_STRIP=true
-          RUN apk update && apk add --no-cache \\
-              nodejs npm bash \\
-              libwpe libwpebackend-fdo gtk4.0 at-spi2-core \\
-              libgcc libstdc++ mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \\
-              gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \\
-              cairo pango gdk-pixbuf libnotify dbus-libs opus libsecret \\
-              nss icu-data-full ca-certificates ttf-freefont font-liberation \\
-              libjpeg-turbo libpng libwebp libwebpdemux libwebpmux lcms2 \\
-              harfbuzz freetype fontconfig libxkbcommon wayland libsoup3 sqlite \\
-              libxml2 libxslt zstd brotli libtasn1 libunistring openssl xvfb xvfb-run
-          COPY --from=${IMAGE_REF} /webkit /ms-playwright/webkit-${ARTIFACT_REV}
-          COPY strip-bundled-libs.sh /tmp/strip-bundled-libs.sh
-          COPY strip-mesa-closure.sh /tmp/strip-mesa-closure.sh
-          RUN if [ "${APPLY_STRIP}" = "true" ]; then \
-                bash /tmp/strip-mesa-closure.sh /ms-playwright/webkit-${ARTIFACT_REV}/minibrowser-wpe && \
-                bash /tmp/strip-bundled-libs.sh /ms-playwright/webkit-${ARTIFACT_REV}/minibrowser-wpe webkit; \
-              else echo 'strip SKIPPED (unstripped bundle)'; fi
-          RUN touch /ms-playwright/webkit-${ARTIFACT_REV}/INSTALLATION_COMPLETE
-          ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-          ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
-          RUN npm install -g --no-fund --no-audit playwright@${PW_VERSION}
-          DOCKER
-          docker build --build-arg APPLY_STRIP="$APPLY_STRIP" \
-            -t wkprobe:${{ github.run_id }} -f /tmp/Dockerfile.wkprobe /tmp
+          ARTIFACT_REV: ${{ inputs.artifact_rev }}
+          HEADED: '0'
+          IMAGE_TAG_OUT: wkprobe:${{ github.run_id }}
+        # build-runner.sh IS what the conformance shards run, strip and all.
+        # The first version of this probe hand-rolled an apk list and its image
+        # build died on the strip's ldd gate — "WPENetworkProcess has 103
+        # unresolved deps", libavif missing libyuv symbols — because the list
+        # omitted libyuv/aom-libs/dav1d/libjxl/libhwy. Re-deriving a list that
+        # already exists is how the probe ends up testing something other than
+        # the thing under investigation.
+        run: ./playwright/alpine-browsers/conformance/build-runner.sh
+
       - name: Run the probe
         run: |
           # Same sandbox strip the conformance shards use for WebKit — WPE's bwrap
@@ -109,7 +76,7 @@ jobs:
             -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
             -e WEBKIT_FORCE_SANDBOX=0 \
             -v "$PWD/playwright/alpine-browsers/conformance/debug:/debug:ro" \
-            -e NODE_PATH=/usr/local/lib/node_modules \
+            -e NODE_PATH=/usr/local/lib/node_modules:/usr/lib/node_modules \
             wkprobe:${{ github.run_id }} \
             node /debug/probe-persistent-context.cjs --timeout ${{ inputs.timeout_ms }} \
             2>&1 | tee /tmp/probe.log
