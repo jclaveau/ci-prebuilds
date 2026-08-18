@@ -51,7 +51,7 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: docker/login-action@v3
@@ -100,26 +100,34 @@ jobs:
       - name: Run the spec ISOLATED in the same runner
         if: inputs.isolated_spec != ''
         run: |
-          # Passing/failing here is the discriminator:
-          #   passes  -> the spec is fine; something earlier in the shard wedges it
-          #   fails   -> the spec really is broken under the harness, and the
-          #              standalone variants above are not exercising what it does
+          # /pw-src does not exist in the runner image: build-runner.sh stages the
+          # browser, and run.sh clones + builds Playwright at RUNTIME. The previous
+          # attempt skipped that and died on "playwright.config.ts does not exist".
+          # Same clone/build run.sh performs, then ONE spec instead of a shard.
           docker run --rm \
             --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
             --cap-add SYS_ADMIN --cap-add NET_ADMIN \
             -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
             -e WEBKIT_FORCE_SANDBOX=0 \
-            -w /pw-src \
+            -e PW_TAG=v${{ inputs.pw_version }} \
+            -e SPEC="${{ inputs.isolated_spec }}" \
             wkprobe:${{ github.run_id }} \
-            npx playwright test --config=tests/library/playwright.config.ts \
-              --project=webkit-library --workers=1 --retries=0 --reporter=list \
-              "${{ inputs.isolated_spec }}" \
-            2>&1 | tee /tmp/isolated.log || true
+            bash -c '
+              set -e
+              git clone --depth 1 --branch "$PW_TAG" \
+                https://github.com/microsoft/playwright.git /pw-src
+              cd /pw-src
+              npm ci --no-audit --no-fund --prefer-offline
+              npm run build
+              npx playwright test --config=tests/library/playwright.config.ts \
+                --project=webkit-library --workers=1 --retries=0 --reporter=list \
+                "$SPEC"
+            ' 2>&1 | tee /tmp/isolated.log || true
           {
             echo
             echo "### Isolated \`${{ inputs.isolated_spec }}\`"
             echo
             echo '```'
-            grep -E "^\s+[0-9]+\)|passed|failed|timeout|Error" /tmp/isolated.log | head -40 || tail -30 /tmp/isolated.log
+            grep -E "passed|failed|✓|✘|Error:|Timeout" /tmp/isolated.log | tail -40 || tail -30 /tmp/isolated.log
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
