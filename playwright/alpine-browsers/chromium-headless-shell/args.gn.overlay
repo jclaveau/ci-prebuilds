@@ -167,7 +167,13 @@ skia_use_dawn = false
 use_dawn = false
 
 # More aports-aligned defaults that headless_shell doesn't conflict with:
-chrome_pgo_phase = 0                       # no PGO (build wall-clock); aports same
+# EXPERIMENT (perf/chromium-pgo-1.62): chromium's own default for our config
+# (is_official_build && !dcheck_always_on && is_linux) is ALREADY 2 -- see
+# build/config/compiler/pgo/pgo.gni -- so this line is what keeps PGO off, not
+# an absence of support. The profile is a plain public download; apply-and-build
+# fetches it and injects pgo_data_path, which is the branch gn takes when the
+# path is non-empty (no depot_tools, no gsutil).
+chrome_pgo_phase = 2
 enable_vr = false                          # no VR/XR
 disable_fieldtrial_testing_config = true   # skip field-trial test configs
 enable_nocompile_tests = false             # no nocompile testing
