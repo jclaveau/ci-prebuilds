@@ -101,7 +101,16 @@ treat_warnings_as_errors = false
 # Skip features chrome-headless-shell doesn't need. Each line corresponds to
 # an apk dep we deliberately don't install — and Chromium's GN config will
 # pkg-config-check for it unless disabled here.
-rtc_use_pipewire = false       # pipewire-dev not installed
+# rtc_use_pipewire stays off (WebRTC screen capture over pipewire is not
+# something PW drives), but pipewire-dev IS installed now: since chromium 151
+# //ui/display pulls //remoting/host/linux:x11_display_utils whenever
+# `is_linux && ozone_platform_x11 && enable_remoting`, and that target's
+# pkg_config("pipewire_config") makes `gn gen` shell out to pkg-config for
+# libpipewire-0.3 (run 32227622665). The config sets ignore_libs = true — the
+# library is dlopen'd at runtime — so we only ever need the .pc file present,
+# not a link dependency. enable_remoting = false would also cut the edge, but
+# the note further down records that it starts an assert chain.
+rtc_use_pipewire = false
 use_pulseaudio = false         # pulseaudio-dev not installed
 use_alsa = false               # alsa-lib-dev installed (harmless)
 proprietary_codecs = false
