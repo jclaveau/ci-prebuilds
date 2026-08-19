@@ -30,6 +30,24 @@ ENV PATCH_HEADED_PRINTING=${PATCH_HEADED_PRINTING}
 # Harmless for the unpatched paths: the fresh script == what setup baked.
 COPY chromium-headless-shell/scripts/ninja-resume.sh /work/chromium-headless-shell/scripts/ninja-resume.sh
 
+# chromium 151's //third_party/dawn/src/tint:generate_sources shells out to a
+# CIPD-provisioned Go at an exact arch path, and stays in the `final` graph even
+# with use_dawn=false. Build-only: `go run` emits a C++ source list, nothing
+# links it, and the scratch artifact stage below cannot carry it either.
+#
+# This belongs in Dockerfile.setup's apk list plus apply-and-build.sh's CIPD
+# block, next to the node/esbuild/gperf symlinks. It sits here instead because
+# touching setup invalidates every round image and forces r1..r12 to rebuild
+# cold (~13h); landing it in finalize resumes from the last round.
+# TODO(dawn-golang-to-setup): move to setup + apply-and-build.sh on the next
+# cold rebuild, and delete this stage.
+RUN apk add --no-cache go \
+ && set -a && . /work/versions.env && . /work/derived.env && set +a \
+ && SRC="/work/chromium-src/chromium-${CHROMIUM_HEADLESS_SHELL_VERSION}" \
+ && DAWN_GO_BIN="$SRC/third_party/dawn/tools/golang/linux-amd64/bin" \
+ && mkdir -p "$DAWN_GO_BIN" \
+ && ln -sfv /usr/bin/go "$DAWN_GO_BIN/go"
+
 RUN --mount=type=cache,target=/root/.cache/sccache,id=chr-sccache,sharing=locked \
     --mount=type=secret,id=actions_runtime_token \
     --mount=type=secret,id=actions_results_url \
