@@ -401,6 +401,60 @@ patch_page_snapshot_format() {
 }
 patch_page_snapshot_format
 
+# Playwright.setLanguages must go through WebProcessPool, not just its config.
+#
+# The tag's patch sets the languages on the process pool's *configuration*
+# object, which is only read when a process launches. So a web process started
+# afterwards picks the locale up (navigator.languages is correct) while every
+# already-running process keeps the old value — and on the soup ports the
+# Accept-Language header is built in the network process, which is long since
+# running. That is exactly the split we see: the navigator.language tests pass
+# and all three Accept-Language ones fail (header, user header, and the
+# WebSocket handshake).
+#
+# WebProcessPool::setOverrideLanguages is the API that actually propagates: it
+# sets the global override and notifies the live web processes, the GPU process
+# and, under `#if USE(SOUP)`, every NetworkProcessProxy. Keep the configuration
+# assignment too so processes launched later still inherit it.
+#
+# Unlike the other blocks here this is not a protocol gap — a full domain diff
+# (commands, events, types AND enum members) against PW's shipped
+# protocol.json shows Playwright.setLanguages already matching. The command
+# arrives and is accepted; only its effect was incomplete.
+patch_playwright_set_languages() {
+  local agent=Source/WebKit/UIProcess/InspectorPlaywrightAgent.cpp
+
+  [[ -f "$agent" ]] || { echo "ERROR: expected $agent to exist" >&2; exit 1; }
+
+  if grep -q 'processPool->setOverrideLanguages' "$agent"; then
+    echo "  setLanguages already goes through WebProcessPool — PW rolled its base, drop patch_playwright_set_languages"
+    return 0
+  fi
+
+  echo "  route Playwright.setLanguages through WebProcessPool"
+  awk '
+    !done && /browserContext->processPool->configuration\(\)\.setOverrideLanguages\(WTF::move\(items\)\);/ {
+      print "    browserContext->processPool->configuration().setOverrideLanguages(Vector<String>(items));"
+      print "    // The configuration is only consulted when a process launches, so this"
+      print "    // second call is what reaches the processes already running — including"
+      print "    // the network process, where the soup ports build Accept-Language."
+      print "    browserContext->processPool->setOverrideLanguages(WTF::move(items));"
+      done = 1
+      next
+    }
+    { print }
+  ' "$agent" > "$agent.new" && mv "$agent.new" "$agent"
+
+  local n_pool n_conf
+  n_pool=$(grep -c 'processPool->setOverrideLanguages(WTF::move(items));' "$agent")
+  n_conf=$(grep -c 'configuration().setOverrideLanguages(Vector<String>(items));' "$agent")
+  if [[ "$n_pool" != 1 ]] || [[ "$n_conf" != 1 ]]; then
+    echo "ERROR: setLanguages patch counts pool=$n_pool conf=$n_conf, expected 1 each" >&2
+    exit 1
+  fi
+}
+patch_playwright_set_languages
+
 # PW's bootstrap.diff flips ENABLE_ORIENTATION_EVENTS 0→1 in PlatformEnable.h,
 # but ENABLE_ORIENTATION_EVENTS is a WEBKIT_OPTION_DEFINE'd cmake option, so
 # the generated cmakeconfig.h emits `#define ENABLE_ORIENTATION_EVENTS 0`
