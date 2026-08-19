@@ -172,7 +172,13 @@ enable_vr = false                          # no VR/XR
 disable_fieldtrial_testing_config = true   # skip field-trial test configs
 enable_nocompile_tests = false             # no nocompile testing
 is_cfi = false                             # CFI off (no IFUNC support on alpine clang)
-use_thin_lto = false                       # aports same; is_official_build would default it ON
+# EXPERIMENT (perf/chromium-thinlto-1.62): the A/B arm against the sweep
+# branch, which pins this false. is_official_build=true would default it ON;
+# aports keeps it off for build cost. ThinLTO optimizes across translation
+# units at link time, so both size and speed should move — but the link runs
+# in finalize, which has no timeout headroom, so watch for a finalize that
+# runs out of time or memory rather than a wrong result.
+use_thin_lto = true
 fatal_linker_warnings = false              # match aports — alpine's lld trips a few warnings
 safe_browsing_use_unrar = false            # no unrar (we don't ship)
 
