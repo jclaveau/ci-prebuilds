@@ -42,10 +42,15 @@ const ok = (cond, msg) => { if (!cond) { console.error('FAIL:', msg); process.ex
   const expectedSo = process.env.EXPECTED_WPE_SOVERSION;
   ok(expectedSo, 'EXPECTED_WPE_SOVERSION is set');
   const distDir = path.dirname(webkit.executablePath());
+  // PW nests each port's libraries under minibrowser-{wpe,gtk}/lib, so the
+  // library never sits beside the launcher executablePath() points at.
   const soRe = /^libWPEWebKit-[\d.]+\.so\.(\d+\.\d+\.\d+)$/;
-  const found = fs.readdirSync(distDir).map(n => n.match(soRe)).filter(Boolean);
+  const entries = fs.readdirSync(distDir, { recursive: true });
+  const found = entries.map(n => path.basename(n).match(soRe)).filter(Boolean);
   ok(found.length > 0,
-    `found a versioned libWPEWebKit in ${distDir} (saw: ${fs.readdirSync(distDir).filter(n => n.startsWith('libWPEWebKit')).join(', ') || 'none'})`);
+    `found a versioned libWPEWebKit under ${distDir} (saw: ${
+      entries.filter(n => path.basename(n).startsWith('libWPEWebKit'))
+        .join(', ') || 'none'})`);
   const soVersion = found[0][1];
   ok(soVersion === expectedSo,
     `libWPEWebKit so-version = ${soVersion}, expected ${expectedSo}`);
