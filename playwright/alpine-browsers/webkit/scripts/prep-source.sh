@@ -455,6 +455,74 @@ patch_playwright_set_languages() {
 }
 patch_playwright_set_languages
 
+# Certificate subject should be the CN, not the whole distinguished name.
+#
+# GLib's GTlsCertificate exposes `subject-name` as a full RFC 2253 DN
+# ("CN=playwright-test"), and at the pinned base CertificateInfo::summary()
+# assigns it straight through. PW reads that value as-is
+# (wkPage.ts: response.security.certificate.subject) and its HAR tests expect
+# the bare common name, so both security-details tests fail on one string:
+#
+#     - "subjectName": "playwright-test"
+#     + "subjectName": "CN=playwright-test"
+#
+# Upstream fixed this after our base by extracting a summary from the DN —
+# prefer CN, then O, else the DN — to match SecCertificateCopySubjectSummary on
+# macOS. Backport that helper verbatim. Its includes are already present: the
+# include block of this file is byte-identical between the pinned base and
+# upstream main, so split/trim/isASCIIWhitespace/notFound all resolve.
+patch_certificate_subject_summary() {
+  local cert=Source/WebCore/platform/network/soup/CertificateInfoSoup.cpp
+
+  [[ -f "$cert" ]] || { echo "ERROR: expected $cert to exist" >&2; exit 1; }
+
+  if grep -q 'subjectSummaryFromDN' "$cert"; then
+    echo "  CertificateInfoSoup already summarises the DN — PW rolled its base, drop patch_certificate_subject_summary"
+    return 0
+  fi
+
+  echo "  extract the CN from the certificate subject DN"
+  awk '
+    !done_fn && /^std::optional<CertificateSummary> CertificateInfo::summary\(\) const$/ {
+      print "// GLib'"'"'s GTlsCertificate::subject-name property returns a full RFC 2253 distinguished name"
+      print "// (e.g. \"CN=example.com,O=Org,C=US\"). Extract a human-readable summary by preferring the"
+      print "// CN attribute, then O, to match the behaviour of SecCertificateCopySubjectSummary on macOS."
+      print "static String subjectSummaryFromDN(const String& dn)"
+      print "{"
+      print "    String organization;"
+      print "    for (auto& component : dn.split('"'"','"'"')) {"
+      print "        auto equalsPos = component.find('"'"'='"'"');"
+      print "        if (equalsPos == notFound)"
+      print "            continue;"
+      print "        auto type = component.left(equalsPos).trim(isASCIIWhitespace<char16_t>);"
+      print "        auto value = component.substring(equalsPos + 1).trim(isASCIIWhitespace<char16_t>);"
+      print "        if (type == \"CN\"_s)"
+      print "            return value;"
+      print "        if (type == \"O\"_s && organization.isEmpty())"
+      print "            organization = value;"
+      print "    }"
+      print "    return organization.isEmpty() ? dn : organization;"
+      print "}"
+      print ""
+      done_fn = 1
+    }
+    !done_use && /summaryInfo\.subject = String::fromUTF8\(subjectName\.get\(\)\);/ {
+      sub(/String::fromUTF8\(subjectName\.get\(\)\);/, "subjectSummaryFromDN(String::fromUTF8(subjectName.get()));")
+      done_use = 1
+    }
+    { print }
+  ' "$cert" > "$cert.new" && mv "$cert.new" "$cert"
+
+  local n_fn n_use
+  n_fn=$(grep -c '^static String subjectSummaryFromDN' "$cert")
+  n_use=$(grep -c 'summaryInfo.subject = subjectSummaryFromDN(' "$cert")
+  if [[ "$n_fn" != 1 ]] || [[ "$n_use" != 1 ]]; then
+    echo "ERROR: subject-summary patch counts fn=$n_fn use=$n_use, expected 1 each" >&2
+    exit 1
+  fi
+}
+patch_certificate_subject_summary
+
 # PW's bootstrap.diff flips ENABLE_ORIENTATION_EVENTS 0→1 in PlatformEnable.h,
 # but ENABLE_ORIENTATION_EVENTS is a WEBKIT_OPTION_DEFINE'd cmake option, so
 # the generated cmakeconfig.h emits `#define ENABLE_ORIENTATION_EVENTS 0`
