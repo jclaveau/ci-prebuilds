@@ -327,8 +327,8 @@ patch_page_snapshot_format() {
       print "            break;"
       print "        case Inspector::Protocol::Page::ImageFormat::Webp:"
       print "            mimeType = \"image/webp\"_s;"
-      print "            // An omitted quality (or 100) means lossless, which the"
-      print "            // encoder selects at 1.0."
+      print "            // An omitted quality (or 100) means lossless, which"
+      print "            // patch_webp_lossless_encoding makes the encoder honour."
       print "            defaultQuality = 100;"
       print "            break;"
       print "        }"
@@ -400,6 +400,51 @@ patch_page_snapshot_format() {
   fi
 }
 patch_page_snapshot_format
+
+# Skia's WebP encoder defaults to lossy compression and never sets fCompression
+# at the pinned base, so the quality patch_page_snapshot_format sends is applied
+# as a LOSSY quality — a webp screenshot decodes at the right dimensions but its
+# pixels differ from the png. Two upstream tests pin the contract that quality
+# 100 (or omitted) is lossless and quality 80 is not:
+#   page-screenshot.spec.ts:307 webp screenshots should be lossless by default
+#   elementhandle-screenshot.spec.ts:38 should work with webp
+# Both failed on run 32263015377 for this reason alone.
+patch_webp_lossless_encoding() {
+  local img=Source/WebCore/platform/graphics/skia/ImageUtilitiesSkia.cpp
+
+  [[ -f "$img" ]] || { echo "ERROR: expected $img to exist" >&2; exit 1; }
+
+  if grep -q 'kLossless' "$img"; then
+    echo "  WebP encoder already selects lossless — PW rolled its base, drop patch_webp_lossless_encoding"
+    return 0
+  fi
+
+  echo "  make the WebP encoder lossless at quality 100"
+  awk '
+    /SkWebpEncoder::Options options;/ { print; in_webp = 1; next }
+    in_webp && /options\.fQuality = static_cast<int>\(\*quality \* 100\.0 \+ 0\.5\);/ {
+      print
+      print "        // Skia defaults WebP to lossy and reads fQuality as the lossy quality;"
+      print "        // kLossless repurposes it as the compression effort. The PW"
+      print "        // contract: an omitted quality (or 100) is lossless."
+      print "        if (options.fQuality == 100)"
+      print "            options.fCompression = SkWebpEncoder::Compression::kLossless;"
+      in_webp = 0
+      next
+    }
+    { print }
+  ' "$img" > "$img.new" && mv "$img.new" "$img"
+
+  # Two encode paths (accelerated + unaccelerated); the jpeg branches share the
+  # fQuality line, so a count of 2 also proves they were left alone.
+  local n
+  n=$(grep -c 'options.fCompression = SkWebpEncoder::Compression::kLossless;' "$img")
+  if [[ "$n" != 2 ]]; then
+    echo "ERROR: webp lossless patch applied $n times, expected 2" >&2
+    exit 1
+  fi
+}
+patch_webp_lossless_encoding
 
 # Playwright.setLanguages must go through WebProcessPool, not just its config.
 #
