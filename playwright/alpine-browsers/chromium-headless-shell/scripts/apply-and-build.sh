@@ -262,7 +262,15 @@ if [[ -d third_party/gperf/cipd/bin ]]; then
   ln -sfv /usr/bin/gperf third_party/gperf/cipd/bin/gperf
 fi
 
-# (g) libxml malloc/free fix — aports replaces xmlMalloc/xmlFree → malloc/free
+# (g) dawn's golang symlink (CIPD placeholder). tint's generate_sources target
+# stays in the `final` graph even with use_dawn=false, and shells out to this
+# exact arch-specific path. Build-only: `go run` emits a C++ source list.
+if [[ -d third_party/dawn ]]; then
+  mkdir -p third_party/dawn/tools/golang/linux-amd64/bin
+  ln -sfv /usr/bin/go third_party/dawn/tools/golang/linux-amd64/bin/go
+fi
+
+# (h) libxml malloc/free fix — aports replaces xmlMalloc/xmlFree → malloc/free
 # in blink + libxml chromium glue. See crbug.com/893950. Without it, builds
 # error against libxml's symbol export differences with the system libxml.
 echo "  libxml malloc/free fix"
@@ -271,7 +279,7 @@ sed -i -e 's/\<xmlMalloc\>/malloc/g' -e 's/\<xmlFree\>/free/g' \
   third_party/blink/renderer/core/xml/parser/xml_document_parser.cc \
   third_party/libxml/chromium/*.cc 2>/dev/null || true
 
-# (h) Replace bundled-lib build files with system-library equivalents. Aports
+# (i) Replace bundled-lib build files with system-library equivalents. Aports
 # does this so Chromium uses Alpine's system fontconfig/freetype/harfbuzz/etc.
 # rather than its bundled forks (which assume glibc — bundled fontconfig uses
 # `initstate_r`/`random_r` which don't exist in musl).

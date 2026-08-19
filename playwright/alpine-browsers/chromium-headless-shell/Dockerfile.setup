@@ -19,7 +19,7 @@ RUN apk add --no-cache \
         rust cargo rust-bindgen rustfmt \
         gn ninja-build samurai \
         python3 py3-setuptools \
-        nodejs npm esbuild \
+        nodejs npm esbuild go \
         binutils file unzip linux-headers \
         bsd-compat-headers sccache \
         alsa-lib-dev brotli-dev bzip2-dev cairo-dev crc32c-dev curl-dev \
