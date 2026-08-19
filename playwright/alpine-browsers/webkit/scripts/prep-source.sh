@@ -656,6 +656,39 @@ if [[ -f "$SOUP_FILE" ]] && ! grep -q 'download destination parent' "$SOUP_FILE"
   fi
 fi
 
+# Assert the engine version of the tree we just cloned + patched.
+#
+# The smoke test cannot do this: browser.version() is a hardcoded constant in
+# playwright-core compared against the same package's browsers.json, so it
+# passes for any WebKit we build. SET_PROJECT_VERSION is the closest thing to a
+# real engine version the sources carry, and it moves with the base
+# (343e13bf = 2.53.1, 4d05d732 = 2.53.3). Checking it here means a base move
+# that nobody declared fails in this 8-minute job instead of shipping a
+# mislabelled artifact hours later.
+assert_webkit_project_version() {
+  local cmake_file=Source/cmake/OptionsWPE.cmake
+  local actual
+  actual=$(awk -F'[()]' '/^ *SET_PROJECT_VERSION\(/ {
+             split($2, v, " "); print v[1] "." v[2] "." v[3]; exit }' "$cmake_file")
+  if [[ -z "$actual" ]]; then
+    echo "ERROR: could not read SET_PROJECT_VERSION from $cmake_file" >&2
+    exit 1
+  fi
+  echo "  WebKit project version: $actual"
+  if [[ -z "${PW_WEBKIT_PROJECT_VERSION:-}" ]]; then
+    echo "ERROR: PW_WEBKIT_PROJECT_VERSION is unset — an unset expectation would make this vacuous" >&2
+    exit 1
+  fi
+  if [[ "$actual" != "$PW_WEBKIT_PROJECT_VERSION" ]]; then
+    echo "ERROR: WebKit project version is $actual but versions.env declares $PW_WEBKIT_PROJECT_VERSION." >&2
+    echo "       The base moved (PW_WEBKIT_PATCHES_REF → UPSTREAM_CONFIG BASE_REVISION)." >&2
+    echo "       Update PW_WEBKIT_PROJECT_VERSION if that move is intended." >&2
+    exit 1
+  fi
+  echo "$actual" > "$WORK/.webkit-project-version"
+}
+assert_webkit_project_version
+
 # Strip .git — ~1GB saved in the source-prep image which both port chains FROM.
 rm -rf .git
 
