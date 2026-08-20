@@ -68,8 +68,11 @@ jobs:
               cd "arms/$arm"
               npm init -y >/dev/null
               npm install "playwright@${version}"
-              rev=$(node -p "require('playwright-core/browsers.json').browsers.find(b => b.name === 'webkit').revision")
-              resolved=$(node -p "require('playwright-core/package.json').version")
+              # Read the files directly: playwright-core's `exports` map does not
+              # expose browsers.json, so require() of it throws.
+              rev=$(jq -r '.browsers[] | select(.name == "webkit") | .revision' \
+                node_modules/playwright-core/browsers.json)
+              resolved=$(jq -r .version node_modules/playwright-core/package.json)
               echo "${arm}_revision=${rev}" >> "$GITHUB_OUTPUT"
               echo "${arm}_resolved=${resolved}" >> "$GITHUB_OUTPUT"
               npx playwright install --with-deps webkit
