@@ -1,0 +1,117 @@
+name: WebKit upstream glibc control
+
+# Control leg for the two WebKit conformance reds that survive on Alpine:
+# the right-click event order (page-click.spec.ts:1203) and CacheStorage
+# surviving page.reload() in a persistent context
+# (defaultbrowsercontext-2.spec.ts:285). Neither test carries a webkit
+# exemption upstream, so PW's own glibc builds should pass both.
+#
+# Two arms, because a single arm cannot separate the two candidate causes.
+# PW ships r2336 with 1.62.1, built from WebKit 343e13bf (April), and moved its
+# base to 4d05d732 (June — the base we build) on 2026-07-24, from which it has
+# rolled r2339 onward. So:
+#
+#   both arms PASS  → the reds are ours (musl, cmake flags, strip, runner env)
+#   newer arm FAILS → the base move carries them, and it is worth filing upstream
+#
+# Both arms live in one job so the run can assert they actually differ; a
+# control that silently probed the same build twice would report a flat result
+# and read as an answer.
+#
+# Runs against PUBLISHED PW builds only. It builds nothing and touches none of
+# our images, so an iteration is ~5 minutes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_pw_version:
+        description: npm version whose webkit build is the older arm
+        default: '1.62.1'
+        type: string
+      candidate_pw_version:
+        description: npm version (or dist-tag) whose webkit build is the newer arm
+        default: 'next'
+        type: string
+
+concurrency:
+  group: wk-upstream-glibc-control-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install both arms
+        id: install
+        env:
+          BASELINE_PW_VERSION: ${{ inputs.baseline_pw_version }}
+          CANDIDATE_PW_VERSION: ${{ inputs.candidate_pw_version }}
+        run: |
+          set -euo pipefail
+          for arm in baseline candidate; do
+            case "$arm" in
+              baseline) version="$BASELINE_PW_VERSION" ;;
+              candidate) version="$CANDIDATE_PW_VERSION" ;;
+            esac
+            mkdir -p "arms/$arm"
+            (
+              cd "arms/$arm"
+              npm init -y >/dev/null
+              npm install "playwright@${version}"
+              rev=$(node -p "require('playwright-core/browsers.json').browsers.find(b => b.name === 'webkit').revision")
+              resolved=$(node -p "require('playwright-core/package.json').version")
+              echo "${arm}_revision=${rev}" >> "$GITHUB_OUTPUT"
+              echo "${arm}_resolved=${resolved}" >> "$GITHUB_OUTPUT"
+              npx playwright install --with-deps webkit
+            )
+          done
+
+      # The whole comparison rests on the two arms carrying different WebKit
+      # builds. npm dist-tags move, so this is checked rather than assumed.
+      - name: Assert the arms differ
+        env:
+          BASELINE_REV: ${{ steps.install.outputs.baseline_revision }}
+          CANDIDATE_REV: ${{ steps.install.outputs.candidate_revision }}
+        run: |
+          set -euo pipefail
+          if [[ "$BASELINE_REV" == "$CANDIDATE_REV" ]]; then
+            echo "both arms resolved to webkit r${BASELINE_REV} — nothing to compare" >&2
+            exit 1
+          fi
+          if (( CANDIDATE_REV < BASELINE_REV )); then
+            echo "candidate r${CANDIDATE_REV} is OLDER than baseline r${BASELINE_REV}" >&2
+            exit 1
+          fi
+
+      - name: Probe each arm
+        env:
+          BASELINE_REV: ${{ steps.install.outputs.baseline_revision }}
+          CANDIDATE_REV: ${{ steps.install.outputs.candidate_revision }}
+          BASELINE_RESOLVED: ${{ steps.install.outputs.baseline_resolved }}
+          CANDIDATE_RESOLVED: ${{ steps.install.outputs.candidate_resolved }}
+        run: |
+          set -euo pipefail
+          {
+            echo '| arm | probe | verdict | detail |'
+            echo '| --- | --- | --- | --- |'
+          } >> "$GITHUB_STEP_SUMMARY"
+          for arm in baseline candidate; do
+            case "$arm" in
+              baseline) rev="$BASELINE_REV"; resolved="$BASELINE_RESOLVED" ;;
+              candidate) rev="$CANDIDATE_REV"; resolved="$CANDIDATE_RESOLVED" ;;
+            esac
+            echo "==== ${arm}: playwright-core ${resolved}, webkit r${rev} ===="
+            ARM_LABEL="${arm} · pw ${resolved} · webkit r${rev}" \
+            PW_MODULE="${GITHUB_WORKSPACE}/arms/${arm}/node_modules/playwright" \
+              node scripts/probe-webkit-contextmenu-and-cachestorage.cjs
+          done
