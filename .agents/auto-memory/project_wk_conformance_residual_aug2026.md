@@ -130,3 +130,22 @@ libwpe+fdo, the same legacy path we build), and patching the preference default
 
 **Rebuild economics:** a WebKit rebuild is ~10h, so any source patches these
 need get batched into ONE build, never one per cluster.
+
+**Strip A/B — REFUTED 2026-08-21, do not re-raise.** The consumer strip
+(`strip-bundled-libs.sh`) removes libwpe, libWPEBackend-fdo and glib/gio, so we
+run against apk libs while WebKit was compiled against the bundled ones — a real
+divergence upstream does not have, and a tempting explanation for all three
+reds. It is not the cause. Restoring the whole artifact over the stripped runner
+(`COPY --from=<ref> /webkit /ms-playwright/webkit-<rev>`, run 32472479248) left
+every cluster byte-identical: contextmenu `["mousedown","contextmenu"]`,
+`cachestorage-cache-index` `[]`, `capture-device-list` `[]`. Verified rather than
+assumed — the restored image carries the 2 bundled wpe libs and `ldd` resolves
+`libWPEBackend-fdo-1.0.so.1` to the bundled copy, not `/usr/lib`.
+
+Note in passing (a real inconsistency, just not this bug): we build libwpe from
+master and patch `WPEBackend-fdo`'s `fdo.cpp` *because* Alpine's apk builds hit a
+musl static-init wall, then strip exactly those two so the apk versions load —
+leaving the `__attribute__((constructor))` fix inert in every runnable image.
+The libwpe clone is also `--depth=1` off master with no pin, so the build-time
+version is not reproducible.
+
