@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 # Consistency guard for playwright/alpine-browsers/versions.env.
 #
-# Asserts ALPINE_APORTS_CHROMIUM_REF points to an aports commit whose
-# community/chromium/APKBUILD pkgver matches PW_VERSION's chromium-headless-shell
-# browserVersion (from playwright-core's browsers.json).
+# Asserts ALPINE_APORTS_CHROMIUM_REF points to an aports commit on the same
+# chromium BRANCH as PW_VERSION's chromium-headless-shell browserVersion (from
+# playwright-core's browsers.json).
 #
-# Mirrors apply-and-build.sh:43-54's pkgver check at PR time so drift is caught
-# in seconds, not after a 30+ minute producer build.
+# Mirrors apply-and-build.sh's pkgver check at PR time so drift is caught in
+# seconds, not after a 30+ minute producer build. That check compares the first
+# three dot-segments, not the whole version, because Alpine packages only some
+# patch releases: aports went 150.0.7871.181 straight to 151.0.7922.71 while PW
+# pins 151.0.7922.34, so strict equality is unsatisfiable by ANY aports commit
+# and no published Playwright aligns either. This file used to be strict and
+# had drifted from the thing it claims to mirror, which is what made the 1.62.1
+# bump structurally red.
 #
 # Firefox (ALPINE_APORTS_REF) is INTENTIONALLY NOT checked here — a separate
 # WIP pipeline rebuilds firefox-on-Alpine with PW patches and owns that surface.
@@ -41,8 +47,11 @@ PKGVER=$(echo "$APKBUILD" | awk -F= '/^pkgver=/ { gsub(/"/, "", $2); print $2; e
 [[ -n "$PKGVER" ]] || { echo "FAIL: could not parse pkgver from APKBUILD at $ALPINE_APORTS_CHROMIUM_REF" >&2; exit 1; }
 echo "PKGVER=$PKGVER"
 
-if [[ "$PKGVER" != "$CHS_VER" ]]; then
-  echo "FAIL: aports pkgver=$PKGVER but PW pins CHS_VER=$CHS_VER" >&2
+branch_of() { echo "$1" | awk -F. '{print $1"."$2"."$3}'; }
+
+if [[ "$(branch_of "$PKGVER")" != "$(branch_of "$CHS_VER")" ]]; then
+  echo "FAIL: aports pkgver=$PKGVER is a different chromium branch than PW's CHS_VER=$CHS_VER" >&2
+  echo "  ($(branch_of "$PKGVER").* vs $(branch_of "$CHS_VER").*)" >&2
   echo "  Bump ALPINE_APORTS_CHROMIUM_REF in versions.env." >&2
   echo "  The auto-resolve-aports workflow handles this automatically on Renovate PRs;" >&2
   echo "  for hand-edited PW bumps, run:" >&2
@@ -50,4 +59,8 @@ if [[ "$PKGVER" != "$CHS_VER" ]]; then
   exit 2
 fi
 
-echo "PASS: ($PW_VERSION, $ALPINE_APORTS_CHROMIUM_REF) consistent — pkgver=$PKGVER == CHS_VER=$CHS_VER"
+if [[ "$PKGVER" != "$CHS_VER" ]]; then
+  echo "WARN: patch-level drift — musl patches are chromium $PKGVER, source is $CHS_VER" >&2
+fi
+
+echo "PASS: ($PW_VERSION, $ALPINE_APORTS_CHROMIUM_REF) consistent — branch $(branch_of "$PKGVER")"
