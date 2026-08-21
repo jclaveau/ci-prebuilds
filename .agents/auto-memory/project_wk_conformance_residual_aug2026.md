@@ -202,3 +202,48 @@ rather than by reading their bundle.
   files on our side, 31 vs 27, are `WebKitCache/Version 17/Records/.../Resource`
   — the HTTP cache, incidental.)
 
+## Update 2026-08-21 — source read at 4d05d732 (sparse clone, 174 MB)
+
+**contextmenu: ROOT CAUSE.** `WebPageProxy::showContextMenu()`
+(`UIProcess/WebPageProxy.cpp:11981`) calls `discardQueuedMouseEvents()`, with
+upstream's own comment: *"Discard any enqueued mouse events that have been
+delivered to the UIProcess whilst the WebProcess is still processing the
+MouseDown event that triggered this ShowContextMenu message. This can happen if
+we take too long to enter the nested runloop."* So the path is explicitly racy,
+and it explains every measurement: pipelined release is already queued →
+discarded; awaited release is sent after the press is answered → not yet queued
+→ survives; left click has no context menu → no discard. PW does NOT patch this
+(their only `discardQueuedMouseEvents` hunk is the drag path at 4285), so both
+builds run it and we simply lose the race — most plausibly a slower musl
+mousedown→ShowContextMenu round trip.
+Just above it sits an escape hatch we do not qualify for:
+```cpp
+if (RefPtr automationSession = configuration().processPool().automationSession()) {
+    if (m_controlledByAutomation && automationSession->isSimulatingUserInteraction())
+        return;   // pretend to show and dismiss — no discard
+}
+```
+PW drives via the inspector, not `WebAutomationSession`, so `automationSession()`
+is null and we fall through. **Candidate fix (rebuild): skip the discard when
+`m_controlledByAutomation` is set** — synthetic input has no stray user events
+to discard. Plausibly upstreamable to PW.
+
+**camera: RETRACT "not preference-driven".** The caller list is complete (the
+clone confirms code search): only `SettingsBase`, `GPUProcess` and
+`syncWithWebCorePrefs`. But the mock centre is a process-global that LATCHES —
+`syncWithWebCorePrefs` returns early when the page's value already equals the
+global — so `--features=!MockCaptureDevices` on one page proves nothing about
+whether the preference drives it. The open question is which page turns it on
+upstream, and when.
+
+**CacheStorage: lead, unproven.** `CacheStorageDiskStore::readAllRecordInfos`
+drops a record silently on BOTH a failed read and a failed decode (two bare
+`continue`s), and `SafeFileData::read` mmaps first via
+`FileSystem::isSafeToUseMemoryMapForPath` / `makeSafeToUseMemoryMapForPath` —
+a plausible musl/overlayfs failure point. Its `RELEASE_LOG_ERROR` never appeared
+in our captured stderr, so this is a lead and not a finding; the NetworkProcess
+log is the thing still missing.
+
+Sparse clone kept at `/home/jean/dev/.webkit-grep` (Source/WebKit + the
+mediastream/mock/cache/page dirs at 4d05d732) for the next round.
+
