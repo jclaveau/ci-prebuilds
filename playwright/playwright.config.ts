@@ -18,6 +18,15 @@ import { defineConfig, devices } from '@playwright/test';
 // patched Firefox + WebKit-WPE from the `playwright-alpine-browsers` producer
 // image; on the standard flavor PW's own glibc browsers apply. No
 // executablePath override needed on either. Same project list everywhere.
+//
+// PW_WEBKIT_UNSUPPORTED drops the webkit project. Playwright 1.62.1 sends
+// `Page.overrideSetting: PushAPIEnabled` on every newPage and no WebKit we
+// have published understands it, so on Alpine — which stages OUR build — the
+// two webkit tests fail while chromium and firefox pass. The standard flavor
+// runs Playwright's own glibc WebKit and is unaffected, which is why this is
+// an env gate on the alpine legs rather than a line deleted from the list.
+// Delete the gate once a wk-<rev> built from PW_WEBKIT_PATCHES_REF ships:
+// https://github.com/jclaveau/ci-prebuilds/issues/100
 const projects = [
   { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
   { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
@@ -42,7 +51,9 @@ const projects = [
   //   name: 'Google Chrome',
   //   use: { ...devices['Desktop Chrome'], channel: 'chrome' },
   // },
-];
+].filter((project) => !(
+  process.env.PW_WEBKIT_UNSUPPORTED === '1' && project.name === 'webkit'
+));
 
 export default defineConfig({
   testDir: './tests',

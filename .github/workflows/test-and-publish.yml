@@ -1246,6 +1246,15 @@ jobs:
 
       - run: pnpm playwright test
         working-directory: playwright
+        env:
+          # Alpine stages OUR WebKit, and none we have published understands
+          # the `PushAPIEnabled` setting Playwright 1.62.1 sends on every
+          # newPage — chromium and firefox pass alongside it. The standard
+          # flavor runs Playwright's own WebKit and keeps full coverage, so
+          # this is scoped to alpine rather than removed from the project list.
+          # Drop it once a wk-<rev> from the new patch series is published:
+          # https://github.com/jclaveau/ci-prebuilds/issues/100
+          PW_WEBKIT_UNSUPPORTED: ${{ matrix.os == 'alpine' && '1' || '0' }}
 
       # Alpine-only: pin the documented `playwright.config.ts` contract from
       # playwright/README.md. The image now stages musl-native
