@@ -180,3 +180,25 @@ rather than by reading their bundle.
   (`cache-index` `[]`), and `df` inside the container reports 82 GB available,
   so a free-space-derived quota of zero is out too.
 
+## Update 2026-08-21 (run 32474867037) — two corrections, both from better probes
+
+- **contextmenu: pipelining CONFIRMED, and narrowed.** Three dispatch shapes,
+  fresh context each (no order effect): `locator-click` FAIL,
+  `awaited-manual` PASS, `pipelined-manual` **FAIL** — identical protocol
+  frames, differing only in whether the release waits for the press to be
+  answered. Upstream passes all three. But `mouseup-on-left-click` (also a
+  pipelining locator click) PASSES, so pipelining alone is not fatal: the
+  release is dropped only when a contextmenu event sits between press and
+  release AND the release arrives unacknowledged. Retracts the earlier
+  "timing / 500ms threshold" reading, which came from a sweep confounded by
+  running every iteration after the failed click on one page.
+- **CacheStorage: the record DOES reach disk — retract "put() stores
+  nothing".** With the estimate call guarded (it had been throwing and killing
+  the rest of the probe on our arm), the profile shows
+  `CacheStorage/<hash>/Version 16/Records/<hash>/<uuid>/<hash>` on ours exactly
+  as upstream. Yet `cache.keys()` is `[]` and `match()` is null in the same
+  document. So the write lands and the LIVE READ PATH cannot see it — an
+  index/read-back fault in the network process, not a write fault. (The extra
+  files on our side, 31 vs 27, are `WebKitCache/Version 17/Records/.../Resource`
+  — the HTTP cache, incidental.)
+
