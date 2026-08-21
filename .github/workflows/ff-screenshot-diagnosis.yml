@@ -1,0 +1,209 @@
+name: firefox screenshot encode diagnosis
+
+# Runs playwright/bench/screenshot-encode-probe.cjs against TWO firefox
+# artifacts, to split the one `screenshot` number the runtime probe reports
+# into codec, capture and per-shot floor.
+#
+# ff-perf-ab.yml put our musl Firefox at 0.68x on screenshots (32.5 ms/shot vs
+# 22.2 official, samples non-overlapping) while every other metric sat at
+# parity — so the cost is specific to that path rather than a build-wide
+# regression, and one number cannot say which part of it.
+#
+# Staging is ff-perf-ab.yml's, including the ICU + Juggler launch shim: without
+# it a PW-driven launch of the musl build measures a launch failure rather than
+# a browser.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_a:
+        description: 'Baseline artifact (e.g. ghcr.io/…:sha-<sha>)'
+        required: true
+        type: string
+      label_a:
+        description: 'Name for A in the report'
+        default: 'control'
+        type: string
+      image_b:
+        description: 'Candidate artifact, or the literal `official` for PW''s published image as reference'
+        required: true
+        type: string
+      label_b:
+        description: 'Name for B in the report'
+        default: 'candidate'
+        type: string
+      ff_rev:
+        description: 'Firefox revision the artifacts carry (PW browsers.json)'
+        required: true
+        type: string
+      pw_version:
+        description: 'Playwright version to drive the probe'
+        default: '1.62.1'
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Probe both artifacts on this runner
+        env:
+          IMAGE_A: ${{ inputs.image_a }}
+          IMAGE_B: ${{ inputs.image_b }}
+          LABEL_A: ${{ inputs.label_a }}
+          LABEL_B: ${{ inputs.label_b }}
+          FF_REV: ${{ inputs.ff_rev }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -o pipefail
+          mkdir -p perf-out && chmod 777 perf-out
+
+          # `official` names PW's own published image rather than one of our
+          # artifacts: it already carries firefox and a global playwright, so it
+          # needs no staging. It answers "how far off the official build are we",
+          # which is a different question from arm-vs-arm and the reason the
+          # probe reports ratios at all.
+          probe_official() {
+            local label="$1" image="mcr.microsoft.com/playwright:v${PW}-noble"
+            echo "::group::probe ${label} (${image})"
+            docker run --rm \
+              --env "PROBE_TARGET=${label}" \
+              --env HOME=/root \
+              -v "$PWD/playwright/bench:/probe:ro" \
+              -v "$PWD/perf-out:/out" \
+              --env "PW_VERSION=${PW}" \
+              "$image" \
+              sh -c '
+                for r in "$(pnpm root -g 2>/dev/null)" "$(npm root -g 2>/dev/null)"; do
+                  [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
+                done
+                export NODE_PATH
+                node -e "require(\"playwright\")" 2>/dev/null \
+                  || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
+                node /probe/screenshot-encode-probe.cjs \
+                  --browser firefox --target "$PROBE_TARGET" --out /out
+              ' 2>&1 | tee "perf-out/probe-${label}.log"
+            echo "::endgroup::"
+          }
+
+          probe_one() {
+            local image="$1" label="$2"
+            if [ "$image" = official ]; then
+              probe_official "$label"
+              return
+            fi
+            echo "::group::stage + probe ${label} (${image})"
+            cat > /tmp/Dockerfile."${label}" <<EOF
+          FROM alpine:edge
+          RUN apk update && apk add --no-cache \\
+              nodejs npm bash \\
+              ca-certificates font-opensans ttf-freefont \\
+              alsa-lib dbus-libs fontconfig glib gtk+3.0 harfbuzz \\
+              libdrm libevent libffi libjpeg-turbo libnotify libogg libtheora \\
+              libvorbis libvpx libwebp libwebpdemux libxcomposite libxt mesa-gl \\
+              nspr nss pipewire-libs libpulse libstdc++ libgcc \\
+              gstreamer gst-plugins-base gst-plugins-good gst-libav \\
+              opus libsecret libxslt double-conversion minizip crc32c
+          COPY --from=${image} /firefox /ms-playwright/firefox-${FF_REV}/firefox
+          RUN touch /ms-playwright/firefox-${FF_REV}/INSTALLATION_COMPLETE \\
+           && chmod 755 /ms-playwright/firefox-${FF_REV}
+          # Same launch shim playwright/Dockerfile.alpine installs: aports builds
+          # firefox --with-system-icu and Alpine's libicudata is a stub, so
+          # ICU_DATA has to point at the artifact dir; and PW's m-remote handler
+          # is shadowed by Mozilla's RemoteAgent, so Juggler only wakes up when
+          # --remote-debugging-port is passed. Probing without this measures a
+          # launch failure, not a browser.
+          RUN mv /ms-playwright/firefox-${FF_REV}/firefox/firefox \\
+                 /ms-playwright/firefox-${FF_REV}/firefox/firefox.real \\
+           && printf '%s\\n' \\
+                  '#!/bin/sh' \\
+                  'DIR="\$(dirname "\$0")"' \\
+                  'ICU_DATA="\$DIR" exec "\$DIR/firefox.real" --remote-debugging-port=0 "\$@"' \\
+                > /ms-playwright/firefox-${FF_REV}/firefox/firefox \\
+           && chmod +x /ms-playwright/firefox-${FF_REV}/firefox/firefox
+          ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+          ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+          # musl ldconfig rejects -p, so PW's host validator reports false
+          # missing libraries on Alpine.
+          ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
+          RUN npm install -g --no-fund --no-audit playwright@${PW}
+          EOF
+            docker build -t "ff-probe-${label}:${{ github.run_id }}" -f /tmp/Dockerfile."${label}" /tmp
+            # The probe is CommonJS precisely so NODE_PATH resolution applies to
+            # the global playwright install — ESM ignores NODE_PATH.
+            docker run --rm \
+              --env "PROBE_TARGET=${label}" \
+              -v "$PWD/playwright/bench:/probe:ro" \
+              -v "$PWD/perf-out:/out" \
+              "ff-probe-${label}:${{ github.run_id }}" \
+              sh -c '
+                export NODE_PATH="$(npm root -g)"
+                node /probe/screenshot-encode-probe.cjs \
+                  --browser firefox --target "$PROBE_TARGET" --out /out
+              ' 2>&1 | tee "perf-out/probe-${label}.log"
+            echo "::endgroup::"
+          }
+
+          probe_one "$IMAGE_A" "$LABEL_A"
+          probe_one "$IMAGE_B" "$LABEL_B"
+
+      - name: Report
+        env:
+          LABEL_A: ${{ inputs.label_a }}
+          LABEL_B: ${{ inputs.label_b }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os
+
+          a_name, b_name = os.environ['LABEL_A'], os.environ['LABEL_B']
+          a = json.load(open(f'perf-out/{a_name}-screenshot.json'))
+          b = json.load(open(f'perf-out/{b_name}-screenshot.json'))
+
+          print(f"## firefox screenshot breakdown — {b_name} vs {a_name}\n")
+          print(f"- {a_name}: `{a['binary_version']}` ({a['libc']})")
+          print(f"- {b_name}: `{b['binary_version']}` ({b['libc']})")
+          print(f"- playwright `{a['playwright_version']}`\n")
+          print(f"| case | {a_name} ms | {b_name} ms | ratio | {a_name} bytes | {b_name} bytes |")
+          print("|---|---:|---:|---:|---:|---:|")
+
+          bi = {r['label']: r for r in b['results']}
+          for ra in a['results']:
+              rb = bi.get(ra['label'])
+              if not rb:
+                  continue
+              av, bv = ra['median_ms'], rb['median_ms']
+              ratio = f"{bv / av:.2f}x" if av else "—"
+              # Same spread rule as the runtime probe: a difference inside the
+              # samples' own range is not a measurement.
+              spread = max(max(ra['samples']) - min(ra['samples']),
+                           max(rb['samples']) - min(rb['samples']))
+              if av and abs(bv - av) < spread:
+                  ratio += " n.s."
+              print(f"| {ra['label']} | {av:.1f} | {bv:.1f} | {ratio} "
+                    f"| {ra['bytes']} | {rb['bytes']} |")
+          PY
+          cat "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ff-screenshot-diagnosis
+          path: perf-out/
+          if-no-files-found: warn
+          retention-days: 30
