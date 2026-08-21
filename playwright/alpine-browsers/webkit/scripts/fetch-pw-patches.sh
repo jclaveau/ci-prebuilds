@@ -17,7 +17,10 @@ PW_VERSION="${PW_VERSION:?PW_VERSION must be set}"
 
 mkdir -p "$OUT/patches" "$OUT/embedder"
 
-GH_RAW="https://raw.githubusercontent.com/microsoft/playwright/v${PW_VERSION}"
+# Patch series ref — see PW_WEBKIT_PATCHES_REF in versions.env. Defaults to the
+# release tag so the script still works standalone.
+PW_PATCHES_REF="${PW_WEBKIT_PATCHES_REF:-v${PW_VERSION}}"
+GH_RAW="https://raw.githubusercontent.com/microsoft/playwright/${PW_PATCHES_REF}"
 
 # Same retry + auth shape as firefox/scripts/fetch-pw-patches.sh — raw.gh +
 # api.gh rate-limit unauthenticated traffic to ~60/hr per IP and a fresh fetch
@@ -49,7 +52,7 @@ chmod +x "$OUT/pw_run.sh"
 fetch_tree() {
   local subdir="$1"
   local local_dir="$2"
-  retry_curl "https://api.github.com/repos/microsoft/playwright/git/trees/v${PW_VERSION}?recursive=1" \
+  retry_curl "https://api.github.com/repos/microsoft/playwright/git/trees/${PW_PATCHES_REF}?recursive=1" \
     | jq -r --arg p "browser_patches/webkit/$subdir/" '.tree[] | select(.type=="blob" and (.path|startswith($p))) | .path' \
     | while read -r path; do
         rel="${path#browser_patches/webkit/$subdir/}"
@@ -64,7 +67,7 @@ fetch_tree embedder "$OUT/embedder"
 WK_REV=$(jq -r '.browsers[] | select(.name=="webkit") | .revision' "$OUT/browsers.json")
 WK_VER=$(jq -r '.browsers[] | select(.name=="webkit") | .browserVersion' "$OUT/browsers.json")
 WK_SHA=$(awk -F= '$1=="BASE_REVISION"{gsub(/[" ]/,"",$2); print $2; exit}' "$OUT/UPSTREAM_CONFIG.sh")
-echo "PW v${PW_VERSION} pins webkit revision=${WK_REV} browserVersion=${WK_VER} (upstream SHA=${WK_SHA})"
+echo "PW v${PW_VERSION} pins webkit revision=${WK_REV} browserVersion=${WK_VER}; patches from ${PW_PATCHES_REF} (upstream SHA=${WK_SHA})"
 echo "${WK_REV}" > "$OUT/.webkit-revision"
 echo "${WK_VER}" > "$OUT/.webkit-version"
 echo "${WK_SHA}" > "$OUT/.webkit-sha"

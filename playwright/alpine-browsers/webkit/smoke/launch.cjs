@@ -7,6 +7,9 @@
 //
 // CommonJS so NODE_PATH=/usr/local/lib/node_modules works (ESM ignores it).
 
+const fs = require('node:fs');
+const path = require('node:path');
+
 const { webkit } = require('playwright');
 
 const ok = (cond, msg) => { if (!cond) { console.error('FAIL:', msg); process.exit(1); } else { console.log('OK  :', msg); } };
@@ -19,17 +22,38 @@ const ok = (cond, msg) => { if (!cond) { console.error('FAIL:', msg); process.ex
   const browser = await webkit.launch();
   ok(browser, 'webkit.launch() returned a browser');
 
-  // WebKit has no Tier-1 `--version` leg — MiniBrowser-wpe reports none — so
-  // this is the only place the artifact's version gets checked at all, and
-  // promote-webkit needs this job, so it gates the `wk-<version>` tag. Without
-  // it that tag is derived purely from PW's pin and will happily label a stale
-  // binary, which is precisely how `ff-150.0.2` ended up on a Firefox 147.0.1.
-  // Required rather than skip-if-unset: an unset env would make the assertion
-  // vacuous and nothing would say so.
+  // browser.version() does NOT read the browser. playwright-core carries
+  // `const BROWSER_VERSION = '26.5'` in webkit/wkBrowser.ts and returns it
+  // verbatim, and EXPECTED_WEBKIT_VERSION comes from the same package's
+  // browsers.json — so this compares PW against itself and passes whatever
+  // WebKit we built. Kept because a mismatch still means the installed client
+  // disagrees with its own pin, but it can NOT catch a mislabelled artifact.
   const expected = process.env.EXPECTED_WEBKIT_VERSION;
   ok(expected, 'EXPECTED_WEBKIT_VERSION is set');
   const actual = browser.version();
-  ok(actual === expected, `browser.version() = ${actual}, expected ${expected}`);
+  ok(actual === expected, `browser.version() = ${actual} (playwright-core constant), expected ${expected}`);
+
+  // The real check: read the engine version off the shipped library. WebKit's
+  // libtool triple in Source/cmake/OptionsWPE.cmake produces
+  // libWPEWebKit-<api>.so.<current-age>.<age>.<revision>, and it moves with the
+  // base — (11 0 10) → 1.10.0 at WebKit 343e13bf, (11 2 10) → 1.10.2 at
+  // 4d05d732. So this is a value only the built binary can supply, checked
+  // against a checked-in expectation.
+  const expectedSo = process.env.EXPECTED_WPE_SOVERSION;
+  ok(expectedSo, 'EXPECTED_WPE_SOVERSION is set');
+  const distDir = path.dirname(webkit.executablePath());
+  // PW nests each port's libraries under minibrowser-{wpe,gtk}/lib, so the
+  // library never sits beside the launcher executablePath() points at.
+  const soRe = /^libWPEWebKit-[\d.]+\.so\.(\d+\.\d+\.\d+)$/;
+  const entries = fs.readdirSync(distDir, { recursive: true });
+  const found = entries.map(n => path.basename(n).match(soRe)).filter(Boolean);
+  ok(found.length > 0,
+    `found a versioned libWPEWebKit under ${distDir} (saw: ${
+      entries.filter(n => path.basename(n).startsWith('libWPEWebKit'))
+        .join(', ') || 'none'})`);
+  const soVersion = found[0][1];
+  ok(soVersion === expectedSo,
+    `libWPEWebKit so-version = ${soVersion}, expected ${expectedSo}`);
 
   const ctx = await browser.newContext();
   ok(ctx, 'browser.newContext()');
