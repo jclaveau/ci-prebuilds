@@ -41,6 +41,32 @@ const PAGE_HTML = `<!doctype html><meta charset="utf-8"><title>probe</title>
 <style>body{font:14px system-ui;margin:0}.pad{padding:2px;border:1px solid #ccc}</style>
 <body><div id="host">${'<div class="pad">x</div>'.repeat(PAD_NODES)}</div></body>`;
 
+/*
+ * A control whose pixels cannot differ between the two images. The text page
+ * above renders with whatever fonts the distro ships, so Alpine and Ubuntu
+ * antialias it differently — and a noisier bitmap is both larger and slower to
+ * deflate, which would produce a codec-shaped result with no codec difference
+ * in it. This page draws a deterministic pattern into a canvas: no fonts, no
+ * layout, integer coordinates, flat fills. If the two sides still disagree on
+ * the PNG bytes here, the difference is not the input.
+ */
+const CANVAS_HTML = `<!doctype html><meta charset="utf-8"><title>probe-canvas</title>
+<style>html,body{margin:0;padding:0;background:#fff}canvas{display:block}</style>
+<body><canvas id="c" width="1280" height="720"></canvas><script>
+const g = document.getElementById('c').getContext('2d', { alpha: false });
+g.fillStyle = '#ffffff';
+g.fillRect(0, 0, 1280, 720);
+for (let y = 0; y < 720; y += 40) {
+  for (let x = 0; x < 1280; x += 40) {
+    // Deterministic, no Math.random and no time: the same bitmap every run.
+    const v = ((x / 40) * 7 + (y / 40) * 13) % 6;
+    g.fillStyle = ['#000000', '#ff0000', '#00ff00', '#0000ff', '#808080', '#ffffff'][v];
+    g.fillRect(x, y, 40, 40);
+  }
+}
+window.__ready = true;
+</script></body>`;
+
 async function measure(page, label, options, iters = 12) {
   const times = [];
   let bytes = 0;
@@ -94,6 +120,13 @@ async function main() {
   results.push(await measure(page, 'jpeg_q80_viewport', { type: 'jpeg', quality: 80 }));
   results.push(await measure(page, 'png_clip_16x16', { type: 'png', clip: { x: 0, y: 0, width: 16, height: 16 } }));
   results.push(await measure(page, 'jpeg_q80_clip_16x16', { type: 'jpeg', quality: 80, clip: { x: 0, y: 0, width: 16, height: 16 } }));
+
+  const canvasPage = await ctx.newPage();
+  await canvasPage.setContent(CANVAS_HTML, { waitUntil: 'load' });
+  await canvasPage.waitForFunction('window.__ready === true');
+  results.push(await measure(canvasPage, 'png_canvas_control', { type: 'png' }));
+  results.push(await measure(canvasPage, 'jpeg_q80_canvas_control', { type: 'jpeg', quality: 80 }));
+  await canvasPage.close();
 
   await ctx.close();
   await browser.close();
