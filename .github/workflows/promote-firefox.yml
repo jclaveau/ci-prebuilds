@@ -51,8 +51,10 @@ jobs:
           curl -fsSL "https://unpkg.com/playwright-core@${PW}/browsers.json" -o /tmp/browsers.json
           REV=$(jq -r '.browsers[] | select(.name == "firefox") | .revision' /tmp/browsers.json)
           PW_VER=$(jq -r '.browsers[] | select(.name == "firefox") | .browserVersion' /tmp/browsers.json)
-          [ -n "$REV" ] && [ "$REV" != "null" ] \
-            || { echo "::error::failed to resolve the firefox revision for PW ${PW}"; exit 1; }
+          if [ -z "$REV" ] || [ "$REV" = "null" ]; then
+            echo "::error::failed to resolve the firefox revision for PW ${PW}"
+            exit 1
+          fi
           echo "rev=$REV" >> "$GITHUB_OUTPUT"
           echo "pw_ver=$PW_VER" >> "$GITHUB_OUTPUT"
           echo "PW ${PW} → firefox rev=${REV}, browsers.json says version=${PW_VER}"
