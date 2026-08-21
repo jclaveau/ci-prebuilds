@@ -322,6 +322,50 @@ jobs:
             }
           ' /tmp/unstripped.log >> "$GITHUB_STEP_SUMMARY"
 
+      # The persistent store is the only context that fails and the only one whose
+      # quota comes from the filesystem, and we run on overlayfs inside a
+      # container while upstream runs on the runner's own disk. That is a
+      # difference the strip could not have accounted for. If statvfs reports
+      # nothing usable, a zero quota would evict every record while leaving
+      # put() resolving happily — exactly what we see.
+      - name: Report what statvfs says about the profile filesystem
+        continue-on-error: true
+        run: |
+          echo '### inside our runner container'
+          docker run --rm --entrypoint sh "wkresiduals:${{ github.run_id }}" -c \
+            'df -P /tmp; echo; stat -f /tmp 2>/dev/null || echo "stat -f unsupported"'
+          echo '### on the host, where the upstream arms run'
+          df -P /tmp; stat -f /tmp 2>/dev/null || true
+
+      # Same probe, profile on a tmpfs instead of the container's overlayfs. If
+      # CacheStorage starts working, the filesystem is the variable and the fix
+      # is nowhere near WebKit.
+      - name: Probe our artifact with the profile on tmpfs
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+            --cap-add SYS_ADMIN --cap-add NET_ADMIN \
+            --tmpfs /profiles:size=512m \
+            -e PROBE_PROFILE_BASE=/profiles \
+            -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
+            -e WEBKIT_FORCE_SANDBOX=0 \
+            -e NODE_PATH=/usr/local/lib/node_modules:/usr/lib/node_modules \
+            -v "$PWD/scripts:/probe:ro" \
+            "wkresiduals:${{ github.run_id }}" \
+            node /probe/probe-webkit-conformance-residuals.cjs > /tmp/tmpfs.log 2>&1 || true
+          grep -aE 'PROBE_RESULT cachestorage' /tmp/tmpfs.log || tail -30 /tmp/tmpfs.log
+          awk -v arm="ours TMPFS-PROFILE" '
+            $1 == "PROBE_RESULT" && $2 ~ /^cachestorage/ {
+              detail = ""
+              for (i = 4; i <= NF; i++) {
+                detail = detail (i > 4 ? " " : "") $i
+              }
+              printf "| %s | %s | %s | `%s` |\n", arm, $2, $3, detail
+            }
+          ' /tmp/tmpfs.log >> "$GITHUB_STEP_SUMMARY"
+
       - name: Keep the full probe logs
         if: always()
         uses: actions/upload-artifact@v4

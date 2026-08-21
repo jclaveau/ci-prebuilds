@@ -83,6 +83,24 @@ async function probeContextmenuOrder(base) {
       afterLeftClick === JSON.stringify(['mousedown', 'mouseup']) ? 'PASS' : 'FAIL',
       afterLeftClick);
 
+    // Sweep the gap between press and release. click() sends them back to back
+    // and loses the release; 500ms delivers it. The threshold is the length of
+    // whatever state swallows it, and a cluster of failures with no threshold
+    // would say the delay is incidental and the cause is elsewhere.
+    for (const delay of [0, 25, 50, 100, 200, 400]) {
+      entries.length = 0;
+      const target = await page.getByRole('button', { name: 'Click me' }).boundingBox();
+      await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2);
+      await page.mouse.down({ button: 'right' });
+      if (delay) {
+        await page.waitForTimeout(delay);
+      }
+      await page.mouse.up({ button: 'right' });
+      await page.waitForTimeout(1200);
+      record(`mouseup-after-${delay}ms`,
+        entries.includes('mouseup') ? 'PASS' : 'FAIL', JSON.stringify(entries));
+    }
+
     // Drive the right button by hand, with the release a beat after the press.
     // click() sends both back to back, so a swallowed release and one the
     // browser simply never got around to look the same. Here the release is a
@@ -103,7 +121,11 @@ async function probeContextmenuOrder(base) {
 }
 
 async function probeCacheStoragePersistence(base) {
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'wk-persist-'));
+  // PROBE_PROFILE_BASE puts the persistent profile on a different filesystem.
+  // The persistent store is the only one that fails and the only one that
+  // computes its quota from the filesystem, so overlayfs-vs-tmpfs is a
+  // difference the strip could never have accounted for.
+  const profile = fs.mkdtempSync(path.join(process.env.PROBE_PROFILE_BASE || os.tmpdir(), 'wk-persist-'));
   const context = await webkit.launchPersistentContext(profile);
   let after;
   try {
@@ -283,6 +305,30 @@ async function probeCaptureDevicesPersistentWithFlag(base) {
   }
 }
 
+// The positive flag proves our build CAN produce mock devices. This asks the
+// complementary question of an arm that shows them WITHOUT a flag: turn the
+// feature off in the one launch shape where --features reaches the page. If the
+// devices vanish, the mock centre is pref-driven and upstream's pref is somehow
+// true for PW pages; if they survive, it is enabled by something that is not the
+// preference at all, and the whole preference search has been the wrong tree.
+async function probeCaptureDevicesPersistentMockDisabled(base) {
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'wk-nomock-'));
+  const context = await webkit.launchPersistentContext(profile, {
+    args: ['--features=!MockCaptureDevices'],
+  });
+  try {
+    await context.grantPermissions(['camera', 'microphone'], { origin: new URL(base).origin });
+    const page = context.pages()[0] || await context.newPage();
+    await page.goto(base);
+    const granted = await getUserMedia(page, { video: true, audio: true });
+    record('capture-persistent-mock-disabled',
+      granted.tracks ? 'INFO' : 'EMPTY', JSON.stringify(granted));
+  } finally {
+    await context.close();
+    fs.rmSync(profile, { recursive: true, force: true });
+  }
+}
+
 async function probeCaptureDevices(base) {
   const origin = new URL(base).origin;
   const browser = await webkit.launch();
@@ -415,6 +461,11 @@ async function probeCaptureDevicesWithMockFeature(base) {
     await probeCaptureDevicesPersistentWithFlag(base);
   } catch (e) {
     record('capture-persistent-with-flag', 'ERROR', String(e && e.message || e).split('\n')[0]);
+  }
+  try {
+    await probeCaptureDevicesPersistentMockDisabled(base);
+  } catch (e) {
+    record('capture-persistent-mock-disabled', 'ERROR', String(e && e.message || e).split('\n')[0]);
   }
   server.close();
 
