@@ -187,6 +187,32 @@ const KERNELS = {
 };
 
 /*
+ * executablePath() names the FULL chromium, but a headless launch runs
+ * chrome-headless-shell and that is the only binary our from-source artifact
+ * ships — so the path Playwright hands back does not exist here. Fall back to
+ * the headless-shell sibling under the same browsers root.
+ */
+function resolveShippedBinary(exe) {
+  if (fs.existsSync(exe)) {
+    return exe;
+  }
+  // …/<root>/chromium-<rev>/chrome-linux64/chrome → three levels up is the root.
+  const browsersRoot = path.dirname(path.dirname(path.dirname(exe)));
+  for (const dir of fs.readdirSync(browsersRoot)) {
+    if (!/headless[_-]shell/.test(dir)) {
+      continue;
+    }
+    const shellDir = path.join(browsersRoot, dir);
+    for (const entry of fs.readdirSync(shellDir, { recursive: true })) {
+      if (path.basename(entry) === 'chrome-headless-shell') {
+        return path.join(shellDir, entry);
+      }
+    }
+  }
+  throw new Error(`no runnable binary: ${exe} is absent and ${browsersRoot} has no headless shell`);
+}
+
+/*
  * Asks the shipped binary what it is, instead of trusting the image tag, the
  * workflow input, or Playwright. `browser.version()` reports what PLAYWRIGHT
  * believes: for WebKit it is a hardcoded playwright-core constant that passes
@@ -198,7 +224,7 @@ const KERNELS = {
  * produced — the same signal webkit/smoke/launch.cjs asserts.
  */
 function binaryVersion(browserType, browserName) {
-  const exe = browserType.executablePath();
+  const exe = resolveShippedBinary(browserType.executablePath());
   if (browserName === 'webkit') {
     const distDir = path.dirname(exe);
     const soRe = /^libWPEWebKit-[\d.]+\.so\.(\d+\.\d+\.\d+)$/;
