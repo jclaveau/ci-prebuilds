@@ -47,3 +47,32 @@ libc++ is NOT a variable.
 `chs-fs-sha-*` artifact — re-run it before theorising further. Related:
 [[project_alpine_browser_perf_vs_glibc]], [[project_runtime_perf_probe]],
 [[feedback_control_excludes_one_mechanism]].
+
+**Round 3 (runs 32505115445 / 32506057827 / 32507502333 / 32513597314) — the
+no-rebuild probes are exhausted.** Also dead:
+
+- **musl string routines.** They ARE 3-30x slower than glibc's at 64 B - 4 KB
+  and ours imports all five from musl while official resolves them internally
+  ([[project_chromium_musl_string_routines]]) — but LD_PRELOADing an AVX2
+  implementation into our own binary moved `layout_boxonly` by **1.9%**
+  (462.6 → 453.6 vs official 277.0). Lever confirmed connected: the shim was
+  loaded by 6 distinct pids, so it reached the renderers.
+- **libc++ hardening.** Identical assertion surface on both
+  (`__libcpp_verbose_abort` x1, same source-path strings, `vector[] index out
+  of bounds` absent on both). `use_custom_libcxx` fixes the mode too.
+- **Orderfile / CFI.** Neither binary has `.text.hot` or `.text.unlikely`, so
+  no section-prefix splitting on either side; CFI symbols 0 on both. `.text` is
+  151,895,539 B ours vs 161,907,689 B official (1.066x) — official is BIGGER,
+  which tracks our feature cuts (webrtc/dawn/xnnpack) rather than optimization.
+
+**The partition that survived everything.** Sorting kernels by what executes
+them: compiled Blink C++ (`layout_boxonly` 1.60-1.67x, `dom_churn` 1.67x) vs
+V8 heap (`js_alloc` 1.16x) vs JIT-emitted machine code (`int_math` 1.00x,
+`libm_fmod` 1.00x, `typed_array_*` 1.01x). Everything the C++ compiler
+produced is ~1.6x; everything emitted at runtime is at parity.
+
+**What is left, all needing a build:** PGO+ThinLTO TOGETHER (never run; each
+alone went 1.42 → 1.28 / 1.31), and alpine clang **22** against official's
+clang **23.0.0**. No cheap probe remains — the next step costs ~40 h and is
+jean's call.
+
