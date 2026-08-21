@@ -41,3 +41,20 @@ cold-flake follow-ups.
 
 [[project_ff_latest_stale_no_edge_tag]] [[feedback_verify_moving_tag_payload]]
 [[feedback_preseed_long_dispatch_pr_branch]] [[project_ff_build_two_pass_cbindgen]]
+
+**Counter-example — a fast round is not always the bug.** WebKit run
+32476690483 went wpe-1 4h34m, wpe-2 2h58m, **wpe-3 4 min**. That is the same
+shape as the staleness tell above, but it was legitimate: the build converged
+in wpe-2 and wpe-3's own log says so —
+
+    Phase 1 already done: .../CMakeCache.txt exists
+    Phase 2 already done: .../bin/MiniBrowser exists
+    Phase 3 already done: /work/minibrowser-wpe-dist has MiniBrowser
+    apply-and-build-port: PORT=WPE all phases satisfied
+
+116 s of the 4 min was the 2.6 GB base pull; the ninja step took 0.1 s. So
+check two things before calling a fast round stale: the script's own
+phase/"no work" markers, and that `BASE_IMAGE` names the PREVIOUS round's
+sha-scoped tag ([[project_multijob_base_image_audit]]) — here
+`wk-wpe-2-sha-5719ccb8`, correct.
+
