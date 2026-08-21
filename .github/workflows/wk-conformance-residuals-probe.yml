@@ -1,0 +1,185 @@
+name: WebKit conformance residuals probe
+
+# The six WebKit conformance failures that survive on Alpine, measured against
+# three browsers in one run so the arms are directly comparable:
+#
+#   ours       our published artifact, inside our own conformance runner image
+#   baseline   the webkit PW ships with 1.62.1 (r2336, built from WebKit 343e13bf)
+#   candidate  the webkit PW ships today (r2355+, built from 4d05d732 — our base)
+#
+# The reds are the right-click event order (page-click.spec.ts:1203), CacheStorage
+# surviving page.reload() in a persistent context (defaultbrowsercontext-2.spec.ts:285)
+# and the four camera/microphone tests (permissions.spec.ts:349-386). None of them
+# carries an exemption we inherit, so every upstream arm is expected to pass.
+#
+#   upstream arms PASS      → the reds are ours: cmake flags, musl, strip, runner env
+#   candidate arm FAILS     → the base move carries them, and it is worth filing upstream
+#
+# All three arms run one script (scripts/probe-webkit-conformance-residuals.cjs) in
+# one job, so they share a summary table and the run can assert the upstream arms
+# actually differ — a control that silently probed the same build twice would
+# report a flat result and read as an answer.
+#
+# Builds only our runner image, never a browser, so an iteration is ~15 minutes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_ref:
+        description: our WebKit artifact to probe
+        default: ghcr.io/jclaveau/playwright-alpine-browsers:wk-edge
+        type: string
+      pw_version:
+        description: PW SDK version installed in our runner image
+        default: '1.62.1'
+        type: string
+      artifact_rev:
+        description: WK_REV to stage at PW's cache path (webkit browsers.json revision)
+        default: '2336'
+        type: string
+      baseline_pw_version:
+        description: npm version whose webkit build is the older upstream arm
+        default: '1.62.1'
+        type: string
+      candidate_pw_version:
+        description: npm version (or dist-tag) whose webkit build is the newer upstream arm
+        default: 'next'
+        type: string
+
+concurrency:
+  group: wk-conformance-residuals-probe-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install both upstream arms
+        id: install
+        env:
+          BASELINE_PW_VERSION: ${{ inputs.baseline_pw_version }}
+          CANDIDATE_PW_VERSION: ${{ inputs.candidate_pw_version }}
+        run: |
+          set -euo pipefail
+          for arm in baseline candidate; do
+            case "$arm" in
+              baseline) version="$BASELINE_PW_VERSION" ;;
+              candidate) version="$CANDIDATE_PW_VERSION" ;;
+            esac
+            mkdir -p "arms/$arm"
+            (
+              cd "arms/$arm"
+              npm init -y >/dev/null
+              npm install "playwright@${version}"
+              # Read the files directly: playwright-core's `exports` map does not
+              # expose browsers.json, so require() of it throws.
+              rev=$(jq -r '.browsers[] | select(.name == "webkit") | .revision' \
+                node_modules/playwright-core/browsers.json)
+              resolved=$(jq -r .version node_modules/playwright-core/package.json)
+              echo "${arm}_revision=${rev}" >> "$GITHUB_OUTPUT"
+              echo "${arm}_resolved=${resolved}" >> "$GITHUB_OUTPUT"
+              npx playwright install --with-deps webkit
+            )
+          done
+
+      # The upstream comparison rests on the two arms carrying different WebKit
+      # builds. npm dist-tags move, so this is checked rather than assumed.
+      - name: Assert the upstream arms differ
+        env:
+          BASELINE_REV: ${{ steps.install.outputs.baseline_revision }}
+          CANDIDATE_REV: ${{ steps.install.outputs.candidate_revision }}
+        run: |
+          set -euo pipefail
+          if [[ "$BASELINE_REV" == "$CANDIDATE_REV" ]]; then
+            echo "both arms resolved to webkit r${BASELINE_REV} — nothing to compare" >&2
+            exit 1
+          fi
+          if (( CANDIDATE_REV < BASELINE_REV )); then
+            echo "candidate r${CANDIDATE_REV} is OLDER than baseline r${BASELINE_REV}" >&2
+            exit 1
+          fi
+
+      - name: Build our conformance runner
+        env:
+          BROWSER: webkit
+          IMAGE_REF: ${{ inputs.image_ref }}
+          PW_VERSION: ${{ inputs.pw_version }}
+          ARTIFACT_REV: ${{ inputs.artifact_rev }}
+          HEADED: '0'
+          IMAGE_TAG_OUT: wkresiduals:${{ github.run_id }}
+        # build-runner.sh IS what the conformance shards run, strip and all —
+        # a hand-rolled apk list would probe something other than what ships.
+        run: ./playwright/alpine-browsers/conformance/build-runner.sh
+
+      - name: Open the summary table
+        run: |
+          {
+            echo '| arm | probe | verdict | detail |'
+            echo '| --- | --- | --- | --- |'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Our arm runs the same script inside the runner image. The container has
+      # no access to the host's step summary, so its PROBE_RESULT lines are
+      # turned into table rows here instead of by the script itself.
+      - name: Probe our artifact
+        env:
+          IMAGE_REF: ${{ inputs.image_ref }}
+        run: |
+          set -euo pipefail
+          # Same sandbox strip the conformance shards use for WebKit — WPE's
+          # bwrap needs seccomp+apparmor unconfined AND the caps AND the env
+          # escape hatch.
+          docker run --rm \
+            --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+            --cap-add SYS_ADMIN --cap-add NET_ADMIN \
+            -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
+            -e WEBKIT_FORCE_SANDBOX=0 \
+            -e NODE_PATH=/usr/local/lib/node_modules:/usr/lib/node_modules \
+            -v "$PWD/scripts:/probe:ro" \
+            "wkresiduals:${{ github.run_id }}" \
+            node /probe/probe-webkit-conformance-residuals.cjs 2>&1 | tee /tmp/ours.log
+          awk -v arm="ours · ${IMAGE_REF##*:}" '
+            $1 == "PROBE_RESULT" {
+              detail = ""
+              for (i = 4; i <= NF; i++) {
+                detail = detail (i > 4 ? " " : "") $i
+              }
+              printf "| %s | %s | %s | `%s` |\n", arm, $2, $3, detail
+            }
+          ' /tmp/ours.log >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Probe each upstream arm
+        env:
+          BASELINE_REV: ${{ steps.install.outputs.baseline_revision }}
+          CANDIDATE_REV: ${{ steps.install.outputs.candidate_revision }}
+          BASELINE_RESOLVED: ${{ steps.install.outputs.baseline_resolved }}
+          CANDIDATE_RESOLVED: ${{ steps.install.outputs.candidate_resolved }}
+        run: |
+          set -euo pipefail
+          for arm in baseline candidate; do
+            case "$arm" in
+              baseline) rev="$BASELINE_REV"; resolved="$BASELINE_RESOLVED" ;;
+              candidate) rev="$CANDIDATE_REV"; resolved="$CANDIDATE_RESOLVED" ;;
+            esac
+            echo "==== ${arm}: playwright-core ${resolved}, webkit r${rev} ===="
+            ARM_LABEL="${arm} · pw ${resolved} · webkit r${rev}" \
+            PW_MODULE="${GITHUB_WORKSPACE}/arms/${arm}/node_modules/playwright" \
+              node scripts/probe-webkit-conformance-residuals.cjs
+          done
