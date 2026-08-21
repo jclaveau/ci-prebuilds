@@ -82,6 +82,21 @@ async function probeContextmenuOrder(base) {
     record('mouseup-on-left-click',
       afterLeftClick === JSON.stringify(['mousedown', 'mouseup']) ? 'PASS' : 'FAIL',
       afterLeftClick);
+
+    // Drive the right button by hand, with the release a beat after the press.
+    // click() sends both back to back, so a swallowed release and one the
+    // browser simply never got around to look the same. Here the release is a
+    // separate protocol call that has to be acknowledged, so if mouseup is
+    // still missing the browser is dropping it rather than lagging.
+    entries.length = 0;
+    const box = await page.getByRole('button', { name: 'Click me' }).boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down({ button: 'right' });
+    await page.waitForTimeout(500);
+    await page.mouse.up({ button: 'right' });
+    await page.waitForTimeout(1000);
+    record('mouseup-on-explicit-right-release',
+      entries.includes('mouseup') ? 'PASS' : 'FAIL', JSON.stringify(entries));
   } finally {
     await browser.close();
   }
@@ -108,6 +123,12 @@ async function probeCacheStoragePersistence(base) {
     });
     record('cachestorage-before-reload',
       before === 'payload' ? 'PASS' : 'FAIL', JSON.stringify(before));
+    // Same split as the ephemeral probe, against the store that actually
+    // fails: a listed cache with no readable entry is a record write, an
+    // empty list is the container itself.
+    const persistentKeys = await page.evaluate(() => caches.keys());
+    record('cachestorage-persistent-keys', persistentKeys.length ? 'INFO' : 'EMPTY',
+      JSON.stringify(persistentKeys));
     await page.reload();
     after = await page.evaluate(async () => {
       const cache = await caches.open('repro-cache');
@@ -237,6 +258,13 @@ async function probeCaptureDevices(base) {
 // --features=help prints; the preference key `MockCaptureDevicesEnabled` is
 // NOT accepted, and an unknown name is answered with a stderr line and
 // otherwise ignored, which reads exactly like a flag that did nothing.
+//
+// MEASURED: this changes nothing for us, and the reason is in PW's own
+// MiniBrowser patch. Pages PW creates come from createWebViewImpl, which
+// constructs the view with "web-context" and "is-controlled-by-automation"
+// and drops the "settings" property upstream's code passed — so --features
+// configures a settings object that PW-driven pages never see. Kept as a
+// standing control: if a future build makes it bite, the assumption changed.
 async function probeCaptureDevicesWithMockFeature(base) {
   const browser = await webkit.launch({ args: ['--features=MockCaptureDevices'] });
   try {

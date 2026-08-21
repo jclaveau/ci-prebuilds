@@ -135,10 +135,11 @@ jobs:
             echo '| --- | --- | --- | --- |'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # The probe passes --features=MockCaptureDevicesEnabled on a guess at the
-      # identifier; MiniBrowser answers an unknown name with a stderr line and
-      # carries on, which looks exactly like a flag that had no effect. Dump the
-      # real list so the run can tell those two apart either way.
+      # This dump is what corrected the identifier: MiniBrowser exposes
+      # `MockCaptureDevices`, not the preference key `MockCaptureDevicesEnabled`,
+      # and it answers an unknown name with a stderr line and carries on — which
+      # reads exactly like a flag that had no effect. Kept so a rename upstream
+      # shows up as a changed dump rather than as a silently inert flag.
       - name: List the MiniBrowser feature identifiers matching mock/capture
         continue-on-error: true
         run: |
@@ -165,9 +166,18 @@ jobs:
             -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
             -e WEBKIT_FORCE_SANDBOX=0 \
             -e NODE_PATH=/usr/local/lib/node_modules:/usr/lib/node_modules \
+            -e GST_DEBUG=webkitcapturedevicemanager:6 \
+            -e DEBUG=pw:browser \
             -v "$PWD/scripts:/probe:ro" \
             "wkresiduals:${{ github.run_id }}" \
             node /probe/probe-webkit-conformance-residuals.cjs 2>&1 | tee /tmp/ours.log
+          # GStreamerCaptureDeviceManager names the branch it took. "Could not
+          # start device monitor" means no provider matched the filters;
+          # "Refreshing capture devices" followed by nothing means the mock
+          # provider declined to probe, which is the mock centre being off.
+          echo '### capture device manager log (ours)'
+          grep -aiE 'capturedevicemanager|device monitor|Refreshing capture' /tmp/ours.log | head -40 \
+            || echo 'the capture device manager logged nothing'
           awk -v arm="ours · ${IMAGE_REF##*:}" '
             $1 == "PROBE_RESULT" {
               detail = ""
@@ -194,5 +204,12 @@ jobs:
             echo "==== ${arm}: playwright-core ${resolved}, webkit r${rev} ===="
             ARM_LABEL="${arm} · pw ${resolved} · webkit r${rev}" \
             PW_MODULE="${GITHUB_WORKSPACE}/arms/${arm}/node_modules/playwright" \
-              node scripts/probe-webkit-conformance-residuals.cjs
+            GST_DEBUG=webkitcapturedevicemanager:6 \
+            DEBUG=pw:browser \
+              node scripts/probe-webkit-conformance-residuals.cjs 2>&1 | tee "/tmp/${arm}.log"
+            # The same log from a build that DOES enumerate devices is the
+            # control: it shows which lines ours never reaches.
+            echo "### capture device manager log (${arm})"
+            grep -aiE 'capturedevicemanager|device monitor|Refreshing capture' "/tmp/${arm}.log" | head -40 \
+              || echo "the capture device manager logged nothing"
           done
