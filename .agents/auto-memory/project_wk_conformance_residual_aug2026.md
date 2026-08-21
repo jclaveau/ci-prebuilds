@@ -157,3 +157,26 @@ FixedBackgroundsPaintRelativeToDocument, PushAPIEnabled — and neither ever sen
 inspector override, which closes the last client-side explanation by observation
 rather than by reading their bundle.
 
+## Update 2026-08-21 (run 32473728973) — three more causes eliminated
+
+- **contextmenu is NOT timing.** A press/release sweep at 0/25/50/100/200/400ms
+  passes at EVERY delay, 0ms included, giving the full
+  `["mousedown","contextmenu","mouseup"]`. The discriminator is not the gap but
+  how the frames are sent: `page.mouse.down()`+`up()` are separately awaited and
+  each round-trips, while `click()` PIPELINES move/down/up before any response —
+  the failing wire shows ids 93/94/95 all sent at `09:48:51.920` and all ACKed at
+  `.923`. So our build drops the release only when input events are pipelined.
+  Retract the earlier "race / 500ms threshold" reading.
+- **Upstream's mock centre is NOT preference-driven.** With
+  `--features=!MockCaptureDevices` in the one launch shape where the flag
+  reaches the page, upstream STILL returns live audio+video tracks while ours
+  returns `OverconstrainedError`. Ours responds to the preference (the positive
+  flag works); upstream ignores it because something else already enabled the
+  centre. Every preference-based explanation for upstream is therefore dead —
+  including the caller list derived from GitHub code search, which is
+  known-incomplete and is the likeliest place the real path is hiding.
+- **CacheStorage is not the filesystem.** Same probe with the profile on a
+  tmpfs instead of the container's overlayfs fails identically
+  (`cache-index` `[]`), and `df` inside the container reports 82 GB available,
+  so a free-space-derived quota of zero is out too.
+
