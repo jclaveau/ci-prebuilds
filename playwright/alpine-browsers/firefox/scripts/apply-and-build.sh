@@ -429,6 +429,29 @@ else
   cat "$APORTS/mozconfig" "$OVERLAY" > .mozconfig
 fi
 
+# EXPERIMENT ARM (perf/firefox-bundled-imaging): bundled libpng + zlib.
+#
+# ff-perf-ab put our screenshots at 0.68x, and the screenshot breakdown
+# (run 32461286072) localised all of it to full-viewport PNG: from a bitmap
+# proven identical — the canvas control's JPEG is byte-for-byte the same on
+# both sides, same sha — our PNG comes out 40150 B against the reference's
+# 26801 B, 1.50x larger AND 1.31x slower. Only a different encoder or
+# different deflate settings can change output bytes; optimisation flags
+# cannot. aports asks for the system copies, Mozilla ships its own.
+#
+# Deleted rather than overridden with --without-system-*: moz.configure
+# rejects a --with and a --without of the same option in one mozconfig.
+# `--with-system-jpeg` deliberately stays — the control's JPEG already
+# matches the reference byte-for-byte, so it is not part of the question.
+sed -i '/^ac_add_options --with-system-png$/d;/^ac_add_options --with-system-zlib$/d' .mozconfig
+# `if`, not `grep && { exit 1; }`: under `set -e` the && form aborts the script
+# on the GOOD path, where grep correctly finds nothing and returns 1.
+if grep -qE -- '^ac_add_options --with-system-(png|zlib)$' .mozconfig; then
+  echo "ERROR: a --with-system-png/zlib line survived the arm's sed" >&2
+  exit 1
+fi
+echo "  ARM: bundled libpng + zlib (system-png/system-zlib removed from mozconfig)"
+
 # 7a. DIAGNOSTIC: PW_ENABLE_TESTS — include xpcshell + gtest + mochitest
 #     harness so the validation workflow can run Mozilla's own self-tests.
 if [[ "$PW_ENABLE_TESTS" == "1" ]]; then
