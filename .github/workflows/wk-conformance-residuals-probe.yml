@@ -135,6 +135,19 @@ jobs:
             echo '| --- | --- | --- | --- |'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # The probe passes --features=MockCaptureDevicesEnabled on a guess at the
+      # identifier; MiniBrowser answers an unknown name with a stderr line and
+      # carries on, which looks exactly like a flag that had no effect. Dump the
+      # real list so the run can tell those two apart either way.
+      - name: List the MiniBrowser feature identifiers matching mock/capture
+        continue-on-error: true
+        run: |
+          docker run --rm --entrypoint sh \
+            -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
+            "wkresiduals:${{ github.run_id }}" \
+            -c '/ms-playwright/webkit-${{ inputs.artifact_rev }}/pw_run.sh --headless --features=help 2>&1' \
+            | grep -iE 'mock|capture' || echo 'no feature identifier matched mock/capture'
+
       # Our arm runs the same script inside the runner image. The container has
       # no access to the host's step summary, so its PROBE_RESULT lines are
       # turned into table rows here instead of by the script itself.

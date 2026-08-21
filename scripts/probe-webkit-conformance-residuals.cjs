@@ -69,6 +69,19 @@ async function probeContextmenuOrder(base) {
     const got = JSON.stringify(entries);
     record('contextmenu-order',
       got === JSON.stringify(expected) ? 'PASS' : 'FAIL', got);
+
+    // A left click on the same page, measured the same way. We drop mouseup
+    // only on the right-click path, and the two candidates for that are a
+    // mouseup that is never sent and one that is sent and swallowed while the
+    // UI process still believes a context menu is up. If mouseup arrives here,
+    // the dispatch side is fine and the swallow is in the context-menu path.
+    entries.length = 0; // in place: the console listener captured this array
+    await page.getByRole('button', { name: 'Click me' }).click();
+    await page.waitForTimeout(1000);
+    const afterLeftClick = JSON.stringify(entries);
+    record('mouseup-on-left-click',
+      afterLeftClick === JSON.stringify(['mousedown', 'mouseup']) ? 'PASS' : 'FAIL',
+      afterLeftClick);
   } finally {
     await browser.close();
   }
@@ -85,6 +98,16 @@ async function probeCacheStoragePersistence(base) {
       const cache = await caches.open('repro-cache');
       await cache.put('/meta', new Response('payload'));
     });
+    // Read it back in the same document first. The spec only checks after the
+    // reload, so a failure there is ambiguous: it fits a write that never
+    // landed just as well as one that landed and was lost. This separates them.
+    const before = await page.evaluate(async () => {
+      const cache = await caches.open('repro-cache');
+      const resp = await cache.match('/meta');
+      return resp ? await resp.text() : null;
+    });
+    record('cachestorage-before-reload',
+      before === 'payload' ? 'PASS' : 'FAIL', JSON.stringify(before));
     await page.reload();
     after = await page.evaluate(async () => {
       const cache = await caches.open('repro-cache');
@@ -174,6 +197,35 @@ async function probeCaptureDevices(base) {
   }
 }
 
+// Upstream enumerates 'Mock audio device 1' and friends, so its mock centre is
+// live — and the only switch for that is the MockCaptureDevicesEnabled
+// developer-preference override, which playwright-core never sends (its shipped
+// bundle issues exactly seven Page.overrideSetting calls, none of them this
+// one). MiniBrowser exposes the same settings through --features, so this asks
+// the question directly: if the flag alone populates our device list, the fix
+// is a launch flag rather than a rebuild.
+async function probeCaptureDevicesWithMockFeature(base) {
+  const browser = await webkit.launch({ args: ['--features=MockCaptureDevicesEnabled'] });
+  try {
+    const context = await browser.newContext();
+    await context.grantPermissions(['camera', 'microphone'], { origin: new URL(base).origin });
+    const page = await context.newPage();
+    await page.goto(base);
+    const labels = await page.evaluate(async () => {
+      const list = await navigator.mediaDevices.enumerateDevices();
+      return list.map(device => `${device.kind}:${device.label}`);
+    });
+    record('capture-with-mock-feature-flag', labels.length ? 'INFO' : 'EMPTY',
+      JSON.stringify(labels));
+    const granted = await getUserMedia(page, { video: true, audio: true });
+    record('capture-granted-with-flag',
+      granted.tracks ? 'PASS' : 'FAIL', JSON.stringify(granted));
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+}
+
 (async () => {
   const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -197,6 +249,11 @@ async function probeCaptureDevices(base) {
     await probeCaptureDevices(base);
   } catch (e) {
     record('capture-devices', 'ERROR', String(e && e.message || e).split('\n')[0]);
+  }
+  try {
+    await probeCaptureDevicesWithMockFeature(base);
+  } catch (e) {
+    record('capture-with-mock-feature-flag', 'ERROR', String(e && e.message || e).split('\n')[0]);
   }
   server.close();
 
