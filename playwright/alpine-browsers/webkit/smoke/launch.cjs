@@ -7,6 +7,8 @@
 //
 // CommonJS so NODE_PATH=/usr/local/lib/node_modules works (ESM ignores it).
 
+const http = require('node:http');
+
 const { webkit } = require('playwright');
 
 const ok = (cond, msg) => { if (!cond) { console.error('FAIL:', msg); process.exit(1); } else { console.log('OK  :', msg); } };
@@ -81,6 +83,43 @@ const ok = (cond, msg) => { if (!cond) { console.error('FAIL:', msg); process.ex
   }
   ok(JSON.stringify(mouseEvents) === JSON.stringify(['mousedown', 'contextmenu', 'mouseup']),
     `right click event order (got: ${JSON.stringify(mouseEvents)})`);
+
+  // Regression: automation must see the mock capture devices.
+  //
+  // Mirrors tests/library/permissions.spec.ts:349 'should capture when camera
+  // and microphone are granted', which runs on any host that is not
+  // isFrozenWebkit (debian11 / ubuntu20.04 / macOS<15) — so Alpine is expected
+  // to pass it. We enumerated zero devices and every getUserMedia failed with
+  // OverconstrainedError, before the permission gate.
+  //
+  // Needs a real origin: getUserMedia requires a secure context and
+  // MediaCaptureRequiresSecureConnection is on, so a data: URL cannot exercise
+  // it. http on a loopback address counts as potentially trustworthy.
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('<html><body>capture</body></html>');
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+
+  const captureContext = await browser.newContext();
+  await captureContext.grantPermissions(['camera', 'microphone'], { origin });
+  const capturePage = await captureContext.newPage();
+  await capturePage.goto(`${origin}/`);
+  const capture = await capturePage.evaluate(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      const kinds = stream.getTracks().map(track => track.kind).sort();
+      stream.getTracks().forEach(track => track.stop());
+      return { kinds };
+    } catch (error) {
+      return { error: error.name };
+    }
+  });
+  ok(JSON.stringify(capture) === JSON.stringify({ kinds: ['audio', 'video'] }),
+    `getUserMedia under automation (got: ${JSON.stringify(capture)})`);
+  await captureContext.close();
+  server.close();
 
   await browser.close();
   console.log('smoke OK');

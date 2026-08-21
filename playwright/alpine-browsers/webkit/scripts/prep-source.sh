@@ -318,6 +318,137 @@ patch_keep_synthetic_mouse_events() {
 }
 patch_keep_synthetic_mouse_events
 
+# Give automation the mock capture devices it is expected to have.
+#
+# tests/library/permissions.spec.ts:349-386 (the four "camera and microphone"
+# tests) drive getUserMedia and expect live audio+video tracks. They are
+# mock-capture-device tests, gated only on isFrozenWebkit (debian11 /
+# ubuntu20.04 / macOS<15), so PW's own ubuntu24.04 CI runs and passes them.
+#
+# The mock centre is off by default on every port and playwright-core never
+# turns it on — its shipped bundle sends exactly seven Page.overrideSetting
+# calls and this is not one of them, confirmed on the wire on both sides. So we
+# enumerate zero devices and every getUserMedia fails OverconstrainedError,
+# BEFORE the permission gate, which is why even the ungranted case reports the
+# wrong error. Our build is not missing the capability: with the setting
+# actually delivered it returns all six mock devices and live tracks, identical
+# to upstream.
+#
+# Enable it when the page is controlled by automation, which is exactly the
+# population these tests describe. mockCaptureDevicesPromptEnabled stays on, so
+# permission is still required and "should reject when no permission is granted"
+# keeps its NotAllowedError — upstream runs with the mock centre on and passes
+# that test.
+#
+# syncWithWebCorePrefs re-derived the same value inline; point it at the
+# accessor so the two cannot drift.
+patch_mock_capture_for_automation() {
+  local umprm=Source/WebKit/UIProcess/UserMediaPermissionRequestManagerProxy.cpp
+  local marker='automation is expected to see mock capture devices'
+
+  if grep -q "$marker" "$umprm"; then
+    echo "  mock capture already enabled for automation — drop patch_mock_capture_for_automation"
+    return 0
+  fi
+
+  echo "  enable mock capture devices under automation"
+  awk '
+    /^    RefPtr page = m_page.get\(\);$/ && !done && prev_is_override {
+      print "    RefPtr page = m_page.get();"
+      print "    if (!page)"
+      print "        return false;"
+      print "    // Playwright: automation is expected to see mock capture devices, and the"
+      print "    // client never sends the MockCaptureDevicesEnabled override that would turn"
+      print "    // them on. See prep-source.sh: patch_mock_capture_for_automation."
+      print "    if (page->isControlledByAutomation())"
+      print "        return true;"
+      print "    return protect(page->preferences())->mockCaptureDevicesEnabled();"
+      done = 1
+      skip_next_return = 1
+      next
+    }
+    skip_next_return && /^    return page && protect\(page->preferences\(\)\)->mockCaptureDevicesEnabled\(\);$/ {
+      skip_next_return = 0
+      next
+    }
+    { prev_is_override = ($0 ~ /return \*m_mockDevicesEnabledOverride;/); print }
+  ' "$umprm" > "${umprm}.new"
+  mv "${umprm}.new" "$umprm"
+
+  # One predicate, both call sites: syncWithWebCorePrefs duplicated the logic.
+  awk '
+    /^    bool mockDevicesEnabled = m_mockDevicesEnabledOverride \? \*m_mockDevicesEnabledOverride : preferences->mockCaptureDevicesEnabled\(\);$/ {
+      print "    bool mockDevicesEnabled = mockCaptureDevicesEnabled();"
+      next
+    }
+    { print }
+  ' "$umprm" > "${umprm}.new"
+  mv "${umprm}.new" "$umprm"
+
+  local marks syncs
+  marks=$(grep -c "$marker" "$umprm")
+  syncs=$(grep -c 'bool mockDevicesEnabled = mockCaptureDevicesEnabled();' "$umprm")
+  if [[ "$marks" != 1 ]] || [[ "$syncs" != 1 ]]; then
+    echo "ERROR: mock-capture patch applied marker=$marks sync=$syncs in $umprm, expected 1 each" >&2
+    exit 1
+  fi
+}
+patch_mock_capture_for_automation
+
+# Say which record the CacheStorage read path is dropping.
+#
+# DIAGNOSTIC, not a fix. In a persistent context our cache.put() resolves and
+# the record file appears on disk exactly where upstream writes it, yet
+# cache.keys() is empty and match() returns null in the same document — so the
+# write lands and the live read cannot see it. readAllRecordInfosInternal drops
+# a record on a failed read AND on a failed decode, both with a bare `continue`
+# and no trace, so the build cannot currently say which. The decode is the
+# likelier of the two (it verifies a salt-derived SHA1, and the profile carries
+# two salt files), but "likelier" is not a reason to patch blind.
+patch_log_dropped_cache_records() {
+  local disk_store=Source/WebKit/NetworkProcess/storage/CacheStorageDiskStore.cpp
+  local marker='ALPINE-DIAG'
+
+  if grep -q "$marker" "$disk_store"; then
+    echo "  cache record drops already logged — drop patch_log_dropped_cache_records"
+    return 0
+  fi
+
+  echo "  log dropped CacheStorage records"
+  # Both edits must stay BRACED. The first attempt emitted the log as a bare
+  # statement under `if (!fileData)`, which left `continue;` unconditional and
+  # would have skipped every record — the diagnostic destroying the thing it
+  # measures. The decode edit appends an `else` rather than re-testing, so
+  # readRecordInfoFromFileData is still called exactly once per record.
+  awk '
+    /^                if \(!fileData\)$/ {
+      print "                if (!fileData) {"
+      print "                    RELEASE_LOG_ERROR(CacheStorage, \"ALPINE-DIAG readAllRecordInfos: unreadable record file\");"
+      print "                    continue;"
+      print "                }"
+      skip_continue = 1
+      next
+    }
+    skip_continue && /^                    continue;$/ { skip_continue = 0; next }
+    /^                    recordInfos.append\(WTF::move\(storedRecordInfo->info\)\);$/ {
+      print
+      print "                else"
+      print "                    RELEASE_LOG_ERROR(CacheStorage, \"ALPINE-DIAG readAllRecordInfos: record failed to decode\");"
+      next
+    }
+    { print }
+  ' "$disk_store" > "${disk_store}.new"
+  mv "${disk_store}.new" "$disk_store"
+
+  local logs
+  logs=$(grep -c "$marker" "$disk_store")
+  if [[ "$logs" != 2 ]]; then
+    echo "ERROR: cache-drop logging applied $logs time(s) in $disk_store, expected 2" >&2
+    exit 1
+  fi
+}
+patch_log_dropped_cache_records
+
 # Strip .git — ~1GB saved in the source-prep image which both port chains FROM.
 rm -rf .git
 
