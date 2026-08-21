@@ -257,6 +257,22 @@ jobs:
             | sort -u | head -8 | sed 's/^/    /'
 
           echo
+          echo "-- link-time code layout: orderfile and CFI --"
+          # An orderfile-linked build uses -z keep-text-section-prefix, which
+          # leaves .text.hot / .text.unlikely as separate sections. Their
+          # presence on one side and not the other is the orderfile, and the
+          # relative .text size is what PGO and ThinLTO move.
+          # symbols.sh is written by a QUOTED heredoc, so a plain single quote
+          # is literal here; the '"'"' dance belongs in a `sh -c` string and
+          # broke the awk program into shell scope when used here.
+          readelf -SW "$BIN" 2>/dev/null \
+            | awk '$2 ~ /^\.text/ { printf "  %-18s %s\n", $2, $6 }'
+          printf '  %-18s %s\n' "CFI symbols" \
+            "$(nm -D "$BIN" 2>/dev/null | grep -c cfi || true)"
+          printf '  %-18s %s\n' "CFI strings" \
+            "$(strings -a "$BIN" | grep -ci 'control flow integrity' || true)"
+
+          echo
           echo "-- DCHECK residue (expected 0 on both) --"
           printf 'strings /Check failed/    : %s\n' \
             "$(strings -a "$BIN" | grep -c 'Check failed' || true)"
