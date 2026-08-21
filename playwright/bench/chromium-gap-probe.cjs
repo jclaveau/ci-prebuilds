@@ -89,6 +89,40 @@ function layoutKernel(fill) {
 }
 
 const KERNELS = {
+  /*
+   * TypedArray bulk moves and fills, which V8 lowers to the platform memmove
+   * and memset once the run is long enough to be worth the call. 64 KiB per
+   * operation is well past that threshold and is also the order of a layout
+   * pass's own buffer traffic.
+   *
+   * Here because the native bench (libc-string-bench.c) sizes musl's routines
+   * against glibc's in isolation, and an isolated microbenchmark has already
+   * been wrong about magnitude once — this says whether the browser process
+   * actually pays the difference.
+   */
+  typed_array_move: `() => {
+    const buf = new Uint8Array(1 << 20);
+    buf.fill(7);
+    const t0 = performance.now();
+    let acc = 0;
+    for (let i = 0; i < 4000; i++) {
+      buf.copyWithin(0, 1 << 16, 1 << 17);
+      acc += buf[i & 0xffff];
+    }
+    return { ms: performance.now() - t0, checksum: acc };
+  }`,
+
+  typed_array_fill: `() => {
+    const buf = new Uint8Array(1 << 20);
+    const t0 = performance.now();
+    let acc = 0;
+    for (let i = 0; i < 4000; i++) {
+      buf.fill(i & 0xff, 0, 1 << 16);
+      acc += buf[0];
+    }
+    return { ms: performance.now() - t0, checksum: acc };
+  }`,
+
   // Fixed-height boxes, no text node anywhere: the width change still dirties
   // and re-lays-out all 800 children, but nothing is shaped or measured.
   layout_boxonly: layoutKernel(

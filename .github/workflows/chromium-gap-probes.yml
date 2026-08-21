@@ -28,6 +28,14 @@ name: chromium residual-gap probes
 #                  libc, if it is absent from the undefined set the binary
 #                  defines it itself.
 #
+#   libc           Whether musl's string/memory routines are the residual.
+#                  Alpine has no IFUNC, so musl links one implementation where
+#                  glibc dispatches an AVX2/ERMS variant off the CPU at load,
+#                  and box layout is mostly moving and clearing memory. Sized
+#                  natively by libc-string-bench.c and, because an isolated
+#                  microbenchmark has been wrong about magnitude before, also
+#                  in-browser by the typed_array_* kernels.
+#
 # Informational, dispatch-only, gates nothing.
 
 on:
@@ -88,7 +96,7 @@ jobs:
           cat > /tmp/Dockerfile.alpine <<EOF
           FROM alpine:edge
           RUN apk update && apk add --no-cache \\
-              nodejs npm bash binutils fontconfig \\
+              nodejs npm bash binutils fontconfig gcc musl-dev \\
               nss freetype harfbuzz ca-certificates ttf-freefont libdrm mesa-gl \\
               libwebp libwebpdemux libxcomposite libxdamage libxrandr \\
               libxscrnsaver libxtst libx11 libxcb libxext libxi cups-libs \\
@@ -197,6 +205,15 @@ jobs:
           printf 'strings /allocator_shim/  : %s\n' \
             "$(strings -a "$BIN" | grep -c 'allocator_shim' || true)"
           echo
+          echo "-- string/memory routines: imported from libc, or internal? --"
+          for sym in memcpy memmove memset memcmp strlen; do
+            u=$(nm -D --undefined-only "$BIN" 2>/dev/null \
+                  | awk -v s="$sym" '$NF == s' | wc -l)
+            d=$(nm -D --defined-only "$BIN" 2>/dev/null \
+                  | awk -v s="$sym" '$NF == s' | wc -l)
+            printf '%-20s undefined=%s defined=%s\n' "$sym" "$u" "$d"
+          done
+          echo
           echo "-- DCHECK residue (expected 0 on both) --"
           printf 'strings /Check failed/    : %s\n' \
             "$(strings -a "$BIN" | grep -c 'Check failed' || true)"
@@ -226,6 +243,76 @@ jobs:
               '
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Probe — libc string routines
+        run: |
+          set -o pipefail
+          # -fno-builtin is the whole point: without it the compiler inlines its
+          # own copy for these constant sizes and the bench measures codegen.
+          # gcc on both sides so the loop around the call is the same shape;
+          # what differs is which libc answers the PLT.
+          BUILD='cc -O2 -fno-builtin -o /tmp/libcbench /probe/libc-string-bench.c'
+
+          docker run --rm \
+            -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/gap-out:/out" \
+            "gap-alpine:${{ github.run_id }}" \
+            sh -c "$BUILD && /tmp/libcbench musl > /out/musl-libc.json" \
+            2>&1 | tee gap-out/libc-musl.log
+
+          docker run --rm --entrypoint sh \
+            -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/gap-out:/out" \
+            "$OFFICIAL" -c "
+              command -v cc >/dev/null 2>&1 \
+                || (apt-get update -qq && apt-get install -y -qq gcc) \
+                     >/dev/null 2>&1
+              $BUILD && /tmp/libcbench glibc > /out/glibc-libc.json
+            " 2>&1 | tee gap-out/libc-glibc.log
+
+      - name: Report — libc string routines
+        run: |
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, os
+
+          try:
+              musl = json.load(open('gap-out/musl-libc.json'))
+              glibc = json.load(open('gap-out/glibc-libc.json'))
+          except Exception as e:
+              print(f'libc bench produced no comparable pair: {e}')
+              raise SystemExit(0)
+
+          sizes = sorted({int(k) for o in musl['ops'].values() for k in o},
+                         key=int)
+          print('## libc string routines — musl / glibc\n')
+          print(f"Same source, same `-O2 -fno-builtin`, "
+                f"{musl['bytes_per_run'] // (1024 * 1024)} MiB touched per "
+                f"cell, fastest of three passes. `nop` is the loop's own cost, "
+                f"so a row near it is measuring nothing.\n")
+          print('| op | ' + ' | '.join(f'{s} B' for s in sizes) + ' |')
+          print('|---' * (len(sizes) + 1) + '|')
+          for op in musl['ops']:
+              cells = []
+              for size in sizes:
+                  a = musl['ops'][op].get(str(size))
+                  b = glibc['ops'].get(op, {}).get(str(size))
+                  if not (a and b):
+                      cells.append('—')
+                      continue
+                  cells.append(f'{a / b:.2f}x')
+              print(f'| `{op}` | ' + ' | '.join(cells) + ' |')
+          print()
+          print('Absolute ms (musl / glibc):\n')
+          print('| op | ' + ' | '.join(f'{s} B' for s in sizes) + ' |')
+          print('|---' * (len(sizes) + 1) + '|')
+          for op in musl['ops']:
+              cells = []
+              for size in sizes:
+                  a = musl['ops'][op].get(str(size))
+                  b = glibc['ops'].get(op, {}).get(str(size))
+                  cells.append('—' if not (a and b) else f'{a:.1f} / {b:.1f}')
+              print(f'| `{op}` | ' + ' | '.join(cells) + ' |')
+          PY
 
       - name: Report — timing and fonts
         env:
