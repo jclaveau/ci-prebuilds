@@ -429,6 +429,38 @@ else
   cat "$APORTS/mozconfig" "$OVERLAY" > .mozconfig
 fi
 
+# EXPERIMENT ARM (perf/firefox-bundled-zlib): bundled zlib ONLY.
+#
+# perf/firefox-bundled-imaging dropped --with-system-png AND --with-system-zlib
+# together, and its canvas control came back byte- and sha-identical to PW's
+# official build (40150 B -> 26801 B, run 32481799551). That says the pair
+# caused it; it does not say which half.
+#
+# The reason the half matters: chromium takes Alpine's system zlib and still
+# emits a byte-identical control PNG, which would rule zlib out — except that
+# argument compares two C zlib derivatives, and Mozilla's tree also builds
+# zlib-rs, a Rust reimplementation whose deflate output need not match. So the
+# chromium evidence transfers only if firefox's PNG path does not go through it.
+#
+# Decisive readout = png_canvas_control. Near 26801 B means zlib was the cause
+# (and the interesting one: deflate is on every compressed path firefox has,
+# not just screenshots). Still ~40150 B means libpng was, and the question
+# closes at the 122 kB the full arm costs.
+sed -i '/^ac_add_options --with-system-zlib$/d' .mozconfig
+# `if`, not `grep && { exit 1; }`: under `set -e` the && form aborts the script
+# on the GOOD path, where grep correctly finds nothing and returns 1.
+if grep -qE -- '^ac_add_options --with-system-zlib$' .mozconfig; then
+  echo "ERROR: a --with-system-zlib line survived the arm's sed" >&2
+  exit 1
+fi
+# The control half of the arm: system-png MUST still be there, or this is a
+# second copy of perf/firefox-bundled-imaging rather than the variable split.
+if ! grep -qE -- '^ac_add_options --with-system-png$' .mozconfig; then
+  echo "ERROR: --with-system-png is absent — this arm would not isolate zlib" >&2
+  exit 1
+fi
+echo "  ARM: bundled zlib only (system-zlib removed, system-png kept)"
+
 # 7a. DIAGNOSTIC: PW_ENABLE_TESTS — include xpcshell + gtest + mochitest
 #     harness so the validation workflow can run Mozilla's own self-tests.
 if [[ "$PW_ENABLE_TESTS" == "1" ]]; then
