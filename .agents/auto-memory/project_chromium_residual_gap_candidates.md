@@ -1,43 +1,49 @@
 ---
 name: project_chromium_residual_gap_candidates
-description: our chromium sits ~1.3x official even with PGO or ThinLTO — ranked candidates for the residual, and the three cheap probes that partition them
+description: our chromium sits ~1.3x official even with PGO or ThinLTO — three probes ran, candidates 1/2/4 are dead, the residual is in box layout
 metadata:
   type: project
 ---
 
 After either perf knob, alpine chromium is still ~1.28-1.31x official on geomean
-and **1.89x on layout** ([[project_chromium_perf_arms_1_62]]). The arms argue over
-~3%; the unexplained residual is ten times that. Ranked candidates:
+and 1.89x on layout ([[project_chromium_perf_arms_1_62]]). Run
+**32502670597** (`chromium-gap-probes.yml`, all arms on one runner) killed three
+of the five candidates.
 
-1. **musl malloc instead of PartitionAlloc.** The from-source setup log shows
-   aports patching `partition_alloc.gni` and
-   `allocator_shim_default_dispatch_to_partition_alloc.cc` for musl, i.e. the
-   allocate-everything-through-PartitionAlloc path is not what official uses.
-   musl's mallocng is markedly slower under churn. Fits `dom_churn` 1.67 and
-   `js_alloc` 1.16 directly. **NOT excluded by `libm_fmod` = 1.00** — that clears
-   musl's libm only ([[feedback_control_excludes_one_mechanism]]).
-2. **Unbundled system libs on the text path.** `USE_SYSTEM_LIBS` in
-   `apply-and-build.sh` hands Chromium Alpine's **fontconfig, freetype, harfbuzz,
-   highway** instead of Chromium's pinned forks. Top suspect for layout: the
-   probe's layout kernel forces 2000 synchronous relayouts over ~900 text-bearing
-   nodes (800 `lorem ipsum` rows + 100 buttons), so shaping and font metrics
-   dominate it.
-3. **Alpine clang 22 instead of Chromium's pinned clang** (`custom_toolchain =
-   //build/toolchain/linux/unbundle:default`, `clang_use_chrome_plugins = false`).
-   Not excluded by `int_math` = 1.00: that kernel runs V8 JIT output, machine code
-   emitted at runtime that no C++ compiler difference can touch.
-4. **Different font sets per runner** — alpine `font-opensans`/`ttf-freefont` vs
-   noble's DejaVu/Liberation. `system-ui` resolves differently, so shaping cost
-   differs. A runner-config difference, not a build one.
-5. **The reference is not a like-for-like binary** — PW's image reports *Google
-   Chrome for Testing 151.0.7922.34*, an official Google build with PGO+LTO+CFI,
-   its own toolchain and everything bundled. Part of the residual may be
-   structural.
+**Measured** (`chromium-gap-probe.cjs`, 800 children, 300 forced reflows, ms):
 
-**How to apply:** three cheap probes partition this without a ~40h rebuild —
-(a) a text-free layout kernel (collapse ⇒ candidate 2), (b) noble's font set
-installed into the alpine probe image (separates 4 from 2), (c) `nm`/`strings` on
-the shipped `chrome-headless-shell` for the PartitionAlloc shim (settles 1,
-[[feedback_strings_splits_compile_from_runtime]]). Related:
+| kernel | official | pgo | pgo+noble fonts |
+|---|---|---|---|
+| `layout_boxonly` | 299.4 | 471.4 (**1.57x**) | 463.0 (1.55x) |
+| `layout_text` | 763.8 | 1170.1 (**1.53x**) | 1122.9 (1.47x) |
+
+- **Candidate 2 (unbundled fontconfig/freetype/harfbuzz) — DEAD.** The gap is
+  *fully present* on a subtree with no text node in it. Text shaping is not
+  where it lives; if anything the box-only arm is the worse one.
+- **Candidate 4 (different font sets) — DEAD, and the arm is valid.** Copying
+  official's `/usr/share/fonts` + `fonts.conf` verbatim moved the probe's
+  advance widths onto official's numbers *exactly* (sans-serif 245.534 →
+  252.105 = official; dom span 245.547 → 252.109 = official), so the arm
+  provably varied its variable ([[feedback_verify_ab_varied_the_variable]]).
+  It bought 4% and left 1.47x.
+- **Candidate 1 (musl mallocng instead of PartitionAlloc) — DEAD, premise was
+  false.** Nothing disables PA-as-malloc on amd64 musl: the aports patch is
+  `partalloc-no-tagging-**arm64**.patch`, no copium patch touches it, and no
+  `use_partition_alloc_as_malloc` appears in the APKBUILD or our
+  `args.gn.overlay`. Both binaries define `malloc` themselves (shim active,
+  `nm -D` defined=1 / undefined=0 on both). The earlier claim in this file was
+  read off a setup log and never verified ([[feedback_read_the_stored_value]]).
+- Free control from the same dump: `Check failed` strings 47 (ours) vs 46
+  (official) — DCHECK removal is real, not a residual.
+
+**Still open, re-ranked:** (a) **musl string/memory routines** — no IFUNC on
+alpine, so no CPU-dispatched `memcpy`/`memset`, and box layout is exactly that
+kind of shuffling; (b) alpine clang vs Chromium's pinned clang; (c) the
+reference is a Google build with its own PGO profile, CFI and full bundling, so
+part of the residual is structural. Note `use_custom_libcxx = true` on both, so
+libc++ is NOT a variable.
+
+**How to apply:** `chromium-gap-probes.yml` is dispatch-only and takes any
+`chs-fs-sha-*` artifact — re-run it before theorising further. Related:
 [[project_alpine_browser_perf_vs_glibc]], [[project_runtime_perf_probe]],
-[[project_chromium_dcheck_from_is_official_build]].
+[[feedback_control_excludes_one_mechanism]].
