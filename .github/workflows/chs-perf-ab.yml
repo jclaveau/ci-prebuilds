@@ -169,8 +169,10 @@ jobs:
           b = json.load(open(f'perf-out/{b_name}-chromium.json'))
 
           print(f"## chromium runtime probe — {b_name} vs {a_name}\n")
-          print(f"- {a_name}: `{a['browser_version']}` ({a['libc']})")
-          print(f"- {b_name}: `{b['browser_version']}` ({b['libc']})")
+          # The binary's own --version, not the tag and not Playwright's claim,
+          # so an A/B that accidentally probed one artifact twice is visible here.
+          print(f"- {a_name}: `{a['binary_version']}` ({a['libc']})")
+          print(f"- {b_name}: `{b['binary_version']}` ({b['libc']})")
           print(f"- playwright `{a['playwright_version']}`, both probed on "
                 f"`{a['runner']['cpu']}` ({a['runner']['cores']} cores)\n")
           print(f"| metric | {a_name} (ms) | {b_name} (ms) | {b_name}/{a_name} |")

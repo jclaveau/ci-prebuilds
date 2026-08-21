@@ -27,6 +27,7 @@
 
 const http = require('node:http');
 const os = require('node:os');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -185,6 +186,38 @@ const KERNELS = {
   }`,
 };
 
+/*
+ * Asks the shipped binary what it is, instead of trusting the image tag, the
+ * workflow input, or Playwright. `browser.version()` reports what PLAYWRIGHT
+ * believes: for WebKit it is a hardcoded playwright-core constant that passes
+ * whatever WebKit we actually built, and a mislabelled artifact would report the
+ * version it was tagged with rather than the one it contains.
+ *
+ * WebKit has no binary that answers --version (executablePath() is pw_run.sh),
+ * so its engine version is read from the so-name of the library the build
+ * produced — the same signal webkit/smoke/launch.cjs asserts.
+ */
+function binaryVersion(browserType, browserName) {
+  const exe = browserType.executablePath();
+  if (browserName === 'webkit') {
+    const distDir = path.dirname(exe);
+    const soRe = /^libWPEWebKit-[\d.]+\.so\.(\d+\.\d+\.\d+)$/;
+    for (const entry of fs.readdirSync(distDir, { recursive: true })) {
+      const found = path.basename(entry).match(soRe);
+      if (found) {
+        return `libWPEWebKit ${found[1]}`;
+      }
+    }
+    return 'unknown';
+  }
+  const out = execFileSync(exe, ['--version'], {
+    encoding: 'utf8',
+    timeout: 30000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return out.trim().split('\n')[0].trim() || 'unknown';
+}
+
 async function main() {
   const browserName = arg('browser', 'chromium');
   const target = arg('target', 'unknown');
@@ -195,6 +228,11 @@ async function main() {
   if (!browserType) {
     throw new Error(`unknown browser "${browserName}"`);
   }
+
+  // Before any measurement, so a run that benches the wrong artifact says so in
+  // its first line rather than in a ratio nobody can attribute afterwards.
+  const binVersion = binaryVersion(browserType, browserName);
+  console.log(`${target}/${browserName} — binary reports: ${binVersion}`);
 
   const server = http.createServer((_req, res) => {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
@@ -300,6 +338,7 @@ async function main() {
     target,
     browser: browserName,
     browser_version: version,
+    binary_version: binVersion,
     playwright_version: require('playwright/package.json').version,
     libc: fs.existsSync('/lib/ld-musl-x86_64.so.1') ? 'musl' : 'glibc',
     node: process.version,
@@ -319,7 +358,7 @@ async function main() {
   fs.writeFileSync(outFile, `${JSON.stringify(result, null, 2)}\n`);
 
   const width = Math.max(...Object.keys(result.metrics).map((k) => k.length));
-  console.log(`${target}/${browserName} — ${version} (${result.libc})`);
+  console.log(`${target}/${browserName} — ${binVersion} (${result.libc}), playwright reports ${version}`);
   for (const [name, m] of Object.entries(result.metrics)) {
     console.log(`  ${name.padEnd(width)}  ${m.median_ms.toFixed(1).padStart(9)} ms`);
   }
