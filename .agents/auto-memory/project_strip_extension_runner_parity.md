@@ -24,3 +24,21 @@ Runner apk additions (FF/WK) mirror the edge closure test containers exactly
 (`ffr-closure`/`wkr-closure`); edge pkg names diverge from 3.24 (`libsoup3`
 not libsoup, `aom-libs` not libaom, `libhwy`, `libidn2`, `libpciaccess`,
 `pcre2`, `libunistring`).
+
+**2026-08-21 — the gate also validates `xpcshell`, and that is worth knowing.**
+The `perf/firefox-bundled-zlib` artifact failed the conformance runner build
+with `xpcshell has 1 unresolved deps after strip: XRE_GetBootstrap: symbol not
+found`, taking all 20 FF conformance shards with it. Attributed by control:
+main-line `ff-latest`, **same Firefox 153.0**, through the runner's exact apk
+list, strips clean (rc 0). So it is that artifact, not a regression on main.
+
+Two probes were needed because the first was invalid: a hand-picked apk subset
+missing `libwebpdemux` failed on `WebPDemux*` symbols the arm never hit. A
+different failure is not a reproduction — copy the apk list from
+`build-runner.sh` verbatim ([[feedback_failed_probe_may_be_invalid_not_refuting]]).
+
+The arm is dead on its own merits (zlib was not the PNG cause), so this needs
+no fix. But note the gate fails a build on `xpcshell`, a Mozilla test binary we
+do not ship — if a legitimate future FF change trips it, the build dies over a
+binary nobody runs. Open question, not a proposal.
+

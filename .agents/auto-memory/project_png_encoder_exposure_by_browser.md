@@ -47,3 +47,5 @@ copy of the library each side links — see [[project_ff_png_encoder_gap]] and
 [[project_alpine_browser_perf_vs_glibc]]. Probe with
 `gh workflow run screenshot-encode-diagnosis.yml -f browser=<b> -f image_a=… -f
 image_b=official -f browser_rev=<PW browsers.json rev>`.
+
+**2026-08-21:** libpng-vs-zlib is separated — the zlib-only arm left `png_canvas_control` at 40150 B (unchanged), so libpng carries the whole gap. See [[project_ff_png_encoder_gap]].

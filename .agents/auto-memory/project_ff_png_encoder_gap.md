@@ -55,3 +55,20 @@ is in, the decision is not. The measurement recipe generalises: for any
 "our output bytes differ" question, use the canvas control (identical JPEG sha
 proves the bitmap is shared) and read the byte count, never the timing.
 See [[project_ff_build_two_pass_cbindgen]], [[feedback_prove_the_lever_is_connected]].
+
+**2026-08-21 — separated: it was libpng, not zlib.** The one-variable arm
+(`perf/firefox-bundled-zlib`, removes only `--with-system-zlib`, keeps
+`--with-system-png`, asserted both ways in `apply-and-build.sh`) came back at
+`png_canvas_control` = **40150 B** — the untouched system-both number, zero
+movement. Official is 26801 B. `jpeg_q80_canvas_control` is 41079 B with the
+SAME sha on both sides, so the rasterized pixels are identical and the delta
+is purely the PNG encoder. Run 32508149937.
+
+Also the first VERSION-MATCHED firefox comparison we have had: both binaries
+report Firefox 153.0. Every earlier one was our 147.0.1 against official's
+150.0.2 and mixed three releases of browser change into the ratio
+([[project_pw_release_tag_pins_disagree]]).
+
+Open: the full arm bundled BOTH libraries for +122,670 B. A libpng-only arm
+would presumably buy the same 13.3 kB saving per canvas shot for less image;
+not built, and landing any of it is still jean's call.
