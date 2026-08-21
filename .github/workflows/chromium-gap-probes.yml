@@ -1,0 +1,320 @@
+name: chromium residual-gap probes
+
+# Three probes for the ~1.3x geomean / 1.89x layout gap that survives BOTH
+# perf knobs: PGO lands at 1.28 and ThinLTO at 1.31 against PW's official
+# build, so about two thirds of the gap is neither DCHECKs nor codegen.
+#
+#   fonts-timing   `layout_boxonly` vs `layout_text` in chromium-gap-probe.cjs.
+#                  We build with `replace_gn_files.py --system-libraries`
+#                  covering fontconfig, freetype, harfbuzz and highway where
+#                  official bundles its own. If the unbundled text stack is
+#                  the cost it lands on the text arm only.
+#
+#   fonts-parity   The same probe again with official's font files and
+#                  fontconfig copied verbatim over the alpine arm. Copied
+#                  rather than apk-installed by name because Alpine's package
+#                  names diverge from Ubuntu's and a near-miss set would look
+#                  like a refutation. The probe's own `text_metrics` widths say
+#                  whether the copy actually took: if they move to official's
+#                  numbers the arm varied its variable, and if they do not,
+#                  the arm is void rather than negative.
+#
+#   symbols        Whether PartitionAlloc is linked in as the allocator.
+#                  aports patches PartitionAlloc-as-malloc OUT for musl
+#                  (partition_alloc.gni, allocator_shim_default_dispatch_*),
+#                  which would leave every allocation on musl's mallocng
+#                  against official's PartitionAlloc. `nm -D` settles it: if
+#                  malloc is an UNDEFINED symbol the binary imports it from
+#                  libc, if it is absent from the undefined set the binary
+#                  defines it itself.
+#
+# Informational, dispatch-only, gates nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_ours:
+        description: 'Our chrome-headless-shell artifact (from-source, scratch)'
+        default: 'ghcr.io/jclaveau/playwright-alpine-browsers:chs-fs-sha-a649cb72f128607f2057e37e3e15a8f58044e400'
+        type: string
+      label_ours:
+        description: 'Name for our arm in the report (which knob it carries)'
+        default: 'pgo'
+        type: string
+      chs_rev:
+        description: 'Chromium revision the artifact carries (PW browsers.json)'
+        default: '1234'
+        type: string
+      pw_version:
+        description: 'Playwright version to drive the probes'
+        default: '1.62.1'
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  probe:
+    # All three arms in ONE job: hosted runners hand out different CPU models
+    # per job, and a control on a sibling runner is not a control.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the arms
+        env:
+          IMAGE_OURS: ${{ inputs.image_ours }}
+          CHS_REV: ${{ inputs.chs_rev }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -o pipefail
+          mkdir -p gap-out && chmod 777 gap-out
+          OFFICIAL="mcr.microsoft.com/playwright:v${PW}-noble"
+          echo "OFFICIAL=$OFFICIAL" >> "$GITHUB_ENV"
+
+          # binutils is here for the symbols probe, not the timing one: nm and
+          # strings have to run against the binary in its shipping form.
+          cat > /tmp/Dockerfile.alpine <<EOF
+          FROM alpine:edge
+          RUN apk update && apk add --no-cache \\
+              nodejs npm bash binutils fontconfig \\
+              nss freetype harfbuzz ca-certificates ttf-freefont libdrm mesa-gl \\
+              libwebp libwebpdemux libxcomposite libxdamage libxrandr \\
+              libxscrnsaver libxtst libx11 libxcb libxext libxi cups-libs \\
+              alsa-lib dbus-libs pango cairo opus dav1d ffmpeg-libavformat \\
+              libjpeg-turbo libxslt libatk-1.0 libatk-bridge-2.0 at-spi2-core \\
+              minizip double-conversion crc32c libxkbcommon mesa-gbm \\
+              eudev-libs flac harfbuzz-subset
+          COPY --from=${IMAGE_OURS} /chrome-headless-shell-linux64 \\
+               /ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64
+          RUN touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_COMPLETE
+          ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+          ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+          # musl ldconfig rejects -p, so PW's host validator reports false
+          # missing libraries on Alpine.
+          ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
+          RUN npm install -g --no-fund --no-audit playwright@${PW}
+          EOF
+          docker build -t gap-alpine:${{ github.run_id }} \
+            -f /tmp/Dockerfile.alpine /tmp
+
+          # The fonts arm. Ubuntu's /etc/fonts references paths Alpine does not
+          # have, so its own conf.d is kept underneath and only the font FILES
+          # plus the top-level config are overlaid; fc-cache then rebuilds the
+          # index and the probe's text_metrics reports whether it took.
+          cat > /tmp/Dockerfile.fonts <<EOF
+          FROM gap-alpine:${{ github.run_id }}
+          COPY --from=${OFFICIAL} /usr/share/fonts /usr/share/fonts
+          COPY --from=${OFFICIAL} /etc/fonts/fonts.conf /etc/fonts/fonts.conf
+          RUN fc-cache -f >/dev/null 2>&1 && fc-list | wc -l
+          EOF
+          docker build -t gap-alpine-fonts:${{ github.run_id }} \
+            -f /tmp/Dockerfile.fonts /tmp
+
+      - name: Probe — timing and text metrics
+        env:
+          LABEL_OURS: ${{ inputs.label_ours }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -o pipefail
+          run_alpine() {
+            local image="$1" label="$2"
+            echo "::group::probe ${label}"
+            docker run --rm \
+              --env "PROBE_TARGET=${label}" \
+              -v "$PWD/playwright/bench:/probe:ro" \
+              -v "$PWD/gap-out:/out" \
+              "$image" \
+              sh -c '
+                export NODE_PATH="$(npm root -g)"
+                node /probe/chromium-gap-probe.cjs \
+                  --target "$PROBE_TARGET" --out /out
+              ' 2>&1 | tee "gap-out/probe-${label}.log"
+            echo "::endgroup::"
+          }
+
+          run_alpine "gap-alpine:${{ github.run_id }}" "$LABEL_OURS"
+          run_alpine "gap-alpine-fonts:${{ github.run_id }}" "${LABEL_OURS}-noble-fonts"
+
+          echo "::group::probe official"
+          docker run --rm --env HOME=/root \
+            -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/gap-out:/out" \
+            --env "PW_VERSION=${PW}" \
+            "$OFFICIAL" \
+            sh -c '
+              for r in "$(pnpm root -g 2>/dev/null)" "$(npm root -g 2>/dev/null)"; do
+                [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
+              done
+              export NODE_PATH
+              node -e "require(\"playwright\")" 2>/dev/null \
+                || npm install -g --no-fund --no-audit \
+                     "playwright@$PW_VERSION" >/dev/null 2>&1
+              node /probe/chromium-gap-probe.cjs --target official --out /out
+            ' 2>&1 | tee "gap-out/probe-official.log"
+          echo "::endgroup::"
+
+      - name: Probe — allocator symbols
+        env:
+          CHS_REV: ${{ inputs.chs_rev }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -o pipefail
+          # One script, two containers: the questions have to be asked of each
+          # binary in its own image, because neither binary runs on the other's
+          # libc and copying one out would lose its dynamic section.
+          cat > /tmp/symbols.sh <<'SH'
+          set -u
+          BIN="$1"
+          echo "### $2"
+          echo "size: $(stat -c %s "$BIN") bytes"
+          echo
+          echo "-- allocator entry points in the DYNAMIC symbol table --"
+          for sym in malloc free calloc realloc posix_memalign malloc_usable_size; do
+            u=$(nm -D --undefined-only "$BIN" 2>/dev/null \
+                  | awk -v s="$sym" '$NF == s' | wc -l)
+            d=$(nm -D --defined-only "$BIN" 2>/dev/null \
+                  | awk -v s="$sym" '$NF == s' | wc -l)
+            printf '%-20s undefined=%s defined=%s\n' "$sym" "$u" "$d"
+          done
+          echo
+          echo "-- PartitionAlloc presence --"
+          printf 'strings /PartitionAlloc/  : %s\n' \
+            "$(strings -a "$BIN" | grep -c 'PartitionAlloc' || true)"
+          printf 'strings /partition_alloc/ : %s\n' \
+            "$(strings -a "$BIN" | grep -c 'partition_alloc' || true)"
+          printf 'strings /allocator_shim/  : %s\n' \
+            "$(strings -a "$BIN" | grep -c 'allocator_shim' || true)"
+          echo
+          echo "-- DCHECK residue (expected 0 on both) --"
+          printf 'strings /Check failed/    : %s\n' \
+            "$(strings -a "$BIN" | grep -c 'Check failed' || true)"
+          echo
+          echo "-- libc the binary is linked against --"
+          head -c 4096 "$BIN" | strings -a | grep -iE 'ld-musl|ld-linux' | head -3
+          SH
+
+          {
+            echo '## Allocator symbols'
+            echo
+            echo '```'
+            docker run --rm -v /tmp/symbols.sh:/symbols.sh:ro \
+              "gap-alpine:${{ github.run_id }}" \
+              sh /symbols.sh \
+                "/ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64/chrome-headless-shell" \
+                "ours (alpine, musl)"
+            echo
+            docker run --rm -v /tmp/symbols.sh:/symbols.sh:ro \
+              --entrypoint sh "$OFFICIAL" -c '
+                command -v nm >/dev/null 2>&1 \
+                  || (apt-get update -qq && apt-get install -y -qq binutils) \
+                       >/dev/null 2>&1
+                BIN=$(find /ms-playwright -name chrome-headless-shell -type f \
+                        | head -1)
+                sh /symbols.sh "$BIN" "official (noble, glibc)"
+              '
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Report — timing and fonts
+        env:
+          LABEL_OURS: ${{ inputs.label_ours }}
+        run: |
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import glob, json, os
+
+          arms = {}
+          for f in sorted(glob.glob('gap-out/*-gap.json')):
+              d = json.load(open(f))
+              arms[d['target']] = d
+
+          ours = os.environ['LABEL_OURS']
+          order = [ours, f'{ours}-noble-fonts', 'official']
+          order = [a for a in order if a in arms]
+          if not order:
+              print('no arm produced a result')
+              raise SystemExit(0)
+
+          ref = arms.get('official')
+          print('## Layout — is the gap in the text stack?\n')
+          print('`layout_boxonly` re-lays-out 800 empty boxes; `layout_text` '
+                'is the same loop over 800 text rows. A gap that lives only in '
+                'the text arm is the unbundled fontconfig/freetype/harfbuzz.\n')
+          print('| kernel | ' + ' | '.join(order) + ' |')
+          print('|---' * (len(order) + 1) + '|')
+          kernels = sorted({k for a in arms.values() for k in a['metrics']})
+          for k in kernels:
+              cells = []
+              for a in order:
+                  m = arms[a]['metrics'].get(k)
+                  cells.append('—' if not m else f"{m['median_ms']:.1f}")
+              print(f'| `{k}` | ' + ' | '.join(cells) + ' |')
+          print()
+
+          if ref:
+              print('Ratios vs `official` (>1 = we are slower):\n')
+              print('| kernel | ' + ' | '.join(a for a in order
+                                               if a != 'official') + ' |')
+              print('|---' * len([a for a in order if a != 'official'] + [0])
+                    + '|')
+              for k in kernels:
+                  rm = ref['metrics'].get(k)
+                  cells = []
+                  for a in order:
+                      if a == 'official':
+                          continue
+                      m = arms[a]['metrics'].get(k)
+                      if not (m and rm and rm['median_ms']):
+                          cells.append('—')
+                          continue
+                      r = m['median_ms'] / rm['median_ms']
+                      # Inside the combined per-sample spread, the ratio is not
+                      # a measurement of anything.
+                      spread = max(max(m['samples']) - min(m['samples']),
+                                   max(rm['samples']) - min(rm['samples']))
+                      s = f'{r:.2f}x'
+                      if abs(m['median_ms'] - rm['median_ms']) < spread:
+                          s += ' n.s.'
+                      cells.append(s)
+                  print(f'| `{k}` | ' + ' | '.join(cells) + ' |')
+              print()
+
+          print('## Text metrics — did the arms shape the same glyphs?\n')
+          print('Advance widths in CSS px for a fixed string. These are '
+                'deterministic: equal widths mean the same face and the same '
+                'shaping, and they are also what says whether the font-copy '
+                'arm actually varied its variable.\n')
+          keys = sorted({k for a in arms.values()
+                         for k in (a.get('text_metrics') or {})})
+          print('| measurement | ' + ' | '.join(order) + ' |')
+          print('|---' * (len(order) + 1) + '|')
+          for k in keys:
+              cells = [str((arms[a].get('text_metrics') or {}).get(k, '—'))
+                       for a in order]
+              print(f'| `{k}` | ' + ' | '.join(cells) + ' |')
+          print()
+          print('| arm | libc | runner |')
+          print('|---|---|---|')
+          for a in order:
+              print(f"| {a} | {arms[a]['libc']} | "
+                    f"{arms[a]['runner']['cpu']} "
+                    f"({arms[a]['runner']['cores']} cores) |")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chromium-gap-probes
+          path: gap-out/
+          if-no-files-found: warn
