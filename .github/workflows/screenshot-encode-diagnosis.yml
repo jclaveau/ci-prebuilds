@@ -102,14 +102,24 @@ jobs:
             RUN_FLAGS="--security-opt seccomp=unconfined --env WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1"
           fi
 
-          # WebKit-WPE loads libwpe + GTK4 + a full gstreamer + Mesa stack that
-          # firefox and chromium never touch. Appended rather than merged into
-          # the base list so the firefox arm's environment stays byte-identical
-          # to the runs already on record.
-          WEBKIT_APKS=""
-          if [ "$BROWSER" = webkit ]; then
-            WEBKIT_APKS="libwpe libwpebackend-fdo gtk4.0 at-spi2-core cairo pango gdk-pixbuf mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast gst-plugins-bad"
-          fi
+          # Per-browser apk extras on top of the shared base, appended rather
+          # than merged so the firefox arm's environment stays byte-identical to
+          # the runs already on record.
+          #
+          #   webkit    libwpe + GTK4 + the gstreamer and Mesa stack WPE loads.
+          #   chromium  the delta against chs-perf-ab.yml's validated list —
+          #             Alpine splits harfbuzz-subset out of harfbuzz, and the
+          #             headless shell links it, so without this the binary dies
+          #             at load with `hb_subset_or_fail: symbol not found`.
+          BROWSER_EXTRA_APKS=""
+          case "$BROWSER" in
+            webkit)
+              BROWSER_EXTRA_APKS="libwpe libwpebackend-fdo gtk4.0 at-spi2-core cairo pango gdk-pixbuf mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast gst-plugins-bad"
+              ;;
+            chromium)
+              BROWSER_EXTRA_APKS="freetype harfbuzz-subset libxdamage libxrandr libxscrnsaver libxtst libx11 libxcb libxext libxi cups-libs pango cairo dav1d ffmpeg-libavformat libatk-1.0 libatk-bridge-2.0 at-spi2-core libxkbcommon mesa-gbm eudev-libs flac"
+              ;;
+          esac
 
           # `official` names PW's own published image rather than one of our
           # artifacts: it already carries every browser and a global playwright,
@@ -210,7 +220,7 @@ jobs:
               libvorbis libvpx libwebp libwebpdemux libxcomposite libxt mesa-gl \\
               nspr nss pipewire-libs libpulse libstdc++ libgcc \\
               gstreamer gst-plugins-base gst-plugins-good gst-libav \\
-              opus libsecret libxslt double-conversion minizip crc32c ${WEBKIT_APKS}
+              opus libsecret libxslt double-conversion minizip crc32c ${BROWSER_EXTRA_APKS}
           EOF
               emit_stage_lines "$image"
           cat <<EOF
