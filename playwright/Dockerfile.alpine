@@ -3,9 +3,9 @@
 # Global ARGs (visible in FROM lines below). BuildKit doesn't support ARG
 # expansion in `COPY --from=` URLs, so we alias the producer-image refs as
 # named build stages and COPY --from that name later.
-ARG CHS_REV=1223
-ARG FF_REV=1522
-ARG WK_REV=2287
+ARG CHS_REV=1234
+ARG FF_REV=1538
+ARG WK_REV=2336
 ARG BASE_IMAGE=jclaveau/alpine-dood-pnpm:latest
 
 # Producer-image stage aliases — Renovate's custom manager bumps the tag
