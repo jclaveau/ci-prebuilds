@@ -25,6 +25,16 @@ for months with every test green and only the wall clock moving.
   sat at 1.5x) — but `click_force` (actionability skipped, ~27.8ms/click) is the
   one that discriminates healthy builds.
 
+**`screenshot` is frame-quantized on chromium too — drop it from any aggregate.**
+Official's own value across three runs of the same image: 449.8 / 499.9 / 333.1 ms,
+i.e. multiples of ~33 ms (15, 15, 10 frames). Ours pins near 500 regardless of
+build. In a separate probe a **16x16 clip** came back at 33.2 ms where webkit does
+it in 4.5 — a 256-pixel encode cannot cost 33 ms, so that is the compositor
+cadence, not work. Any chromium row sitting at ~33 ms multiples is measuring
+frames. Read the BYTES for encode questions
+([[project_png_encoder_exposure_by_browser]]) and check the reference's own spread
+before trusting a row ([[feedback_check_reference_stability_across_runs]]).
+
 **Gotchas:** `page.evaluate(<string>)` treats the string as an EXPRESSION, so a
 bare arrow-function source returns `undefined` — invoke as `(${source})()`.
 CommonJS on purpose: `playwright` is a global install and ESM ignores `NODE_PATH`

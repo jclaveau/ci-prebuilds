@@ -1,6 +1,6 @@
 ---
 name: project_png_encoder_exposure_by_browser
-description: only firefox paid the PNG size gap — webkit and chromium match official byte-for-byte on the canvas control, so libpng (not zlib, not musl) is what differed
+description: only firefox paid the PNG size gap; webkit and chromium match official byte-for-byte on the canvas control — but libpng-vs-zlib is NOT yet separated (zlib-only arm in flight)
 metadata:
   type: project
 ---
@@ -18,9 +18,15 @@ rasterized the same pixels.
 | chromium | **bundled** libpng + system zlib | 5049 B vs 5049 B, **same sha** | identical |
 
 - Chromium takes Alpine's zlib (`replace_gn_files.py --system-libraries` lists
-  `zlib`, not `libpng`) and still emits byte-identical PNG ⇒ **system zlib is
-  output-neutral**, so firefox's gap was **libpng**. Two encoders, so this is
-  converging evidence rather than a controlled swap.
+  `zlib`, not `libpng`) and still emits byte-identical PNG. **This is weaker than
+  it looks and I over-claimed it once**: it compares two *C zlib derivatives*,
+  which agree by construction, while Mozilla's tree also builds **zlib-rs**
+  (`Compiling zlib-rs v0.6.3` in the arm's log) whose deflate output need not
+  match. The firefox arm deleted `--with-system-png` AND `--with-system-zlib`
+  together — the log shows both `media/libpng` and `modules/zlib/src` compiling —
+  so the pair is established, the half is not. `perf/firefox-bundled-zlib`
+  (run 32486920455) drops only zlib to split them. See
+  [[feedback_control_excludes_one_mechanism]].
 - WebKit links Alpine's libpng and matches on size because *official WebKit
   links Ubuntu's libpng* — same library, different distro build. Firefox was
   Alpine's libpng against **Mozilla's bundled** one. The rule is "our libpng

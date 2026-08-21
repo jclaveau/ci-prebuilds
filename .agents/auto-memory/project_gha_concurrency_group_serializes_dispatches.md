@@ -30,6 +30,16 @@ running two chromium-from-source builds side by side (dcheck-only vs
 is_official_build). Confirm it worked by checking BOTH runs spawned jobs — the
 blocked signature is `status: pending` with `jobs: 0`.
 
+**The mirror-image failure: `cancel-in-progress: true` + a group that ignores the
+dispatch's parameters means the second dispatch KILLS the first.** Both
+`chs-perf-ab.yml` and the (then) `ff-screenshot-diagnosis.yml` used
+`group: <workflow>-${{ github.ref }}` with cancel-in-progress, so two comparisons
+dispatched off main would have silently cancelled each other — the pair under test
+is the question, and the group did not encode it. Fixed 2026-08-21 by keying on
+the arguments: `-${{ inputs.label_a }}-${{ inputs.label_b }}` for the perf A/B,
+`-${{ inputs.browser }}` for the screenshot diagnosis. Rule: whatever input makes
+two dispatches *different questions* belongs in the group key.
+
 **Escape hatch for reusable child workflows:** if the child (`uses: ./.github/workflows/foo.yml`) declares `workflow_dispatch` alongside `workflow_call`, you can `gh workflow run foo.yml --ref <branch> -f ...` directly — the child runs UNDER ITS OWN concurrency (or none), skipping the parent's group. Useful when the parent is stuck on a straggler shard and you want to iterate on the child in parallel. Verified 2026-07-08 for `pw-conformance.yml` while `playwright-alpine-browsers.yml` had a run in-flight.
 
 Cross-ref: [[feedback_gha_actions_budget_diagnostic]] is the SIMILAR-LOOKING failure mode (jobs fail fast ~10s). Concurrency-group hang is distinct: zero jobs spawn at all.

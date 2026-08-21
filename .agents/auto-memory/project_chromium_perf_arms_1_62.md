@@ -41,6 +41,30 @@ below 1.0 is faster; **bold** = delta exceeded the samples' own spread.
 - **Untested: both knobs together.** `is_official_build` would default both ON;
   each arm changed exactly one. A combined arm is another ~40 h build.
 
+**Placed against official** (each arm probed vs `mcr.microsoft.com/playwright:
+v1.62.1-noble` in its own run; x official, lower better; `screenshot` and
+`locator_click` dropped as frame-quantized):
+
+| metric | baseline | PGO | ThinLTO |
+|---|---|---|---|
+| layout | 2.27 | 1.89 | 1.89 |
+| dom_churn | 1.67 | 1.33 | 1.30 |
+| click_force | 1.35 | 1.25 | 1.23 |
+| eval_rtt | 1.28 | 1.23 | 1.15 |
+| js_alloc | 1.16 | **0.94** | 1.12 |
+| **geomean** | **1.42** | **1.28** | **1.31** |
+
+Both knobs close about a third of the gap; neither reaches parity, and the two
+are within a point of each other on geomean. `js_alloc` under PGO is the only
+row where we beat official.
+
+**Open tension — do not quote the layout gap as settled.** thinlto-vs-pgo on
+layout: implied-via-baselines **0.87**, direct head-to-head **0.89**, but
+via-official **1.00** (1.89 vs 1.89). Two routes say ThinLTO wins layout, one
+says a tie. The head-to-head is the strongest instrument for that pair (one
+runner, one job), so ThinLTO still leads — but my first verdict message called
+it firm on three agreeing routes, which was wrong.
+
 **Do not rebase the older `perf/chromium-{thinlto,pgo,official-build}`
 branches.** They sit on a main from before the metrics tree, the gap probes and
 six memories — `git diff main..` is ~113k deletions — and they predate the

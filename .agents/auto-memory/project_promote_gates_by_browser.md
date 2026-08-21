@@ -27,3 +27,11 @@ green WebKit dispatch would move `wk-latest` the same way.
 - Treat a green dispatch of chromium-from-source or webkit as a PUBLISH.
 - `promote-firefox.yml` (added 2026-08-21) is the dispatch path Firefox lacked;
   it re-implements the gates as pre-flights. See [[feedback_never_merge_nongreen_pr]].
+
+**It happened, and twice in eight minutes (2026-08-21).** The two chromium perf
+arms finished together and each promoted: PGO `a649cb7` took `chs-latest` at
+13:40:05, ThinLTO `b689c01` overwrote it at 13:47:51, displacing the main-lineage
+`911c93b`. So `chs-latest` is decided by whichever experiment finishes last, not
+by what we ship. Both were green (conformance 20/20 + smoke), so nothing broke and
+nothing warned. Pinned `chs-<rev>` tags were unaffected. Parked for a fix in
+`.agents/requested-memory/parked_chromium_promote_and_pgo_comment.md`.
