@@ -91,6 +91,7 @@ jobs:
             echo "chs_ver=$CHS_VER"
             echo "old_sha=$ALPINE_APORTS_CHROMIUM_REF"
             echo "new_sha=$NEW_SHA_SHORT"
+            echo "pkgver=$PKGVER"
           } >> "$GITHUB_OUTPUT"
 
       - name: commit & push
@@ -100,10 +101,20 @@ jobs:
           NEW: ${{ steps.resolve.outputs.new_sha }}
           PW:  ${{ steps.resolve.outputs.pw_version }}
           CHS: ${{ steps.resolve.outputs.chs_ver }}
+          PKGVER: ${{ steps.resolve.outputs.pkgver }}
         run: |
           set -euo pipefail
-          awk -v old="$OLD" -v new="$NEW" '
-            /^ALPINE_APORTS_CHROMIUM_REF=/ { sub(old, new); print; next }
+          # The trailing comment names the chromium the SHA carries, so it has
+          # to move with it. Replacing only the SHA left the line claiming a
+          # version the commit no longer pointed at, and the comment is the
+          # only human-readable record of what the pin means. Both subs are
+          # anchored so the surrounding alignment survives.
+          awk -v new="$NEW" -v pkgver="$PKGVER" '
+            /^ALPINE_APORTS_CHROMIUM_REF=/ {
+              sub(/=[0-9a-f]+/, "=" new)
+              sub(/# chromium [0-9.]+/, "# chromium " pkgver)
+              print; next
+            }
             { print }
           ' playwright/alpine-browsers/versions.env > versions.env.new
           mv versions.env.new playwright/alpine-browsers/versions.env
@@ -113,7 +124,7 @@ jobs:
           git add playwright/alpine-browsers/versions.env
           git commit \
             -m "chore(versions.env): auto-resolve aports chromium SHA $OLD → $NEW for PW $PW [skip ci]" \
-            -m "Pre-flight verified: aports@$NEW community/chromium/APKBUILD pkgver=$CHS matches PW $PW's browsers.json pin." \
+            -m "Pre-flight verified: aports@$NEW community/chromium/APKBUILD pkgver=$PKGVER is on the same chromium branch as PW $PW's pin $CHS." \
             -m "Assisted-by: Claude:claude-opus-4-7"
           git push
 
