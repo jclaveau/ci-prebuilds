@@ -28,6 +28,14 @@ name: chromium residual-gap probes
 #                  libc, if it is absent from the undefined set the binary
 #                  defines it itself.
 #
+#   toolchain      Which clang produced each binary, and whether libc++
+#                  hardening assertions are compiled in. use_custom_libcxx is
+#                  true on both, so the library is the same — but that says
+#                  nothing about _LIBCPP_HARDENING_MODE, and a bounds check on
+#                  every vector access is the right shape for a flat ~1.6x on
+#                  container-heavy C++ that no allocator, font or memcpy
+#                  change touches.
+#
 #   fast-string    The one-variable confirmation: LD_PRELOAD an AVX2
 #                  implementation of the five routines into OUR OWN binary and
 #                  re-run the layout kernel. Same build, same fonts, same
@@ -219,6 +227,35 @@ jobs:
                   | awk -v s="$sym" '$NF == s' | wc -l)
             printf '%-20s undefined=%s defined=%s\n' "$sym" "$u" "$d"
           done
+          echo
+          echo "-- toolchain that produced the binary --"
+          readelf -p .comment "$BIN" 2>/dev/null | grep -aoE \
+            '(clang|GCC) version [0-9][0-9.]*' | sort -u | head -5
+          strings -a "$BIN" | grep -aoE 'clang version [0-9][0-9.]*' \
+            | sort | uniq -c | sort -rn | head -3
+
+          echo
+          echo "-- libc++ hardening: are the assertion messages compiled in? --"
+          # Both builds set use_custom_libcxx, so the LIBRARY is the same one.
+          # What is not fixed by that is _LIBCPP_HARDENING_MODE: with hardening
+          # on, every vector::operator[] carries a bounds check and libc++
+          # embeds the literal message it would abort with. Chromium turns it
+          # off for official builds; if alpine's clang defaults it on, Blink's
+          # container-heavy layout code pays a check per access.
+          for msg in 'vector\[\] index out of bounds' \
+                     'index out of bounds' \
+                     '__libcpp_verbose_abort' \
+                     'cannot dereference' \
+                     'unordered container'; do
+            printf '%-38s %s\n' "$msg" \
+              "$(strings -a "$BIN" | grep -acE "$msg" || true)"
+          done
+          # Chromium has its own "index out of bounds" strings that mean
+          # nothing here, so the sample is restricted to libc++'"'"'s own.
+          echo "  libc++-specific strings present:"
+          strings -a "$BIN" | grep -aiE 'libc\+\+|__libcpp' \
+            | sort -u | head -8 | sed 's/^/    /'
+
           echo
           echo "-- DCHECK residue (expected 0 on both) --"
           printf 'strings /Check failed/    : %s\n' \
