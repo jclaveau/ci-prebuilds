@@ -47,20 +47,23 @@ PKGVER=$(echo "$APKBUILD" | awk -F= '/^pkgver=/ { gsub(/"/, "", $2); print $2; e
 [[ -n "$PKGVER" ]] || { echo "FAIL: could not parse pkgver from APKBUILD at $ALPINE_APORTS_CHROMIUM_REF" >&2; exit 1; }
 echo "PKGVER=$PKGVER"
 
-branch_of() { echo "$1" | awk -F. '{print $1"."$2"."$3}'; }
+. "$ROOT/playwright/alpine-browsers/chromium-headless-shell/scripts/aports-pkgver.sh"
 
-if [[ "$(branch_of "$PKGVER")" != "$(branch_of "$CHS_VER")" ]]; then
-  echo "FAIL: aports pkgver=$PKGVER is a different chromium branch than PW's CHS_VER=$CHS_VER" >&2
-  echo "  ($(branch_of "$PKGVER").* vs $(branch_of "$CHS_VER").*)" >&2
-  echo "  Bump ALPINE_APORTS_CHROMIUM_REF in versions.env." >&2
-  echo "  The auto-resolve-aports workflow handles this automatically on Renovate PRs;" >&2
-  echo "  for hand-edited PW bumps, run:" >&2
-  echo "    bash playwright/alpine-browsers/chromium-headless-shell/scripts/resolve-aports-ref.sh $CHS_VER" >&2
-  exit 2
-fi
+pkgver_status=0
+chromium_pkgver_status "$PKGVER" "$CHS_VER" || pkgver_status=$?
+case "$pkgver_status" in
+  1)
+    echo "WARN: patch-level drift — musl patches are chromium $PKGVER, source is $CHS_VER" >&2
+    ;;
+  2)
+    echo "FAIL: aports pkgver=$PKGVER is a different chromium branch than PW's CHS_VER=$CHS_VER" >&2
+    echo "  ($(chromium_branch_of "$PKGVER").* vs $(chromium_branch_of "$CHS_VER").*)" >&2
+    echo "  Bump ALPINE_APORTS_CHROMIUM_REF in versions.env." >&2
+    echo "  The auto-resolve-aports workflow handles this automatically on Renovate PRs;" >&2
+    echo "  for hand-edited PW bumps, run:" >&2
+    echo "    bash playwright/alpine-browsers/chromium-headless-shell/scripts/resolve-aports-ref.sh $CHS_VER" >&2
+    exit 2
+    ;;
+esac
 
-if [[ "$PKGVER" != "$CHS_VER" ]]; then
-  echo "WARN: patch-level drift — musl patches are chromium $PKGVER, source is $CHS_VER" >&2
-fi
-
-echo "PASS: ($PW_VERSION, $ALPINE_APORTS_CHROMIUM_REF) consistent — branch $(branch_of "$PKGVER")"
+echo "PASS: ($PW_VERSION, $ALPINE_APORTS_CHROMIUM_REF) consistent — branch $(chromium_branch_of "$PKGVER")"

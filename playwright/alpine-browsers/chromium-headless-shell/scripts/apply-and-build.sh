@@ -41,34 +41,25 @@ PW_CHROMIUM_ENABLE_DEBUG=$(truthy "$PW_CHROMIUM_ENABLE_DEBUG")
 echo "Flags: PW_CHROMIUM_SKIP_APORTS=$PW_CHROMIUM_SKIP_APORTS PW_CHROMIUM_ENABLE_DEBUG=$PW_CHROMIUM_ENABLE_DEBUG"
 
 # 2. Sanity: aports' APKBUILD must be from the same Chromium BRANCH as CHS_VER,
-#    otherwise the musl patches were authored against a different tree.
-#
-#    Compared on the first 3 dot-segments (e.g. 151.0.7922) rather than exactly,
-#    because Alpine packages only some patch releases: aports went 150.0.7871.181
-#    straight to 151.0.7922.71 (then .108) while PW pins 151.0.7922.34, so exact
-#    equality made the 1.62 bump unsatisfiable by ANY aports commit — and no
-#    published Playwright aligns either (1.62.1 is latest and also pins .34).
-#    That is what auto-resolve-aports kept failing on.
-#
-#    Relaxing the INPUT check is safe because this pin only selects which musl
-#    patches get applied; the version we actually SHIP is asserted against the
-#    built binary further down. Same 3-segment granularity the apk path's
-#    drift-check uses (Dockerfile.apk).
+#    otherwise the musl patches were authored against a different tree. The rule
+#    and its rationale live in aports-pkgver.sh, which the PR-time test and the
+#    auto-resolve workflow source too — they used to re-implement it and drifted.
+. "$WORK/chromium-headless-shell/scripts/aports-pkgver.sh"
 if [[ "$PW_CHROMIUM_SKIP_APORTS" != "1" ]]; then
   [[ -f "$APORTS/APKBUILD" ]] || { echo "missing $APORTS/APKBUILD" >&2; exit 1; }
   APORTS_PKGVER=$(awk -F= '$1=="pkgver"{gsub(/"/,"",$2); print $2; exit}' "$APORTS/APKBUILD")
-  branch_of() { echo "$1" | awk -F. '{print $1"."$2"."$3}'; }
-  if [[ "$(branch_of "$APORTS_PKGVER")" != "$(branch_of "$CHS_VER")" ]]; then
-    echo "ERROR: aports pkgver=$APORTS_PKGVER is a different Chromium branch than PW's CHS_VER=$CHS_VER" >&2
-    echo "  ($(branch_of "$APORTS_PKGVER").* vs $(branch_of "$CHS_VER").*)" >&2
-    echo "  Bump ALPINE_APORTS_CHROMIUM_REF in versions.env to a commit on the same branch." >&2
-    exit 2
-  fi
-  if [[ "$APORTS_PKGVER" != "$CHS_VER" ]]; then
-    echo "::warning::aports musl patches are chromium $APORTS_PKGVER but the source is $CHS_VER — same branch $(branch_of "$CHS_VER"), patch-level drift"
-  else
-    echo "  aports pkgver matches CHS_VER ✓"
-  fi
+  pkgver_status=0
+  chromium_pkgver_status "$APORTS_PKGVER" "$CHS_VER" || pkgver_status=$?
+  case "$pkgver_status" in
+    0) echo "  aports pkgver matches CHS_VER ✓" ;;
+    1) echo "::warning::aports musl patches are chromium $APORTS_PKGVER but the source is $CHS_VER — same branch $(chromium_branch_of "$CHS_VER"), patch-level drift" ;;
+    *)
+      echo "ERROR: aports pkgver=$APORTS_PKGVER is a different Chromium branch than PW's CHS_VER=$CHS_VER" >&2
+      echo "  ($(chromium_branch_of "$APORTS_PKGVER").* vs $(chromium_branch_of "$CHS_VER").*)" >&2
+      echo "  Bump ALPINE_APORTS_CHROMIUM_REF in versions.env to a commit on the same branch." >&2
+      exit 2
+      ;;
+  esac
 fi
 
 # 3. Source tree.

@@ -72,15 +72,17 @@ jobs:
           # commit ever packaged.
           APKBUILD=$(curl -fsSL "https://gitlab.alpinelinux.org/alpine/aports/-/raw/${NEW_SHA}/community/chromium/APKBUILD")
           PKGVER=$(echo "$APKBUILD" | awk -F= '/^pkgver=/ { gsub(/"/, "", $2); print $2; exit }')
-          branch_of() { echo "$1" | awk -F. '{print $1"."$2"."$3}'; }
-          if [ "$(branch_of "$PKGVER")" != "$(branch_of "$CHS_VER")" ]; then
+          . playwright/alpine-browsers/chromium-headless-shell/scripts/aports-pkgver.sh
+          pkgver_status=0
+          chromium_pkgver_status "$PKGVER" "$CHS_VER" || pkgver_status=$?
+          if [ "$pkgver_status" = 2 ]; then
             echo "::error::pre-flight: aports@${NEW_SHA} pkgver=$PKGVER is a different chromium branch than PW's CHS_VER=$CHS_VER"
             exit 1
           fi
-          if [ "$PKGVER" != "$CHS_VER" ]; then
+          if [ "$pkgver_status" = 1 ]; then
             echo "::warning::pre-flight: patch-level drift — musl patches are chromium $PKGVER, source is $CHS_VER"
           fi
-          echo "pre-flight: aports is on chromium branch $(branch_of "$PKGVER") ✓"
+          echo "pre-flight: aports is on chromium branch $(chromium_branch_of "$PKGVER") ✓"
 
           # Truncate to 8 chars to match versions.env's existing abbreviation style.
           NEW_SHA_SHORT=${NEW_SHA:0:8}
