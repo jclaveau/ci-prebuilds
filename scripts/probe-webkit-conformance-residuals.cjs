@@ -158,6 +158,16 @@ async function probeCaptureDevices(base) {
     });
     record('capture-granted-captures',
       JSON.stringify(granted) === expected ? 'PASS' : 'FAIL', JSON.stringify(granted));
+    // Labels are withheld until a capture permission is granted, so this second
+    // enumeration is the first one that can name the devices. 'Mock audio
+    // device 1' means WebKit's mock center is live; a '/dev/video0' or a
+    // 'Monitor of ...' means the host simply has real GStreamer sources that
+    // Alpine does not, which is a different fix entirely.
+    const labels = await page.evaluate(async () => {
+      const list = await navigator.mediaDevices.enumerateDevices();
+      return list.map(device => `${device.kind}:${device.label}`);
+    });
+    record('capture-device-labels', labels.length ? 'INFO' : 'EMPTY', JSON.stringify(labels));
     await context.close();
   } finally {
     await browser.close();
