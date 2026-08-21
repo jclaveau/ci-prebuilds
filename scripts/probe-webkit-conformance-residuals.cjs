@@ -83,24 +83,6 @@ async function probeContextmenuOrder(base) {
       afterLeftClick === JSON.stringify(['mousedown', 'mouseup']) ? 'PASS' : 'FAIL',
       afterLeftClick);
 
-    // Sweep the gap between press and release. click() sends them back to back
-    // and loses the release; 500ms delivers it. The threshold is the length of
-    // whatever state swallows it, and a cluster of failures with no threshold
-    // would say the delay is incidental and the cause is elsewhere.
-    for (const delay of [0, 25, 50, 100, 200, 400]) {
-      entries.length = 0;
-      const target = await page.getByRole('button', { name: 'Click me' }).boundingBox();
-      await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2);
-      await page.mouse.down({ button: 'right' });
-      if (delay) {
-        await page.waitForTimeout(delay);
-      }
-      await page.mouse.up({ button: 'right' });
-      await page.waitForTimeout(1200);
-      record(`mouseup-after-${delay}ms`,
-        entries.includes('mouseup') ? 'PASS' : 'FAIL', JSON.stringify(entries));
-    }
-
     // Drive the right button by hand, with the release a beat after the press.
     // click() sends both back to back, so a swallowed release and one the
     // browser simply never got around to look the same. Here the release is a
@@ -115,6 +97,62 @@ async function probeContextmenuOrder(base) {
     await page.waitForTimeout(1000);
     record('mouseup-on-explicit-right-release',
       entries.includes('mouseup') ? 'PASS' : 'FAIL', JSON.stringify(entries));
+  } finally {
+    await browser.close();
+  }
+}
+
+// Which DISPATCH SHAPE loses the release, on a fresh page each time.
+//
+// The earlier sweep varied the press/release gap and passed at every delay
+// including 0ms — but every iteration ran after the failed click() on the same
+// page, so "0ms passes" fits an order effect (the first right-click arms
+// something) just as well as it fits the gap being irrelevant. A fresh context
+// per shape removes that confound.
+//
+// The three shapes differ only in how the frames reach the browser:
+//   locator-click     move/down/up pipelined — PW sends all three before any
+//                     response, which the wire confirms (ids 93/94/95 sent at
+//                     the same millisecond, all ACKed 3ms later)
+//   awaited-manual    each call awaited, so each round-trips
+//   pipelined-manual  same calls as awaited-manual, promises not awaited
+//                     between them — isolates pipelining from the locator path
+async function probeRightClickDispatchShapes(base) {
+  const browser = await webkit.launch();
+  const shapes = ['locator-click', 'awaited-manual', 'pipelined-manual'];
+  try {
+    for (const shape of shapes) {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.goto(base);
+      await page.evaluate(() => {
+        const logEvent = e => console.log(e.type);
+        document.addEventListener('mousedown', logEvent);
+        document.addEventListener('mouseup', logEvent);
+        document.addEventListener('contextmenu', logEvent);
+      });
+      const entries = [];
+      page.on('console', message => entries.push(message.text()));
+      const button = page.getByRole('button', { name: 'Click me' });
+      if (shape === 'locator-click') {
+        await button.click({ button: 'right' });
+      } else {
+        const box = await button.boundingBox();
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        if (shape === 'awaited-manual') {
+          await page.mouse.down({ button: 'right' });
+          await page.mouse.up({ button: 'right' });
+        } else {
+          const pressed = page.mouse.down({ button: 'right' });
+          const released = page.mouse.up({ button: 'right' });
+          await Promise.all([pressed, released]);
+        }
+      }
+      await page.waitForTimeout(1500);
+      record(`right-click-${shape}`,
+        entries.includes('mouseup') ? 'PASS' : 'FAIL', JSON.stringify(entries));
+      await context.close();
+    }
   } finally {
     await browser.close();
   }
@@ -167,10 +205,20 @@ async function probeCacheStoragePersistence(base) {
     // one from memory — which is the one structural difference between the
     // context that fails and the context that works. A zero quota would evict
     // every record silently and leave put() resolving happily.
-    const estimate = await page.evaluate(() => navigator.storage.estimate()
-      .then(e => ({ quota: e.quota, usage: e.usage }))
-      .catch(e => ({ error: String(e) })));
-    record('cachestorage-storage-estimate', estimate.quota ? 'INFO' : 'ZERO',
+    const estimate = await page.evaluate(() => {
+      // navigator.storage only exists from webkit r2355; on ours and r2336 an
+      // unguarded call THREW here and took the rest of this function with it,
+      // so persistent-keys/on-disk/survives-reload were never measured on the
+      // two arms that matter.
+      if (!navigator.storage || !navigator.storage.estimate) {
+        return { absent: true };
+      }
+      return navigator.storage.estimate()
+        .then(e => ({ quota: e.quota, usage: e.usage }))
+        .catch(e => ({ error: String(e) }));
+    });
+    record('cachestorage-storage-estimate',
+      estimate.absent ? 'ABSENT' : (estimate.quota ? 'INFO' : 'ZERO'),
       JSON.stringify(estimate));
     // Same split as the ephemeral probe, against the store that actually
     // fails: a listed cache with no readable entry is a record write, an
@@ -431,6 +479,11 @@ async function probeCaptureDevicesWithMockFeature(base) {
     await probeContextmenuOrder(base);
   } catch (e) {
     record('contextmenu-order', 'ERROR', String(e && e.message || e).split('\n')[0]);
+  }
+  try {
+    await probeRightClickDispatchShapes(base);
+  } catch (e) {
+    record('right-click-dispatch-shapes', 'ERROR', String(e && e.message || e).split('\n')[0]);
   }
   try {
     await probeCacheStoragePersistence(base);
