@@ -429,37 +429,48 @@ else
   cat "$APORTS/mozconfig" "$OVERLAY" > .mozconfig
 fi
 
-# EXPERIMENT ARM (perf/firefox-bundled-zlib): bundled zlib ONLY.
+# EXPERIMENT ARM (perf/firefox-bundled-libpng): bundled libpng ONLY.
 #
-# perf/firefox-bundled-imaging dropped --with-system-png AND --with-system-zlib
-# together, and its canvas control came back byte- and sha-identical to PW's
-# official build (40150 B -> 26801 B, run 32481799551). That says the pair
-# caused it; it does not say which half.
+# The other half of the split. perf/firefox-bundled-imaging dropped
+# --with-system-png AND --with-system-zlib together and its canvas control came
+# back byte- and sha-identical to PW official (40150 B -> 26801 B, run
+# 32481799551). perf/firefox-bundled-zlib then removed only system-zlib and
+# moved NOTHING — 40150 B, the untouched number, against official's 26801 B,
+# with jpeg_q80_canvas_control identical and same-sha on both sides so the
+# rasterized pixels were never in question (run 32508149937).
 #
-# The reason the half matters: chromium takes Alpine's system zlib and still
-# emits a byte-identical control PNG, which would rule zlib out — except that
-# argument compares two C zlib derivatives, and Mozilla's tree also builds
-# zlib-rs, a Rust reimplementation whose deflate output need not match. So the
-# chromium evidence transfers only if firefox's PNG path does not go through it.
+# By elimination libpng carries all of it, but elimination assumes the two
+# effects are independent, and this arm is what turns that into a measurement.
 #
-# Decisive readout = png_canvas_control. Near 26801 B means zlib was the cause
-# (and the interesting one: deflate is on every compressed path firefox has,
-# not just screenshots). Still ~40150 B means libpng was, and the question
-# closes at the 122 kB the full arm costs.
-sed -i '/^ac_add_options --with-system-zlib$/d' .mozconfig
+# It is also the one that decides what we would ship: the full arm cost
+# +122,670 B of image for both libraries. If libpng alone reaches 26801 B, the
+# same saving costs less.
+#
+# Decisive readout = png_canvas_control. Near 26801 B confirms libpng and
+# prices the fix. Still ~40150 B means neither library alone explains it and
+# only the pair does — which would be a genuinely surprising result and worth
+# more than the size question.
+# Before the sed, not only after: if the base ever stops setting system-png the
+# removal is a no-op, the arm becomes byte-identical to the control, and it
+# would still report success.
+if ! grep -qE -- '^ac_add_options --with-system-png$' .mozconfig; then
+  echo "ERROR: --with-system-png was not in .mozconfig — this arm has nothing to remove" >&2
+  exit 1
+fi
+sed -i '/^ac_add_options --with-system-png$/d' .mozconfig
 # `if`, not `grep && { exit 1; }`: under `set -e` the && form aborts the script
 # on the GOOD path, where grep correctly finds nothing and returns 1.
-if grep -qE -- '^ac_add_options --with-system-zlib$' .mozconfig; then
-  echo "ERROR: a --with-system-zlib line survived the arm's sed" >&2
+if grep -qE -- '^ac_add_options --with-system-png$' .mozconfig; then
+  echo "ERROR: a --with-system-png line survived the arm's sed" >&2
   exit 1
 fi
-# The control half of the arm: system-png MUST still be there, or this is a
+# The control half of the arm: system-zlib MUST still be there, or this is a
 # second copy of perf/firefox-bundled-imaging rather than the variable split.
-if ! grep -qE -- '^ac_add_options --with-system-png$' .mozconfig; then
-  echo "ERROR: --with-system-png is absent — this arm would not isolate zlib" >&2
+if ! grep -qE -- '^ac_add_options --with-system-zlib$' .mozconfig; then
+  echo "ERROR: --with-system-zlib is absent — this arm would not isolate libpng" >&2
   exit 1
 fi
-echo "  ARM: bundled zlib only (system-zlib removed, system-png kept)"
+echo "  ARM: bundled libpng only (system-png removed, system-zlib kept)"
 
 # 7a. DIAGNOSTIC: PW_ENABLE_TESTS — include xpcshell + gtest + mochitest
 #     harness so the validation workflow can run Mozilla's own self-tests.
