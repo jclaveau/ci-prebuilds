@@ -282,12 +282,24 @@ jobs:
           DOCKERFILE
           docker build -t wkunstripped:${{ github.run_id }} -f /tmp/Dockerfile.unstripped /tmp
           # A restore that restored nothing would read as "the strip is innocent".
+          # bundle-dist.sh uses a FLAT layout — every .so sits beside MiniBrowser
+          # with RPATH=$ORIGIN, there is no lib/ subdir (that is PW's layout, and
+          # counting it there reported 0 for both images and verified nothing).
           for image in wkresiduals wkunstripped; do
-            echo -n "$image libwpe/fdo present: "
+            echo -n "$image bundled libwpe/fdo: "
             docker run --rm --entrypoint sh "$image:${{ github.run_id }}" -c \
-              'ls /ms-playwright/webkit-${{ inputs.artifact_rev }}/minibrowser-wpe/lib/ 2>/dev/null \
-                 | grep -cE "^lib(wpe|WPEBackend-fdo)" || echo 0'
+              'ls /ms-playwright/webkit-${{ inputs.artifact_rev }}/minibrowser-wpe/ 2>/dev/null \
+                 | grep -cE "^lib(wpe|WPEBackend-fdo)" || true'
           done
+          # And prove which copy the process actually MAPS: RPATH=$ORIGIN should
+          # prefer the restored one, but "present on disk" is not "loaded".
+          docker run --rm \
+            --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+            --cap-add SYS_ADMIN --cap-add NET_ADMIN \
+            -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
+            --entrypoint sh "wkunstripped:${{ github.run_id }}" -c \
+            'ldd /ms-playwright/webkit-${{ inputs.artifact_rev }}/minibrowser-wpe/MiniBrowser 2>&1 \
+               | grep -iE "wpe" || echo "ldd named no wpe libs"'
           docker run --rm \
             --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
             --cap-add SYS_ADMIN --cap-add NET_ADMIN \
