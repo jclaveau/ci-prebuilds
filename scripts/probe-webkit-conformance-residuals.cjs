@@ -131,6 +131,34 @@ async function probeCacheStoragePersistence(base) {
   fs.rmSync(profile, { recursive: true, force: true });
 }
 
+// The persistent write does not land even in the same document, so the reload
+// is not what loses it. This runs the identical put/match in an ordinary
+// ephemeral context: a failure here too means CacheStorage writes are broken
+// outright in our build, and the persistent profile is incidental.
+async function probeCacheStorageEphemeral(base) {
+  const browser = await webkit.launch();
+  try {
+    const page = await browser.newPage();
+    await page.goto(base);
+    const value = await page.evaluate(async () => {
+      const cache = await caches.open('repro-cache');
+      await cache.put('/meta', new Response('payload'));
+      const resp = await cache.match('/meta');
+      return resp ? await resp.text() : null;
+    });
+    record('cachestorage-ephemeral-same-document',
+      value === 'payload' ? 'PASS' : 'FAIL', JSON.stringify(value));
+    // caches.keys() answers a narrower question than match(): whether the
+    // container registered the cache at all. A named cache with no readable
+    // entry points at the record write; no cache at all points higher up.
+    const keys = await page.evaluate(() => caches.keys());
+    record('cachestorage-container-keys', keys.length ? 'INFO' : 'EMPTY',
+      JSON.stringify(keys));
+  } finally {
+    await browser.close();
+  }
+}
+
 // Mirrors the helper in permissions.spec.ts, sort included, so a verdict here
 // means what the failing test means. `constraint` is carried too: it is the
 // only field that distinguishes an OverconstrainedError raised over an empty
@@ -204,22 +232,27 @@ async function probeCaptureDevices(base) {
 // one). MiniBrowser exposes the same settings through --features, so this asks
 // the question directly: if the flag alone populates our device list, the fix
 // is a launch flag rather than a rebuild.
+//
+// The identifier is `MockCaptureDevices`, which is what MiniBrowser's own
+// --features=help prints; the preference key `MockCaptureDevicesEnabled` is
+// NOT accepted, and an unknown name is answered with a stderr line and
+// otherwise ignored, which reads exactly like a flag that did nothing.
 async function probeCaptureDevicesWithMockFeature(base) {
-  const browser = await webkit.launch({ args: ['--features=MockCaptureDevicesEnabled'] });
+  const browser = await webkit.launch({ args: ['--features=MockCaptureDevices'] });
   try {
     const context = await browser.newContext();
     await context.grantPermissions(['camera', 'microphone'], { origin: new URL(base).origin });
     const page = await context.newPage();
     await page.goto(base);
+    const granted = await getUserMedia(page, { video: true, audio: true });
+    record('capture-granted-with-flag',
+      granted.tracks ? 'PASS' : 'FAIL', JSON.stringify(granted));
     const labels = await page.evaluate(async () => {
       const list = await navigator.mediaDevices.enumerateDevices();
       return list.map(device => `${device.kind}:${device.label}`);
     });
     record('capture-with-mock-feature-flag', labels.length ? 'INFO' : 'EMPTY',
       JSON.stringify(labels));
-    const granted = await getUserMedia(page, { video: true, audio: true });
-    record('capture-granted-with-flag',
-      granted.tracks ? 'PASS' : 'FAIL', JSON.stringify(granted));
     await context.close();
   } finally {
     await browser.close();
@@ -244,6 +277,11 @@ async function probeCaptureDevicesWithMockFeature(base) {
     await probeCacheStoragePersistence(base);
   } catch (e) {
     record('cachestorage-survives-reload', 'ERROR', String(e && e.message || e).split('\n')[0]);
+  }
+  try {
+    await probeCacheStorageEphemeral(base);
+  } catch (e) {
+    record('cachestorage-ephemeral-same-document', 'ERROR', String(e && e.message || e).split('\n')[0]);
   }
   try {
     await probeCaptureDevices(base);
