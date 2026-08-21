@@ -28,6 +28,12 @@ name: chromium residual-gap probes
 #                  libc, if it is absent from the undefined set the binary
 #                  defines it itself.
 #
+#   fast-string    The one-variable confirmation: LD_PRELOAD an AVX2
+#                  implementation of the five routines into OUR OWN binary and
+#                  re-run the layout kernel. Same build, same fonts, same
+#                  allocator. Gated on a correctness check that is itself
+#                  checked against a deliberately corrupted shim.
+#
 #   libc           Whether musl's string/memory routines are the residual.
 #                  Alpine has no IFUNC, so musl links one implementation where
 #                  glibc dispatches an AVX2/ERMS variant off the CPU at load,
@@ -314,6 +320,62 @@ jobs:
               print(f'| `{op}` | ' + ' | '.join(cells) + ' |')
           PY
 
+      - name: Probe — the same binary with AVX2 string routines
+        env:
+          LABEL_OURS: ${{ inputs.label_ours }}
+        run: |
+          set -o pipefail
+          # The one-variable test. Same binary, same fonts, same allocator;
+          # only which code answers memcpy changes. An arm that crashes the
+          # browser is recorded as absent rather than failing the run, because
+          # the other arms are still results.
+          docker run --rm \
+            -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/gap-out:/out" \
+            --env "PROBE_TARGET=${LABEL_OURS}-fast-string" \
+            "gap-alpine:${{ github.run_id }}" \
+            sh -c '
+              set -e
+              SHIM="-O3 -mavx2 -fPIC -shared -fno-builtin"
+              SHIM="$SHIM -fno-tree-loop-distribute-patterns"
+              # shellcheck disable=SC2086
+              cc $SHIM -o /tmp/libfast.so /probe/fast-string-preload.c
+              # -fno-builtin on the TEST too, or the compiler inlines its own
+              # memcpy, the PLT is never taken, and a corrupted shim passes.
+              cc -O2 -fno-builtin -fno-tree-loop-distribute-patterns \
+                 -o /tmp/shimtest /probe/fast-string-preload-test.c
+
+              echo "--- control: no preload, must pass ---"
+              /tmp/shimtest
+              echo "--- shim: must pass ---"
+              LD_PRELOAD=/tmp/libfast.so /tmp/shimtest
+              echo "--- corrupted shim: must fail, or the gate is vacuous ---"
+              # Anchored at four spaces so it lands in copy_fwd, the tail
+              # both memcpy and the forward memmove share.
+              sed "s|^    d\[i\] = s\[i\];|    d[i] = (unsigned char)(s[i] ^ (i + 1 == n));|" \
+                  /probe/fast-string-preload.c > /tmp/broken.c
+              if diff -q /tmp/broken.c /probe/fast-string-preload.c >/dev/null; then
+                echo "the corruption sed matched nothing" >&2
+                exit 1
+              fi
+              # shellcheck disable=SC2086
+              cc $SHIM -o /tmp/libbroken.so /tmp/broken.c
+              if LD_PRELOAD=/tmp/libbroken.so /tmp/shimtest >/dev/null 2>&1; then
+                echo "gate is vacuous: the corrupted shim passed" >&2
+                exit 1
+              fi
+              echo "gate caught it"
+
+              rm -f /out/preload-pids.txt
+              FAST_STRING_MARKER=/out/preload-pids.txt \
+              LD_PRELOAD=/tmp/libfast.so \
+              NODE_PATH="$(npm root -g)" \
+                node /probe/chromium-gap-probe.cjs \
+                  --target "$PROBE_TARGET" --out /out
+              echo "processes that loaded the shim: $(wc -l < /out/preload-pids.txt)"
+            ' 2>&1 | tee gap-out/probe-fast-string.log \
+            || echo "::warning::the fast-string arm did not complete"
+
       - name: Report — timing and fonts
         env:
           LABEL_OURS: ${{ inputs.label_ours }}
@@ -327,7 +389,8 @@ jobs:
               arms[d['target']] = d
 
           ours = os.environ['LABEL_OURS']
-          order = [ours, f'{ours}-noble-fonts', 'official']
+          order = [ours, f'{ours}-noble-fonts', f'{ours}-fast-string',
+                   'official']
           order = [a for a in order if a in arms]
           if not order:
               print('no arm produced a result')
@@ -391,6 +454,14 @@ jobs:
                        for a in order]
               print(f'| `{k}` | ' + ' | '.join(cells) + ' |')
           print()
+          try:
+              pids = len(set(open('gap-out/preload-pids.txt').read().split()))
+              print(f'`{ours}-fast-string`: the shim was loaded by **{pids}** '
+                    f'processes. One would mean it reached only the launcher '
+                    f'and the layout row measures nothing.\n')
+          except Exception:
+              pass
+
           print('| arm | libc | runner |')
           print('|---|---|---|')
           for a in order:
