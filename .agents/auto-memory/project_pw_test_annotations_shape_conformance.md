@@ -31,19 +31,19 @@ runner env). `wk-conformance-residuals-probe.yml` (was
 `wk-upstream-glibc-control.yml`) runs one script over three arms in one job:
 ours, r2336, r2355.
 
-Leads, in order of strength:
-- **`DEVELOPER_MODE`**. `Tools/Scripts/webkitdirs.pm:2911` pushes
-  `-DDEVELOPER_MODE=ON` for every non-Apple port, and PW builds through
-  `build-webkit` — so their WPE build has it ON while `cmake-flags.overlay`
-  sets `-DENABLE_DEVELOPER_MODE=OFF`. Same class of divergence we have been
-  closing one option at a time (orientation, WebRTC).
-- Persistent `WebsiteDataStore` path for CacheStorage.
-- NOT `ENABLE_CONTEXT_MENUS` — checked, `WebKitFeatures.cmake:194` defines it
-  `PRIVATE ON` globally, so it is already on in our build.
-- NOT the mock-capture pref: `MockCaptureDevicesEnabled` defaults false on every
-  port, PW never sends the `Page.overrideSetting`, passes no launch arg, and
-  `bootstrap.diff` contains no mock wiring — so whatever gives upstream its
-  devices is something else.
+Every lead below was measured out; the surviving root causes live in
+[[project_wk_conformance_residual_aug2026]]. Do not re-raise:
+- **`DEVELOPER_MODE`** — PW does build with it ON (`webkitdirs.pm:2911` pushes
+  `-DDEVELOPER_MODE=ON` for non-Apple ports) while we set OFF, but its one
+  visible consequence, `ENABLE_WPE_PLATFORM`, is not in play: PW's own r2336
+  ships `libwpe` + `libWPEBackend-fdo` and no `libWPEPlatform`, the same legacy
+  path we build.
+- **Persistent `WebsiteDataStore` path** — our profile tree is structurally
+  identical to upstream's.
+- **`ENABLE_CONTEXT_MENUS`** — `WebKitFeatures.cmake:194` defines it
+  `PRIVATE ON` globally; already on in our build.
+- **The mock-capture preference default** — PW's own binary prints
+  `- MockCaptureDevices` from `--features=help`, the same default as ours.
 
 **How to apply:** grep the spec for `test.fail` / `it.skip` / `isFrozenWebkit`
 BEFORE theorising about a musl gap, then check whether the gate actually fires

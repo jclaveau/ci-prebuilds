@@ -53,3 +53,19 @@ chromium fix will NOT remove. **The bench understates the DCHECK penalty**: its
 trivial spec barely touches layout, so it shows ~1.9x while layout alone is 104x;
 real suites re-pay layout on every actionability poll, which is where "50% slower"
 came from.
+
+**1.62.1 re-measure (2026-08-21), one job per A/B so the CPU is held constant.**
+
+chromium from-source vs `Google Chrome for Testing` (run 32458305232), ratio =
+official/alpine, lower = alpine slower: layout **0.44x**, dom_churn **0.60x**,
+goto_warm 0.64x, click_force 0.74x, launch 0.84x — but int_math 1.00x, js_alloc
+0.86x, **libm_fmod 1.00x**. Compute at parity, rendering 2.3x off ⇒ build
+config, not musl. Conformance suite-time in the same run: +15.5% library,
++13.6% page, +25.2% stress (DCHECK era was +27%).
+
+firefox 153.0 vs official 153.0 (run 32460180480): essentially parity —
+layout 0.86x, launch 0.91x, most metrics inside their own spread. **libm_fmod
+1.43x, i.e. our musl build is FASTER**, which contradicts the "musl fmod ~2.1x
+slower" claim in `runtime-probe.cjs`'s header comment — re-verify before quoting
+it. Sole real FF regression is screenshot 0.68x, see
+[[project_ff_png_encoder_gap]].

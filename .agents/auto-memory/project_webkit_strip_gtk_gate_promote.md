@@ -18,9 +18,22 @@ metadata:
 - **Regression caught:** skipped GTK jobs cascade-skipped `smoke-webkit` +
   `promote-webkit` (bare `if:` on `needs` output doesn't break the
   transitive skip — actions/runner#491). Fixed in 1752fc1: both `if:` now
-  prefixed `!cancelled() &&`. **Not yet validated in CI** — next webkit
+  prefixed `!cancelled() &&`. **Not yet validated end-to-end in CI** — next webkit
   build (dispatch `build_webkit=true`) must show smoke-webkit + promote-webkit
-  actually running.
+  actually running. 2026-08-18 run 32136794311 (`build_webkit_gtk=false`):
+  gtk-1..4 skipped and source-prep green as intended; finalize/smoke not yet
+  reached. **Statically verified meanwhile:** `Dockerfile.finalize` has a
+  `gtk_none` stage that `mkdir -p`s an empty `minibrowser-gtk-dist`, so the
+  artifact always carries the dir, the finalize Tier-1 smoke's `ls` succeeds and
+  its loop hits the explicit `skip: gtk MiniBrowser not built` branch (WPE
+  required, GTK optional). `conformance-webkit` pulls `wk-gtk-sha-<sha>` even in
+  WPE-only mode — that tag is still published, with GTK empty — and the headed
+  leg is disabled by run.sh's WebKit headed capability probe.
+  **CONFIRMED IN CI 2026-08-18 19:34Z** (same run): with GTK skipped,
+  `build-webkit-finalize` succeeded (6m13s) and `smoke-webkit` **ran** (26s,
+  success) instead of cascade-skipping, then `conformance-webkit` started. The
+  `!cancelled()` fix (1752fc1) works. `promote-webkit` remains unvalidated —
+  it is main-gated and this was a branch run.
 - **Promote:** `promote-webkit` tags `wk-${REV}`, `wk-${VER}`, `wk-latest`
   (plus Docker Hub mirrors) from the build's `wk-sha-<sha>` tag. For the
   deferred/broken case, promote locally with:

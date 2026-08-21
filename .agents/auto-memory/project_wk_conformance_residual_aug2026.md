@@ -1,0 +1,132 @@
+---
+name: wk-conformance-residual-aug2026
+description: Per-cluster verdicts for the WebKit conformance failures left after closePage — what each one actually is, so a clean session does not re-derive them
+metadata:
+  type: project
+---
+
+Baseline: 155 failures → **26** once `closePage` landed (5756 passed, run
+32136794311). Then `snapshotRect` (-11) and `setLanguages` (-3) and the
+certificate CN (-2). Verdicts on what was left, each traced to evidence:
+
+- **screenshot webp/jpeg (11)** — RESOLVED, see [[project_wk_screenshot_format_ignored]].
+- **Accept-Language (3)** — RESOLVED: `setLanguages` only set the pool
+  *configuration*, which the already-running network process never re-reads.
+- **har security details (2)** — RESOLVED: GLib gives the full RFC 2253 DN, PW
+  wants the bare CN; upstream's `subjectSummaryFromDN` backported.
+- **camera/microphone (4)** — genuine build gap. NOT skip-list parity: control and
+  ours have identical skip sets (8 each; control 8+107=115, ours 4 failed+8+103).
+  Not the pref default (`MockCaptureDevicesEnabled` is false at our base *and*
+  upstream main), not PW client-side (code search: mock capture is wired only in
+  their **macOS** embedder), not our gst env. WebKit registers a
+  `mock-device-provider` unconditionally, so the capability exists at our base.
+- **modernizr (2)** — the residual key is **`fontdisplay`** (earlier notes saying
+  `unicoderange` are stale). We report `true`, PW expects `false`, and no
+  preference exists for it — an engine divergence from the base gap.
+- **Navigation API same-document (1)** — NOT a protocol or preference gap
+  (`NavigationAPIEnabled` is already true for WPE at our base and on main). The
+  failure snapshot shows the DOM is **correct** (`paragraph: intercepted:/other`);
+  PW's locator reads `""` until timeout, i.e. a stale execution context after a
+  same-document navigation.
+- **contextmenu order (1)** — we emit `['mousedown','contextmenu']`, never
+  `mouseup`. PW's patch touches the WPE context-menu proxy; likely swallowed there.
+- **headed / no-XServer (1)** — we shipped an *empty* `minibrowser-gtk`, so a
+  headed launch dies instantly instead of printing `cannot open display`, which is
+  the string PW greps for (`webkit.ts: doRewriteStartupLog`). Fixed by actually
+  building the GTK port. Note that enabling GTK also switches on the headed
+  conformance leg via run.sh's capability probe.
+- **CacheStorage after reload (1)** — returns null; unexamined.
+
+## Update 2026-08-19 — 8 failures → 6, and two verdicts reversed
+
+Run 32286335559 (`7ba6866`): 17/20 shards green, 6 failures.
+
+**webp: RESOLVED.** `page-screenshot.spec.ts:307 webp screenshots should be
+lossless by default` and `elementhandle-screenshot.spec.ts:38 should work with
+webp` were ONE bug — `ImageUtilitiesSkia.cpp` sets only `fQuality` and never
+`fCompression`, which Skia defaults to `kLossy`. Fixed by
+`patch_webp_lossless_encoding` (gate on `fQuality == 100`; quality 80 must stay
+lossy, line 310 asserts it). Both green now.
+
+**contextmenu and CacheStorage are REAL divergences, not parity.** Measured
+against PW's own shipped `webkit-2336` on 2026-08-19:
+
+```
+CONTEXTMENU_EVENTS=["mousedown","contextmenu","mouseup"]
+CACHESTORAGE_PERSISTENT_AFTER_RELOAD="payload"
+```
+
+Ours gives `["mousedown","contextmenu"]` and `null`. So both fail on OUR build
+and pass on upstream's. Two earlier verdicts are retracted:
+- yury-s's 2023 "WebKit fires 2 events, consistent with Safari, expected
+  behavior" (#26515) is **stale** — WebKit changed since.
+- PW #41618's fix PR #41647 was **never merged** (`merged: false`) while the
+  test PR #41701 merged 2 seconds before the issue closed — yet upstream passes
+  anyway, so the fix turned out to be unnecessary for their build, not skipped.
+
+Neither is a skip candidate. Our base `4d05d732` is NEWER than the `343e13bf`
+PW builds from, so both look like regressions introduced upstream between late
+April and mid June — or musl. Next step is a source diff across that window;
+the runtime pre/post A/B is impossible ([[wk_premove_build_needs_old_pw]]).
+
+**Now inert on the new base** (guards self-disabled, do not credit them):
+`patch_page_snapshot_format` (base carries `Page.ImageFormat`) and
+`patch_certificate_subject_summary`. Still live: `closePage`, `setLanguages`,
+orientation, WebRTC, download-destination, and the new webp block.
+
+Still open and unchanged: camera and microphone x4 (genuine build gap).
+
+**Update 2026-08-21.** Reds down to 6 (17/20 shards). Upstream annotations and
+the glibc control now decide each cluster — see
+[[project_pw_test_annotations_shape_conformance]]: camera/mic ×4 is a host-gated
+`it.skip` we cannot inherit; persistent CacheStorage and contextmenu order are
+ours, with the WebKit base exonerated by probing PW's own r2336 and r2349.
+WebKit was NOT promoted (jean: hold until the 6 go green); `wk-latest` still
+points at the old build, this one is `wk-sha-7ba6866b…` / `wk-edge`.
+
+## Update 2026-08-21 — root causes, all three measured
+
+Three-arm probe (`wk-conformance-residuals-probe.yml`: ours + PW's r2336 + PW's
+r2355, one script, one job). **PW main ships r2355 built from `4d05d732`, our
+exact base, and our patch pin is newer than PW's last `browser_patches` roll
+(2026-07-24)** — so base and patch series are both exonerated and every red is
+ours. Six reds: camera/mic ×4, CacheStorage-across-reload, contextmenu order.
+
+- **camera/mic ×4 — delivery, not capability.** `strings` on our own
+  `libWPEWebKit` shows `GStreamerMockDeviceProvider`, both mock GStreamer
+  sources and every `Mock audio device N`. And with the setting actually
+  delivered (a *persistent* launch + `--features=MockCaptureDevices`) our build
+  returns all six devices and live audio+video tracks, byte-for-byte what
+  upstream returns. So no rebuild helps: the mock centre is compiled, works, and
+  is simply never switched on for normal-context pages
+  ([[project_wk_minibrowser_no_startup_window]]). Runtime symptom is
+  `Audio capture was requested but no device was found amongst 0 devices`, a
+  line upstream never prints. **Still open: what turns it on upstream.** Not the
+  client (the shipped `playwright-core@1.62.1` bundle sends exactly seven
+  `Page.overrideSetting` calls, none of them this one), not `bootstrap.diff`, not
+  a launch arg, and not the compiled default (PW's own binary prints
+  `- MockCaptureDevices` too).
+- **CacheStorage — `put()` is a silent no-op.** After `await cache.put()`
+  resolves, `cache.keys()` is `[]` on ours and `["/meta"]` upstream, and 3s of
+  polling never fills it. Nothing is stored, so nothing is "lost across the
+  reload" — the reload and the disk were both red herrings: our persistent
+  profile tree is structurally identical to upstream's (same `Version 16/salt`,
+  `cacheslist`, `origin`, `salt`; neither writes a record file). The same code
+  works in an ephemeral context.
+- **contextmenu — WebKit ACKs the release and drops it.** `pw:protocol` shows
+  the driver sending `{"id":95,"type":"up","button":"right"}`, the browser
+  answering `{"result":{}}`, and no DOM `mouseup` ever reaching the page. Not
+  the driver, not transport. A press and release separated by 500ms delivers the
+  full correct `["mousedown","contextmenu","mouseup"]`, so it is a race, not a
+  missing capability. `WebContextMenuProxyWPE::showContextMenuWithItems` is
+  `notImplemented()` on WPE (menu never shows *or dismisses*) — but that is
+  identical upstream, so it is not the cause on its own.
+
+**Retracted leads, do not re-raise:** `ENABLE_CONTEXT_MENUS` (globally
+`PRIVATE ON`, already on in our build), the persistent `WebsiteDataStore` path
+(tree matches upstream), WPEPlatform / `DEVELOPER_MODE` (PW's own r2336 ships
+libwpe+fdo, the same legacy path we build), and patching the preference default
+(PW's binary has the same default).
+
+**Rebuild economics:** a WebKit rebuild is ~10h, so any source patches these
+need get batched into ONE build, never one per cluster.
