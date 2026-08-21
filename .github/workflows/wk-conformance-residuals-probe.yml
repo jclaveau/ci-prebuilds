@@ -192,8 +192,14 @@ jobs:
           # Whether the driver ever sent the release, and whether the browser
           # answered it, is the whole contextmenu question: a release absent
           # here was never sent, one present with no response was dropped.
-          grep -aoE '"method":"Input\.dispatchMouseEvent","params":\{"type":"[a-z]+","[^}]*"button":"[a-z]+"' /tmp/ours.log \
+          grep -aoE 'Input\.dispatchMouseEvent","params":\{[^}]*\}' /tmp/ours.log \
             | head -30 || echo 'no dispatchMouseEvent frames in the protocol log'
+          echo '### console events the page reported (ours)'
+          # The release is ACKed with {"result":{}} and no mouseup ever reaches
+          # the page, so the count of console events beside the acks is the
+          # evidence that WebKit accepted the event and dropped it.
+          grep -aoE 'Console\.messageAdded[^}]*' /tmp/ours.log | head -12 \
+            || echo 'no console events in the protocol log'
           # GStreamerCaptureDeviceManager names the branch it took. "Could not
           # start device monitor" means no provider matched the filters;
           # "Refreshing capture devices" followed by nothing means the mock
@@ -230,13 +236,19 @@ jobs:
             ARM_LABEL="${arm} · pw ${resolved} · webkit r${rev}" \
             PW_MODULE="${GITHUB_WORKSPACE}/arms/${arm}/node_modules/playwright" \
             GST_DEBUG=webkitcapturedevicemanager:6 \
-            DEBUG=pw:browser \
-              node scripts/probe-webkit-conformance-residuals.cjs 2>&1 | tee "/tmp/${arm}.log"
+            DEBUG=pw:browser,pw:protocol \
+              node scripts/probe-webkit-conformance-residuals.cjs > "/tmp/${arm}.log" 2>&1
+            grep -a PROBE_RESULT "/tmp/${arm}.log"
             # The same log from a build that DOES enumerate devices is the
             # control: it shows which lines ours never reaches.
             echo "### capture device manager log (${arm})"
-            grep -aiE 'capturedevicemanager|device monitor|Refreshing capture' "/tmp/${arm}.log" | head -40 \
+            grep -aiE 'device monitor|Refreshing capture' "/tmp/${arm}.log" | head -12 \
               || echo "the capture device manager logged nothing"
+            # The same wire from a build that delivers the release: ours ACKs it
+            # and drops it, so what upstream does differently is the fix.
+            echo "### mouse events on the wire (${arm})"
+            grep -aoE 'Input\.dispatchMouseEvent","params":\{[^}]*\}' "/tmp/${arm}.log" | head -12 \
+              || echo "no dispatchMouseEvent frames"
           done
 
       - name: Keep the full probe logs

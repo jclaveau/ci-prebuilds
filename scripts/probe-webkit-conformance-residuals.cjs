@@ -109,29 +109,7 @@ async function probeCacheStoragePersistence(base) {
   try {
     const page = context.pages()[0] || await context.newPage();
     await page.goto(base);
-    await page.evaluate// The mirror of the flag probe: turn the feature OFF. On an arm that shows mock
-// devices by default, this settles whether --features reaches a PW-created page
-// at all — if the devices vanish the settings object does reach them, and our
-// own empty list under the same flag means the build cannot produce mock
-// devices; if they survive, something other than the settings object enables
-// the mock centre and that is what we still have to find.
-async function probeCaptureDevicesWithMockDisabled(base) {
-  const browser = await webkit.launch({ args: ['--features=!MockCaptureDevices'] });
-  try {
-    const context = await browser.newContext();
-    await context.grantPermissions(['camera', 'microphone'], { origin: new URL(base).origin });
-    const page = await context.newPage();
-    await page.goto(base);
-    const granted = await getUserMedia(page, { video: true, audio: true });
-    record('capture-with-mock-disabled',
-      granted.tracks ? 'INFO' : 'EMPTY', JSON.stringify(granted));
-    await context.close();
-  } finally {
-    await browser.close();
-  }
-}
-
-(async () => {
+    await page.evaluate(async () => {
       const cache = await caches.open('repro-cache');
       await cache.put('/meta', new Response('payload'));
     });
@@ -140,11 +118,38 @@ async function probeCaptureDevicesWithMockDisabled(base) {
     // landed just as well as one that landed and was lost. This separates them.
     const before = await page.evaluate(async () => {
       const cache = await caches.open('repro-cache');
-      const resp = await cache.match('/meta');
-      return resp ? await resp.text() : null;
+      // Poll rather than read once: a write that lands late and one that never
+      // lands are the same single read, and only one of them is a race.
+      for (let attempt = 0; attempt < 30; attempt++) {
+        const resp = await cache.match('/meta');
+        if (resp) {
+          return { value: await resp.text(), attempt };
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      return { value: null, attempt: -1 };
     });
     record('cachestorage-before-reload',
-      before === 'payload' ? 'PASS' : 'FAIL', JSON.stringify(before));
+      before.value === 'payload' ? 'PASS' : 'FAIL', JSON.stringify(before));
+    // cache.keys() is the cache's own index, a sharper question than
+    // caches.keys(): the request listed with no readable response puts the
+    // failure on the body, an empty index puts it on the put().
+    const stored = await page.evaluate(async () => {
+      const cache = await caches.open('repro-cache');
+      const requests = await cache.keys();
+      return requests.map(request => new URL(request.url).pathname);
+    });
+    record('cachestorage-cache-index', stored.length ? 'INFO' : 'EMPTY',
+      JSON.stringify(stored));
+    // A persistent origin computes its quota from the filesystem, an ephemeral
+    // one from memory — which is the one structural difference between the
+    // context that fails and the context that works. A zero quota would evict
+    // every record silently and leave put() resolving happily.
+    const estimate = await page.evaluate(() => navigator.storage.estimate()
+      .then(e => ({ quota: e.quota, usage: e.usage }))
+      .catch(e => ({ error: String(e) })));
+    record('cachestorage-storage-estimate', estimate.quota ? 'INFO' : 'ZERO',
+      JSON.stringify(estimate));
     // Same split as the ephemeral probe, against the store that actually
     // fails: a listed cache with no readable entry is a record write, an
     // empty list is the container itself.
@@ -220,6 +225,28 @@ async function getUserMedia(page, constraints) {
       return { error: error.name, constraint: error.constraint };
     }
   }, constraints);
+}
+
+// The mirror of the flag probe: turn the feature OFF. On an arm that shows mock
+// devices by default, this settles whether --features reaches a PW-created page
+// at all — if the devices vanish the settings object does reach them, and our
+// own empty list under the same flag means the build cannot produce mock
+// devices; if they survive, something other than the settings object enables
+// the mock centre and that is what we still have to find.
+async function probeCaptureDevicesWithMockDisabled(base) {
+  const browser = await webkit.launch({ args: ['--features=!MockCaptureDevices'] });
+  try {
+    const context = await browser.newContext();
+    await context.grantPermissions(['camera', 'microphone'], { origin: new URL(base).origin });
+    const page = await context.newPage();
+    await page.goto(base);
+    const granted = await getUserMedia(page, { video: true, audio: true });
+    record('capture-with-mock-disabled',
+      granted.tracks ? 'INFO' : 'EMPTY', JSON.stringify(granted));
+    await context.close();
+  } finally {
+    await browser.close();
+  }
 }
 
 async function probeCaptureDevices(base) {
