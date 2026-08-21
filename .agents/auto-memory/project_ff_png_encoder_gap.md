@@ -1,6 +1,6 @@
 ---
 name: project_ff_png_encoder_gap
-description: musl Firefox emits PNGs 1.50x larger and 1.31x slower than PW's official build from a byte-identical bitmap — system libpng/zlib, not musl or PGO
+description: RESOLVED — musl Firefox's 1.50x-larger PNGs were Alpine's system libpng/zlib; bundling Mozilla's copies makes the canvas control byte- and sha-identical to official
 metadata:
   type: project
 ---
@@ -31,8 +31,27 @@ already matches the reference byte-for-byte.
 Secondary: aports enables PGO inside its APKBUILD `build()`, which we never run —
 see the note in `firefox/mozconfig.overlay`. Our FF is LTO-but-not-PGO.
 
-**How to apply:** arm `perf/firefox-bundled-imaging` (run 32462261885) drops the
-two lines. Decisive readout = the canvas control's PNG byte count: near 26801 B
-means the encoder was the cause; still ~40150 B means it wasn't, and PGO is next.
-Bundling fights this repo's system-lib/dedup direction, so it is an experiment,
-not a decided fix. See [[project_ff_build_two_pass_cbindgen]].
+**RESOLVED 2026-08-21** — arm `perf/firefox-bundled-imaging` (build 32462261885,
+diagnosis 32481799551) deletes the two mozconfig lines. The canvas control goes
+**40150 B → 26801 B with sha 2768ce17d3c727d9, byte-identical to official**, and
+its 0.76x timing — the only significant row in the control run — becomes n.s.
+The encoder was the whole cause; PGO is not implicated in the size and no longer
+needs to be tried for it.
+
+| case | control (system) | arm (bundled) | official |
+|---|---|---|---|
+| png_canvas_control | 40150 B | **26801 B, same sha** | 26801 B |
+| png_viewport | 25018 B | 12188 B | 10875 B |
+
+`png_viewport` cannot reach parity — the page uses distro fonts, so the bitmaps
+genuinely differ — but it drops from 2.30x official's size to 1.12x.
+
+Cost: **+122,670 B compressed** (136.5 → 136.6 MiB), and conformance-firefox
+stayed 20/20 with conformance-runtime-parity green.
+
+**How to apply:** bundling fights this repo's system-lib/dedup direction, so
+whether to land it is the user's call, not a foregone conclusion — the evidence
+is in, the decision is not. The measurement recipe generalises: for any
+"our output bytes differ" question, use the canvas control (identical JPEG sha
+proves the bitmap is shared) and read the byte count, never the timing.
+See [[project_ff_build_two_pass_cbindgen]], [[feedback_prove_the_lever_is_connected]].
