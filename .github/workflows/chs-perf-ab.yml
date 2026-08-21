@@ -43,7 +43,10 @@ on:
         type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Suffixed by the pair under test: two comparisons off the same ref are
+  # independent questions, and a shared group would make the second dispatch
+  # cancel the first.
+  group: ${{ github.workflow }}-${{ inputs.label_a }}-${{ inputs.label_b }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
