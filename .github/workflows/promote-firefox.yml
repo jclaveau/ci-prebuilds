@@ -1,0 +1,184 @@
+name: Promote firefox → ff-<rev>
+
+# Promotes an ALREADY-BUILT musl Firefox artifact (sha-<sha> / edge) to the
+# canonical consumer tags ff-<rev> / ff-<version> / ff-latest on both GHCR and
+# Docker Hub — a pure imagetools retag, NO rebuild.
+#
+# The producer has its own promote-firefox job, but it is gated on
+# `push && ref == refs/heads/main`, so a Firefox built and fully conformed on a
+# feature branch can never ship without merging first. This is that missing
+# path, with the same guarantees spelled out as pre-flights rather than
+# inherited through `needs:`.
+#
+# Mirrors promote-chromium-from-source.yml deliberately: same three pre-flights,
+# same failure modes already paid for once.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: Existing firefox image tag to promote (e.g. edge or sha-<sha>)
+        default: edge
+        type: string
+      pw_version:
+        description: Playwright version whose firefox revision/version tags to write
+        default: '1.62.1'
+        type: string
+      conformance_run_id:
+        description: Run id of the conformance run that passed for THIS image (its head sha must match the image's revision label)
+        required: true
+        type: string
+
+concurrency:
+  group: promote-firefox
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Resolve the revision Playwright pins
+        id: pins
+        env:
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://unpkg.com/playwright-core@${PW}/browsers.json" -o /tmp/browsers.json
+          REV=$(jq -r '.browsers[] | select(.name == "firefox") | .revision' /tmp/browsers.json)
+          PW_VER=$(jq -r '.browsers[] | select(.name == "firefox") | .browserVersion' /tmp/browsers.json)
+          [ -n "$REV" ] && [ "$REV" != "null" ] \
+            || { echo "::error::failed to resolve the firefox revision for PW ${PW}"; exit 1; }
+          echo "rev=$REV" >> "$GITHUB_OUTPUT"
+          echo "pw_ver=$PW_VER" >> "$GITHUB_OUTPUT"
+          echo "PW ${PW} → firefox rev=${REV}, browsers.json says version=${PW_VER}"
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Pre-flight — source image must exist
+        env:
+          SRC: ghcr.io/jclaveau/playwright-alpine-browsers:${{ inputs.source_tag }}
+        run: |
+          set -euo pipefail
+          docker manifest inspect "$SRC" >/dev/null \
+            || { echo "::error::source image $SRC not found on GHCR"; exit 1; }
+          echo "source OK: $SRC"
+
+      # The version tag comes from the BINARY, never from browsers.json. Deriving
+      # it from Playwright's pin is exactly how `ff-150.0.2` came to name a
+      # Firefox 147.0.1 build: for some releases browsers.json and the
+      # UPSTREAM_CONFIG revision name different versions, and we build from
+      # aports rather than from Playwright's mirror, so neither is authoritative
+      # about what is actually inside this image.
+      - name: Pre-flight — read the version off the shipped binary
+        id: binary
+        env:
+          SRC: ghcr.io/jclaveau/playwright-alpine-browsers:${{ inputs.source_tag }}
+        run: |
+          set -euo pipefail
+          # The artifact is FROM scratch, so borrow a shell and the runtime libs
+          # the consumer image supplies (playwright/Dockerfile.alpine's set).
+          cat > /tmp/Dockerfile.verify <<EOF
+          FROM alpine:edge
+          RUN apk update && apk add --no-cache \\
+              ca-certificates font-opensans ttf-freefont \\
+              alsa-lib dbus-libs fontconfig glib gtk+3.0 harfbuzz \\
+              libdrm libevent libffi libjpeg-turbo libnotify libogg libtheora \\
+              libvorbis libvpx libwebp libwebpdemux libxcomposite libxt mesa-gl \\
+              nspr nss pipewire-libs libpulse libstdc++ libgcc \\
+              gstreamer gst-plugins-base gst-plugins-good gst-libav \\
+              opus libsecret libxslt double-conversion minizip crc32c
+          COPY --from=${SRC} /firefox /opt/firefox
+          EOF
+          docker build -t ff-promote-verify:${{ github.run_id }} -f /tmp/Dockerfile.verify /tmp
+          OUT=$(docker run --rm ff-promote-verify:${{ github.run_id }} /opt/firefox/firefox --version 2>&1)
+          echo "firefox --version output:"
+          echo "$OUT"
+          # "Mozilla Firefox 153.0" → 153.0
+          VER=$(echo "$OUT" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+          [ -n "$VER" ] \
+            || { echo "::error::could not read a version out of '$OUT'"; exit 1; }
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+
+      # Not fatal: we build Firefox from aports, so the shipped version can
+      # legitimately differ from the one Playwright's mirror carries. It is
+      # logged because a SILENT divergence is what produced the mislabelled tag.
+      - name: Note any divergence from Playwright's pin
+        env:
+          BIN_VER: ${{ steps.binary.outputs.ver }}
+          PW_VER: ${{ steps.pins.outputs.pw_ver }}
+        run: |
+          set -euo pipefail
+          if [ "$BIN_VER" != "$PW_VER" ]; then
+            echo "::warning::shipping firefox ${BIN_VER}, playwright-core pins ${PW_VER} — tagging as ${BIN_VER}"
+          else
+            echo "binary and playwright-core agree: ${BIN_VER}"
+          fi
+
+      # A run can conclude `success` with every conformance job skipped, and a
+      # passing conformance run for a DIFFERENT build says nothing about this
+      # one — so check the jobs, and tie the run to the artifact by sha.
+      - name: Pre-flight — conformance must have passed for this exact image
+        env:
+          SRC: ghcr.io/jclaveau/playwright-alpine-browsers:${{ inputs.source_tag }}
+          RUN_ID: ${{ inputs.conformance_run_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          HEAD_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" -q .head_sha)
+          echo "conformance run ${RUN_ID} ran on ${HEAD_SHA}"
+
+          # Anchored and firefox-only: sibling browsers this run never built
+          # report `skipped`, and demanding all-success across every conformance
+          # job would reject them as if they had failed.
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs?per_page=100" \
+            -q '.jobs[]
+                | select(.name | test("^conformance-firefox"))
+                | "\(.conclusion)\t\(.name)"' > /tmp/conf-jobs.txt
+          cat /tmp/conf-jobs.txt
+          [ -s /tmp/conf-jobs.txt ] \
+            || { echo "::error::run ${RUN_ID} ran no firefox conformance job"; exit 1; }
+          if grep -qvE '^success\b' /tmp/conf-jobs.txt; then
+            echo "::error::run ${RUN_ID} has firefox conformance jobs that did not succeed"
+            exit 1
+          fi
+          echo "firefox conformance: $(wc -l < /tmp/conf-jobs.txt) jobs, all success"
+
+          IMG_SHA=$(docker buildx imagetools inspect "$SRC" --format '{{ json .Image }}' \
+            | jq -r '[.. | objects | ."org.opencontainers.image.revision"? // empty] | first // empty')
+          [ -n "$IMG_SHA" ] \
+            || { echo "::error::$SRC carries no org.opencontainers.image.revision label"; exit 1; }
+          [ "$IMG_SHA" = "$HEAD_SHA" ] \
+            || { echo "::error::$SRC was built from ${IMG_SHA}, but run ${RUN_ID} tested ${HEAD_SHA}"; exit 1; }
+          echo "conformance OK: run ${RUN_ID} passed on the sha this image was built from"
+
+      - name: Promote firefox → ff-<rev> (GHCR + Docker Hub)
+        env:
+          SRC: ghcr.io/jclaveau/playwright-alpine-browsers:${{ inputs.source_tag }}
+          REV: ${{ steps.pins.outputs.rev }}
+          VER: ${{ steps.binary.outputs.ver }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t "ghcr.io/jclaveau/playwright-alpine-browsers:ff-${REV}" \
+            -t "ghcr.io/jclaveau/playwright-alpine-browsers:ff-${VER}" \
+            -t ghcr.io/jclaveau/playwright-alpine-browsers:ff-latest \
+            -t "jclaveau/playwright-alpine-browsers:ff-${REV}" \
+            -t "jclaveau/playwright-alpine-browsers:ff-${VER}" \
+            -t jclaveau/playwright-alpine-browsers:ff-latest \
+            "$SRC"
+          echo "::notice::promoted $SRC → ff-${REV} / ff-${VER} / ff-latest"
