@@ -49,6 +49,39 @@ const ok = (cond, msg) => { if (!cond) { console.error('FAIL:', msg); process.ex
   const png = await page.screenshot();
   ok(png && png.length > 100, `page.screenshot returned ${png?.length} bytes`);
 
+  // Regression: the right-click release must reach the page.
+  //
+  // Mirrors tests/page/page-click.spec.ts:1203 'should fire contextmenu event
+  // on right click in correct order' (microsoft/playwright#26515), which every
+  // non-Windows-chromium browser is expected to pass:
+  //
+  //     await expect.poll(() => entries).toEqual(['mousedown', 'contextmenu', 'mouseup'])
+  //
+  // We emitted only ['mousedown', 'contextmenu']. WebPageProxy::showContextMenu
+  // calls discardQueuedMouseEvents(), whose own comment says it drops events
+  // "if we take too long to enter the nested runloop" — and locator.click()
+  // PIPELINES move/down/up, so our release is already queued when
+  // ShowContextMenu arrives and gets discarded. Sending the same three events
+  // awaited one at a time passes, which is why this uses click(): only the
+  // pipelined shape reproduces it.
+  await page.setContent('<button id="target">Click me</button>');
+  await page.evaluate(() => {
+    const logEvent = e => console.log(e.type);
+    document.addEventListener('mousedown', logEvent);
+    document.addEventListener('mouseup', logEvent);
+    document.addEventListener('contextmenu', logEvent);
+  });
+  const mouseEvents = [];
+  page.on('console', message => mouseEvents.push(message.text()));
+  await page.getByRole('button', { name: 'Click me' }).click({ button: 'right' });
+  // A dropped event never arrives late, but poll anyway so a slow runner
+  // reports the real order rather than a truncated one.
+  for (let attempt = 0; attempt < 30 && mouseEvents.length < 3; attempt++) {
+    await page.waitForTimeout(100);
+  }
+  ok(JSON.stringify(mouseEvents) === JSON.stringify(['mousedown', 'contextmenu', 'mouseup']),
+    `right click event order (got: ${JSON.stringify(mouseEvents)})`);
+
   await browser.close();
   console.log('smoke OK');
 })().catch(e => { console.error(e); process.exit(1); });
