@@ -247,3 +247,27 @@ log is the thing still missing.
 Sparse clone kept at `/home/jean/dev/.webkit-grep` (Source/WebKit + the
 mediastream/mock/cache/page dirs at 4d05d732) for the next round.
 
+## Patches in flight (branch `fix/webkit-residual-patches`, build 32476690483)
+
+Three `patch_*` functions in `webkit/scripts/prep-source.sh`, each asserting it
+applied so a bad anchor fails in source-prep rather than hours into compiling:
+
+- `patch_keep_synthetic_mouse_events` — **FIX**. Guards
+  `discardQueuedMouseEvents()` in `showContextMenu` with
+  `if (!m_controlledByAutomation)`. Witness: right-click event order in
+  `webkit/smoke/launch.cjs`, red on the current artifact.
+- `patch_mock_capture_for_automation` — **FIX**. `mockCaptureDevicesEnabled()`
+  returns true for automation-controlled pages, and `syncWithWebCorePrefs` now
+  calls that accessor instead of duplicating the expression. Witness:
+  `getUserMedia` returning audio+video in smoke. NOTE it is user-visible for
+  every consumer driving our WebKit — mock devices appear where none did — which
+  is upstream parity, not divergence, but it IS a behaviour change.
+- `patch_log_dropped_cache_records` — **DIAGNOSTIC, not a fix**. `RELEASE_LOG`
+  at both silent `continue`s in `readAllRecordInfosInternal`, tagged
+  `ALPINE-DIAG`. No witness, because it asserts nothing; do NOT read a green
+  build as validating it. Grep the smoke/conformance logs for `ALPINE-DIAG` to
+  learn whether the record is unreadable or undecodable.
+
+PRs: #97 (WPE clone pins, open question tags-vs-commits), #98 (contextmenu fix).
+`fix/webkit-residual-patches` is stacked on #98 and has NO PR yet.
+
