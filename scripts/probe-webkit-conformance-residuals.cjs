@@ -249,6 +249,40 @@ async function probeCaptureDevicesWithMockDisabled(base) {
   }
 }
 
+// MEASURED: --features reaches no PW-created page on either side, because PW
+// passes --no-startup-window for every non-persistent launch and MiniBrowser's
+// activate() returns on that flag before webkit_settings_new_with_settings()
+// is ever built. A persistent launch passes --user-data-dir instead, so
+// activate() runs to completion and the flag does reach the page it creates.
+//
+// That makes this the one launch shape that can answer whether our build is
+// able to produce mock devices at all. Devices here mean the capability is
+// present and only the delivery of the setting is missing; still nothing means
+// the build cannot do it, and those need different fixes.
+async function probeCaptureDevicesPersistentWithFlag(base) {
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'wk-capture-'));
+  const context = await webkit.launchPersistentContext(profile, {
+    args: ['--features=MockCaptureDevices'],
+  });
+  try {
+    await context.grantPermissions(['camera', 'microphone'], { origin: new URL(base).origin });
+    const page = context.pages()[0] || await context.newPage();
+    await page.goto(base);
+    const granted = await getUserMedia(page, { video: true, audio: true });
+    record('capture-persistent-with-flag',
+      granted.tracks ? 'PASS' : 'FAIL', JSON.stringify(granted));
+    const labels = await page.evaluate(async () => {
+      const list = await navigator.mediaDevices.enumerateDevices();
+      return list.map(device => `${device.kind}:${device.label}`);
+    });
+    record('capture-persistent-labels', labels.length ? 'INFO' : 'EMPTY',
+      JSON.stringify(labels));
+  } finally {
+    await context.close();
+    fs.rmSync(profile, { recursive: true, force: true });
+  }
+}
+
 async function probeCaptureDevices(base) {
   const origin = new URL(base).origin;
   const browser = await webkit.launch();
@@ -376,6 +410,11 @@ async function probeCaptureDevicesWithMockFeature(base) {
     await probeCaptureDevicesWithMockDisabled(base);
   } catch (e) {
     record('capture-with-mock-disabled', 'ERROR', String(e && e.message || e).split('\n')[0]);
+  }
+  try {
+    await probeCaptureDevicesPersistentWithFlag(base);
+  } catch (e) {
+    record('capture-persistent-with-flag', 'ERROR', String(e && e.message || e).split('\n')[0]);
   }
   server.close();
 
