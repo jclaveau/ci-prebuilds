@@ -167,7 +167,7 @@ skia_use_dawn = false
 use_dawn = false
 
 # More aports-aligned defaults that headless_shell doesn't conflict with:
-# EXPERIMENT (perf/chromium-pgo-1.62): chromium's own default for our config
+# EXPERIMENT (perf/chromium-pgo-thinlto-1.62), knob 1 of 2: chromium's own default for our config
 # (is_official_build && !dcheck_always_on && is_linux) is ALREADY 2 -- see
 # build/config/compiler/pgo/pgo.gni -- so this line is what keeps PGO off, not
 # an absence of support. The profile is a plain public download; apply-and-build
@@ -178,7 +178,18 @@ enable_vr = false                          # no VR/XR
 disable_fieldtrial_testing_config = true   # skip field-trial test configs
 enable_nocompile_tests = false             # no nocompile testing
 is_cfi = false                             # CFI off (no IFUNC support on alpine clang)
-use_thin_lto = false                       # aports same; is_official_build would default it ON
+# EXPERIMENT (perf/chromium-pgo-thinlto-1.62), knob 2 of 2. Measured
+# separately against PW official each knob closed about a third of the
+# gap -- baseline 1.42 geomean, PGO 1.28, ThinLTO 1.31 -- and neither
+# reached parity. They have never been built together, which is also the
+# only configuration that matches what official actually ships. If the
+# effects are independent this lands near 1.2 and the remaining ~20% is
+# something else; if it lands near 1.0 the two were addressing the same
+# missed optimizations from different directions.
+#
+# is_official_build would default this ON; aports turns it off. Both
+# arms cost about +10% build time on their own.
+use_thin_lto = true
 fatal_linker_warnings = false              # match aports — alpine's lld trips a few warnings
 safe_browsing_use_unrar = false            # no unrar (we don't ship)
 
