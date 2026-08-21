@@ -109,7 +109,29 @@ async function probeCacheStoragePersistence(base) {
   try {
     const page = context.pages()[0] || await context.newPage();
     await page.goto(base);
-    await page.evaluate(async () => {
+    await page.evaluate// The mirror of the flag probe: turn the feature OFF. On an arm that shows mock
+// devices by default, this settles whether --features reaches a PW-created page
+// at all — if the devices vanish the settings object does reach them, and our
+// own empty list under the same flag means the build cannot produce mock
+// devices; if they survive, something other than the settings object enables
+// the mock centre and that is what we still have to find.
+async function probeCaptureDevicesWithMockDisabled(base) {
+  const browser = await webkit.launch({ args: ['--features=!MockCaptureDevices'] });
+  try {
+    const context = await browser.newContext();
+    await context.grantPermissions(['camera', 'microphone'], { origin: new URL(base).origin });
+    const page = await context.newPage();
+    await page.goto(base);
+    const granted = await getUserMedia(page, { video: true, audio: true });
+    record('capture-with-mock-disabled',
+      granted.tracks ? 'INFO' : 'EMPTY', JSON.stringify(granted));
+    await context.close();
+  } finally {
+    await browser.close();
+  }
+}
+
+(async () => {
       const cache = await caches.open('repro-cache');
       await cache.put('/meta', new Response('payload'));
     });
@@ -144,11 +166,13 @@ async function probeCacheStoragePersistence(base) {
   // process still holds has been flushed. Whether the entry reached disk at all
   // separates a data store that never persisted from one that persisted and
   // then failed to be read back.
-  const onDisk = fs.readdirSync(profile, { recursive: true })
-    .map(String)
-    .filter(entry => /cache/i.test(entry));
-  record('cachestorage-on-disk', onDisk.length ? 'INFO' : 'EMPTY',
-    JSON.stringify(onDisk.slice(0, 12)));
+  const onDisk = fs.readdirSync(profile, { recursive: true }).map(String).sort();
+  record('cachestorage-on-disk-count', onDisk.length ? 'INFO' : 'EMPTY', String(onDisk.length));
+  // The whole tree, not the paths matching /cache/. The record file is exactly
+  // what neither listing showed, and nothing says its name carries the word —
+  // so the earlier filter could not have found it either way. Diffing the full
+  // trees names the file upstream writes and we do not.
+  record('cachestorage-on-disk', 'INFO', JSON.stringify(onDisk));
   fs.rmSync(profile, { recursive: true, force: true });
 }
 
@@ -320,6 +344,11 @@ async function probeCaptureDevicesWithMockFeature(base) {
     await probeCaptureDevicesWithMockFeature(base);
   } catch (e) {
     record('capture-with-mock-feature-flag', 'ERROR', String(e && e.message || e).split('\n')[0]);
+  }
+  try {
+    await probeCaptureDevicesWithMockDisabled(base);
+  } catch (e) {
+    record('capture-with-mock-disabled', 'ERROR', String(e && e.message || e).split('\n')[0]);
   }
   server.close();
 

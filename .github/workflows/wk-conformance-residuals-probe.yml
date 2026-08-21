@@ -140,6 +140,19 @@ jobs:
       # and it answers an unknown name with a stderr line and carries on — which
       # reads exactly like a flag that had no effect. Kept so a rename upstream
       # shows up as a changed dump rather than as a silently inert flag.
+      # PW's own libWPEWebKit carries "Mock audio device 1" and the mock
+      # GStreamer sources. Whether ours does splits the camera cluster in two:
+      # present means the mock centre is merely switched off at runtime, absent
+      # means mock capture was never compiled and only a rebuild can fix it.
+      - name: Check whether our libWPEWebKit carries the mock capture sources
+        continue-on-error: true
+        run: |
+          docker run --rm --entrypoint sh "wkresiduals:${{ github.run_id }}" -c '
+            lib=$(find /ms-playwright/webkit-${{ inputs.artifact_rev }}/minibrowser-wpe               -name "libWPEWebKit-*.so.*" -type f | head -1)
+            echo "lib=$lib"
+            strings -a "$lib" | grep -aiE "Mock audio device|Mock video device|MockRealtime(Audio|Video)SourceGStreamer|MockDeviceProvider"               | sort -u | head -12 || echo "NO mock capture strings in our libWPEWebKit"
+          '
+
       - name: List the MiniBrowser feature identifiers matching mock/capture
         continue-on-error: true
         run: |
@@ -167,17 +180,28 @@ jobs:
             -e WEBKIT_FORCE_SANDBOX=0 \
             -e NODE_PATH=/usr/local/lib/node_modules:/usr/lib/node_modules \
             -e GST_DEBUG=webkitcapturedevicemanager:6 \
-            -e DEBUG=pw:browser \
+            -e DEBUG=pw:browser,pw:protocol \
             -v "$PWD/scripts:/probe:ro" \
             "wkresiduals:${{ github.run_id }}" \
-            node /probe/probe-webkit-conformance-residuals.cjs 2>&1 | tee /tmp/ours.log
+            node /probe/probe-webkit-conformance-residuals.cjs > /tmp/ours.log 2>&1 \
+            || { echo 'the probe container exited non-zero; last 80 lines:'; tail -80 /tmp/ours.log; exit 1; }
+          # pw:protocol is far too noisy to stream, so the full log goes up as an
+          # artifact and only the answers are printed here.
+          grep -a PROBE_RESULT /tmp/ours.log
+          echo '### mouse events on the wire (dispatchMouseEvent, in order)'
+          # Whether the driver ever sent the release, and whether the browser
+          # answered it, is the whole contextmenu question: a release absent
+          # here was never sent, one present with no response was dropped.
+          grep -aoE '"method":"Input\.dispatchMouseEvent","params":\{"type":"[a-z]+","[^}]*"button":"[a-z]+"' /tmp/ours.log \
+            | head -30 || echo 'no dispatchMouseEvent frames in the protocol log'
           # GStreamerCaptureDeviceManager names the branch it took. "Could not
           # start device monitor" means no provider matched the filters;
           # "Refreshing capture devices" followed by nothing means the mock
           # provider declined to probe, which is the mock centre being off.
           echo '### capture device manager log (ours)'
-          grep -aiE 'capturedevicemanager|device monitor|Refreshing capture' /tmp/ours.log | head -40 \
+          grep -aiE 'device monitor|Refreshing capture' /tmp/ours.log | head -20 \
             || echo 'the capture device manager logged nothing'
+
           awk -v arm="ours · ${IMAGE_REF##*:}" '
             $1 == "PROBE_RESULT" {
               detail = ""
@@ -187,6 +211,7 @@ jobs:
               printf "| %s | %s | %s | `%s` |\n", arm, $2, $3, detail
             }
           ' /tmp/ours.log >> "$GITHUB_STEP_SUMMARY"
+
 
       - name: Probe each upstream arm
         env:
@@ -213,3 +238,11 @@ jobs:
             grep -aiE 'capturedevicemanager|device monitor|Refreshing capture' "/tmp/${arm}.log" | head -40 \
               || echo "the capture device manager logged nothing"
           done
+
+      - name: Keep the full probe logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wk-residuals-logs-${{ github.run_id }}
+          path: /tmp/*.log
+          if-no-files-found: warn
