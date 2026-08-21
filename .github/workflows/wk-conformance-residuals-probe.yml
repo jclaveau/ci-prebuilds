@@ -45,6 +45,10 @@ on:
         description: npm version (or dist-tag) whose webkit build is the newer upstream arm
         default: 'next'
         type: string
+      probe_unstripped:
+        description: also probe our artifact with the stripped libs restored (the strip A/B)
+        default: true
+        type: boolean
 
 concurrency:
   group: wk-conformance-residuals-probe-${{ github.ref }}
@@ -250,6 +254,49 @@ jobs:
             grep -aoE 'Input\.dispatchMouseEvent","params":\{[^}]*\}' "/tmp/${arm}.log" | head -12 \
               || echo "no dispatchMouseEvent frames"
           done
+
+      # A/B on the consumer strip, not on WebKit. strip-bundled-libs.sh removes
+      # every bundled lib that has an apk twin — including libwpe and
+      # libWPEBackend-fdo, which own the view backend and its mouse events, and
+      # glib/gio, which the persistent store's file IO goes through. So the
+      # runner loads different libraries than WebKit was COMPILED against, while
+      # upstream builds and ships one set. Restoring the artifact's own lib
+      # directory over the stripped tree reverses the strip exactly, without
+      # re-deriving the apk list that build-runner.sh already owns.
+      - name: Probe our artifact with the bundled libs restored
+        if: inputs.probe_unstripped
+        env:
+          IMAGE_REF: ${{ inputs.image_ref }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/Dockerfile.unstripped <<DOCKERFILE
+          FROM wkresiduals:${{ github.run_id }}
+          COPY --from=${{ inputs.image_ref }} \
+            /webkit/minibrowser-wpe/lib/ \
+            /ms-playwright/webkit-${{ inputs.artifact_rev }}/minibrowser-wpe/lib/
+          DOCKERFILE
+          docker build -t wkunstripped:${{ github.run_id }} -f /tmp/Dockerfile.unstripped /tmp
+          docker run --rm \
+            --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+            --cap-add SYS_ADMIN --cap-add NET_ADMIN \
+            -e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
+            -e WEBKIT_FORCE_SANDBOX=0 \
+            -e NODE_PATH=/usr/local/lib/node_modules:/usr/lib/node_modules \
+            -e DEBUG=pw:browser \
+            -v "$PWD/scripts:/probe:ro" \
+            "wkunstripped:${{ github.run_id }}" \
+            node /probe/probe-webkit-conformance-residuals.cjs > /tmp/unstripped.log 2>&1 \
+            || { echo 'the unstripped probe exited non-zero; last 60 lines:'; tail -60 /tmp/unstripped.log; }
+          grep -a PROBE_RESULT /tmp/unstripped.log
+          awk -v arm="ours UNSTRIPPED" '
+            $1 == "PROBE_RESULT" {
+              detail = ""
+              for (i = 4; i <= NF; i++) {
+                detail = detail (i > 4 ? " " : "") $i
+              }
+              printf "| %s | %s | %s | `%s` |\n", arm, $2, $3, detail
+            }
+          ' /tmp/unstripped.log >> "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the full probe logs
         if: always()
