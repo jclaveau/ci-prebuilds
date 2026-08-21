@@ -30,3 +30,12 @@ ff-latest is patched either path — cold just costs ~3-4h vs ~10min.
 Confirms [[project_ff_prebuilt_base_pin_only_tag_staleness]] fix WORKS
 end-to-end (PR #81 merged 0baf9cec). [[feedback_watch_merge_push_run_not_dispatch]]
 [[project_ff_latest_stale_no_edge_tag]]
+
+**Consequence for unrelated edits under that path.** Because `build-firefox`
+fires on ANY push to main matching `playwright/alpine-browsers/**`, a change
+there that has no reason to build a browser — pinning a dependency, fixing a
+comment, editing a webkit-only script — still starts a ~2h (clean) / ~30min
+(hot) Firefox job. Put those on a branch + PR instead: every build job is
+label-gated on `pull_request`, so a PR costs nothing and the merge is a
+deliberate act. Used for PR #97 (the WPE clone pins).
+

@@ -149,3 +149,11 @@ leaving the `__attribute__((constructor))` fix inert in every runnable image.
 The libwpe clone is also `--depth=1` off master with no pin, so the build-time
 version is not reproducible.
 
+**Client parity confirmed on the wire, not inferred.** Both arms' `pw:protocol`
+logs carry the identical seven `Page.overrideSetting` calls — FullScreenEnabled,
+NotificationsEnabled, PointerLockEnabled, InputTypeMonth/WeekEnabled,
+FixedBackgroundsPaintRelativeToDocument, PushAPIEnabled — and neither ever sends
+`MockCaptureDevicesEnabled`. So upstream's mock centre is on without the
+inspector override, which closes the last client-side explanation by observation
+rather than by reading their bundle.
+
