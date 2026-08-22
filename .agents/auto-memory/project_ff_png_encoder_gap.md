@@ -72,3 +72,33 @@ report Firefox 153.0. Every earlier one was our 147.0.1 against official's
 Open: the full arm bundled BOTH libraries for +122,670 B. A libpng-only arm
 would presumably buy the same 13.3 kB saving per canvas shot for less image;
 not built, and landing any of it is still jean's call.
+
+**2026-08-22 — RETRACTED: the elimination was wrong.** The libpng-only arm
+(`perf/firefox-bundled-libpng`, run 32540949752) also came back at
+**40150 B**, sha `9466cb98` — bit-identical to the zlib-only arm and to the
+untouched baseline. The full table:
+
+| arm | png_canvas_control |
+|---|---|
+| baseline (both system) | 40150 B |
+| bundled zlib only | 40150 B |
+| bundled libpng only | 40150 B |
+| **both bundled** | **26801 B** (= official, byte- and sha-identical) |
+
+`jpeg_q80_canvas_control` is 41079 B same-sha on every arm, so the rasterized
+pixels were never in question on any of them.
+
+So "by elimination libpng carries all of it" — written here after the zlib arm
+— was unsupported. Elimination assumed the two effects were independent, and
+this says they are not, OR that the single-library arms never took effect. The
+second is the likelier and is NOT yet excluded: the arms' guards proved the
+MOZCONFIG OPTION changed, not that the built libxul stopped linking the system
+library. `--with-system-png` removed while Mozilla's libpng still pulls system
+zlib (or vice versa) could silently fall back.
+[[feedback_verify_ab_varied_the_variable]], [[feedback_prove_the_lever_is_connected]]
+
+**Next, before any further conclusion:** `readelf -d libxul.so | grep NEEDED`
+on each arm's artifact. A single-library arm whose libxul still NEEDs
+`libpng16.so.16` (or `libz.so.1`) did not vary its variable and its 40150 B
+means nothing.
+
