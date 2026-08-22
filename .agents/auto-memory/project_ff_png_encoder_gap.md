@@ -102,3 +102,35 @@ on each arm's artifact. A single-library arm whose libxul still NEEDs
 `libpng16.so.16` (or `libz.so.1`) did not vary its variable and its 40150 B
 means nothing.
 
+**2026-08-22 — RESOLVED. Both arms were valid; it is a real interaction.**
+`readelf -d libxul.so | grep NEEDED` on each artifact:
+
+| arm | DT_NEEDED | png_canvas_control |
+|---|---|---|
+| baseline | `libz.so.1`, `libpng16.so.16` | 40150 B |
+| bundled zlib only | `libpng16.so.16` (libz gone ✓) | 40150 B |
+| bundled libpng only | `libz.so.1` (libpng16 gone ✓) | 40150 B |
+| both bundled | neither | **26801 B** |
+
+**Mozilla's zlib is the cause; bundling libpng is the PRECONDITION for it to
+be reachable.** With `--with-system-png` kept, PNG encoding happens inside the
+external `libpng16.so.16`, which carries its own linkage to system
+`libz.so.1` — so the in-tree zlib is compiled into libxul but never on the PNG
+path. That is why zlib-alone changes nothing. And Mozilla's libpng against
+system zlib is byte-identical to Alpine's libpng against system zlib, so the
+filter choices are not the variable. Only with both in-tree does the path
+reach Mozilla's deflate (their tree carries **zlib-rs**, a Rust
+reimplementation whose output need not match C zlib).
+
+**So it cannot be shipped by halves.** +122,670 B buys the 13,349 B/shot
+saving only as a pair; there is no cheaper libpng-only variant. Landing it is
+still jean's call.
+
+**Method note.** "By elimination libpng carries it" was recorded here twice
+before being retracted. Two single-variable arms agreeing with the baseline is
+NOT evidence that the variables are inert — it is equally consistent with one
+of them being unreachable. `DT_NEEDED` on the built artifact is what separated
+those, and it cost three wrong conclusions to reach for it.
+[[feedback_prove_the_lever_is_connected]],
+[[feedback_control_excludes_one_mechanism]]
+
