@@ -273,6 +273,26 @@ jobs:
             "$(strings -a "$BIN" | grep -ci 'control flow integrity' || true)"
 
           echo
+          echo "-- thread-local storage: the model, and how much of it there is --"
+          # Ranked first among what is left. musl and glibc use different TLS
+          # models, and a dynamic-TLS access through __tls_get_addr costs far
+          # more than glibc initial-exec. Blink layout touches thread_local
+          # constantly, which fits the surviving evidence exactly: compiled C++
+          # slow, JIT-emitted code at parity, malloc and libm both excluded.
+          printf '  %-26s %s\n' "__tls_get_addr undefined" \
+            "$(nm -D --undefined-only "$BIN" 2>/dev/null | grep -c __tls_get_addr || true)"
+          for r in TLSGD TLSLD DTPMOD DTPOFF TPOFF GOTTPOFF; do
+            printf '  %-26s %s\n' "reloc $r" \
+              "$(readelf -rW "$BIN" 2>/dev/null | grep -c "$r" || true)"
+          done
+
+          echo
+          echo "-- section sizes (ThinLTO should SHRINK .text; if ours is much"
+          echo "   smaller than official the inlining differs, not just the libc) --"
+          readelf -SW "$BIN" 2>/dev/null \
+            | awk '$2 ~ /^\.(text|rodata|data|bss|got|plt)/ { printf "  %-18s %s\n", $2, $6 }'
+
+          echo
           echo "-- DCHECK residue (expected 0 on both) --"
           printf 'strings /Check failed/    : %s\n' \
             "$(strings -a "$BIN" | grep -c 'Check failed' || true)"
