@@ -3,9 +3,9 @@
 # Global ARGs (visible in FROM lines below). BuildKit doesn't support ARG
 # expansion in `COPY --from=` URLs, so we alias the producer-image refs as
 # named build stages and COPY --from that name later.
-ARG CHS_REV=1223
-ARG FF_REV=1522
-ARG WK_REV=2287
+ARG CHS_REV=1234
+ARG FF_REV=1538
+ARG WK_REV=2336
 ARG BASE_IMAGE=jclaveau/alpine-dood-pnpm:latest
 
 # Producer-image stage aliases — Renovate's custom manager bumps the tag
@@ -158,7 +158,7 @@ ARG WK_REV
 # tag. Same PW_VERSION drives `pnpm install -g playwright@…` AND the
 # COPY --from tag above — they must match (PW SDK reads its bundled
 # browsers.json to know the expected revision in the cache path).
-ARG PLAYWRIGHT_VERSION=1.60.0
+ARG PLAYWRIGHT_VERSION=1.62.1
 
 LABEL org.opencontainers.image.description="Playwright (musl-native chromium-headless-shell + Firefox + WebKit) in Alpine based DinD as Github Actions Container"
 

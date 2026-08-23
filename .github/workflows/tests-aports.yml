@@ -31,5 +31,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: resolve-aports-ref unit test
         run: bash tests/aports/test-resolve-aports-ref.sh
+      - name: aports pkgver rule unit test
+        run: bash tests/aports/test-aports-pkgver.sh
       - name: versions.env consistency
         run: bash tests/aports/test-versions-env-consistency.sh

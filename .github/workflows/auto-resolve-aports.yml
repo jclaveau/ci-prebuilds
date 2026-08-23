@@ -9,10 +9,11 @@ name: auto-resolve-aports
 # pipeline owns that surface.
 #
 # Limits known up-front:
-#   - resolve-aports-ref.sh matches by major.minor.patch PREFIX; apply-and-build.sh
-#     does STRICT pkgver equality. If aports' latest matching commit shipped a
-#     newer dot-release than PW pins, the pre-flight check fails and the workflow
-#     comments without committing. The human resolves manually in that case.
+#   - resolve-aports-ref.sh matches by major.minor.patch PREFIX, and so does the
+#     pre-flight below — same 3-segment rule apply-and-build.sh applies. A newer
+#     dot-release than PW pins is normal (Alpine packages only some patch
+#     releases) and drift-warns rather than failing. Only a different BRANCH
+#     stops the commit, and the human resolves that manually.
 #
 # Manual smoke:
 #   1. Open a draft PR bumping PW_VERSION in versions.env.
@@ -65,14 +66,23 @@ jobs:
           NEW_SHA=$(bash playwright/alpine-browsers/chromium-headless-shell/scripts/resolve-aports-ref.sh "$CHS_VER")
           echo "resolved aports SHA: $NEW_SHA (current: $ALPINE_APORTS_CHROMIUM_REF)"
 
-          # Pre-flight: mirror apply-and-build.sh's strict pkgver check at PR time.
+          # Pre-flight: mirror apply-and-build.sh's pkgver check at PR time. It
+          # compares the first three dot-segments, not the whole version —
+          # strict equality is unsatisfiable for 1.62.1, whose .34 no aports
+          # commit ever packaged.
           APKBUILD=$(curl -fsSL "https://gitlab.alpinelinux.org/alpine/aports/-/raw/${NEW_SHA}/community/chromium/APKBUILD")
           PKGVER=$(echo "$APKBUILD" | awk -F= '/^pkgver=/ { gsub(/"/, "", $2); print $2; exit }')
-          if [ "$PKGVER" != "$CHS_VER" ]; then
-            echo "::error::pre-flight: aports@${NEW_SHA} pkgver=$PKGVER but PW pins CHS_VER=$CHS_VER (strict match required by apply-and-build.sh)"
+          . playwright/alpine-browsers/chromium-headless-shell/scripts/aports-pkgver.sh
+          pkgver_status=0
+          chromium_pkgver_status "$PKGVER" "$CHS_VER" || pkgver_status=$?
+          if [ "$pkgver_status" = 2 ]; then
+            echo "::error::pre-flight: aports@${NEW_SHA} pkgver=$PKGVER is a different chromium branch than PW's CHS_VER=$CHS_VER"
             exit 1
           fi
-          echo "pre-flight: pkgver=$PKGVER matches CHS_VER ✓"
+          if [ "$pkgver_status" = 1 ]; then
+            echo "::warning::pre-flight: patch-level drift — musl patches are chromium $PKGVER, source is $CHS_VER"
+          fi
+          echo "pre-flight: aports is on chromium branch $(chromium_branch_of "$PKGVER") ✓"
 
           # Truncate to 8 chars to match versions.env's existing abbreviation style.
           NEW_SHA_SHORT=${NEW_SHA:0:8}
@@ -81,6 +91,7 @@ jobs:
             echo "chs_ver=$CHS_VER"
             echo "old_sha=$ALPINE_APORTS_CHROMIUM_REF"
             echo "new_sha=$NEW_SHA_SHORT"
+            echo "pkgver=$PKGVER"
           } >> "$GITHUB_OUTPUT"
 
       - name: commit & push
@@ -90,10 +101,20 @@ jobs:
           NEW: ${{ steps.resolve.outputs.new_sha }}
           PW:  ${{ steps.resolve.outputs.pw_version }}
           CHS: ${{ steps.resolve.outputs.chs_ver }}
+          PKGVER: ${{ steps.resolve.outputs.pkgver }}
         run: |
           set -euo pipefail
-          awk -v old="$OLD" -v new="$NEW" '
-            /^ALPINE_APORTS_CHROMIUM_REF=/ { sub(old, new); print; next }
+          # The trailing comment names the chromium the SHA carries, so it has
+          # to move with it. Replacing only the SHA left the line claiming a
+          # version the commit no longer pointed at, and the comment is the
+          # only human-readable record of what the pin means. Both subs are
+          # anchored so the surrounding alignment survives.
+          awk -v new="$NEW" -v pkgver="$PKGVER" '
+            /^ALPINE_APORTS_CHROMIUM_REF=/ {
+              sub(/=[0-9a-f]+/, "=" new)
+              sub(/# chromium [0-9.]+/, "# chromium " pkgver)
+              print; next
+            }
             { print }
           ' playwright/alpine-browsers/versions.env > versions.env.new
           mv versions.env.new playwright/alpine-browsers/versions.env
@@ -103,7 +124,7 @@ jobs:
           git add playwright/alpine-browsers/versions.env
           git commit \
             -m "chore(versions.env): auto-resolve aports chromium SHA $OLD → $NEW for PW $PW [skip ci]" \
-            -m "Pre-flight verified: aports@$NEW community/chromium/APKBUILD pkgver=$CHS matches PW $PW's browsers.json pin." \
+            -m "Pre-flight verified: aports@$NEW community/chromium/APKBUILD pkgver=$PKGVER is on the same chromium branch as PW $PW's pin $CHS." \
             -m "Assisted-by: Claude:claude-opus-4-7"
           git push
 
