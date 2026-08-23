@@ -86,3 +86,37 @@ before reading any number off it ([[feedback_verify_ab_varied_the_variable]]).
 Different refs also mean different concurrency groups and different
 `chs-build-rN-sha-*` tags, which is what lets the arms run in parallel
 ([[project_gha_concurrency_group_serializes_dispatches]], [[chromium_round_images_sha_keyed]]).
+
+**2026-08-23 — PGO+ThinLTO TOGETHER is super-additive** (build 32530923539,
+~38 h, r9 of 12; comparison 32650654039, one runner):
+
+| arm | geomean | layout |
+|---|---|---|
+| baseline | 1.42 | 2.27 |
+| PGO | 1.28 | 1.89 |
+| ThinLTO | 1.31 | 1.89 |
+| **PGO + ThinLTO** | **1.12** | **1.61** |
+
+The gap closes 42% -> 12%. Independent effects would have predicted ~1.17-1.20;
+neither single arm predicted 1.12.
+
+**Controls held**, which is what makes it readable: `int_math` 1.00 and
+`libm_fmod` 1.00 (JIT output and musl libm untouched), `js_alloc` 0.98,
+`locator_click`/`screenshot` 1.00 because they are frame-cadence-bound. Every
+metric that moved is compiled Blink C++ — layout 1.61, goto_warm 1.28,
+dom_churn 1.16, click_force 1.15 — the same population that read ~1.6x through
+every probe in [[project_chromium_residual_gap_candidates]].
+
+**Note the report's direction.** `chs-perf-ab` prints `official/ours`, the
+INVERSE of the convention used in this file; 0.62x on layout is ours being
+1.61x slower. Convert before comparing arms.
+
+**Residual: 12% geomean, 61% on layout.** Both binaries report
+151.0.7922.34, so it is not version drift. Untested: alpine clang 22 vs
+official's 23, and what is structurally Google's (CFI, their own PGO profile
+rather than the public one, full bundling).
+
+**Build cost:** ~38 h wall-clock, finishing at r9 — the monolithic ThinLTO
+link of `headless_shell` that looked like a structural risk took 18 minutes,
+not a round.
+
