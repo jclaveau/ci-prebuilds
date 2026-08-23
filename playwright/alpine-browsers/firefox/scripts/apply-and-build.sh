@@ -429,6 +429,53 @@ else
   cat "$APORTS/mozconfig" "$OVERLAY" > .mozconfig
 fi
 
+# 7b. Build libpng and zlib from Mozilla's tree instead of Alpine's.
+#
+# aports asks for the system copies; the PNG our screenshots produce is then
+# 40150 B against Playwright's official build's 26801 B for a bitmap proven
+# identical — the canvas control's JPEG is byte-for-byte the same on both
+# sides, same sha, so only the encoder can differ.
+#
+# Measured ours-vs-ours on one runner (32640911593, 32641010090): PNG
+# screenshots 0.70-0.78x, i.e. ~25% faster, with png_viewport falling
+# 25018 -> 12188 B on the real page. The JPEG rows stay at 0.97-1.21x around
+# unity across both runs, which is the control: same page, same capture, same
+# transport, identical bytes and sha. Every row is flagged n.s. individually
+# because the single-row noise floor is ~±20%, but PNG never approached 1.0 in
+# four measurements while JPEG never approached 0.75 in six.
+#
+# BOTH or neither. Removing one alone changes nothing at all — verified by
+# DT_NEEDED on all four arms, and both single arms did drop their library.
+# With --with-system-png kept, PNG encoding happens inside libpng16.so.16,
+# which carries its OWN linkage to system libz, so an in-tree zlib is compiled
+# into libxul and never sits on the PNG path. And Mozilla's libpng against
+# system zlib is byte-identical to Alpine's. Only with both in-tree does the
+# path reach Mozilla's deflate.
+#
+# Costs +122,670 B of image. --with-system-jpeg deliberately stays: the JPEG
+# control already matches the reference byte-for-byte, so it is not part of
+# this.
+#
+# Deleted rather than overridden with --without-system-*: moz.configure
+# rejects a --with and a --without of the same option in one mozconfig.
+# A no-op here is acceptable rather than fatal: if aports ever stops asking
+# for the system copies we are already where we want to be. It is still worth
+# saying out loud, because the removal below would then be dead code.
+if ! grep -qE -- '^ac_add_options --with-system-(png|zlib)$' .mozconfig; then
+  echo "::warning::aports no longer sets --with-system-png/zlib — removal is a no-op"
+fi
+sed -i \
+  -e '/^ac_add_options --with-system-png$/d' \
+  -e '/^ac_add_options --with-system-zlib$/d' \
+  .mozconfig
+# `if`, not `grep && { exit 1; }`: under `set -e` the && form aborts on the
+# GOOD path, where grep correctly finds nothing and returns 1.
+if grep -qE -- '^ac_add_options --with-system-(png|zlib)$' .mozconfig; then
+  echo "ERROR: a --with-system-png/zlib line survived the removal" >&2
+  exit 1
+fi
+echo "  imaging: libpng + zlib built from Mozilla's tree (system copies removed)"
+
 # 7a. DIAGNOSTIC: PW_ENABLE_TESTS — include xpcshell + gtest + mochitest
 #     harness so the validation workflow can run Mozilla's own self-tests.
 if [[ "$PW_ENABLE_TESTS" == "1" ]]; then
