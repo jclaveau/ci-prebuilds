@@ -134,3 +134,37 @@ those, and it cost three wrong conclusions to reach for it.
 [[feedback_prove_the_lever_is_connected]],
 [[feedback_control_excludes_one_mechanism]]
 
+**2026-08-23 — the number that actually decides it is TIME, not size.** jean:
+"more important is fastest tests, not artifacts size". Every earlier reading
+here was bytes, because bytes are deterministic and settle attribution; the
+timing question needed its own experiment, ours-vs-ours on ONE runner
+(`ff-latest` vs the both-bundled arm), not ours-vs-official which confounds
+musl, the runner and the build.
+
+Two runs, 32640911593 and 32641010090:
+
+| row | run 1 | run 2 |
+|---|---|---|
+| `png_viewport` | 0.77x | 0.70x |
+| `png_canvas_control` | 0.78x | 0.75x |
+| `jpeg_q80_viewport` | 0.97x | **1.21x** |
+| `jpeg_q80_clip_16x16` | 1.00x | 0.99x |
+| `jpeg_q80_canvas_control` | 1.02x | 1.09x |
+
+**~25% faster PNG screenshots**, and `png_viewport` bytes 25018 -> 12188 (-51%)
+on the real page — more than the canvas control's -33%, and the speed comes
+WITH the smaller output, not traded against it.
+
+**Read it as two populations, not per-row significance.** Every row is flagged
+`n.s.` because the single-row noise floor is ~±20% — run 2's JPEG hit 1.21x on
+a row whose bytes and sha are IDENTICAL between the images, which is pure
+noise. But PNG never landed near 1.0 in 4 measurements while JPEG never landed
+near 0.75 in 6. The populations do not overlap. Arguing "the control is flat
+therefore PNG is real" off run 1 alone was luck; the repeat is what made it a
+claim. [[feedback_size_verification_to_failure_rate]],
+[[feedback_check_reference_stability_across_runs]]
+
+**Still unmeasured:** suite-level impact = 25% x screenshot frequency. Needs
+the bundled build published under a real tag so `benchmark-playwright.yml`
+benches it end-to-end like the others.
+
