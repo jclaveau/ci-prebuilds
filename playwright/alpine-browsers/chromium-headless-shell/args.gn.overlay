@@ -148,12 +148,41 @@ skia_use_dawn = false
 use_dawn = false
 
 # More aports-aligned defaults that headless_shell doesn't conflict with:
-chrome_pgo_phase = 0                       # no PGO (build wall-clock); aports same
+# PGO and ThinLTO, measured TOGETHER. Against Playwright's official build,
+# geomean and layout:
+#
+#   baseline       1.42 / 2.27
+#   PGO alone      1.28 / 1.89
+#   ThinLTO alone  1.31 / 1.89
+#   both           1.12 / 1.61   <- run 32650654039
+#
+# Super-additive: each knob alone recovers about a third of the gap, together
+# they recover roughly three quarters, and independent effects would have
+# predicted ~1.17-1.20. Neither single arm predicted 1.12, which is why they
+# had to be built together rather than reasoned about.
+#
+# The controls in that run are what make it readable: int_math and libm_fmod
+# both 1.00 (JIT output and musl's libm untouched), js_alloc 0.98,
+# locator_click and screenshot 1.00 because they are frame-cadence-bound.
+# Everything that moved is compiled Blink C++.
+#
+# The profile is a plain public download; apply-and-build fetches it and
+# injects pgo_data_path, which is the branch gn takes when the path is
+# non-empty — no depot_tools, no gsutil. Chromium's own default for our config
+# (is_official_build && !dcheck_always_on && is_linux) is ALREADY 2, so the
+# previous `0` is what kept PGO off rather than any absence of support.
+#
+# COST: ~38 h wall-clock, finishing at round 9 of 12 (build 32530923539). The
+# browser runs in every consumer's CI and time-to-tests for a prebuilt image is
+# ~entirely image pull, so the trade only makes sense in this direction. When
+# ITERATING on plumbing rather than publishing, set both back to 0/false — it
+# roughly halves the round trip and no plumbing question depends on them.
+chrome_pgo_phase = 2
 enable_vr = false                          # no VR/XR
 disable_fieldtrial_testing_config = true   # skip field-trial test configs
 enable_nocompile_tests = false             # no nocompile testing
 is_cfi = false                             # CFI off (no IFUNC support on alpine clang)
-use_thin_lto = false                       # aports same; is_official_build would default it ON
+use_thin_lto = true                        # see the PGO block above; measured together
 fatal_linker_warnings = false              # match aports — alpine's lld trips a few warnings
 safe_browsing_use_unrar = false            # no unrar (we don't ship)
 

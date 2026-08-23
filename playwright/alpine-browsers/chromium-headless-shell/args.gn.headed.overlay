@@ -85,6 +85,11 @@ use_cups = false
 enable_basic_printing = true
 enable_print_preview = true
 enable_vr = false
+# Deliberately still 0 while the headless overlay moved to 2. The 1.12x
+# geomean was measured on headless_shell; the headed target is a different and
+# substantially longer build, and turning this on there would be extrapolating
+# past the evidence onto the most expensive build we have. Measure it before
+# flipping it.
 chrome_pgo_phase = 0
 disable_fieldtrial_testing_config = true
 enable_nocompile_tests = false
