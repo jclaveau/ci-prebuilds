@@ -79,4 +79,14 @@ jobs:
           fi
           git diff --cached --stat
           git commit -m 'chore(metrics): weekly snapshot [skip ci]'
+          # Rebase-and-retry rather than a bare push: this job runs on a
+          # schedule and takes minutes to build its commit, so any push to
+          # main inside that window rejects it as non-fast-forward and the
+          # week's snapshot is simply lost. Nothing but this job writes
+          # metrics/, so the rebase never has a conflict to resolve.
+          for attempt in 1 2 3; do
+            git push && exit 0
+            echo "push rejected (attempt $attempt) — rebasing onto origin/main"
+            git pull --rebase --autostash origin main
+          done
           git push
