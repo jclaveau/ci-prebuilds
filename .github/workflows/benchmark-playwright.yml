@@ -124,7 +124,7 @@ jobs:
         run: awk '/^[ \t]*eth0:/{print $2}' /proc/net/dev > /tmp/nb_rx
       - uses: actions/setup-node@v7
         with:
-          node-version: '22'   # no cache: we measure the cold install on purpose
+          node-version: '24'   # no cache: we measure the cold install on purpose
       - name: Ensure pnpm
         run: npm install -g pnpm@9
       - name: Install project deps
