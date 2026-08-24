@@ -1,6 +1,6 @@
 ---
 name: project_ff_png_encoder_gap
-description: RESOLVED — musl Firefox's 1.50x-larger PNGs were Alpine's system libpng/zlib; bundling Mozilla's copies makes the canvas control byte- and sha-identical to official
+description: musl Firefox's 1.50x-larger PNGs were Alpine's system libpng/zlib — bundling Mozilla's copies makes the canvas control byte-identical to official, but the runtime-probe screenshot TIME gap (0.68x) did not move, so encode was never its dominant cost
 metadata:
   type: project
 ---
@@ -187,3 +187,37 @@ before/after. The ours-vs-official run has every timing row n.s. (0.91-1.04x),
 `png_canvas_control` nominally 10% SLOWER. Both can be true — they are
 different questions — but do not cite the 25% as if it were measured against
 official.
+
+**2026-08-24 — the runtime-probe `screenshot` gap did NOT move. Encode was
+never its dominant cost.** Fresh `ff-perf-ab` (run 32777808018) against the
+post-#102 artifact, pinned to `sha-ae0cc2d…` (ancestry-checked: contains
+247d7c1), same runner model as the pre-#102 run 32460180480:
+
+| row | pre-#102 (32460180480) | post-#102 (32777808018) |
+|---|---|---|
+| `screenshot` | 325.0 vs 222.2 = **0.68x** | 304.9 vs 209.0 = **0.69x** |
+| `layout` | 111 vs 96 = 0.86x | 109 vs 94 = **0.86x** |
+| `launch` | 975.6 vs 885.7 = 0.91x | 1014.2 vs 845.5 = 0.83x |
+| `libm_fmod` | 1.43x (ours faster) | 1.49x (ours faster) |
+
+The probe shoots **viewport** PNG, 10 per sample — i.e. exactly the
+`png_viewport` case, whose bytes went 25018 -> 12188 under #102. So the encoder
+did less work and produced near-official output, and the wall time did not
+follow. Bytes cannot explain a 46% time gap when the byte gap is now 12%.
+
+**So "the whole gap is full-viewport PNG encode" (written at the top of this
+file) is refuted.** The live hypothesis is full-viewport **capture/readback**,
+not encode. The old `png_clip_16x16` parity does not exonerate it: a 16x16 clip
+excludes fixed per-call overhead, not readback that scales with pixel count —
+it is a control over one mechanism, not its family
+([[feedback_control_excludes_one_mechanism]]).
+
+**Reference stability across the two runs** (official arm, same CPU model):
+screenshot -6%, launch -4.5%, layout -2%, goto_warm -11%. So the drift band is
+~2-11%: `screenshot` (46%) and `layout` (16%) carry claims; `launch` moved
+0.91 -> 0.83 inside that band and is a footnote, not a trend
+([[feedback_check_reference_stability_across_runs]]).
+
+**Next instrument:** a TIMED variant of the canvas-control diagnosis, splitting
+capture from encode on the same shot. `ff-screenshot-diagnosis` already has the
+harness and runs in ~5 min; it currently reports bytes and a total.
