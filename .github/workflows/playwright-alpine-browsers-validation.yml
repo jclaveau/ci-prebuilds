@@ -87,7 +87,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build test-enabled image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: playwright/alpine-browsers
           target: firefox-builder   # keep the full builder; we run mach tests INSIDE it
