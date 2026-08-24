@@ -91,6 +91,53 @@ fi
 PRE_OBJ_COUNT=$(find "$OUT" -name '*.o' 2>/dev/null | wc -l)
 echo "===== ninja $LABEL — starting with $PRE_OBJ_COUNT .o files on disk ====="
 
+# Report from a trap rather than after the ninja call below. The 18000s
+# `timeout` ends this script along with ninja, so on a full-length round every
+# line after it was skipped and the round reported nothing at all: run
+# 32745725864's r1 went straight from "received signal: Terminated" to the
+# layer export. Only rounds that died EARLY ever printed their counters, which
+# is why the one sccache reading we have (1.33% hits, 210 write errors) comes
+# from run 32739278406's 979s round and no 5h round has ever reported.
+ROUND_REPORTED=0
+report_round() {
+  if [[ "$ROUND_REPORTED" == 1 ]]; then
+    return 0
+  fi
+  ROUND_REPORTED=1
+  kill "$SCCACHE_TICKER_PID" 2>/dev/null || true
+
+  POST_OBJ_COUNT=$(find "$OUT" -name '*.o' 2>/dev/null | wc -l)
+  DELTA=$((POST_OBJ_COUNT - PRE_OBJ_COUNT))
+  echo "===== ninja $LABEL — ended with $POST_OBJ_COUNT .o files (+$DELTA this round) ====="
+
+  # sccache stats (best-effort — log even if unavailable)
+  sccache --show-stats 2>&1 | sed 's/^/  sccache: /' || true
+}
+
+# The trap only helps if this script is still alive after ninja returns, and
+# that is exactly what is in doubt: r1 of run 32745725864 went from ninja's
+# "received signal: Terminated" straight to the layer export with no further
+# line, and three faithful repros (host GNU, Alpine busybox, a ninja that
+# drains on SIGTERM) all failed to reproduce it. So also report DURING the
+# round, which does not depend on how the round ends and additionally shows
+# the hit rate evolving instead of one end-of-round figure.
+report_sccache_periodically() {
+  while sleep 1800; do
+    echo "===== sccache during $LABEL ====="
+    sccache --show-stats 2>&1 | sed 's/^/  sccache: /' || true
+  done
+}
+report_sccache_periodically &
+SCCACHE_TICKER_PID=$!
+trap report_round EXIT
+if [[ "$FINAL" != "final" ]]; then
+  # A non-final round is MEANT to be cut short, so keep the exit status 0 the
+  # way the `|| true` below does — a non-zero rc here would stop BuildKit from
+  # committing the partial obj/ layer the next round resumes from. The final
+  # round gets no such trap: a signal there is a real failure.
+  trap 'report_round; exit 0' TERM
+fi
+
 # Final round vs resumable round
 if [[ "$FINAL" == "final" ]]; then
   ninja -C "$OUT" -j "$(nproc)" $VARIANT_TARGET
@@ -107,13 +154,6 @@ else
   # layer commit. https://github.com/jclaveau/ci-prebuilds/issues/108
   rc=0
 fi
-
-POST_OBJ_COUNT=$(find "$OUT" -name '*.o' 2>/dev/null | wc -l)
-DELTA=$((POST_OBJ_COUNT - PRE_OBJ_COUNT))
-echo "===== ninja $LABEL — ended with $POST_OBJ_COUNT .o files (+$DELTA this round) ====="
-
-# sccache stats (best-effort — log even if unavailable)
-sccache --show-stats 2>&1 | sed 's/^/  sccache: /' || true
 
 # On final round with rc=0, do the dist copy that apply-and-build.sh normally
 # does post-ninja (it exited early via PW_CHROMIUM_SKIP_NINJA=1 in setup).
