@@ -175,17 +175,35 @@ TIMEOUT_FLAG=""
 # skip-when-headless) exercises the real windowed path that the headless legs
 # never touch. Headed-capable today:
 #   firefox — from-source binary links gtk3, runs headed under Xvfb.
-#   webkit  — MiniBrowser-gtk (gtk4). The libgtk-4 SIGSEGV was the bundled gtk4
-#             stack, fixed in bundle-dist (exclude gtk4 closure -> runner apk
-#             gtk4.0); smoke Tier-2 headed green in run 29907310889. See
-#             project_webkit_gtk_headed_recursion (RESOLVED).
+#   webkit  — MiniBrowser-gtk (gtk4), WHEN the artifact actually carries it. The
+#             libgtk-4 SIGSEGV was the bundled gtk4 stack, fixed in bundle-dist
+#             (exclude gtk4 closure -> runner apk gtk4.0); smoke Tier-2 headed
+#             green in run 29907310889. See project_webkit_gtk_headed_recursion
+#             (RESOLVED). Capability is probed below rather than assumed.
 # chrome-headless-shell has no headed target; the full-chrome (chr-fs) artifact
 # does. So chromium is headed-capable ONLY in a HEADED=1 dispatch (image_ref=
 # chr-fs-*, whose runner stages the real chrome-linux64/chrome). The headless-
 # shell runner keeps HEADED_ENABLED=0 so the run_headed headful.spec.ts leg —
 # which would launch the headless-shell stub binary headed — stays off.
 case "$BROWSER" in
-  firefox|webkit) HEADED_ENABLED=1 ;;
+  firefox) HEADED_ENABLED=1 ;;
+  webkit)
+    # Probe the artifact, do not assume. MiniBrowser-gtk is the headed binary
+    # and it is built only when the producer runs build_webkit_gtk=true, which
+    # is NOT the default; with GTK off the artifact still ships an EMPTY
+    # minibrowser-gtk/, so the directory proves nothing and the binary is the
+    # only honest signal. Measured on wk-gtk-sha-0384a77a: 0 entries under
+    # minibrowser-gtk/, 131 under minibrowser-wpe/.
+    #
+    # Running the leg anyway costs 16 headful.spec.ts failures that no WebKit
+    # change can fix, and they take conformance-webkit red and promote-webkit
+    # with it — which is why wk-latest has had to be promoted by hand.
+    if [ -n "$(ls /ms-playwright/webkit-*/minibrowser-gtk/MiniBrowser 2>/dev/null)" ]; then
+      HEADED_ENABLED=1
+    else
+      HEADED_ENABLED=0
+      echo "==== headed leg OFF: no minibrowser-gtk/MiniBrowser in this artifact (WPE-only build) ===="
+    fi ;;
   chromium)
     if [ "${HEADED:-0}" = "1" ]; then HEADED_ENABLED=1; else HEADED_ENABLED=0; fi ;;
   *)              HEADED_ENABLED=0 ;;
