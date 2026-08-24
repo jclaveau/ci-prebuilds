@@ -100,6 +100,11 @@ else
   # in-flight jobs, then exits 124. `|| true` lets the layer commit with
   # whatever obj/ files were written before the cap.
   timeout 18000 ninja -C "$OUT" -j "$(nproc)" $VARIANT_TARGET || true
+  # This also swallows ninja REFUSING to build, which is indistinguishable here
+  # from the time-box kill: run 32739278406 reported a green r1 having stopped
+  # at 2842/38707 on a missing dawn tool. Fixing it needs a status marker read
+  # back out of the pushed image, not a different rc — the rc is what makes the
+  # layer commit. https://github.com/jclaveau/ci-prebuilds/issues/108
   rc=0
 fi
 
