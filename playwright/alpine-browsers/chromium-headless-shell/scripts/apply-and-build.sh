@@ -253,7 +253,15 @@ if [[ -d third_party/gperf/cipd/bin ]]; then
   ln -sfv /usr/bin/gperf third_party/gperf/cipd/bin/gperf
 fi
 
-# (g) libxml malloc/free fix — aports replaces xmlMalloc/xmlFree → malloc/free
+# (g) dawn's golang symlink (CIPD placeholder). tint's generate_sources target
+# stays in the `final` graph even with use_dawn=false, and shells out to this
+# exact arch-specific path. Build-only: `go run` emits a C++ source list.
+if [[ -d third_party/dawn ]]; then
+  mkdir -p third_party/dawn/tools/golang/linux-amd64/bin
+  ln -sfv /usr/bin/go third_party/dawn/tools/golang/linux-amd64/bin/go
+fi
+
+# (h) libxml malloc/free fix — aports replaces xmlMalloc/xmlFree → malloc/free
 # in blink + libxml chromium glue. See crbug.com/893950. Without it, builds
 # error against libxml's symbol export differences with the system libxml.
 echo "  libxml malloc/free fix"
@@ -262,7 +270,7 @@ sed -i -e 's/\<xmlMalloc\>/malloc/g' -e 's/\<xmlFree\>/free/g' \
   third_party/blink/renderer/core/xml/parser/xml_document_parser.cc \
   third_party/libxml/chromium/*.cc 2>/dev/null || true
 
-# (h) Replace bundled-lib build files with system-library equivalents. Aports
+# (i) Replace bundled-lib build files with system-library equivalents. Aports
 # does this so Chromium uses Alpine's system fontconfig/freetype/harfbuzz/etc.
 # rather than its bundled forks (which assume glibc — bundled fontconfig uses
 # `initstate_r`/`random_r` which don't exist in musl).
@@ -359,10 +367,45 @@ echo "  RUSTC_BOOTSTRAP=1 (allow -Z flags on stable rust)"
 OUT_DIR="$VARIANT_OUT_DIR"
 mkdir -p "$OUT_DIR"
 
+# PGO profile. gn resolves the profile itself only by shelling out to
+# tools/update_pgo_profiles.py, which wants depot_tools + gsutil; setting
+# pgo_data_path skips that path entirely (see build/config/compiler/pgo/BUILD.gn:
+# the script only runs when pgo_data_path is empty). The profile is a public
+# object, no auth, ~83 MB, named by a sha1 recorded in chrome/build/linux.pgo.txt.
+PGO_DATA_PATH=""
+if grep -qE '^chrome_pgo_phase[[:space:]]*=[[:space:]]*2' \
+     "$WORK/chromium-headless-shell/$VARIANT_OVERLAY"; then
+  PGO_STATE="chrome/build/linux.pgo.txt"
+  [[ -f "$PGO_STATE" ]] || { echo "ERROR: $PGO_STATE absent — cannot resolve a PGO profile" >&2; exit 5; }
+  PGO_NAME=$(tr -d '[:space:]' < "$PGO_STATE")
+  PGO_DATA_PATH="$PWD/chrome/build/pgo_profiles/$PGO_NAME"
+  if [[ -f "$PGO_DATA_PATH" ]]; then
+    echo "  PGO profile already in the tree: $PGO_NAME"
+  else
+    echo "  fetch PGO profile $PGO_NAME"
+    mkdir -p "$(dirname "$PGO_DATA_PATH")"
+    curl -fSL --retry 3 \
+      "https://storage.googleapis.com/chromium-optimization-profiles/pgo_profiles/$PGO_NAME" \
+      -o "$PGO_DATA_PATH"
+  fi
+  # curl -f already rejects an HTTP error, but a truncated or redirected body
+  # would still land as a file and only surface as a confusing clang error, so
+  # check the size: the real profile is ~83 MB.
+  PGO_BYTES=$(stat -c%s "$PGO_DATA_PATH")
+  if (( PGO_BYTES < 1048576 )); then
+    echo "ERROR: PGO profile at $PGO_DATA_PATH is only $PGO_BYTES bytes" >&2
+    exit 5
+  fi
+  echo "  PGO profile: $PGO_NAME ($((PGO_BYTES / 1048576)) MB)"
+fi
+
 {
   cat "$WORK/chromium-headless-shell/$VARIANT_OVERLAY"
   echo ""
   echo "# Injected at build time"
+  if [[ -n "$PGO_DATA_PATH" ]]; then
+    echo "pgo_data_path = \"$PGO_DATA_PATH\""
+  fi
   echo "clang_base_path = \"$CLANG_BASE\""
   echo "clang_version = \"${LLVMVER:-22}\""
   echo ""
