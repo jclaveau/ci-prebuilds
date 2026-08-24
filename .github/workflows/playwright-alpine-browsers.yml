@@ -231,7 +231,12 @@ jobs:
       || (github.event_name == 'workflow_dispatch' && inputs.build_firefox == 'true')
       || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-firefox'))
     runs-on: ubuntu-latest
-    timeout-minutes: 240   # 4h ceiling — clean build ~2h, hot rebuild ~30 min
+    # 6h ceiling. The old 4h was written against a "clean build ~2h" that no
+    # longer holds: the last clean one (2026-08-23, run 32650828651) took
+    # 3h19m, and #102 added libpng and zlib to compile in-tree on top of
+    # that. 18% headroom on a build this long is a coin flip, and losing it
+    # costs the whole 4h. A ceiling is a cap, not an allocation.
+    timeout-minutes: 360
     outputs:
       build_tag: sha-${{ github.sha }}
       pw_version: ${{ steps.pins.outputs.pw_version }}
