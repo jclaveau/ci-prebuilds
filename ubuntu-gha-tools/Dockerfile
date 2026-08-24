@@ -3,7 +3,7 @@
 # limit in CI: the rest of the pipeline builds/pulls via GHCR, so CI does zero Docker Hub pulls.
 # Renovate keeps the default pinned; the workflow_call path overrides OS_VERSION for on-demand
 # requests targeting a different Ubuntu (e.g. 22.04). Default = current consumer pin.
-ARG OS_VERSION=24.04
+ARG OS_VERSION=24.10
 FROM public.ecr.aws/ubuntu/ubuntu:${OS_VERSION}
 
 # Mimics GitHub's ubuntu-latest VM environment (accounts, env, OS-level tooling) per issue #5.
