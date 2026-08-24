@@ -106,3 +106,29 @@ from aports' `_llvmver`, not the artifact.
 containers**, not another static candidate. Seven eliminations in, elimination
 is clearly the slow path; a profile names the cause instead.
 
+**Round 5 — the clang candidate is one-sided and not testable.** Checked
+2026-08-24, no build:
+
+- Official IS clang **23.0.0**, read from the artifact
+  (`readelf -p .comment`, run 32665276324). Ours printed NOTHING there: the
+  finalize strip drops non-alloc sections, so our own pipeline erases the
+  producer string. "clang 22" comes from aports' `_llvmver=22`, a recipe, not
+  the binary — the two halves are not the same kind of fact. Fix with
+  `--keep-section=.comment` or read an unstripped round image.
+- **Alpine edge has no clang 23** (`apk search clang2*-dev` → 20, 21, 22). The
+  clean one-variable A/B — same musl, same args, bump `_llvmver` — cannot be
+  run. It needs LLVM 23 built for musl first, and a self-built LLVM against
+  Alpine's patched llvm22 is no longer a single variable.
+- Effect size argues against it regardless: a clang major moving ONE metric
+  61% would be extraordinary ([[feedback_match_instrument_to_effect_size]]).
+  Cheap bound: compile a layout-shaped kernel under clang 21 vs 22 and see how
+  little an adjacent major buys.
+
+So the two survivors are not equally actionable. The **libc control**
+(same clang, same args, glibc base) costs the same ~38 h and separates musl
+from the whole compiler family at once, which the unbuildable clang A/B
+cannot. And `perf record` still beats both: same symbols each slower =
+codegen, time in malloc/futex/syscalls = libc.
+
+PGO is NOT a suspect — it demonstrably engaged (1.42 -> 1.28 alone), via
+`pgo_data_path` from the public profile download.
