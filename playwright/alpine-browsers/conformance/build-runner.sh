@@ -322,6 +322,24 @@ FROM alpine:edge AS webrtc-build
 # construction; without it new RTCPeerConnection() throws → Modernizr
 # datachannel:false. Build libnice 0.1.23 + the webrtc plugin from source against
 # the runner's own gstreamer. GSTVER auto-detected so it can't drift from edge.
+#
+# Two sources for the tarball: gstreamer.freedesktop.org 503'd for hours on
+# 2026-08-24 and took 19 of 20 webkit conformance shards with it, since every
+# shard builds this same image. The fallback is Alpine's distfiles cache, and
+# it holds the RIGHT version by construction rather than by luck: this runner
+# is alpine:edge, so GSTVER is whatever Alpine packages, and distfiles caches
+# the tarball for exactly the version it packages. libnice keeps a single
+# source — it comes from gitlab.freedesktop.org, a different host that stayed
+# up, and we build 0.1.23 while Alpine packages 0.1.22, so distfiles has no
+# copy of ours to fall back to.
+#
+# Fetched to a FILE and xz -t'd rather than piped into tar. Piping cannot be
+# made to fall back: the primary failed mid-stream (PROTOCOL_ERROR after the
+# headers, not a clean 503), so -f could not suppress the partial body, tar
+# died on corrupt input, and the fallback curl had no reader left. That left
+# a partially extracted tree that still contained ext/webrtc — a silent half
+# success. Verifying the archive before extracting is what makes the retry
+# mean anything.
 RUN apk add --no-cache build-base meson ninja pkgconf curl \\
     gstreamer-dev gst-plugins-base-dev gst-plugins-bad-dev openssl-dev libsrtp-dev glib-dev
 RUN set -e; GSTVER=\$(pkg-config --modversion gstreamer-1.0); cd /tmp \\
@@ -331,7 +349,9 @@ RUN set -e; GSTVER=\$(pkg-config --modversion gstreamer-1.0); cd /tmp \\
       -Dtests=disabled -Dexamples=disabled -Dintrospection=disabled -Dgtk_doc=disabled \\
  && ninja -C b install \\
  && cd /tmp \\
- && curl -fsSL "https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-\${GSTVER}.tar.xz" | tar xJ \\
+ && { curl -fsSL -o gpb.tar.xz "https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-\${GSTVER}.tar.xz" && xz -t gpb.tar.xz; } \\
+      || { curl -fsSL -o gpb.tar.xz "https://distfiles.alpinelinux.org/distfiles/edge/gst-plugins-bad-\${GSTVER}.tar.xz" && xz -t gpb.tar.xz; } \\
+ && tar xJf gpb.tar.xz && rm gpb.tar.xz \\
  && cd gst-plugins-bad-\${GSTVER} \\
  && meson setup build -Dauto_features=disabled \\
       -Dwebrtc=enabled -Dsctp=enabled -Ddtls=enabled -Dsrtp=enabled \\
