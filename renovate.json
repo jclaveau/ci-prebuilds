@@ -8,7 +8,9 @@
     {
       "matchDatasources": ["docker"],
       "matchPackageNames": ["ubuntu", "public.ecr.aws/ubuntu/ubuntu"],
-      "groupName": "Ubuntu base image"
+      "groupName": "Ubuntu base image",
+      "description": "LTS only: even year + .04. Interim releases carry 9 months of support and Renovate reads them as newer, so it proposed 24.10 over the 24.04 LTS (PR #71). By the time that PR was looked at, oracular was EOL and all four of its repositories 404'd, so the bump would have broken every apt-get in ubuntu-gha-tools.",
+      "allowedVersions": "/^\\d*[02468]\\.04$/"
     },
     {
       "matchDatasources": ["docker"],
