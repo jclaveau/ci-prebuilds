@@ -372,9 +372,9 @@ RUN apk update && apk add --no-cache \\
 # updated nice element. gst-plugins-bad (above) ships the dtls/srtp/sctp plugins +
 # libgstwebrtc-1.0 the plugin links; GST_PLUGIN_SYSTEM_PATH_1_0 (set below) points
 # at /usr/lib/gstreamer-1.0 so webrtcbin is auto-discovered. font-noto-emoji fixes
-# Modernizr's emoji canvas-pixel key. font-liberation makes `local("Arial")`
+# Modernizr's emoji canvas-pixel key. font-liberation makes \`local("Arial")\`
 # resolve (fontconfig aliases Arial→Liberation Sans) — Modernizr's unicoderange
-# test declares `@font-face{src:local("Arial");unicode-range:U+0020,U+002E}` and
+# test declares \`@font-face{src:local("Arial");unicode-range:U+0020,U+002E}\` and
 # reports false when Arial is absent; adding Liberation flips unicoderange true
 # (validated locally 2026-07-21 → modernizr Safari Desktop passes). Last modernizr key.
 COPY --from=webrtc-build /webrtc-dist/libnice.so.10*             /usr/lib/
