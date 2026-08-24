@@ -20,3 +20,18 @@ Log payload from v18 r2 job 84790371894:
 3. Wait for/pin newer sccache with opendal >=0.53 that speaks the v2 Twirp path; try `SCCACHE_GHA_VERSION=2` if the build honors it
 
 Related: [[project_buildkit_cacheto_commit_semantics]] (why we moved to multi-job in the first place). Even without sccache cross-round hits, the per-round Docker layer of accumulated `obj/*.o` DOES persist across jobs (proven r1→r2 delta).
+
+**2026-08-24 — CORRECTED: this is fixed at sccache 0.16.0. The backend works.**
+The repo now installs 0.16.0 (`Dockerfile.setup`) and exports
+`ACTIONS_CACHE_SERVICE_V2=1` in `ninja-resume.sh`. Real stats off a round:
+
+    Compile requests 2260   Cache hits 30 (1.33 %)   Cache misses 2230
+    Cache read errors   0   Cache write errors 210   Cache location: ghac
+
+So reads and writes both function — the "0 writes, read-only" state above is
+specific to 0.15 + opendal ≤0.51 and must not be quoted as current. What is
+still open is the 210 write errors (~9% of misses) and, more importantly,
+whether a SECOND cold build actually hits: 1.33% on an empty cache says
+nothing, and no full-length round has ever reported
+([[feedback_report_from_trap_not_after_the_call]] — the stats line sat after
+the `timeout`, so only rounds that died early ever printed).
