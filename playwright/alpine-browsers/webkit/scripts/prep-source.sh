@@ -734,6 +734,70 @@ assert_webkit_project_version() {
 }
 assert_webkit_project_version
 
+# Keep the right-click release when the input is synthetic.
+#
+# WebPageProxy::showContextMenu() discards mouse events already queued in the UI
+# process, and upstream's own comment says it fires "if we take too long to enter
+# the nested runloop". PW's locator.click() PIPELINES move/down/up — the wire
+# shows all three sent in one millisecond and acknowledged together — so on our
+# musl build the release is already queued when ShowContextMenu arrives and is
+# dropped. The page then sees ['mousedown','contextmenu'] and
+# tests/page/page-click.spec.ts:1203 fails. Sending the same three events awaited
+# one at a time passes, which is what identifies this as the discard rather than
+# a dispatch bug.
+#
+# Immediately above the discard, WebKit already exempts automation:
+#     if (RefPtr automationSession = ...processPool().automationSession()) {
+#         if (m_controlledByAutomation && automationSession->isSimulatingUserInteraction())
+#             return;
+# PW drives over the inspector rather than WebAutomationSession, so
+# automationSession() is null and it never applies. Extend the same reasoning to
+# the discard: when every event was injected by the driver there are no stray
+# user events to throw away.
+#
+# Upstream candidate — worth offering to PW rather than carrying forever.
+patch_keep_synthetic_mouse_events() {
+  local page_proxy=Source/WebKit/UIProcess/WebPageProxy.cpp
+
+  # Key the guard AND the assertion on our own marker, never on
+  # `if (!m_controlledByAutomation)` — that already occurs in
+  # activeAutomationSession(), so a generic grep makes this patch a silent
+  # no-op on the skip path and a false "applied twice" on the assert path.
+  local marker='no stray user events to discard'
+
+  if grep -q "$marker" "$page_proxy"; then
+    echo "  showContextMenu already guards the discard — drop patch_keep_synthetic_mouse_events"
+    return 0
+  fi
+
+  echo "  guard discardQueuedMouseEvents() in showContextMenu"
+  # discardQueuedMouseEvents() is called twice (didStartDrag also calls it), so
+  # arm on the comment unique to the context-menu one rather than the call.
+  awk '
+    /MouseDown event that triggered this ShowContextMenu message/ { armed = 1 }
+    armed && /^    discardQueuedMouseEvents\(\);$/ {
+      print "    // Playwright injects every event over the inspector, so there are"
+      print "    // no stray user events to discard here — and its click() pipelines"
+      print "    // press and release, so this would otherwise drop the release."
+      print "    // See prep-source.sh: patch_keep_synthetic_mouse_events."
+      print "    if (!m_controlledByAutomation)"
+      print "        discardQueuedMouseEvents();"
+      armed = 0
+      next
+    }
+    { print }
+  ' "$page_proxy" > "${page_proxy}.new"
+  mv "${page_proxy}.new" "$page_proxy"
+
+  local guards
+  guards=$(grep -c "$marker" "$page_proxy")
+  if [[ "$guards" != 1 ]]; then
+    echo "ERROR: guard applied $guards time(s) in $page_proxy, expected exactly 1" >&2
+    exit 1
+  fi
+}
+patch_keep_synthetic_mouse_events
+
 # Strip .git — ~1GB saved in the source-prep image which both port chains FROM.
 rm -rf .git
 
