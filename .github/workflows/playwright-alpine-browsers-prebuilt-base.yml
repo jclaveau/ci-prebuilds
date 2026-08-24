@@ -86,7 +86,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build + push prebuilt-base image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: playwright/alpine-browsers
           file: playwright/alpine-browsers/Dockerfile.prebuilt-base

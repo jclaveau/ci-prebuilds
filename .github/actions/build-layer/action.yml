@@ -89,7 +89,7 @@ runs:
         echo "layer ${{ inputs.image }} changed=$changed"
     # Changed layer: build + push (sha + edge).
     - if: ${{ steps.gate.outputs.changed == 'true' }}
-      uses: docker/build-push-action@v5
+      uses: docker/build-push-action@v7
       with:
         context: ${{ inputs.context }}
         file: ${{ inputs.context }}/${{ inputs.dockerfile }}

@@ -75,7 +75,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Warm finalize (re-enable print-preview, delta-compile chrome)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}

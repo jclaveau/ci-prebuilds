@@ -351,7 +351,7 @@ jobs:
           esac
 
       - name: Build artifact image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: playwright/alpine-browsers
           file: ${{ steps.dockerfile-choice.outputs.file }}
@@ -1013,7 +1013,7 @@ jobs:
             type=raw,value=chs-edge,enable=${{ github.event_name != 'pull_request' }}
 
       - name: Build artifact image (apk fast path)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: playwright/alpine-browsers
           file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.apk
@@ -1123,7 +1123,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build setup image (apt + fetch source + gn gen)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -1185,7 +1185,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build round-1 image (5h ninja timeout, commits partial obj/)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -1230,7 +1230,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build round-2 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -1275,7 +1275,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build round-3 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -1320,7 +1320,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build round-4 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -1365,7 +1365,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build round-5 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -1410,7 +1410,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build round-6 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -1455,7 +1455,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build round-7 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -1500,7 +1500,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build round-8 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -1545,7 +1545,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build round-9 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -1590,7 +1590,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build round-10 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -1635,7 +1635,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build round-11 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -1680,7 +1680,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build round-12 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -1772,7 +1772,7 @@ jobs:
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
 
       - name: Build final artifact image (ninja must complete)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -1849,7 +1849,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build headed setup image (VARIANT=headed → gn gen chrome)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -1893,7 +1893,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build headed round-1 (5h ninja chrome, commits partial obj/)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -1936,7 +1936,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build headed round-2 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -1979,7 +1979,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build headed round-3 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -2022,7 +2022,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build headed round-4 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -2065,7 +2065,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build headed round-5 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -2108,7 +2108,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build headed round-6 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -2151,7 +2151,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build headed round-7 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -2194,7 +2194,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build headed round-8 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -2237,7 +2237,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build headed round-9 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -2280,7 +2280,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build headed round-10 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -2323,7 +2323,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build headed round-11 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -2366,7 +2366,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build headed round-12 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -2409,7 +2409,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build headed round-13 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -2452,7 +2452,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build headed round-14 image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -2526,7 +2526,7 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
       - name: Build final headed artifact image (ninja chrome must complete)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         env:
           ACTIONS_RUNTIME_TOKEN: ${{ env.ACTIONS_RUNTIME_TOKEN }}
           ACTIONS_RESULTS_URL: ${{ env.ACTIONS_RESULTS_URL }}
@@ -2658,7 +2658,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build glibc-debug image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: playwright/alpine-browsers
           file: playwright/alpine-browsers/Dockerfile.glibc-debug
@@ -2816,7 +2816,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build source-prep image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: playwright/alpine-browsers
           file: playwright/alpine-browsers/webkit/Dockerfile.source-prep
@@ -2843,7 +2843,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v7
         with:
           context: playwright/alpine-browsers
           file: playwright/alpine-browsers/webkit/Dockerfile.port
@@ -2870,7 +2870,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v7
         with:
           context: playwright/alpine-browsers
           file: playwright/alpine-browsers/webkit/Dockerfile.port
@@ -2897,7 +2897,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v7
         with:
           context: playwright/alpine-browsers
           file: playwright/alpine-browsers/webkit/Dockerfile.port
@@ -2924,7 +2924,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v7
         with:
           context: playwright/alpine-browsers
           file: playwright/alpine-browsers/webkit/Dockerfile.port
@@ -2967,7 +2967,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v7
         with:
           context: playwright/alpine-browsers
           file: playwright/alpine-browsers/webkit/Dockerfile.port
@@ -2997,7 +2997,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v7
         with:
           context: playwright/alpine-browsers
           file: playwright/alpine-browsers/webkit/Dockerfile.port
@@ -3027,7 +3027,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v7
         with:
           context: playwright/alpine-browsers
           file: playwright/alpine-browsers/webkit/Dockerfile.port
@@ -3057,7 +3057,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v7
         with:
           context: playwright/alpine-browsers
           file: playwright/alpine-browsers/webkit/Dockerfile.port
@@ -3120,7 +3120,7 @@ jobs:
             type=raw,value=wk-gtk-sha-${{ github.sha }}
             type=raw,value=wk-gtk-edge,enable=${{ github.event_name != 'pull_request' }}
       - name: Build WPE-only artifact (wk-sha-<sha>)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: playwright/alpine-browsers
           file: playwright/alpine-browsers/webkit/Dockerfile.finalize
@@ -3133,7 +3133,7 @@ jobs:
             BASE_GTK=${{ env.BASE_GTK }}
             BASE_SOURCE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-source-prep.outputs.tag }}
       - name: Build WPE+GTK artifact (wk-gtk-sha-<sha>)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: playwright/alpine-browsers
           file: playwright/alpine-browsers/webkit/Dockerfile.finalize
