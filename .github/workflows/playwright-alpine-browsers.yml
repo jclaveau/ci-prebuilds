@@ -3262,6 +3262,12 @@ jobs:
           # fixed the SIGILL, launch.cjs runs the full Tier-2 sequence
           # (launch, page, route, screenshot). If something else still
           # crashes WPEWebProcess, the core-dump step below captures bt.
+          #
+          # versions.env carries PW_WEBKIT_WPE_SOVERSION, the expected so-version
+          # of the shipped libWPEWebKit — the one version assertion that reads the
+          # built binary rather than playwright's own package.
+          set -a; . playwright/alpine-browsers/versions.env; set +a
+          : "${PW_WEBKIT_WPE_SOVERSION:?versions.env must define PW_WEBKIT_WPE_SOVERSION}"
           docker run --rm \
             --security-opt seccomp=unconfined \
             --security-opt apparmor=unconfined \
@@ -3279,6 +3285,7 @@ jobs:
             -e GALLIUM_DRIVER=llvmpipe \
             -e MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
             -e EXPECTED_WEBKIT_VERSION="${{ needs.build-webkit-finalize.outputs.webkit_version }}" \
+            -e EXPECTED_WPE_SOVERSION="$PW_WEBKIT_WPE_SOVERSION" \
             wk-candidate-runner:${{ github.sha }} \
             sh -c '
               ulimit -c unlimited 2>/dev/null || true

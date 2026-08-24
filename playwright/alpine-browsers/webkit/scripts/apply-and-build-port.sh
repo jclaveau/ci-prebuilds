@@ -100,6 +100,28 @@ fi
 
 # Phase 2 — ninja MiniBrowser (progressive across resumes).
 if [[ ! -f "$BUILD_DIR/bin/MiniBrowser" ]]; then
+  # Populate the forwarding headers before anything compiles.
+  #
+  # WebKit 4d05d732 split JSC's JIT into its own subtarget
+  # (WEBKIT_DEFINE_SUBTARGET_WITH_PREFIX(JavaScriptCore JavaScriptCoreJIT ...)),
+  # and that subtarget's precompiled header does not depend on
+  # JavaScriptCore_CopyPrivateHeaders. With a cold cache and full parallelism the
+  # PCH therefore starts before the headers are symlinked and dies on
+  #   B3ValueRep.h:32:10: fatal error: 'JavaScriptCore/FPRInfo.h' file not found
+  # even though ninja generates that header seconds later (run 32232319190,
+  # 26 minutes in, unit 6601/8797). The old base had no such subtarget, which is
+  # why this only appeared when the base moved.
+  #
+  # Building the copy targets first is deterministic — unlike lowering -j or
+  # retrying, which only make the race less likely. Each is a no-op on resume
+  # rounds, and `|| true` keeps this harmless if a target is renamed upstream:
+  # the real build below still gates the round.
+  for hdr_target in WTF_CopyHeaders bmalloc_CopyHeaders JavaScriptCore_CopyPrivateHeaders; do
+    echo "--- pre-building $hdr_target ---"
+    cmake --build "$BUILD_DIR" --target "$hdr_target" || \
+      echo "note: $hdr_target not present in this WebKit revision — skipping"
+  done
+
   echo "===== Phase 2: ninja PORT=$PORT (timeout: $(remaining_seconds)s) ====="
   rc=0
   # BusyBox `timeout` syntax: -s SIG SECS PROG; no `s` suffix.
