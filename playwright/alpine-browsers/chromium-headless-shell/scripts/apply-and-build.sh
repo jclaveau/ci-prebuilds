@@ -371,7 +371,8 @@ mkdir -p "$OUT_DIR"
 # tools/update_pgo_profiles.py, which wants depot_tools + gsutil; setting
 # pgo_data_path skips that path entirely (see build/config/compiler/pgo/BUILD.gn:
 # the script only runs when pgo_data_path is empty). The profile is a public
-# object, no auth, ~83 MB, named by a sha1 recorded in chrome/build/linux.pgo.txt.
+# object, no auth, 296 MB for chromium 151, named by a sha1 recorded in
+# chrome/build/linux.pgo.txt.
 PGO_DATA_PATH=""
 if grep -qE '^chrome_pgo_phase[[:space:]]*=[[:space:]]*2' \
      "$WORK/chromium-headless-shell/$VARIANT_OVERLAY"; then
@@ -390,7 +391,8 @@ if grep -qE '^chrome_pgo_phase[[:space:]]*=[[:space:]]*2' \
   fi
   # curl -f already rejects an HTTP error, but a truncated or redirected body
   # would still land as a file and only surface as a confusing clang error, so
-  # check the size: the real profile is ~83 MB.
+  # check the size: the real profile is hundreds of MB (296 for 151), so the
+  # 1 MB floor only has to reject a truncated body or an error page.
   PGO_BYTES=$(stat -c%s "$PGO_DATA_PATH")
   if (( PGO_BYTES < 1048576 )); then
     echo "ERROR: PGO profile at $PGO_DATA_PATH is only $PGO_BYTES bytes" >&2
