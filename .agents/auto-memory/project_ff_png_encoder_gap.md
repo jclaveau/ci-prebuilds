@@ -168,3 +168,22 @@ claim. [[feedback_size_verification_to_failure_rate]],
 the bundled build published under a real tag so `benchmark-playwright.yml`
 benches it end-to-end like the others.
 
+**RESOLVED and shipped 2026-08-24** (PR #102, merged 247d7c12; producer run
+32733050481, measurement 32759762664).
+
+`png_canvas_control` is now **26801 B on both sides with the SAME sha** —
+byte-identical to official, from 40150 B. Not "close": the same bytes. The
+paired `jpeg_q80_canvas_control` also matches sha on both sides, which is what
+makes the PNG column readable as an encoder measurement at all. `png_viewport`
+(real page, bitmaps legitimately differ) went 25018 -> 12188 against official's
+10875.
+
+Verified on the ARTIFACT, not the build log: `ff-latest`'s `libxul.so`
+DT_NEEDED carries `libjpeg.so.8` and neither `libpng` nor `libz`
+([[feedback_verify_moving_tag_payload]]).
+
+**Caveat on the speed claim.** #102's "~25% faster" was ours-vs-ours,
+before/after. The ours-vs-official run has every timing row n.s. (0.91-1.04x),
+`png_canvas_control` nominally 10% SLOWER. Both can be true — they are
+different questions — but do not cite the 25% as if it were measured against
+official.
