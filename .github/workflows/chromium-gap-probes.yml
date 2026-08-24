@@ -172,13 +172,12 @@ jobs:
           echo "::group::probe official"
           docker run --rm --env HOME=/root \
             -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/playwright/scripts:/pwscripts:ro" \
             -v "$PWD/gap-out:/out" \
             --env "PW_VERSION=${PW}" \
             "$OFFICIAL" \
             sh -c '
-              for r in "$(pnpm root -g 2>/dev/null)" "$(npm root -g 2>/dev/null)"; do
-                [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
-              done
+              NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
               export NODE_PATH
               node -e "require(\"playwright\")" 2>/dev/null \
                 || npm install -g --no-fund --no-audit \

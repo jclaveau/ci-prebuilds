@@ -71,9 +71,7 @@ jobs:
           # both-roots loop and dropping the install fallback is exactly why the
           # three net-official-* jobs died with "Cannot find module 'playwright'"
           # in run 32073294621: neither root resolves it on the MS image.
-          for r in "$(pnpm root -g 2>/dev/null)" "$(npm root -g 2>/dev/null)"; do
-            [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
-          done
+          NODE_PATH="$(sh "$GITHUB_WORKSPACE/playwright/scripts/global-node-path.sh")"
           export NODE_PATH
           node -e 'require("playwright")' 2>/dev/null \
             || npm install -g --no-fund --no-audit "playwright@${{ inputs.pw_version }}" >/dev/null 2>&1
@@ -105,9 +103,7 @@ jobs:
       - name: Probe bundled vs system libs
         working-directory: playwright/bench
         run: |
-          for r in "$(pnpm root -g 2>/dev/null)" "$(npm root -g 2>/dev/null)"; do
-            [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
-          done
+          NODE_PATH="$(sh "$GITHUB_WORKSPACE/playwright/scripts/global-node-path.sh")"
           export NODE_PATH
           node -e 'require("playwright")' 2>/dev/null \
             || npm install -g --no-fund --no-audit "playwright@${{ inputs.pw_version }}" >/dev/null 2>&1
@@ -172,12 +168,11 @@ jobs:
               --env "PROBE_TARGET=$name" \
               --env "PW_VERSION=$PW_VERSION" \
               -v "$PWD/playwright/bench:/probe:ro" \
+              -v "$PWD/playwright/scripts:/pwscripts:ro" \
               -v "$PWD/opts-out:/out" \
               "$IMG" \
               sh -c '
-                for r in "$(pnpm root -g 2>/dev/null)" "$(npm root -g 2>/dev/null)"; do
-                  [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
-                done
+                NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
                 export NODE_PATH
                 node -e "require(\"playwright\")" 2>/dev/null \
                   || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1

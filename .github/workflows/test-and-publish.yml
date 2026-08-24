@@ -1332,9 +1332,7 @@ jobs:
         run: |
           # `playwright` is installed globally in these images; the script is
           # CommonJS so this resolution applies (ESM ignores NODE_PATH).
-          for r in "$(pnpm root -g 2>/dev/null)" "$(npm root -g 2>/dev/null)"; do
-            [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
-          done
+          NODE_PATH="$(sh "$GITHUB_WORKSPACE/playwright/scripts/global-node-path.sh")"
           export NODE_PATH
           node playwright/scripts/assert-browser-versions.cjs
 
@@ -1420,6 +1418,7 @@ jobs:
               --env "PROBE_TARGET=$target" \
               --env "PW_VERSION=$PW" \
               -v "$PWD/playwright/bench:/probe:ro" \
+              -v "$PWD/playwright/scripts:/pwscripts:ro" \
               -v "$PWD/perf-out:/out" \
               "$image" \
               sh -c '
@@ -1427,9 +1426,7 @@ jobs:
                 # ours, npm -g on the control), and the probe is CommonJS precisely so
                 # NODE_PATH resolution applies — ESM ignores NODE_PATH. The npm
                 # fallback covers a control image that stops baking it in.
-                for r in "$(pnpm root -g 2>/dev/null)" "$(npm root -g 2>/dev/null)"; do
-                  [ -n "$r" ] && NODE_PATH="${NODE_PATH:+$NODE_PATH:}$r"
-                done
+                NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
                 export NODE_PATH
                 node -e "require(\"playwright\")" 2>/dev/null \
                   || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
