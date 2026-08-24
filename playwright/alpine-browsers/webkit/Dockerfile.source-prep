@@ -51,8 +51,17 @@ RUN apk add --no-cache \
 # reads NULL despite the bundled lib exposing it correctly in isolation.
 # Master may carry fixes; this overwrites apk's lib at /usr/lib so WebKit's
 # cmake configure picks up the new headers + ABI at build time.
-RUN cd /tmp && git clone --depth=1 https://github.com/WebPlatformForEmbedded/libwpe.git \
-    && cd libwpe \
+# Pinned, not `--depth=1` of master: an unpinned clone makes the build-time
+# libwpe irreproducible between builds. Pinned to a COMMIT rather than a tag on
+# purpose — libwpe's tags live on a release branch that has DIVERGED from master
+# (1.16.3 is 8 ahead / 7 behind), and 1.16.3 is precisely the apk version whose
+# musl static-init wall sent us to master in the first place. This SHA is what
+# we already build, so the pin changes nothing but reproducibility.
+RUN cd /tmp && mkdir libwpe && cd libwpe \
+    && git init -q . \
+    && git remote add origin https://github.com/WebPlatformForEmbedded/libwpe.git \
+    && git fetch -q --depth=1 origin 445a0b5579aba7eca619973ca476bb5291a85cf5 \
+    && git reset -q --hard FETCH_HEAD \
     && meson setup build --prefix=/usr --libdir=lib --buildtype=release \
         -Ddefault-backend=libWPEBackend-fdo-1.0.so.1 \
     && meson compile -C build \
@@ -65,8 +74,15 @@ RUN cd /tmp && git clone --depth=1 https://github.com/WebPlatformForEmbedded/lib
 # in WebKit's main process despite working in standalone dlopen tests.
 COPY webkit/scripts/fdo-explicit-ctor.cpp /work/fdo-explicit-ctor.cpp
 
-RUN cd /tmp && git clone --depth=1 https://github.com/Igalia/WPEBackend-fdo.git \
-    && cd WPEBackend-fdo \
+# Pinned for the same reason, and it matters more here: we replace src/fdo.cpp
+# wholesale, so an upstream move can silently desync our file from the
+# interfaces.h it includes. Newest tag 1.16.1 is again the apk version we
+# rejected.
+RUN cd /tmp && mkdir WPEBackend-fdo && cd WPEBackend-fdo \
+    && git init -q . \
+    && git remote add origin https://github.com/Igalia/WPEBackend-fdo.git \
+    && git fetch -q --depth=1 origin 84492327673fa0dedfa4fa0ab9488bed1763a5a8 \
+    && git reset -q --hard FETCH_HEAD \
     && cp /work/fdo-explicit-ctor.cpp src/fdo.cpp \
     && meson setup build --prefix=/usr --libdir=lib --buildtype=release \
     && meson compile -C build \
