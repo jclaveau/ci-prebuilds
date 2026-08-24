@@ -19,7 +19,7 @@ RUN apk add --no-cache \
         rust cargo rust-bindgen rustfmt \
         gn ninja-build samurai \
         python3 py3-setuptools \
-        nodejs npm esbuild \
+        nodejs npm esbuild go \
         binutils file unzip linux-headers \
         bsd-compat-headers sccache \
         alsa-lib-dev brotli-dev bzip2-dev cairo-dev crc32c-dev curl-dev \
@@ -33,7 +33,8 @@ RUN apk add --no-cache \
         nspr-dev nss-dev openh264-dev opus-dev pango-dev pciutils-dev \
         simdutf-dev snappy-dev speex-dev sqlite-dev wayland-dev \
         libxcomposite-dev libxcursor-dev libxdamage-dev libxi-dev \
-        libxinerama-dev libxrandr-dev libxscrnsaver-dev libxt-dev libxtst-dev
+        libxinerama-dev libxrandr-dev libxscrnsaver-dev libxt-dev libxtst-dev \
+        pipewire-dev
 
 # Alpine edge ships sccache 0.15.0-r0 which has a broken GHA v1 cache backend
 # under GHA runners v18 (writes to deprecated /_apis/artifactcache path, 100%

@@ -101,19 +101,38 @@ treat_warnings_as_errors = false
 # Skip features chrome-headless-shell doesn't need. Each line corresponds to
 # an apk dep we deliberately don't install — and Chromium's GN config will
 # pkg-config-check for it unless disabled here.
-rtc_use_pipewire = false       # pipewire-dev not installed
+# rtc_use_pipewire stays off (WebRTC screen capture over pipewire is not
+# something PW drives), but pipewire-dev IS installed now: since chromium 151
+# //ui/display pulls //remoting/host/linux:x11_display_utils whenever
+# `is_linux && ozone_platform_x11 && enable_remoting`, and that target's
+# pkg_config("pipewire_config") makes `gn gen` shell out to pkg-config for
+# libpipewire-0.3 (run 32227622665). The config sets ignore_libs = true — the
+# library is dlopen'd at runtime — so we only ever need the .pc file present,
+# not a link dependency. enable_remoting = false would also cut the edge, but
+# the note further down records that it starts an assert chain.
+rtc_use_pipewire = false
 use_pulseaudio = false         # pulseaudio-dev not installed
 use_alsa = false               # alsa-lib-dev installed (harmless)
 proprietary_codecs = false
 ffmpeg_branding = "Chromium"
 
-# Disable printing — cups-dev intentionally not installed (PW doesn't need
-# print/preview to drive CDP). use_cups is the right knob; enable_basic_printing
-# alone doesn't stop //printing/BUILD.gn from calling cups_config_helper.py at
-# gn-gen time.
+# Printing stays ENABLED, cups does not. cups-dev is intentionally not installed
+# and PW needs no print/preview to drive CDP, but printing cannot be cut from the
+# graph: since chromium 151, //chrome/test/BUILD.gn depends on
+# //chrome/browser/ui/webui/print_preview:interactive_ui_tests unconditionally,
+# and that file opens with `assert(enable_print_preview)` — so `gn gen` itself
+# fails (run 32114910664, 10 min in). gn evaluates the whole gn_all graph, so it
+# is not enough that headless_shell never links any of it.
+#
+# use_cups is the knob that actually keeps cups out: it is what stops
+# //printing/BUILD.gn calling cups_config_helper.py at gn-gen time, and
+# print-to-PDF needs no CUPS backend. Same combination the headed overlay has
+# carried since run 29946711140 (where cutting printing passed gn gen and then
+# failed the final link 5 days in). aports sets neither flag, i.e. upstream
+# default = enabled.
 use_cups = false
-enable_basic_printing = false
-enable_print_preview = false
+enable_basic_printing = true
+enable_print_preview = true
 
 # Disable check_version.js for Node.js — Chromium pins v24.12.0; Alpine ships
 # v24.16.0. cr138-node-version-check.patch (copium) makes the check gateable
