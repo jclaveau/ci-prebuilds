@@ -28,3 +28,22 @@ tradeoff no measurement settles ([[feedback_never_pause_unless_blocked]]).
 Does NOT generalize: everywhere else [[feedback_no_merge_without_review]] and
 [[feedback_ask_before_branch_switch_and_pr]] still stand, per
 [[feedback_scope_memory_by_what_varies]].
+
+**Extended 2026-08-24:** *"loop until no more ready to merge pr needs to be
+merged."* The remit is the whole PR queue, not only mine — Renovate's included.
+"Ready" means green AND not stale AND the change is actually sound; each of
+those failed on a different PR the same evening:
+
+- **stale green** — #97 green from 83 commits back; rebased for a fresh run
+  ([[feedback_pr_green_is_stale_after_base_moves]]).
+- **conflicting** — #98 and #101 had each appended at the same point in
+  `prep-source.sh`; kept BOTH blocks and proved it with zero deletions against
+  either parent.
+- **sound? no** — #71 was mergeable and would have broken every `apt-get`
+  ([[feedback_bump_target_may_be_dead]]). Resolving a PR can mean CLOSING it
+  with the evidence and fixing the bot that produced it.
+
+Drained 7 that evening: merged #97 #98 #105 #106 #107 #79, closed #71. Only the
+parked draft #37 was left. Parked/draft PRs stay parked
+([[feedback_superseded_label_not_close]]).
+
