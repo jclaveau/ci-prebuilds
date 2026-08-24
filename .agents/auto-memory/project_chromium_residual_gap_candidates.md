@@ -76,3 +76,33 @@ alone went 1.42 → 1.28 / 1.31), and alpine clang **22** against official's
 clang **23.0.0**. No cheap probe remains — the next step costs ~40 h and is
 jean's call.
 
+**Round 4 — PGO+ThinLTO landed the gap at 12%, and static inspection is now
+exhausted** (build 32530923539, compare 32650654039, probe 32665276324):
+
+| arm | geomean | layout |
+|---|---|---|
+| baseline | 1.42 | 2.27 |
+| PGO | 1.28 | 1.89 |
+| ThinLTO | 1.31 | 1.89 |
+| **both** | **1.12** | **1.61** |
+
+Also dead:
+- **TLS.** Both binaries: `__tls_get_addr` undefined ×1, and ZERO relocations
+  in all six TLS classes. Not a broken probe — `is_component_build = false`,
+  so Blink lives in the main executable and every `thread_local` is local-exec
+  on both sides. I ranked this first without checking the build shape; the
+  hypothesis is sound for a shared-library layout and inapplicable here.
+- **Under-inlining.** ThinLTO GREW our `.text` 151,895,539 -> 165,909,030
+  (+9.2%), landing 1.02x ABOVE official's 161,907,689. Smaller `.rodata`
+  (0.89x) and `.bss` (0.58x) track the features we cut (webrtc/dawn/xnnpack).
+
+**What is left can only be seen at runtime:** alpine clang 22 vs official's
+23 (instruction selection/scheduling, invisible in section sizes), and
+musl-vs-glibc beyond the routines already excluded — futex/pthread contention,
+scheduler. Our binary carries no producer string, so the clang version comes
+from aports' `_llvmver`, not the artifact.
+
+**Next instrument should be `perf record` of the layout kernel inside both
+containers**, not another static candidate. Seven eliminations in, elimination
+is clearly the slow path; a profile names the cause instead.
+
