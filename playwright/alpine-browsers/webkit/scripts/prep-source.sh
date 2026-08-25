@@ -798,6 +798,69 @@ patch_keep_synthetic_mouse_events() {
 }
 patch_keep_synthetic_mouse_events
 
+# WebKit's mock capture devices — the fake camera/microphone that PW's
+# permissions suite requires. Without them `getUserMedia({video,audio})`
+# rejects with OverconstrainedError and `enumerateDevices()` returns [], which
+# is the whole of the camera/mic conformance cluster
+# (permissions.spec.ts:349 and its three siblings).
+#
+# Diagnosed by running the same probe against our artifact and against
+# mcr.microsoft.com/playwright:v1.62.1-noble, with GST_DEBUG_FILE to get the
+# GStreamer log out of the web process (PW discards its stderr):
+#
+#   ours      GStreamerMockDeviceProvider.cpp:53  "Mock capture sources are
+#                                                  disabled, returning empty
+#                                                  device list"
+#   official  GStreamerMockDeviceProvider.cpp:57  "Probing" -> 6 mock devices
+#
+# Same binary layout, opposite branch of the same `if`, so the gate is purely
+# `MockRealtimeMediaSourceCenter::mockRealtimeMediaSourceCenterEnabled()`. Its
+# only UI-process caller reads `preferences->mockCaptureDevicesEnabled()`,
+# whose default is false at BOTH our base (4d05d732) and PW's (6b34ac51) — and
+# PW neither sends `Page.overrideSetting: MockCaptureDevicesEnabled` (verified
+# on a live protocol trace: it sends seven settings, not that one) nor touches
+# mock capture in any revision of bootstrap.diff. Official must therefore set
+# it in the build recipe, which Playwright no longer publishes — their
+# browser_patches build scripts 404 on every tag. So we set it ourselves.
+#
+# Scoped to the WebKit layer only; WebKitLegacy and WebCore keep their upstream
+# false, and the neighbouring MockCaptureDevicesPromptEnabled is untouched.
+patch_mock_capture_devices_default() {
+  local yaml=Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
+  local marker='prep-source.sh: mock capture devices on by default'
+
+  if grep -q "$marker" "$yaml"; then
+    echo "  MockCaptureDevicesEnabled already defaults on — drop patch_mock_capture_devices_default"
+    return 0
+  fi
+
+  echo "  default MockCaptureDevicesEnabled to true (WebKit layer)"
+  # Arm on the block header, then on `    WebKit:` INSIDE it: the pref has
+  # three `default: false` lines (WebKitLegacy, WebKit, WebCore) and only the
+  # WebKit one drives the UIProcess preference.
+  awk -v marker="$marker" '
+    /^MockCaptureDevicesEnabled:$/ { in_pref = 1; print; next }
+    in_pref && /^[A-Za-z]/ { in_pref = 0; in_webkit = 0 }
+    in_pref && /^    WebKit:$/ { in_webkit = 1; print; next }
+    in_webkit && /^      default: false$/ {
+      print "      # " marker
+      print "      default: true"
+      in_webkit = 0
+      next
+    }
+    { print }
+  ' "$yaml" > "${yaml}.new"
+  mv "${yaml}.new" "$yaml"
+
+  local applied
+  applied=$(grep -c "$marker" "$yaml")
+  if [[ "$applied" != 1 ]]; then
+    echo "ERROR: mock-capture default applied $applied time(s) in $yaml, expected exactly 1" >&2
+    exit 1
+  fi
+}
+patch_mock_capture_devices_default
+
 # Strip .git — ~1GB saved in the source-prep image which both port chains FROM.
 rm -rf .git
 
