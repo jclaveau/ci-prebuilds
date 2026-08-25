@@ -829,30 +829,15 @@ patch_keep_synthetic_mouse_events
 # enables the mock centre in the WebProcess — ONLY on a change, so flipping
 # WebCore too would make the write a no-op and silence the hook.
 #
-# MockCaptureDevicesPromptEnabled must move as well, and enabling the devices
-# without it is exactly half a fix — which is what ed83438 shipped. The
-# UIProcess auto-grant is gated on BOTH:
-#
-#     if (preferences->mockCaptureDevicesEnabled()
-#         && !preferences->mockCaptureDevicesPromptEnabled())
-#         grantRequest(...);        // UserMediaPermissionRequestManagerProxy.cpp:782
-#
-# and this one defaults TRUE, so `!true` killed the condition and every request
-# fell through to requestSystemValidation() — which in a container has no system
-# permission to validate against, hence NotAllowedError with the mocks present
-# and working. Measured locally against wk-gtk-sha-ed83438: the GStreamer log
-# takes the good branch (GStreamerMockDeviceProvider.cpp:57 "Probing", all six
-# mocks created), and enumerateDevices still reports an audioinput and a
-# videoinput in a container with no /dev/video* and no /dev/snd — so the devices
-# were there and only the grant was missing.
-#
-# This pref is safe to flip on both counts the other one is not: it has a single
-# WebKit default layer, `webcoreBinding: none` and no webcoreOnChange, so no
-# transition carries it.
-# Rewrite one pref's `WebKit:` default in place. Both call sites below need the
-# same walk: arm on the block header, then on `    WebKit:` INSIDE it, because a
-# pref can carry a default per layer and only the WebKit one drives the
-# UIProcess preference.
+# Enabling the devices is necessary and NOT sufficient — see
+# patch_user_media_automation_permissions below, which supplies the grant.
+# MockCaptureDevicesPromptEnabled is deliberately left at its upstream true:
+# flipping it makes the UIProcess auto-grant EVERY request, which trades the
+# three failing camera/mic tests for three different ones (measured, not
+# guessed: run 32843700425 went from :349/:373/:386 red to :364/:373/:386 red).
+# Rewrite one pref's `WebKit:` default in place: arm on the block header, then
+# on `    WebKit:` INSIDE it, because a pref carries a default per layer and only
+# the WebKit one drives the UIProcess preference.
 set_webkit_pref_default() {
   local yaml="$1" pref="$2" from="$3" to="$4" marker="$5"
 
@@ -882,19 +867,97 @@ set_webkit_pref_default() {
 patch_mock_capture_devices_defaults() {
   local yaml=Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
   local marker='prep-source.sh: mock capture devices on by default'
-  local prompt_marker='prep-source.sh: mock capture devices need no prompt'
 
-  if grep -q "$prompt_marker" "$yaml"; then
+  if grep -q "$marker" "$yaml"; then
     echo "  mock capture defaults already patched — drop patch_mock_capture_devices_defaults"
     return 0
   fi
 
   echo "  default MockCaptureDevicesEnabled to true (WebKit layer)"
   set_webkit_pref_default "$yaml" MockCaptureDevicesEnabled false true "$marker"
-  echo "  default MockCaptureDevicesPromptEnabled to false (WebKit layer)"
-  set_webkit_pref_default "$yaml" MockCaptureDevicesPromptEnabled true false "$prompt_marker"
 }
 patch_mock_capture_devices_defaults
+
+# Honour Browser.grantPermissions for camera/microphone.
+#
+# PW's bootstrap.diff adds WebPageProxy::permissionForAutomation() and wires it
+# into exactly three places — clipboard-read, geolocation, and queryPermission —
+# but nothing in the getUserMedia path. Same in the series at PW's own v1.62.1
+# tag, so this is not our patch pin drifting.
+#
+# The consequence, measured on wk-gtk-sha-ed83438 and mcr…:v1.62.1-noble with an
+# identical probe. navigator.permissions.query agrees on all three rows, because
+# that is the path PW DID wire; only getUserMedia diverges:
+#
+#   grant         query                        official      ours
+#   none          prompt / prompt              NotAllowed    NotAllowed
+#   camera only   granted / denied             NotAllowed    NotAllowed
+#   both          granted / granted            audio+video   NotAllowed
+#
+# So PW's permissions reach the browser correctly and the UIProcess decision
+# ignores them. Neither build's UI client is ever asked — upstream's WPE
+# MiniBrowser decidePermissionRequest() allows everything and prints "Accepting
+# <type> request", and that line appears on NEITHER side — so the decision is
+# made inside UserMediaPermissionRequestManagerProxy.
+#
+# Why official reaches the right answer without this patch is not settled. Its
+# shipped webkit-2336 is past our pinned 4d05d732, and the likeliest explanation
+# is that the newer revision consults the permission state itself. What IS
+# settled is the table above, and this patch reproduces it by construction, in
+# the same idiom PW used for geolocation:
+#
+#   ungranted     -> permissionForAutomation returns nullopt -> Deny
+#   camera only   -> video Grant, anything needing audio Deny
+#   both          -> Grant
+#
+# Scoped to isControlledByAutomation() so a non-automation embedder keeps
+# upstream behaviour, and to non-display capture so getDisplayMedia still
+# prompts.
+patch_user_media_automation_permissions() {
+  local cpp=Source/WebKit/UIProcess/UserMediaPermissionRequestManagerProxy.cpp
+  local marker='prep-source.sh: honour Browser.grantPermissions for capture'
+
+  if grep -q "$marker" "$cpp"; then
+    echo "  user-media automation permissions already patched — drop this step"
+    return 0
+  fi
+
+  # Anchor on the wasRequestDenied guard, the first statement of
+  # getRequestAction after the three request-shape bools it needs.
+  local anchor='    if (!request.isUserGesturePriviledged() \&\& wasRequestDenied('
+  if [[ "$(grep -c "$anchor" "$cpp")" != 1 ]]; then
+    echo "ERROR: expected exactly 1 getRequestAction anchor in $cpp" >&2
+    exit 1
+  fi
+
+  echo "  honour Browser.grantPermissions for camera/microphone"
+  awk -v marker="$marker" '
+    /^    if \(!request\.isUserGesturePriviledged\(\) && wasRequestDenied\(/ && !done {
+      print "    // " marker
+      print "    if (RefPtr automationPage = m_page.get(); automationPage && automationPage->isControlledByAutomation() && !requestingScreenCapture && (requestingCamera || requestingMicrophone)) {"
+      print "        auto automationOrigin = request.topLevelDocumentSecurityOrigin().toString();"
+      print "        bool automationGranted = true;"
+      print "        if (requestingCamera)"
+      print "            automationGranted = automationGranted && automationPage->permissionForAutomation(automationOrigin, \"camera\"_s).value_or(false);"
+      print "        if (requestingMicrophone)"
+      print "            automationGranted = automationGranted && automationPage->permissionForAutomation(automationOrigin, \"microphone\"_s).value_or(false);"
+      print "        return automationGranted ? RequestAction::Grant : RequestAction::Deny;"
+      print "    }"
+      print ""
+      done = 1
+    }
+    { print }
+  ' "$cpp" > "${cpp}.new"
+  mv "${cpp}.new" "$cpp"
+
+  local applied
+  applied=$(grep -c "$marker" "$cpp")
+  if [[ "$applied" != 1 ]]; then
+    echo "ERROR: user-media automation patch applied $applied time(s) in $cpp, expected exactly 1" >&2
+    exit 1
+  fi
+}
+patch_user_media_automation_permissions
 
 # Strip .git — ~1GB saved in the source-prep image which both port chains FROM.
 rm -rf .git
