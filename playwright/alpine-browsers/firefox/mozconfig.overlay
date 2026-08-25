@@ -1,12 +1,37 @@
 # Overlay applied on top of aports' community/firefox/mozconfig.
 #
 # aports' mozconfig is already tuned for an Alpine distro build (system libs,
-# release channel, hardening on, updater off). aports' build() function
-# CONDITIONALLY adds PGO (--enable-profile-generate / --enable-profile-use) at
-# build time on x86_64/aarch64/ppc64le, but we don't run that function — we
-# invoke ./mach build directly, so PGO never enters the picture.
+# release channel, hardening on, updater off). What it is NOT tuned for is
+# speed: aports puts every optimisation in the APKBUILD's build() function,
+# which we never run because we invoke ./mach build directly. `base-mozconfig`
+# has zero mentions of `lto` and carries `--disable-jemalloc`, so what we
+# shipped was the distro's SOURCE with none of the distro's optimisation.
 #
-# Result: minimal overrides. We do enable sccache here so mach wraps every CC
-# / rustc invocation, which combined with the Dockerfile cache mount makes
-# incremental rebuilds across CI runs fast (3h cold → ~5min hot).
+# `apply-and-build.sh` builds .mozconfig as `cat aports/mozconfig overlay`, so
+# options here are appended and win over the base.
+#
+# We do enable sccache here so mach wraps every CC / rustc invocation, which
+# combined with the Dockerfile cache mount makes incremental rebuilds across
+# CI runs fast (3h cold → ~5min hot).
 ac_add_options --with-ccache=sccache
+
+# PERF ARM (perf/firefox-lto-jemalloc). Measured against PW's own firefox on a
+# single runner, our build's only real deltas are screenshot 1.20, launch 1.16
+# and layout 1.09, while every JIT-executed kernel is at parity — the shape a
+# missing C++ optimisation makes. Two of the three missing levers, in one
+# build; PGO is the third and costs roughly twice this.
+#
+# jemalloc: base sets --disable-jemalloc, and the shipped libxul.so has zero
+# moz_arena_ symbols, so firefox runs on musl malloc. An LD_PRELOAD A/B in the
+# shipped image (mimalloc vs musl malloc, one container, back to back) moved
+# eval_rtt -33%, launch -21%, layout -12% while the allocation-free controls
+# stayed flat (libm_fmod +1%, locator_click -2%) — so the allocator is real,
+# but it only bought 5% of screenshot.
+ac_add_options --enable-jemalloc
+
+# lto: aports uses exactly `cross` in its optimised-mozconfig. Kept identical
+# rather than dropping to `cross,thin`, because `cross` is the recipe proven to
+# build firefox on Alpine x86_64. If the final link OOMs on a 4-vCPU/16GB
+# runner, `--enable-lto=cross,thin` is the fallback — and the failure would
+# land late, at the link step.
+ac_add_options --enable-lto=cross
