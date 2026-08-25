@@ -103,4 +103,34 @@ if [ -n "$missing" ]; then
   ldd "$DST/firefox" 2>&1 | head -30 >&2
   exit 1
 fi
+# Strip ELF symbol tables. aports' mozconfig sets --disable-strip, because a
+# distro builds symbols here and strips them in package() -- which we never
+# run. So libxul ships .symtab + .strtab: 51.8 MB of the bundle's 380 MB.
+# Mozilla's own libxul carries neither, and our WebKit dist is already stripped
+# the same way in webkit/Dockerfile.finalize, so this is parity on both sides
+# rather than a new tradeoff. Neither section is SHF_ALLOC, so nothing leaves
+# the runtime image; .dynsym and the RPATH=$ORIGIN set above are untouched.
+#
+# Producer-side on purpose: the conformance runner builds from this artifact,
+# so what we measure is what we ship.
+#
+# The ELF-magic gate is load-bearing -- icudt*.dat (33 MB) sits in this same
+# directory and `strip` must never be handed it. `du -sk` because the builder
+# is busybox, which has no `du -b`.
+echo "===== Stripping ELF symbol tables ====="
+strip_before=$(du -sk "$DST" | cut -f1)
+stripped=0
+while IFS= read -r f; do
+  [ "$(od -An -N4 -tx1 < "$f" | tr -d ' \n')" = "7f454c46" ] || continue
+  strip --strip-all "$f" 2>/dev/null && stripped=$((stripped + 1))
+done < <(find "$DST" -type f)
+strip_after=$(du -sk "$DST" | cut -f1)
+echo "===== Stripped $stripped ELFs: $((strip_before / 1024)) -> $((strip_after / 1024)) MiB ====="
+
+# A strip that cost us a loadable artifact must fail here, not at consumer run.
+if ldd "$DST/libxul.so" 2>&1 | grep -q 'not found'; then
+  echo "ERROR: libxul.so has unresolved deps after strip" >&2
+  exit 1
+fi
+
 echo "===== Self-contained artifact: $(du -sh "$DST" | cut -f1) ====="

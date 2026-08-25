@@ -25,7 +25,7 @@ FROM alpine:${ALPINE_VERSION} AS firefox-builder
 # `_llvmver` (read by apply-and-build.sh at build time, not hard-coded here).
 RUN apk add --no-cache \
         bash curl git patch patchutils tar xz gzip jq gettext-envsubst make sccache \
-        alsa-lib-dev automake bsd-compat-headers cargo cbindgen \
+        alsa-lib-dev automake binutils bsd-compat-headers cargo cbindgen \
         clang22 clang22-libclang clang22-dev compiler-rt \
         dbus dbus-dev gettext gtk+3.0-dev hunspell-dev icu-dev icu-data-full \
         libevent-dev libffi-dev libjpeg-turbo-dev libnotify-dev libogg-dev \

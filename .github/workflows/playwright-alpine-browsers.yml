@@ -266,20 +266,10 @@ jobs:
           echo "firefox_revision=$REV" >> "$GITHUB_OUTPUT"
           echo "firefox_version=$VER" >> "$GITHUB_OUTPUT"
           echo "PW v${PW_VERSION} → firefox revision=${REV} browserVersion=${VER}"
-          # Content-address the prebuilt-base on the FF patch SET, not just PW's
-          # rev. A source-only patch (e.g. the Juggler location fix in
-          # apply-and-build.sh) leaves the rev unchanged, so a rev-only base tag
-          # lets the iter path reuse a stale pre-patch base and ship an unpatched
-          # ff-latest (shipped exactly that 2026-07-28). Hashing the files baked
-          # INTO the base forces a cold reseed whenever the patch set changes.
-          # Excludes apply-and-build-iter.sh (applied at iter time, not baked in).
-          PATCHSET_HASH=$(cat \
-            playwright/alpine-browsers/versions.env \
-            playwright/alpine-browsers/firefox/scripts/apply-and-build.sh \
-            playwright/alpine-browsers/firefox/scripts/fetch-aports.sh \
-            playwright/alpine-browsers/firefox/scripts/fetch-pw-patches.sh \
-            playwright/alpine-browsers/firefox/mozconfig.overlay \
-            | sha256sum | cut -c1-12)
+          # Content-addresses the base on the FF patch set so a source-only
+          # patch reseeds it instead of reusing a stale one. Shared with the
+          # other workflow's pins step — both MUST agree, see the script.
+          PATCHSET_HASH=$(bash playwright/alpine-browsers/firefox/patchset-hash.sh)
           echo "patchset_hash=$PATCHSET_HASH" >> "$GITHUB_OUTPUT"
           echo "FF patch-set hash=${PATCHSET_HASH}"
 
