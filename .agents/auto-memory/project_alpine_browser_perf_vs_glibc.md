@@ -69,3 +69,37 @@ layout 0.86x, launch 0.91x, most metrics inside their own spread. **libm_fmod
 slower" claim in `runtime-probe.cjs`'s header comment — re-verify before quoting
 it. Sole real FF regression is screenshot 0.68x, see
 [[project_ff_png_encoder_gap]].
+
+**2026-08-25 — the three-arm `perf-firefox` job separates ENVIRONMENT from
+BUILD; read it that way or you misattribute.** Run 32782133911, all arms on one
+runner (EPYC 9V74), FF 153.0, PW 1.62.1.
+
+The `ubuntu` arm is NOT our Firefox on glibc. `playwright/Dockerfile` runs
+`playwright install`, so it carries **PW's own binary** — the same build the
+official image ships. So:
+
+- `ubuntu/official` = our IMAGE vs PW's image, browser held constant → ENV.
+- `alpine/ubuntu`   = our musl BUILD vs PW's binary, image roughly constant.
+
+| metric | ENV (ubu/off) | OUR BUILD (alp/ubu) |
+|---|---|---|
+| screenshot | 1.08 n.s. | **1.20** |
+| launch | 1.00 n.s. | **1.16** |
+| layout | 1.00 n.s. | **1.09** |
+| eval_rtt | **1.14** | 1.00 n.s. |
+| libm_fmod | 1.00 n.s. | **0.59** (musl faster) |
+
+`>1.00 = slower` — the INVERSE of chs-perf-ab/ff-perf-ab, which print
+official/ours. n.s. = delta inside summed half-IQRs (IQR, not range: alpine's
+`context_page` carries a 1158 ms outlier among ~250 ms samples).
+
+**So our build's real deltas are exactly three** — screenshot, launch, layout —
+and `eval_rtt`'s 14% belongs to our ubuntu image's runtime, not to Firefox. A
+two-arm ours-vs-official comparison cannot see that difference and charges it
+to the browser. `libm_fmod`'s 1.00 on the ENV column is the harness's own
+control: identical binary, identical number.
+
+**How to apply:** for any "is this our build or our packaging?" question, use
+this job's three arms, not `ff-perf-ab`'s two. [[project_ff_png_encoder_gap]]
+(screenshot is capture/readback, not encode),
+[[feedback_check_reference_stability_across_runs]]
