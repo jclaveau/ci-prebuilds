@@ -41,6 +41,14 @@ on:
         description: 'Playwright version to drive the probe'
         default: '1.62.1'
         type: string
+      preload_a:
+        description: 'LD_PRELOAD baked into arm A''s firefox shim (e.g. /usr/lib/libmimalloc-insecure.so.2)'
+        default: ''
+        type: string
+      preload_b:
+        description: 'LD_PRELOAD baked into arm B''s firefox shim, same form as preload_a'
+        default: ''
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -71,6 +79,8 @@ jobs:
           LABEL_B: ${{ inputs.label_b }}
           FF_REV: ${{ inputs.ff_rev }}
           PW: ${{ inputs.pw_version }}
+          PRELOAD_A: ${{ inputs.preload_a }}
+          PRELOAD_B: ${{ inputs.preload_b }}
         run: |
           set -o pipefail
           mkdir -p perf-out && chmod 777 perf-out
@@ -103,8 +113,12 @@ jobs:
           }
 
           probe_one() {
-            local image="$1" label="$2"
+            local image="$1" label="$2" preload="$3"
             if [ "$image" = official ]; then
+              # No preload arm for official: noble carries no mimalloc, and the
+              # question the preload asks — can a general-purpose allocator
+              # stand in for the mozjemalloc we cannot build on musl — is only
+              # meaningful on our side.
               probe_official "$label"
               return
             fi
@@ -119,7 +133,8 @@ jobs:
               libvorbis libvpx libwebp libwebpdemux libxcomposite libxt mesa-gl \\
               nspr nss pipewire-libs libpulse libstdc++ libgcc \\
               gstreamer gst-plugins-base gst-plugins-good gst-libav \\
-              opus libsecret libxslt double-conversion minizip crc32c
+              opus libsecret libxslt double-conversion minizip crc32c \\
+              mimalloc2-insecure mimalloc2 jemalloc
           COPY --from=${image} /firefox /ms-playwright/firefox-${FF_REV}/firefox
           RUN touch /ms-playwright/firefox-${FF_REV}/INSTALLATION_COMPLETE \\
            && chmod 755 /ms-playwright/firefox-${FF_REV}
@@ -134,7 +149,7 @@ jobs:
            && printf '%s\\n' \\
                   '#!/bin/sh' \\
                   'DIR="\$(dirname "\$0")"' \\
-                  'ICU_DATA="\$DIR" exec "\$DIR/firefox.real" --remote-debugging-port=0 "\$@"' \\
+                  'LD_PRELOAD="${preload}" ICU_DATA="\$DIR" exec "\$DIR/firefox.real" --remote-debugging-port=0 "\$@"' \\
                 > /ms-playwright/firefox-${FF_REV}/firefox/firefox \\
            && chmod +x /ms-playwright/firefox-${FF_REV}/firefox/firefox
           ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
@@ -145,6 +160,14 @@ jobs:
           RUN npm install -g --no-fund --no-audit playwright@${PW}
           EOF
             docker build -t "ff-probe-${label}:${{ github.run_id }}" -f /tmp/Dockerfile."${label}" /tmp
+            # A preload naming a path the image does not carry is silently
+            # ignored by the loader, so a typo would report a clean null result.
+            if [ -n "$preload" ]; then
+              docker run --rm "ff-probe-${label}:${{ github.run_id }}" \
+                test -f "$preload" \
+                || { echo "preload $preload absent from arm ${label}" >&2; exit 1; }
+              echo "arm ${label} preloads ${preload}"
+            fi
             # The probe is CommonJS precisely so NODE_PATH resolution applies to
             # the global playwright install — ESM ignores NODE_PATH.
             docker run --rm \
@@ -160,8 +183,8 @@ jobs:
             echo "::endgroup::"
           }
 
-          probe_one "$IMAGE_A" "$LABEL_A"
-          probe_one "$IMAGE_B" "$LABEL_B"
+          probe_one "$IMAGE_A" "$LABEL_A" "$PRELOAD_A"
+          probe_one "$IMAGE_B" "$LABEL_B" "$PRELOAD_B"
 
       - name: Report
         env:

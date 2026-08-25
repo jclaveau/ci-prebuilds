@@ -35,7 +35,7 @@ RUN sudo apk add --no-cache \
         alsa-lib dbus-libs fontconfig glib gtk+3.0 harfbuzz \
         libdrm libevent libffi libjpeg-turbo libnotify libogg libtheora \
         libvorbis libvpx libwebp libwebpdemux libxcomposite libxt mesa-gl \
-        nspr nss pipewire-libs libpulse libstdc++ libgcc \
+        nspr nss pipewire-libs libpulse libstdc++ libgcc mimalloc2-insecure \
         libwpe libwpebackend-fdo gtk4.0 at-spi2-core cairo pango gdk-pixbuf \
         mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \
         gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \
@@ -67,7 +67,7 @@ COPY --from=ff-source /firefox /ms-playwright/firefox-${FF_REV}/firefox
 RUN sudo touch /ms-playwright/firefox-${FF_REV}/INSTALLATION_COMPLETE \
  && sudo chmod 755 /ms-playwright/firefox-${FF_REV}
 
-# Firefox launch shim — handles two musl-FF quirks:
+# Firefox launch shim — handles three musl-FF quirks:
 #
 # 1. ICU data file. aports builds firefox --with-system-icu; Alpine's
 #    libicudata.so.${maj} is a 12 KB stub and the real data file lives at
@@ -86,11 +86,26 @@ RUN sudo touch /ms-playwright/firefox-${FF_REV}/INSTALLATION_COMPLETE \
 #    Tier-2 smoke does this from test code; the shim makes PW-driven launches
 #    get the flag transparently. Drop the flag once a build-side Juggler
 #    self-bootstrap fix lands in the producer.
+#
+# 3. The allocator. Playwright's own firefox links mozjemalloc — `nm -D` on
+#    its libxul leaves `malloc` undefined 0 times, ours 1. We cannot build
+#    mozjemalloc on musl: mozmemory_wrap.h declares free_impl/memalign_impl
+#    `noexcept(true)` to match glibc's __THROW, musl does not mark them, and
+#    every decl mismatches its previous one. So musl's malloc answered every
+#    allocation, and that — not the PNG encoder, not musl's string routines,
+#    not the missing PGO — was the whole gap against official: preloading
+#    mimalloc moves screenshot 0.69x -> 0.96x, launch 0.83x -> 1.02x and
+#    eval_rtt 0.86x -> 1.00x, while int_math and locator_click, which
+#    allocate nothing, stay identical (runs 32833439914, 32833725968).
+#    Scoped to the shim rather than ENV so it reaches firefox and its
+#    children and not the Node.js driving them, and so chromium's
+#    PartitionAlloc and webkit's bmalloc are left alone.
 RUN sudo mv /ms-playwright/firefox-${FF_REV}/firefox/firefox \
             /ms-playwright/firefox-${FF_REV}/firefox/firefox.real \
  && printf '%s\n' \
         '#!/bin/sh' \
         'DIR="$(dirname "$0")"' \
+        'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2' \
         'ICU_DATA="$DIR" exec "$DIR/firefox.real" --remote-debugging-port=0 "$@"' \
   | sudo tee /ms-playwright/firefox-${FF_REV}/firefox/firefox >/dev/null \
  && sudo chmod +x /ms-playwright/firefox-${FF_REV}/firefox/firefox

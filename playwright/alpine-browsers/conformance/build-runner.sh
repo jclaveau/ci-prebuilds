@@ -188,6 +188,7 @@ RUN apk update && apk add --no-cache \\
     icu-libs icu-data-full libevent libffi libjpeg-turbo libnotify libogg \\
     libtheora libvorbis libvpx libwebp libwebp-tools libwebpdemux libxcomposite \\
     libxt mesa-gl mesa-dri-gallium nspr nss pipewire-libs libpulse \\
+    mimalloc2-insecure \\
     ttf-freefont xvfb xvfb-run jq \\
     ffmpeg-libs \\
     at-spi2-core libatk-1.0 cairo gdk-pixbuf pango pixman fribidi brotli bzip2 \\
@@ -210,11 +211,15 @@ RUN bash /tmp/strip-bundled-libs.sh /ms-playwright/firefox-${ARTIFACT_REV}/firef
 # browsertype-connect run-server tests launch FF without it → 38min hang. Wrap the
 # binary so the arg is always present regardless of PW's filtering — the security
 # filter stays fully intact. Dedup guard avoids double-passing on paths that add it.
+# The LD_PRELOAD mirrors playwright/Dockerfile.alpine's shim (quirk 3 there):
+# conformance has to exercise the allocator we actually ship, or the suite
+# validates a build nobody runs.
 RUN FFBIN=/ms-playwright/firefox-${ARTIFACT_REV}/firefox/firefox \\
  && mv "\$FFBIN" "\$FFBIN.real" \\
  && printf '%s\\n' \\
       '#!/bin/sh' \\
       'D=\$(dirname "\$0")' \\
+      'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2' \\
       'case " \$* " in' \\
       '  *" --remote-debugging-port"*) exec "\$D/firefox.real" "\$@" ;;' \\
       '  *) exec "\$D/firefox.real" --remote-debugging-port=0 "\$@" ;;' \\
