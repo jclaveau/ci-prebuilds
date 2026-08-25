@@ -1,0 +1,36 @@
+name: tests-firefox
+
+# Cheap consistency guards for the firefox producer's build scripts. Runs in
+# seconds — catches a patch-set that would silently reuse a stale prebuilt-base
+# without waiting for the ~5h producer build to ship nothing.
+#
+# Separate from tests-aports, which is scoped to the chromium pin pair.
+
+on:
+  pull_request:
+    paths:
+      - 'playwright/alpine-browsers/firefox/**'
+      - 'playwright/alpine-browsers/versions.env'
+      - 'playwright/alpine-browsers/Dockerfile.prebuilt-base'
+      - 'tests/firefox/**'
+      - '.github/workflows/playwright-alpine-browsers.yml'
+      - '.github/workflows/playwright-alpine-browsers-prebuilt-base.yml'
+      - '.github/workflows/tests-firefox.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'playwright/alpine-browsers/firefox/**'
+      - 'playwright/alpine-browsers/versions.env'
+      - 'playwright/alpine-browsers/Dockerfile.prebuilt-base'
+      - 'tests/firefox/**'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: prebuilt-base patch-set hash unit test
+        run: bash tests/firefox/test-patchset-hash.sh
