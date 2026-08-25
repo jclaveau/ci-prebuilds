@@ -29,7 +29,11 @@ zlib 1.3.2, libpng 1.6.58); Mozilla ships its own copies. `--with-system-jpeg`
 already matches the reference byte-for-byte.
 
 Secondary: aports enables PGO inside its APKBUILD `build()`, which we never run —
-see the note in `firefox/mozconfig.overlay`. Our FF is LTO-but-not-PGO.
+see the note in `firefox/mozconfig.overlay`. **CORRECTED 2026-08-25: our FF is
+neither LTO nor PGO.** `--enable-lto=cross` lives in the APKBUILD's
+`optimised-mozconfig` NEXT TO the PGO options, not in the base mozconfig
+(`grep -c lto` on it returns 0), so skipping `build()` drops both at once.
+See [[project_ff_build_missing_pgo_lto_jemalloc]].
 
 **RESOLVED 2026-08-21** — arm `perf/firefox-bundled-imaging` (build 32462261885,
 diagnosis 32481799551) deletes the two mozconfig lines. The canvas control goes
