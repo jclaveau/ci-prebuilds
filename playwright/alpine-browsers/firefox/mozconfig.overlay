@@ -21,13 +21,18 @@ ac_add_options --with-ccache=sccache
 # missing C++ optimisation makes. Two of the three missing levers, in one
 # build; PGO is the third and costs roughly twice this.
 #
-# jemalloc: base sets --disable-jemalloc, and the shipped libxul.so has zero
-# moz_arena_ symbols, so firefox runs on musl malloc. An LD_PRELOAD A/B in the
-# shipped image (mimalloc vs musl malloc, one container, back to back) moved
-# eval_rtt -33%, launch -21%, layout -12% while the allocation-free controls
-# stayed flat (libm_fmod +1%, locator_click -2%) — so the allocator is real,
-# but it only bought 5% of screenshot.
-ac_add_options --enable-jemalloc
+# jemalloc: NOT AVAILABLE ON MUSL, do not re-add. `--enable-jemalloc` compiles
+# memory/build/, whose mozmemory_wrap.h declares free_impl/memalign_impl as
+# `noexcept(true)`; glibc marks those __THROW but musl's stdlib.h does not, so
+# every decl mismatches its previous declaration and the build dies ~2min into
+# memory/ (run 32800234529). aports' --disable-jemalloc is a musl REQUIREMENT,
+# not performance left on the table.
+#
+# The allocator win is real but has to be delivered at RUNTIME instead: an
+# LD_PRELOAD A/B in the shipped image (mimalloc vs musl malloc, one container,
+# back to back) moved eval_rtt -33%, launch -21%, layout -12%, while the
+# allocation-free controls stayed flat (libm_fmod +1%, locator_click -2%).
+# It bought only 5% of screenshot, which is why LTO is worth its own arm.
 
 # lto: aports uses exactly `cross` in its optimised-mozconfig. Kept identical
 # rather than dropping to `cross,thin`, because `cross` is the recipe proven to
