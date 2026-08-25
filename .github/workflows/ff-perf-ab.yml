@@ -134,7 +134,7 @@ jobs:
               nspr nss pipewire-libs libpulse libstdc++ libgcc \\
               gstreamer gst-plugins-base gst-plugins-good gst-libav \\
               opus libsecret libxslt double-conversion minizip crc32c \\
-              mimalloc2-insecure
+              mimalloc2-insecure mimalloc2 jemalloc
           COPY --from=${image} /firefox /ms-playwright/firefox-${FF_REV}/firefox
           RUN touch /ms-playwright/firefox-${FF_REV}/INSTALLATION_COMPLETE \\
            && chmod 755 /ms-playwright/firefox-${FF_REV}
