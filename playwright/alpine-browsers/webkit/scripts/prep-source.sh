@@ -824,27 +824,46 @@ patch_keep_synthetic_mouse_events
 # browser_patches build scripts 404 on every tag. So we set it ourselves.
 #
 # Scoped to the WebKit layer only; WebKitLegacy and WebCore keep their upstream
-# false, and the neighbouring MockCaptureDevicesPromptEnabled is untouched.
-patch_mock_capture_devices_default() {
-  local yaml=Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
-  local marker='prep-source.sh: mock capture devices on by default'
+# false. WebCore's false is load-bearing, not an oversight: the generated setter
+# fires `webcoreOnChange: mockCaptureDevicesEnabledChanged` — the only thing that
+# enables the mock centre in the WebProcess — ONLY on a change, so flipping
+# WebCore too would make the write a no-op and silence the hook.
+#
+# MockCaptureDevicesPromptEnabled must move as well, and enabling the devices
+# without it is exactly half a fix — which is what ed83438 shipped. The
+# UIProcess auto-grant is gated on BOTH:
+#
+#     if (preferences->mockCaptureDevicesEnabled()
+#         && !preferences->mockCaptureDevicesPromptEnabled())
+#         grantRequest(...);        // UserMediaPermissionRequestManagerProxy.cpp:782
+#
+# and this one defaults TRUE, so `!true` killed the condition and every request
+# fell through to requestSystemValidation() — which in a container has no system
+# permission to validate against, hence NotAllowedError with the mocks present
+# and working. Measured locally against wk-gtk-sha-ed83438: the GStreamer log
+# takes the good branch (GStreamerMockDeviceProvider.cpp:57 "Probing", all six
+# mocks created), and enumerateDevices still reports an audioinput and a
+# videoinput in a container with no /dev/video* and no /dev/snd — so the devices
+# were there and only the grant was missing.
+#
+# This pref is safe to flip on both counts the other one is not: it has a single
+# WebKit default layer, `webcoreBinding: none` and no webcoreOnChange, so no
+# transition carries it.
+# Rewrite one pref's `WebKit:` default in place. Both call sites below need the
+# same walk: arm on the block header, then on `    WebKit:` INSIDE it, because a
+# pref can carry a default per layer and only the WebKit one drives the
+# UIProcess preference.
+set_webkit_pref_default() {
+  local yaml="$1" pref="$2" from="$3" to="$4" marker="$5"
 
-  if grep -q "$marker" "$yaml"; then
-    echo "  MockCaptureDevicesEnabled already defaults on — drop patch_mock_capture_devices_default"
-    return 0
-  fi
-
-  echo "  default MockCaptureDevicesEnabled to true (WebKit layer)"
-  # Arm on the block header, then on `    WebKit:` INSIDE it: the pref has
-  # three `default: false` lines (WebKitLegacy, WebKit, WebCore) and only the
-  # WebKit one drives the UIProcess preference.
-  awk -v marker="$marker" '
-    /^MockCaptureDevicesEnabled:$/ { in_pref = 1; print; next }
+  awk -v pref="$pref" -v from="      default: $from" -v to="      default: $to" \
+      -v marker="$marker" '
+    $0 == pref ":" { in_pref = 1; print; next }
     in_pref && /^[A-Za-z]/ { in_pref = 0; in_webkit = 0 }
     in_pref && /^    WebKit:$/ { in_webkit = 1; print; next }
-    in_webkit && /^      default: false$/ {
+    in_webkit && $0 == from {
       print "      # " marker
-      print "      default: true"
+      print to
       in_webkit = 0
       next
     }
@@ -855,11 +874,27 @@ patch_mock_capture_devices_default() {
   local applied
   applied=$(grep -c "$marker" "$yaml")
   if [[ "$applied" != 1 ]]; then
-    echo "ERROR: mock-capture default applied $applied time(s) in $yaml, expected exactly 1" >&2
+    echo "ERROR: $pref default applied $applied time(s) in $yaml, expected exactly 1" >&2
     exit 1
   fi
 }
-patch_mock_capture_devices_default
+
+patch_mock_capture_devices_defaults() {
+  local yaml=Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
+  local marker='prep-source.sh: mock capture devices on by default'
+  local prompt_marker='prep-source.sh: mock capture devices need no prompt'
+
+  if grep -q "$prompt_marker" "$yaml"; then
+    echo "  mock capture defaults already patched — drop patch_mock_capture_devices_defaults"
+    return 0
+  fi
+
+  echo "  default MockCaptureDevicesEnabled to true (WebKit layer)"
+  set_webkit_pref_default "$yaml" MockCaptureDevicesEnabled false true "$marker"
+  echo "  default MockCaptureDevicesPromptEnabled to false (WebKit layer)"
+  set_webkit_pref_default "$yaml" MockCaptureDevicesPromptEnabled true false "$prompt_marker"
+}
+patch_mock_capture_devices_defaults
 
 # Strip .git — ~1GB saved in the source-prep image which both port chains FROM.
 rm -rf .git
