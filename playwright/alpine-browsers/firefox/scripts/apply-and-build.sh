@@ -476,6 +476,45 @@ if grep -qE -- '^ac_add_options --with-system-(png|zlib)$' .mozconfig; then
 fi
 echo "  imaging: libpng + zlib built from Mozilla's tree (system copies removed)"
 
+# 6c. MEASUREMENT ARM — security hardening off.
+#
+# This branch exists to price --enable-hardening, which aports' mozconfig sets
+# and we therefore inherit. For clang-22 / x86_64 / release / no-asan it is
+# worth, per build/moz.configure/toolchain.configure:
+#
+#   -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2
+#   -fstack-protector-strong        (cflags AND ldflags)
+#   -fstack-clash-protection        (cflags AND ldflags)
+#   -fstrict-flex-arrays=1
+#   -ftrivial-auto-var-init=pattern (via MOZ_TRIVIAL_AUTO_VAR_INIT)
+#
+# The last one initializes every local variable and is the one most likely to
+# show up in the probe.
+#
+# Deleting aports' --enable-hardening line is NOT sufficient and would be a
+# silent no-op. configure adds the same flags when the option is absent:
+#
+#   "all flags are actually added in the default no-flag case; making
+#    --enable-hardening the same as omitting the flag."
+#
+# So the enable line is removed AND --disable-hardening appended, because
+# moz.configure will not take both spellings of one option.
+#
+# NOT A SHIPPING CHANGE. This trades real exploit mitigations for speed; it
+# stays on perf/firefox-no-hardening until the numbers say whether the trade is
+# even worth discussing.
+if ! grep -qE -- '^ac_add_options --enable-hardening$' .mozconfig; then
+  echo "::warning::aports no longer sets --enable-hardening — removal is a no-op"
+fi
+sed -i -e '/^ac_add_options --enable-hardening$/d' .mozconfig
+if grep -qE -- '^ac_add_options --enable-hardening$' .mozconfig; then
+  echo "ERROR: an --enable-hardening line survived the removal" >&2
+  exit 1
+fi
+echo 'ac_add_options --disable-hardening' >> .mozconfig
+echo "  MEASUREMENT ARM: hardening disabled (FORTIFY_SOURCE, stack-protector, auto-var-init)"
+
+
 # 7a. DIAGNOSTIC: PW_ENABLE_TESTS — include xpcshell + gtest + mochitest
 #     harness so the validation workflow can run Mozilla's own self-tests.
 if [[ "$PW_ENABLE_TESTS" == "1" ]]; then
