@@ -574,6 +574,25 @@ mach_rc=0
 ./mach build || mach_rc=$?
 echo "===== END ./mach build (rc=$mach_rc) ====="
 
+# What did configure ACTUALLY decide about hardening? The perf/firefox-no-hardening
+# arm came back with a byte-identical .text, and nothing in the build log can
+# separate "the flag changed no codegen" from "the flag never reached the
+# compiler" — moz.configure turns hardening ON when the option is absent as well
+# as when it is passed, so deleting the line is a silent no-op. autoconf.mk is
+# what configure wrote, so it is the only cheap discriminator.
+#
+# MOZ_OPTIMIZE is the positive control: it must always print. If the whole block
+# comes back empty, the grep is broken, not the hardening.
+AUTOCONF_MK="$SRC/obj/config/autoconf.mk"
+if [[ -r "$AUTOCONF_MK" ]]; then
+  echo "===== configure flags (hardening + control) ====="
+  grep -E '^(MOZ_HARDENING|MOZ_TRIVIAL_AUTO_VAR_INIT|MOZ_OPTIMIZE|MOZ_LTO|MOZ_PGO)' \
+    "$AUTOCONF_MK" | sed 's/^/  /' || echo "  (no match — grep is broken, see control above)"
+  echo "===== end configure flags ====="
+else
+  echo "WARNING: no autoconf.mk at $AUTOCONF_MK — hardening flags unreportable" >&2
+fi
+
 # cbindgen 0.29.4 (Alpine edge) has a regression where impl-associated
 # constants used in Rust array-size expressions (e.g. `[BudgetType;
 # BudgetType::COUNT]`) get emitted as bare `[COUNT]` in the generated
