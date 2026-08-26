@@ -7,6 +7,9 @@
 #   ./run-probe.sh official capture-permissions.cjs
 #   ./run-probe.sh wk-gtk-sha-<sha> cachestorage-reload.cjs
 #
+# /data is a docker volume shared by every invocation, so a probe can hand state
+# from one build to the next — see cachestorage-record-readback.cjs.
+#
 # Exists because the answer depends entirely on the environment, and two ways of
 # getting it wrong both look like a browser bug:
 #
@@ -106,16 +109,25 @@ if [ "$TARGET" != "official" ]; then
 fi
 
 PASSTHROUGH_ENV=()
-for var in GST_DEBUG GST_DEBUG_FILE DEBUG; do
+for var in GST_DEBUG GST_DEBUG_FILE DEBUG FRESH PUT_KEY PROBE_PORT; do
   [ -n "${!var:-}" ] && PASSTHROUGH_ENV+=(-e "$var=${!var}")
 done
 
+docker volume create "${PROBE_VOLUME:-wk-probe-data}" >/dev/null
+
+rc=0
 docker run --rm -i \
   --security-opt seccomp=unconfined \
   --security-opt apparmor=unconfined \
   --cap-add SYS_ADMIN --cap-add NET_ADMIN \
   "${ARTIFACT_ENV[@]+"${ARTIFACT_ENV[@]}"}" \
   "${PASSTHROUGH_ENV[@]+"${PASSTHROUGH_ENV[@]}"}" \
+  -v "${PROBE_VOLUME:-wk-probe-data}:/data" \
   -v "$HERE/$PROBE:${WORKDIR}/$(basename "$PROBE"):ro" \
   -w "$WORKDIR" \
-  "$IMAGE" node "$(basename "$PROBE")"
+  "$IMAGE" node "$(basename "$PROBE")" || rc=$?
+
+# The official image runs as root and ours as `runner`, so whichever writes /data
+# first locks the other out of a shared profile. Level it after every run.
+docker run --rm -v "${PROBE_VOLUME:-wk-probe-data}:/data" alpine chmod -R 777 /data
+exit "$rc"
