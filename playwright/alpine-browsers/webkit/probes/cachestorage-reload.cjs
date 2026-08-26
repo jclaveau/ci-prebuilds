@@ -106,6 +106,18 @@ function describeTree(root, limit = 12) {
   const after = await readEntry(page);
   await context.close();
 
+  // Relaunch on the SAME user-data-dir. page.reload() keeps the network process
+  // alive, so it cannot tell "the record was never registered in memory" from
+  // "the on-disk record cannot be read back". A cold browser reading the same
+  // directory can: payload here means the disk format is fine and the bug is
+  // registration; null means the read path itself is broken.
+  const reopened = await webkit.launchPersistentContext(userDataDir);
+  const reopenedPage = await reopened.newPage();
+  await reopenedPage.goto(origin + '/');
+  const coldRead = await readEntry(reopenedPage);
+  const coldInspect = await inspectCache(reopenedPage);
+  await reopened.close();
+
   // ── non-persistent, for contrast ──
   const browser = await webkit.launch();
   console.log('browser  ' + browser.version());
@@ -126,8 +138,53 @@ function describeTree(root, limit = 12) {
     + String(before).padEnd(16) + String(after));
   console.log('  persistent re-reads without reloading: ' + delayed.join('  '));
   console.log('  persistent cache contents: ' + inspection);
+  console.log('  cold relaunch on same dir: ' + String(coldRead) + '  ' + coldInspect);
   console.log('non-persistent'.padEnd(16) + 'ok'.padEnd(8)
     + String(ephemeralBefore).padEnd(16) + String(ephemeralAfter));
+
+  // Dump the bytes, not just the tree. The file SET matches official exactly,
+  // so whatever differs is inside a file — and the record is only reachable if
+  // the engine can parse both the cache list and the record header.
+  const dump = (label, rel) => {
+    const full = path.join(userDataDir, rel);
+    if (!fs.existsSync(full)) {
+      console.log('  ' + label + ': ABSENT');
+      return;
+    }
+    const buf = fs.readFileSync(full);
+    console.log('  ' + label + ' (' + buf.length + 'B)');
+    console.log('    ascii: ' + JSON.stringify(buf.toString('latin1').slice(0, 220)));
+    console.log('    b64:   ' + buf.toString('base64'));
+  };
+  const originDir = fs.readdirSync(path.join(userDataDir, 'CacheStorage'))
+    .find(name => name !== 'salt');
+  console.log('');
+  console.log('bytes:');
+  dump('versionsalt', path.join('CacheStorage', originDir, 'Version 16', 'salt'));
+  dump('cacheslist', path.join('CacheStorage', originDir, 'cacheslist'));
+  dump('origin', path.join('CacheStorage', originDir, 'origin'));
+  dump('estimatedsize', path.join('CacheStorage', originDir, 'estimatedsize'));
+  const recordsRoot = path.join(userDataDir, 'CacheStorage', originDir, 'Version 16', 'Records');
+  const walkFirst = dir => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        const r = walkFirst(full);
+        if (r) {
+          return r;
+        }
+      } else {
+        return full;
+      }
+    }
+    return null;
+  };
+  const rec = fs.existsSync(recordsRoot) ? walkFirst(recordsRoot) : null;
+  if (rec) {
+    dump('record ' + path.relative(recordsRoot, rec), path.relative(userDataDir, rec));
+  } else {
+    console.log('  record: NONE under Version 16/Records');
+  }
 
   console.log('');
   console.log('files under the persistent user-data-dir:');
