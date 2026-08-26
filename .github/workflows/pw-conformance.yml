@@ -136,7 +136,7 @@ jobs:
             # Root-caused via iter 29565116253 bucket-C + 3-agent source dive.
             SECURITY_FLAGS="$SECURITY_FLAGS --security-opt apparmor=unconfined --cap-add SYS_ADMIN --cap-add NET_ADMIN"
             EXTRA_ENV="-e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 -e WEBKIT_FORCE_SANDBOX=0"
-            # webkit/probes/run-capture-probe.sh mirrors this block so a local
+            # webkit/probes/run-probe.sh mirrors this block so a local
             # probe measures the same browser CI does — change both together.
           fi
           if [ "$BROWSER" = "chromium" ]; then

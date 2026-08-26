@@ -1,0 +1,8 @@
+# Titles excluded ONLY when the artifact carries no headed binary, i.e. when
+# run.sh's MiniBrowser probe sets HEADED_ENABLED=0 (a WPE-only WebKit build).
+# A GTK build runs them normally, so this cannot mask a headed regression.
+#
+# Upstream skips this same test by artifact capability:
+#   it.skip(channel === 'chromium-headless-shell', 'shell is never headed')
+# We have no channel to declare, so the probe stands in for it.
+should throw a friendly error if its headed and there is no xserver on linux running$
