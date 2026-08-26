@@ -798,6 +798,62 @@ patch_keep_synthetic_mouse_events() {
 }
 patch_keep_synthetic_mouse_events
 
+# CacheStorage records are written 8 bytes short and no build can read them back.
+#
+# bootstrap.diff adds httpRequestHeaderFields to ResourceResponseData and teaches
+# Coder<ResourceResponseData>::decodeForPersistence to read it, but never adds the
+# matching line to encodeForPersistence — which upstream writes as an explicit
+# field list, so a new struct member does NOT reach it on its own. Decode then
+# consumes the empty map's 8 bytes out of httpStatusCode and runs off the end of
+# the blob, decodeRecordHeader returns nullopt, and readAllRecordInfosInternal
+# does a bare `continue`. No log, so the cache presents as EMPTY rather than
+# broken: defaultbrowsercontext-2.spec.ts CacheStorage entry should survive
+# page.reload() is red, and every record we write is unreadable by PW's own
+# official image too.
+#
+# Same family as patch_playwright_close_page: PW's published bootstrap.diff is
+# not the whole of what builds their shipped browser.
+patch_persistence_encode_request_headers() {
+  local coders=Source/WebCore/platform/network/ResourceResponseBase.cpp
+
+  if grep -q 'encoder << data.httpRequestHeaderFields;' "$coders"; then
+    echo "  encodeForPersistence already writes httpRequestHeaderFields — PW rolled its base, drop patch_persistence_encode_request_headers"
+    return 0
+  fi
+
+  local anchor='    encoder << data.httpHeaderFields;'
+  if [[ "$(grep -cF "$anchor" "$coders")" != 1 ]]; then
+    echo "ERROR: expected exactly 1 encodeForPersistence header-map line in $coders" >&2
+    exit 1
+  fi
+
+  echo "  encodeForPersistence: write httpRequestHeaderFields (decode already reads it)"
+  awk -v anchor="$anchor" '
+    index($0, anchor) && !done {
+      print
+      print "    // decodeForPersistence reads this next; see prep-source.sh:"
+      print "    // patch_persistence_encode_request_headers."
+      print "    encoder << data.httpRequestHeaderFields;"
+      done = 1
+      next
+    }
+    { print }
+  ' "$coders" > "${coders}.new"
+  mv "${coders}.new" "$coders"
+
+  # The order has to match decodeForPersistence exactly, so pin it: the write
+  # must land between the response header map and the status code.
+  local written between
+  written=$(grep -c 'encoder << data.httpRequestHeaderFields;' "$coders")
+  between=$(grep -A4 -F "$anchor" "$coders" \
+    | grep -c 'encoder << data.httpRequestHeaderFields;')
+  if [[ "$written" != 1 ]] || [[ "$between" != 1 ]]; then
+    echo "ERROR: httpRequestHeaderFields written $written time(s), $between of them after the header map; expected 1/1" >&2
+    exit 1
+  fi
+}
+patch_persistence_encode_request_headers
+
 # Strip .git — ~1GB saved in the source-prep image which both port chains FROM.
 rm -rf .git
 
