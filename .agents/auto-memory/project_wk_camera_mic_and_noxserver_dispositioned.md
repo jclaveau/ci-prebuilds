@@ -1,6 +1,6 @@
 ---
 name: project_wk_camera_mic_and_noxserver_dispositioned
-description: WebKit camera/mic ROOT-CAUSED — ed83438 worked but was half a fix; the UIProcess auto-grant needs MockCaptureDevicesPromptEnabled=false too (it defaults true), fixed in 525f238/PR #112; includes a ~30s local repro that replaces the multi-hour build cycle
+description: WebKit camera/mic — tracked probe at webkit/probes/run-capture-probe.sh; PW's bootstrap.diff never wires permissionForAutomation into the getUserMedia path (only clipboard/geolocation/queryPermission), so the UIProcess ignores Browser.grantPermissions; fix a759bb0/PR #112. The prompt-pref theory (525f238) was WRONG. Includes a ~30s local repro.
 metadata:
   type: project
 ---
@@ -134,7 +134,8 @@ WebProcess mock centre is irrelevant and the gate is
 [[feedback_instrument_before_theorising]], [[feedback_child_process_logs_via_file]]
 
 
-**2026-08-25 (later) — ROOT CAUSE FOUND. Two prefs, not one.**
+**2026-08-25 (later) — SUPERSEDED, this was WRONG. Kept because the probe
+recipe below is correct and reusable; the two-prefs conclusion is not.**
 
 The UIProcess auto-grant is gated on BOTH:
 
@@ -152,8 +153,11 @@ killed the condition regardless of the first pref, and every request fell to
 `webcoreBinding: none`, no `webcoreOnChange`, so no transition carries it.
 `MockCaptureDevicesEnabled` keeps `WebCore: false` for the onChange reason above.
 
-**The ~30-second local repro — this is the reusable part.** It replaced a
-multi-hour build per hypothesis:
+**The ~30-second local repro is now TRACKED** at
+`playwright/alpine-browsers/webkit/probes/run-capture-probe.sh` (PR #113) — run
+`./run-capture-probe.sh <wk-tag|official>` rather than rebuilding this by hand.
+The env traps it encodes, kept here because they explain WHY the script looks
+like it does:
 
 - probe image = consumer `alpine-dood-playwright` + `npm i playwright-core@1.62.1`,
   with `/ms-playwright/webkit-<REV>/minibrowser-wpe` replaced by the producer
@@ -183,3 +187,55 @@ multi-hour build per hypothesis:
 - The `is-controlled-by-automation ... falling back to default session` CRITICAL
   is NOISE — official logs it identically and passes
   ([[feedback_benign_loud_vs_fatal_log]]).
+
+**2026-08-25 (final) — the real gap: permissionForAutomation is not wired to
+getUserMedia.**
+
+The prompt-pref fix (525f238) shipped and conformance refuted it: same failure
+COUNT, different names — `:349` went green and `:364` went red, because
+`MockCaptureDevicesPromptEnabled=false` makes the UIProcess auto-grant EVERY
+request. `:373`/`:386` red both ways. Reverted; that pref stays upstream `true`.
+[[feedback_unskip_regression_beyond_target]]
+
+The probe matrix that settled it (ours vs `mcr…:v1.62.1-noble`, same script/env)
+— note `navigator.permissions.query` **agrees on every row**:
+
+    grant         query               official      ours
+    none          prompt / prompt     NotAllowed    NotAllowed
+    camera only   granted / denied    NotAllowed    NotAllowed
+    both          granted / granted   audio+video   NotAllowed
+
+So PW's grants reach the browser intact and only the UIProcess decision ignores
+them. PW's `bootstrap.diff` adds `WebPageProxy::permissionForAutomation()` and
+wires it into exactly THREE places — clipboard-read, geolocation,
+`queryPermission` — and nothing in the user-media path. Identical in the series
+at PW's own `v1.62.1` tag, so not our patch pin drifting.
+
+Not the UI client either: upstream WPE MiniBrowser `decidePermissionRequest()`
+allows everything and prints `Accepting <type> request` — that line appears on
+**NEITHER** side, so the decision is made inside
+`UserMediaPermissionRequestManagerProxy`. `m_grantedRequests` is only appended
+inside `grantRequest`, so `hasGrantedRequest` is empty on the first call for
+everyone; `getRequestAction` returns Prompt for both builds.
+
+`a759bb0` adds the consult in `getRequestAction`, in PW's geolocation idiom,
+scoped to `isControlledByAutomation()` and non-display capture.
+
+**Still open: why official works unpatched.** Its shipped webkit-2336 is past
+our pinned base and likely consults the permission state itself. The patch
+matches official's BEHAVIOUR, not provably its MECHANISM.
+
+**Gotcha — the built revision is NOT versions.env's `PW_WEBKIT_SHA`.** That says
+`d8fa5ad85…`; the source-prep log says `upstream SHA=4d05d732…`, taken from
+`UPSTREAM_CONFIG.sh` at `PW_WEBKIT_PATCHES_REF`. I read the wrong revision first
+(the file happened to be identical, so no harm — but read the one the log
+names). [[feedback_classify_file_by_base_revision]]
+
+**A fourth env trap, found while promoting the probe (PR #113):** do NOT give
+the official image our Alpine `GST_*` paths. `/usr/lib/gstreamer-1.0` does not
+exist on noble (it is `/usr/lib/x86_64-linux-gnu/gstreamer-1.0`), and pointing
+GStreamer at an empty dir takes the browser down mid-probe — which reads as
+"official crashes on ungranted capture" and is entirely our own harness. The
+control runs BARE. Also: repeated `getUserMedia` on one ungranted page kills the
+browser (official dies on the third call), so isolate each cell in its own context.
+
