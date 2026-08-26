@@ -58,3 +58,28 @@ phase/"no work" markers, and that `BASE_IMAGE` names the PREVIOUS round's
 sha-scoped tag ([[project_multijob_base_image_audit]]) — here
 `wk-wpe-2-sha-5719ccb8`, correct.
 
+## 2026-08-25 — the same class, still open for ONE file (fixed, PR #111)
+
+PR #81 content-addressed the base on a patch-set hash, but the file list was
+**hand-written in two workflows and omitted `bundle-dist.sh`** — which
+`Dockerfile.prebuilt-base` bakes in via `COPY firefox/scripts` and which does
+change the artifact. So an edit to it left the hash unchanged, the iter path
+reused the pre-edit base, and the build went green having shipped none of it.
+A strip pass added there would have shipped nothing.
+
+Fixed in `04af46d`: the set is now DERIVED from the directory in one script,
+`playwright/alpine-browsers/firefox/patchset-hash.sh`, that both workflows call.
+It lives OUTSIDE `firefox/scripts/` on purpose — a file in there would be baked
+in and would hash itself, reseeding a ~4 h build whenever the hash logic
+changed. `apply-and-build-iter.sh` stays excluded (iter-time, not baked).
+
+`tests/firefox/test-patchset-hash.sh` (wired via `tests-firefox.yml`, kept out
+of `tests-aports.yml` per [[project_firefox_alpine_wip_pipeline]]) pins: editing
+`bundle-dist.sh` moves the hash, editing the iter script does not, neither
+workflow re-implements the rule inline, and the `COPY` set of
+Dockerfile.prebuilt-base is unchanged. Verified red against the old hand-listed
+rule and green against the new one.
+
+**The general shape:** a hand-maintained list that must mirror a `COPY <dir>` is
+a drift trap. Derive it. [[feedback_complete_set_needs_the_real_artifact]]
+
