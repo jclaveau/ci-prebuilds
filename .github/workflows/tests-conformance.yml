@@ -1,0 +1,29 @@
+name: tests-conformance
+
+# Unit tests for the conformance gates in scripts/. They decide whether a
+# producer run is allowed to call itself same-or-better, so a gate that reads
+# its inputs wrong ships a false green — which is exactly what happened in run
+# 32941298683. Runs in seconds; no images, no browsers.
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/check-runtime-parity.sh'
+      - 'tests/conformance/**'
+      - '.github/workflows/tests-conformance.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/check-runtime-parity.sh'
+      - 'tests/conformance/**'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: runtime parity gate unit test
+        run: bash tests/conformance/test-check-runtime-parity.sh
