@@ -915,11 +915,40 @@ patch_mock_capture_devices_defaults
 # prompts.
 patch_user_media_automation_permissions() {
   local cpp=Source/WebKit/UIProcess/UserMediaPermissionRequestManagerProxy.cpp
+  local hdr=Source/WebKit/UIProcess/WebPageProxy.h
   local marker='prep-source.sh: honour Browser.grantPermissions for capture'
 
   if grep -q "$marker" "$cpp"; then
     echo "  user-media automation permissions already patched — drop this step"
     return 0
+  fi
+
+  # bootstrap.diff declares permissionForAutomation under `private:`, which is
+  # enough for PW's own three call sites because they are WebPageProxy members.
+  # Ours is not, so widen it to public and close the section straight after.
+  local decl='  std::optional<bool> permissionForAutomation(const String& origin, const String& permission) const;'
+  if [[ "$(grep -cF "$decl" "$hdr")" != 1 ]]; then
+    echo "ERROR: expected exactly 1 permissionForAutomation declaration in $hdr" >&2
+    exit 1
+  fi
+
+  echo "  widen WebPageProxy::permissionForAutomation to public"
+  awk -v decl="$decl" -v marker="$marker" '
+    index($0, decl) && !done {
+      print "public:"
+      print "    // " marker
+      print $0
+      print "private:"
+      done = 1
+      next
+    }
+    { print }
+  ' "$hdr" > "${hdr}.new"
+  mv "${hdr}.new" "$hdr"
+
+  if [[ "$(grep -c "$marker" "$hdr")" != 1 ]]; then
+    echo "ERROR: permissionForAutomation visibility patch did not apply" >&2
+    exit 1
   fi
 
   # Anchor on the wasRequestDenied guard, the first statement of
