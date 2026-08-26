@@ -209,6 +209,36 @@ case "$BROWSER" in
   *)              HEADED_ENABLED=0 ;;
 esac
 
+# Some tests call browserType.launch({ headless: false }) from INSIDE a headless
+# leg — launcher.spec.ts:45 (the no-xserver friendly error) is the one that bit
+# us. HEADED_ENABLED gates the headful.spec.ts leg only, so it never reached
+# them, and on a WPE-only artifact they fail with
+#
+#   minibrowser-gtk/MiniBrowser: No such file or directory
+#
+# instead of the message they assert. No WebKit change fixes that; the artifact
+# simply has no headed binary. That took conformance-webkit red and
+# promote-webkit with it, which is why wk-latest had to be promoted by hand.
+#
+# Excluded on the artifact's measured capability, never by hand — the same
+# reason PW's own launcher.spec.ts carries
+#   it.skip(channel === 'chromium-headless-shell', 'shell is never headed')
+# A headed-capable artifact still runs them, so this cannot hide a real headed
+# regression.
+NEEDS_HEADED_LIST="$SKIP_DIR/${BROWSER}.needs-headed.titles.txt"
+if [ "$HEADED_ENABLED" = "0" ] && [ -f "$NEEDS_HEADED_LIST" ]; then
+  NEEDS_HEADED_PATTERNS=$(grep -vE '^\s*(#|$)' "$NEEDS_HEADED_LIST" | paste -sd'|' -)
+  if [ -n "$NEEDS_HEADED_PATTERNS" ]; then
+    if [ -n "$TITLE_PATTERNS" ]; then
+      TITLE_PATTERNS="$TITLE_PATTERNS|$NEEDS_HEADED_PATTERNS"
+    else
+      TITLE_PATTERNS="$NEEDS_HEADED_PATTERNS"
+    fi
+    GREP_INVERT="--grep-invert"
+    echo "==== Needs-headed skip-list active ($NEEDS_HEADED_LIST): $(echo "$NEEDS_HEADED_PATTERNS" | tr '|' '\n' | wc -l) patterns — artifact has no headed binary ===="
+  fi
+fi
+
 # Full-headed mode (HEADED=1 dispatch input) runs the ENTIRE suite headed via
 # --headed on every leg, not just headful.spec.ts. The single lever flips
 # playwright.config.ts's `headless: !argv.includes('--headed')` for all
