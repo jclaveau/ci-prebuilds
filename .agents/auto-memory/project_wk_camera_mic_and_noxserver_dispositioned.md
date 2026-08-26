@@ -239,3 +239,25 @@ GStreamer at an empty dir takes the browser down mid-probe — which reads as
 control runs BARE. Also: repeated `getUserMedia` on one ungranted page kills the
 browser (official dies on the third call), so isolate each cell in its own context.
 
+**The fix does not compile as first written.** `permissionForAutomation` is
+declared under `private:` in `WebPageProxy.h` (bootstrap.diff hunk
+`@@ -3226,6 +3263,7 @@ private:`). PW's own three call sites — clipboard-read,
+geolocation, queryPermission — are `WebPageProxy` members, so they never hit the
+access check; a consult from `UserMediaPermissionRequestManagerProxy` does. Run
+32898202778 spent **2h40m** to surface that as
+`'permissionForAutomation' is a private member`, because the offending TU
+(`UnifiedSource-UIProcess-7.cpp`) compiles late. `f70ebe4` widens the
+declaration and closes the section again immediately, so nothing below it
+changes visibility.
+
+Cheap check before any future WebKit dispatch: if a patch calls a
+bootstrap.diff-added method from a class PW did not call it from, grep the
+header hunk for the enclosing access specifier first. Two and a half hours per
+wrong guess.
+
+**The no-xserver residual is NOT camera/mic.** It fails with
+`minibrowser-gtk/MiniBrowser: No such file or directory` — the test launches
+headed and a WPE-only artifact has no headed binary. Handled by the
+capability probe in PR #115, see
+[[project_wk_promote_gate_holds_the_nightly_bench]].
+
