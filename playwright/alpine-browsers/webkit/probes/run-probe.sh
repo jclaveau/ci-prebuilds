@@ -2,9 +2,10 @@
 # Run a probe script against a WebKit artifact, or against Playwright's own
 # image as the control.
 #
-#   ./run-capture-probe.sh wk-gtk-sha-<sha>          # one of ours
-#   ./run-capture-probe.sh official                  # PW's published image
-#   ./run-capture-probe.sh official capture-permissions.cjs
+#   ./run-probe.sh wk-gtk-sha-<sha>                  # one of ours
+#   ./run-probe.sh official                          # PW's published image
+#   ./run-probe.sh official capture-permissions.cjs
+#   ./run-probe.sh wk-gtk-sha-<sha> cachestorage-reload.cjs
 #
 # Exists because the answer depends entirely on the environment, and two ways of
 # getting it wrong both look like a browser bug:
@@ -24,7 +25,7 @@
 
 set -euo pipefail
 
-TARGET="${1:?usage: run-capture-probe.sh <wk-tag|official> [probe.cjs]}"
+TARGET="${1:?usage: run-probe.sh <wk-tag|official> [probe.cjs]}"
 PROBE="${2:-capture-permissions.cjs}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
