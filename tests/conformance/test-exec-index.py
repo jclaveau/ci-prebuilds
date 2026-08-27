@@ -14,6 +14,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "scripts"))
+import exec_index as X  # noqa: E402
 from exec_index import exec_cell, exec_index, load_probes  # noqa: E402
 
 failures = 0
@@ -34,7 +35,7 @@ def probes(**scenarios):
         metrics = {"int_math": 40.0 * cpu}
         for i, metric in enumerate(METRICS):
             metrics[metric] = (100.0 + i) * cpu * browser
-        out[(name, "chromium")] = metrics
+        out[(name, "chromium")] = [metrics]
     return out
 
 
@@ -76,20 +77,20 @@ expect_none("absent scenario", exec_index(p, "ubuntu", "official")[0])
 expect_none("absent reference", exec_index(p, "alpine", "nosuch")[0])
 
 # Too few usable metrics is not a geometric mean.
-thin = {("official", "chromium"): {"int_math": 40.0, "launch": 100.0},
-        ("alpine", "chromium"): {"int_math": 40.0, "launch": 150.0}}
+thin = {("official", "chromium"): [{"int_math": 40.0, "launch": 100.0}],
+        ("alpine", "chromium"): [{"int_math": 40.0, "launch": 150.0}]}
 expect_none("one metric is not a geomean", exec_index(thin, "alpine", "official")[0])
 
 # int_math must not be counted as one of the metrics: with it excluded these two
 # scenarios differ on every remaining metric by exactly 50%.
-half = {("official", "chromium"): {"int_math": 40.0, **{m: 100.0 for m in METRICS}},
-        ("alpine", "chromium"): {"int_math": 40.0, **{m: 150.0 for m in METRICS}}}
+half = {("official", "chromium"): [{"int_math": 40.0, **{m: 100.0 for m in METRICS}}],
+        ("alpine", "chromium"): [{"int_math": 40.0, **{m: 150.0 for m in METRICS}}]}
 expect("normalizer excluded from the index",
        exec_index(half, "alpine", "official")[0], 50.0)
 
 # A browser present on one side only contributes nothing rather than exploding.
 mixed = dict(probes(official=(1.0, 1.0), alpine=(1.0, 1.5)))
-mixed[("alpine", "webkit")] = {"int_math": 40.0, **{m: 999.0 for m in METRICS}}
+mixed[("alpine", "webkit")] = [{"int_math": 40.0, **{m: 999.0 for m in METRICS}}]
 expect("a browser the reference lacks is skipped",
        exec_index(mixed, "alpine", "official")[0], 50.0)
 
@@ -103,8 +104,9 @@ with tempfile.TemporaryDirectory() as d:
     json.dump({"nonsense": True}, open(os.path.join(d, "broken.json"), "w"))
     loaded = load_probes(os.path.join(d, "*.json"))
     checks += 1
-    if loaded.get(("alpine", "chromium"), {}).get("int_math") != 40.0:
-        print(f"FAIL: load_probes keeps the fastest normalizer — got {loaded}", file=sys.stderr)
+    norms = sorted(r["int_math"] for r in loaded.get(("alpine", "chromium"), []))
+    if norms != [40.0, 80.0]:
+        print(f"FAIL: load_probes keeps EVERY run — got {norms}", file=sys.stderr)
         failures += 1
     checks += 1
     if len(loaded) != 1:
@@ -115,6 +117,55 @@ checks += 1
 if exec_cell(None, None) != "—" or not exec_cell(-12.0, 3.0).startswith("−12%"):
     print(f"FAIL: exec_cell formatting — {exec_cell(-12.0, 3.0)!r}", file=sys.stderr)
     failures += 1
+
+# --- runs > 1: median across runs, normalized inside each run first ---
+# A contended runner inflates every metric INCLUDING the normalizer, so it must
+# not move the index. Picking one run by any rule (the old "fastest normalizer
+# wins") throws away the redundancy that runs>1 was bought for.
+contended = {
+    ("official", "chromium"): [{"int_math": 40.0, **{m: 100.0 for m in METRICS}}],
+    ("alpine", "chromium"): [
+        {"int_math": 40.0, **{m: 120.0 for m in METRICS}},
+        {"int_math": 40.0, **{m: 120.0 for m in METRICS}},
+        {"int_math": 200.0, **{m: 600.0 for m in METRICS}},   # 5x contended
+    ],
+}
+expect("a contended run does not move the median",
+       exec_index(contended, "alpine", "official")[0], 20.0)
+
+# The median is a median, not a mean: one wild run cannot drag it.
+wild = {
+    ("official", "chromium"): [{"int_math": 40.0, **{m: 100.0 for m in METRICS}}],
+    ("alpine", "chromium"): [
+        {"int_math": 40.0, **{m: 100.0 for m in METRICS}},
+        {"int_math": 40.0, **{m: 100.0 for m in METRICS}},
+        {"int_math": 40.0, **{m: 4000.0 for m in METRICS}},
+    ],
+}
+expect("an outlier run is medianed away", exec_index(wild, "alpine", "official")[0], 0.0)
+
+# --- the libc switch ---
+# libm_fmod measured ~1.7x in musl's FAVOUR, so including it moves an otherwise
+# identical alpine row below parity. Both readings are defensible; the point is
+# that the flag actually changes the number.
+libc = {
+    ("official", "chromium"): [{"int_math": 40.0, "libm_fmod": 170.0,
+                                **{m: 100.0 for m in METRICS if m != "libm_fmod"}}],
+    ("alpine", "chromium"): [{"int_math": 40.0, "libm_fmod": 100.0,
+                              **{m: 100.0 for m in METRICS if m != "libm_fmod"}}],
+}
+X.KEEP_LIBC_METRICS = True
+with_libc = exec_index(libc, "alpine", "official")[0]
+X.KEEP_LIBC_METRICS = False
+without_libc = exec_index(libc, "alpine", "official")[0]
+X.KEEP_LIBC_METRICS = True
+expect("dropping libm_fmod leaves parity", without_libc, 0.0)
+checks += 1
+if with_libc is None or with_libc >= -1.0:
+    print(f"FAIL: keeping libm_fmod must pull the index below parity — got {with_libc}",
+          file=sys.stderr)
+    failures += 1
+
 
 print(f"exec-index: {checks - failures}/{checks} checks passed")
 sys.exit(1 if failures else 0)

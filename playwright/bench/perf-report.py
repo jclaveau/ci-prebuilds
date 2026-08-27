@@ -158,7 +158,7 @@ def _footer(current):
         "| `dom_churn` | 20000 create/append/remove in-page. 5.3x on the same build. |",
         "| `js_alloc` | 2M short-lived object allocations in-page. |",
         "| `int_math` | 30M integer ops (`Math.imul` + `\\|0`) in-page. No libm call — that is the point. |",
-        "| `libm_fmod` | 3M `%` on doubles past 2^53, i.e. `fmod()`. Isolated because musl's fmod is ~2.1x glibc's and it used to contaminate the JIT number. |",
+        "| `libm_fmod` | 3M `%` on doubles past 2^53, i.e. `fmod()`. Isolated because it measures the C library rather than the engine and used to contaminate the JIT number. musl runs it ~1.7x FASTER than glibc, so it is a musl gain, not a penalty. |",
         "",
         "</details>",
         "",

@@ -19,8 +19,12 @@
  *     probed in the same workflow run — see the perf-report job.
  *   - Every kernel measures ONE subsystem. The `libm_fmod` kernel is split out
  *     explicitly because a `%` on a value past 2^53 compiles to an fmod() libm
- *     call, and musl's fmod is ~2.1x glibc's: folding it into an "int math"
- *     kernel once made me report a libc gap as a JIT gap.
+ *     call: folding it into an "int math" kernel once made me report a libc gap
+ *     as a JIT gap. The gap is real and large — but it runs the OTHER way from
+ *     what this comment used to claim. Measured across firefox arms, musl is
+ *     ~1.7x FASTER here (50 vs 85 ms, and 64 vs 110 ms), while a same-libc arm
+ *     reads 0.99x. Anything reading this kernel as a musl penalty is reading it
+ *     backwards.
  *   - In-page kernels time themselves with performance.now(), so protocol RTT is
  *     excluded from them and measured separately by `eval_rtt`.
  */
@@ -174,8 +178,9 @@ const KERNELS = {
   }`,
 
   // The libc gap, isolated on purpose: `%` on a double past 2^53 is an fmod()
-  // call, and musl's fmod is ~2.1x slower than glibc's. Tracked so it can never
-  // again contaminate a kernel that claims to measure the JIT.
+  // call, so this number is the C library rather than the engine. Tracked so it
+  // can never again contaminate a kernel that claims to measure the JIT. Sign
+  // check before quoting it: musl measures ~1.7x FASTER than glibc here.
   libm_fmod: `() => {
     const t0 = performance.now();
     let x = 0;
