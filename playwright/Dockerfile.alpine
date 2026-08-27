@@ -68,6 +68,7 @@ RUN sudo apk add --no-cache \
         libdrm libevent libffi libjpeg-turbo libnotify libogg libtheora \
         libvorbis libvpx libwebp libwebpdemux libxcomposite libxt mesa-gl \
         nspr nss pipewire-libs libpulse libstdc++ libgcc mimalloc2-insecure \
+        mimalloc2 \
         libwpe libwpebackend-fdo gtk4.0 at-spi2-core cairo pango gdk-pixbuf \
         mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \
         gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \
@@ -267,6 +268,31 @@ ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
 # image README) — the two are required together (see the producer Tier-2 smoke).
 ENV WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
 
+# The Playwright DRIVER's allocator. Every browser shim already preloads
+# mimalloc for the browser itself; this is the node process on the other end of
+# the pipe, which still used musl malloc.
+#
+# `eval_rtt` is 500 sequential page.evaluate round trips — the driver's
+# stream/pipe and event-loop path, re-paid by every Playwright action — and it
+# is the row that did not move when the browsers got mimalloc. Preloading it
+# into node is worth +7.8% and +13.2% on that row across two ff-perf-ab runs on
+# different CPUs with the arms in opposite order (33065282215, 33065574061),
+# while the browser-only controls stay flat: click_force 1.000/0.999,
+# locator_click 1.000/1.000.
+#
+# This is an OURS-VS-OURS improvement only. It does NOT beat the official
+# image on eval_rtt: two draws against it read 0.957 and 1.022, and the n=10
+# baseline classes that row as tied. Do not quote it as a win over official.
+#
+# The secure build is used deliberately. On the driver the two are within ~2%
+# of each other (33066499518), so there is no reason to give up mimalloc's
+# hardening here — unlike the browser shims, where secure measured 10-15%
+# slower and -insecure is a paid-for choice.
+#
+# Scope: this is a container-wide ENV, so it reaches every process a user runs
+# here, not just the driver.
+ENV LD_PRELOAD=/usr/lib/libmimalloc.so.2
+
 # The fmod interposer the webkit launcher preloads. ~10 kB; reaches
 # MiniBrowser and every auxiliary process, and nothing else — not the Node
 # driver, not chromium, not firefox.
@@ -291,6 +317,21 @@ RUN sudo touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_CO
       cat "$WARN" >&2; \
       echo "==========================================================" >&2; \
     fi
+
+# chromium is the only browser here with no launch shim — playwright execs the
+# binary directly — so the container-wide LD_PRELOAD above would reach it and
+# silently put mimalloc under PartitionAlloc. Every earlier decision in this
+# file deliberately left chromium's allocator alone, so give it a shim whose
+# only job is to drop the preload back to nothing.
+RUN CHS=/ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64 \
+ && sudo mv "$CHS/chrome-headless-shell" "$CHS/chrome-headless-shell.real" \
+ && printf '%s\n' \
+        '#!/bin/sh' \
+        'DIR="$(dirname "$0")"' \
+        'unset LD_PRELOAD' \
+        'exec "$DIR/chrome-headless-shell.real" "$@"' \
+  | sudo tee "$CHS/chrome-headless-shell" >/dev/null \
+ && sudo chmod +x "$CHS/chrome-headless-shell"
 
 # Firefox first: webkit's ICU libs are relative symlinks into the firefox tree,
 # so its target must already be in place when the webkit layer lands.
