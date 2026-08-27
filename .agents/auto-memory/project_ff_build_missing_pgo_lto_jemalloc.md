@@ -281,3 +281,18 @@ objection from the shipping question: `libmimalloc.so.2` keeps mimalloc's
 hardening and still gets the win, so the choice does not have to be `-insecure`.
 Note this is the opposite of the BROWSER-side finding, where mimalloc2 secure
 was a clear 10-15% loss — the driver is not allocation-bound the way gecko is.
+**As-shipped parity CONFIRMED 2026-08-27** (run 32961593466, `official/ours`,
+one runner): `libm_fmod` 1.70x and `int_math`/`js_alloc`/`launch`/`click_force`/
+`locator_click` at 1.00x; `dom_churn` 1.25x, `context_page` 1.08x, `screenshot`
+0.96x, `goto_cold` 0.95x, `eval_rtt` 0.91x, `layout` 0.89x — every delta inside
+its own sample spread, nothing significant against us.
+
+**But `ff-perf-ab`'s `preload_a`/`preload_b` default to `''`**, and the preload
+lives in `playwright/Dockerfile.alpine`'s launch shim, NOT in the browser
+payload (exported the artifact's rootfs: `firefox/firefox` is a real ELF, no
+shim, zero mimalloc files — correct, just not where a payload A/B looks). A
+default dispatch therefore measures our Firefox on musl's allocator and reads
+as a regression: same artifact scored `screenshot` 0.76x, `layout` 0.48x,
+`launch` 0.89x. Always pass
+`preload_a=/usr/lib/libmimalloc-insecure.so.2` for an as-shipped number.
+[[feedback_measure_the_shipped_configuration]]

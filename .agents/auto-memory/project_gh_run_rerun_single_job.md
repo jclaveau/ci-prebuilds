@@ -17,3 +17,12 @@ metadata:
 Do NOT use for real failures (compile errors, dep issues) — those need a code fix + fresh dispatch.
 
 Related: [[project_multijob_base_image_audit]].
+
+**A CANCELLED job cannot be rerun individually** — `gh run rerun --job <id>`
+answers `job <id> cannot be rerun`; the per-job form only accepts a FAILED job.
+So a job that is merely *stuck* (a conformance shard still `in_progress` at 37
+min while its siblings finished) needs `gh run cancel <run>` first, and then
+`gh run rerun <run> --failed`, which does pick the cancelled job up. Cancelling
+the run is safe when every other job has already completed — it kills only the
+straggler. Verify the cancel landed (`gh api .../jobs/<id> -q .status`) before
+the rerun, and expect a NEW job id.
