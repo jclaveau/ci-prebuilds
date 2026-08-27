@@ -1,6 +1,6 @@
 ---
 name: project_chromium_screenshot_is_skia_highp
-description: the chromium screenshot stage is NAMED — Skia's from_1010102_xr — and the mechanism is PINNED: every 1010102/XR op is HIGHP_ONLY by construction, so an XR surface forces the float pipeline regardless of lowp, making the raster fix a surface-format change rather than a build flag
+description: the chromium screenshot cost is Skia's extended-range 10-bit decodes — dominated by from_10101010_xr (7.43%), whose int64->float AVX2 has to emulate per lane, NOT from_1010102_xr (1.74%); every 1010102/XR op is HIGHP_ONLY by construction, so the fix is the surface format, not a build flag
 metadata:
   type: project
 ---
@@ -88,6 +88,38 @@ question):
   specific build.
 - **`SKRP_CPU_SCALAR`** — chosen from `SK_CPU_X64_LEVEL`, which is ≥ SSE2 on
   every x86-64 target, so scalar is unreachable here.
+
+**CORRECTION 2026-08-28 — the dominant stage is `from_10101010_xr`, not
+`from_1010102_xr`, and a 64 KiB bucket is not a function.** The dispatch table
+gives real function boundaries; attributing the CI samples to them instead of to
+buckets moves the answer:
+
+| stage | share of our screenshot CPU |
+|---|---|
+| `0x535ba60`..`0x535bf20` — **`from_10101010_xr`** (64-bit, 10x6) | **7.43%** |
+| `0x535bf20`..`0x535c090` — its store side | 2.34% |
+| `0x535b900`..`0x535ba60` — `from_1010102_xr` (32-bit) | **1.74%** |
+| `0x535b800`..`0x535b900` | 0.39% |
+
+I named the stage the byte pattern matched and then read the whole 64 KiB
+bucket's 18.24% as if it were that one function. It was not: the table says the
+function at `0x535b900` ENDS at `0x535ba60`, and most of the hot addresses were
+past it. **Anchor to the dispatch table before attributing samples to a name.**
+
+Identified the same way, on the artifact: `vpsrlq $0x6` on 64-bit lanes with a
+qword mask of `0x00000000000003ff` (read out of `.rodata`), matching Skia's
+`from_10101010_xr` — `(cast64((_10x6 >> (n+6)) & 0x3ff) - 384.f) * (1/510.f)`.
+
+**And this is WHY that stage is the expensive one.** AVX2 has no int64→float
+instruction (`vcvtqq2ps` is AVX-512DQ), so Skia's `cast64` is emulated one lane
+at a time — the disassembly shows `vpextrq` / `vmovq` / `vextracti128` feeding
+four separate `vcvtsi2ss` per vector. The 32-bit sibling converts a whole vector
+at once, which is exactly why it costs 1.74% where this costs 7.43%.
+
+**The family conclusion is unchanged and better supported.** Both hot stages are
+extended-range 10-bit decodes, both are HIGHP_ONLY, and together with the store
+they are ~11.9% of our screenshot CPU. The lever is still the surface format;
+only the name of the stage that dominates was wrong.
 
 **Why this matters more than the stack protector.** It is 66% of the screenshot
 overrun against the protector's ~12% of the layout instruction count, and if it
