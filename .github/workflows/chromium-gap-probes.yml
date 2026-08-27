@@ -355,6 +355,41 @@ jobs:
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
+      - name: Probe — which stack-protector spelling wins on alpine clang
+        run: |
+          set -o pipefail
+          # The fix for our 358 107 canary loads (against official's 33 166)
+          # goes through the environment, not a gn arg: we build with
+          # `custom_toolchain = //build/toolchain/linux/unbundle:default`, and
+          # that toolchain reads `extra_cflags = getenv("CFLAGS")`. So the
+          # question is purely which spelling survives Alpine's patched clang
+          # default.
+          #
+          # PARITY, not de-hardening, is the target. Chromium already passes
+          # `-fstack-protector` (weak) on linux in the is_posix branch of
+          # build/config/compiler/BUILD.gn, and official's artifact carries
+          # 33 166 canaries — so matching official means the WEAK variant, and
+          # `-fno-stack-protector` would leave us less protected than the
+          # reference. Whether weak is even reachable is what this measures: a
+          # driver default appended after the command line would outrank it,
+          # and only the artifact says which.
+          docker run --rm \
+            -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/probes:/probes:ro" \
+            alpine:edge sh -c '
+              apk add --no-cache clang22 binutils libgcc gcc musl-dev \
+                >/dev/null 2>&1
+              clang --version | head -1
+              for arm in DEFAULT -fstack-protector -fstack-protector-strong \
+                         -fno-stack-protector; do
+                flag=""
+                [ "$arm" = DEFAULT ] || flag="$arm"
+                # shellcheck disable=SC2086
+                clang -O2 -mavx2 $flag -o /b /probes/ssp-cost-bench.c 2>/dev/null
+                printf "  %-26s canary refs %s\n" "$arm" \
+                  "$(objdump -d /b | grep -c fs:0x28 || true)"
+              done
+            ' 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Probe — libc string routines
         run: |
           set -o pipefail
