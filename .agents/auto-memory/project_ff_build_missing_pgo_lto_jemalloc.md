@@ -162,3 +162,45 @@ bimodal, not noise around a mean.
 smoke-firefox), so a green PR does NOT validate a browser change here — dispatch
 `pw-conformance.yml --ref <branch>` with `image_ref`/`artifact_rev` and gate on
 that. [[project_conformance_only_dispatch_gap]]
+
+**2026-08-27 — two corrections to the entries above.**
+
+**The "loaded into N processes" marker evidence is CHROMIUM's, not firefox's.**
+`FAST_STRING_MARKER` is wired only in `.github/workflows/chromium-gap-probes.yml`,
+and `playwright/bench/fast-string-preload.c`'s own header scopes itself to "the
+five routines our chrome-headless-shell imports from musl". This file reads as if
+that proof covers firefox. It does not: **the firefox mimalloc preload has never
+been empirically shown to reach a content process.** The mechanism says it should
+— Gecko's `security/sandbox/linux/launch/SandboxLaunch.cpp::PreloadSandboxLib`
+appends the parent's `LD_PRELOAD` after `libmozsandbox.so` and records the
+original in `MOZ_ORIG_LD_PRELOAD` — and `dom_churn` at 0.77x is consistent with it,
+but that is inference. Settle it in ~5 min on the shipped image:
+`grep -c MOZ_ORIG_LD_PRELOAD /proc/*/environ` (Gecko sets it ONLY on children
+whose inherited value it rewrote), or `MIMALLOC_SHOW_STATS=1` and count the
+per-process stat blocks. A count of 1 means every layout number is measuring
+nothing. [[feedback_prove_the_lever_is_connected]]
+
+**LTO was measured, twice, and never shipped because of a false comment.**
+`apply-and-build.sh` (near line 519) claims "the musl producer build (aports'
+mozconfig) keeps LTO on for shipping perf". `grep -c lto` on that mozconfig
+returns **0** — LTO lives in the APKBUILD's `optimised-mozconfig`, which we never
+run. So we ship a non-LTO firefox. Two independent ours-vs-ours A/Bs on different
+runners measured `layout` **0.91x and 0.90x** with every control flat, and then
+0.98x vs official — closed. The arm built in **4h18m on the 4-vCPU/16 GB runner
+without OOM**, so `cross,thin` is unnecessary. Caveat: every LTO measurement
+predates mimalloc and the allocator moved `layout` -12% on its own, so the two may
+overlap rather than add — one `ff-perf-ab` with `preload_a == preload_b` settles
+it. Gate it the way the void hardening arm should have been:
+`readelf -S libxul.so | grep '\.text'`, baseline **118 846 320 B**; byte-identical
+means the arm is void. [[project_ff_hardening_arm_unresolved]],
+[[feedback_verify_ab_varied_the_variable]]
+
+**Closed on source evidence, not measurement — stop proposing these:**
+- **Hardening is not a differentiator.** `build/moz.configure/toolchain.configure`
+  adds the flags in the default no-flag case, so OFFICIAL carries the identical
+  set. This retires the parked `MOZ_HARDENING_CFLAGS` rebuild. Two refinements:
+  `-ftrivial-auto-var-init=pattern` is `if debug:` only, so neither side pays it,
+  and STL hardening is off on both (`debug or WINNT or OSX`).
+- **`-O2` vs `-O3`.** `moz_optimize_flags` returns `-O2` for Linux; ours is `-O2`
+  via `: "${CFLAGS:=-O2 -pipe}"`. Same level. `-O3` only arrives under PGO, which
+  official does not use either.
