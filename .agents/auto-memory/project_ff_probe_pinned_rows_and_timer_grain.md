@@ -56,3 +56,36 @@ to BOTH arms so it stays a fair control.
 the delta exceeds the grain; and never open a work item on `click_force`,
 `locator_click` or `int_math` for firefox.
 [[project_runtime_perf_probe]], [[feedback_match_instrument_to_effect_size]]
+
+**2026-08-27 — at n=10, TEN of the thirteen firefox rows are statistically
+TIED, and n=5 manufactures false verdicts.** Run 33066912135 (`runs=10`,
+EPYC 7763, both arms in one job), scored by what fraction of the 100 cross-run
+pairs has alpine faster — a median on one side is not separation:
+
+| verdict | rows |
+|---|---|
+| CLEAN faster (100/100) | `dom_churn` 0.780, `libm_fmod` 0.665 |
+| CLEAN slower (0/100) | **`layout` 1.065** |
+| tied (everything else) | `context_page` 69/100, `goto_cold` 61, `js_alloc` 57, `launch` 57, `click_force` 57, `locator_click` 52, `goto_warm` 39, `screenshot` 36, `eval_rtt` 23, `int_math` 16+68 tied |
+
+**`context_page` was 25/25 "CLEAN faster" at n=5 and is only 69/100 at n=10.**
+That is the n=5 trap in one row: five draws produced a confident verdict that ten
+draws withdrew. Do not promote a row to "won" off n=5.
+
+**So a "ratio < 1.00 on every metric" goal is not decidable on most of these
+rows with this instrument**, and not because we are slower — because the per-row
+spread dwarfs the difference. `goto_warm` is 26-37 ms against 26-36 ms: a ~2%
+effect inside a ~40% spread will not separate at any n we would pay for. Needed
+n scales as (spread/effect)^2, so:
+
+- resolvable today: `layout` (5% spread vs 6.5% effect), `dom_churn`,
+  `libm_fmod`, and marginally `eval_rtt` / `js_alloc`;
+- structurally unresolvable: `goto_warm`, `goto_cold`, `context_page`,
+  `launch`, `screenshot` — these need *quieter kernels* (longer, more
+  deterministic, more repetitions inside the page), not more container restarts,
+  and that is a `playwright/bench/` change.
+
+**How to apply:** report these rows as "at parity, indistinguishable" rather than
+as wins or as work items, and spend build budget only on rows the probe can
+actually resolve. [[feedback_match_instrument_to_effect_size]],
+[[feedback_size_verification_to_failure_rate]]
