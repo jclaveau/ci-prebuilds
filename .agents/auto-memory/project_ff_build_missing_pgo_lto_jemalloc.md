@@ -281,3 +281,26 @@ objection from the shipping question: `libmimalloc.so.2` keeps mimalloc's
 hardening and still gets the win, so the choice does not have to be `-insecure`.
 Note this is the opposite of the BROWSER-side finding, where mimalloc2 secure
 was a clear 10-15% loss — the driver is not allocation-bound the way gecko is.
+
+**2026-08-27 — RETRACTED: the node preload does NOT demonstrably put `eval_rtt`
+below official.** The 0.957 recorded above was ONE draw. A second draw on the
+same CPU model (33071275248) came back at **1.022**, and the absolutes say why:
+official's own arm moved 365.9 -> 390.7 ms between the two runs (+7%) while ours
+moved 350.3 -> 399.3 with a 447.2 ms outlier among its three samples.
+
+That is consistent with the n=10 baseline, where `eval_rtt` scores 23/100
+cross-pairs and is classed **tied** — a ~2% difference cannot be read off n=1
+per arm no matter how clean the A/B that produced it.
+
+**What survives is the ours-vs-ours claim, and only that:** preloading mimalloc
+into node is worth +7.8% and +13.2% on `eval_rtt` across two runs with tight
+within-run spreads (1.8%, 6%) and flat browser-only controls. That is a real
+improvement to our own image. It is NOT evidence that we beat official on that
+row, and the two must not be conflated.
+[[feedback_check_reference_stability_across_runs]],
+[[feedback_size_verification_to_failure_rate]]
+
+**The three rows that reproduce across every measurement this session**
+(n=5, n=10, and four ff-perf-ab draws on three CPU models) are `layout`
+1.065-1.12 slower, `dom_churn` 0.756-0.82 faster and `libm_fmod` 0.66-0.67
+faster. Everything else wanders between draws and should be quoted as parity.
