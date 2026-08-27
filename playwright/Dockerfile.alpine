@@ -14,6 +14,38 @@ FROM ghcr.io/jclaveau/playwright-alpine-browsers:chs-${CHS_REV} AS chs-source
 FROM ghcr.io/jclaveau/playwright-alpine-browsers:ff-${FF_REV} AS ff-source
 FROM ghcr.io/jclaveau/playwright-alpine-browsers:wk-${WK_REV} AS wk-source
 
+# libfastfmod.so — a drop-in `fmod` for musl, preloaded under WebKit alongside
+# mimalloc. musl's fmod walks the exponent difference one bit per iteration
+# with a data-dependent branch, so for large dividends every call eats ~21
+# unpredictable branches: 163.8 ms per 3M calls against glibc's 54.0. That is
+# the whole of `libm_fmod`, our largest per-metric gap on any browser (5.35x on
+# an EPYC 7763, 7.65x on a Xeon 8370C) — both engines call libc the same
+# 3,000,000 times per kernel, so it was never JSC. See issue #126.
+#
+# Compiled here and gated in .github/workflows/wk-fastfmod-gate.yml, which runs
+# the same operand stream with and without it and compares raw result bits.
+# The smoke below is only a build-time sanity check that the object loads and
+# answers; bit-exactness is the workflow's job, over 7.5M comparisons.
+FROM ${BASE_IMAGE} AS fastfmod-build
+COPY alpine-browsers/webkit/fastfmod /work/fastfmod
+RUN sudo apk add --no-cache gcc musl-dev \
+ && sudo gcc -O2 -fPIC -shared -o /usr/lib/libfastfmod.so /work/fastfmod/fastfmod.c \
+ && printf '%s\n' \
+      '#include <stdio.h>' \
+      '#include <math.h>' \
+      'int main(void){' \
+      '  /* k*y + r with k=1e6, y=2^32, r=12345: a ~32-bit exponent gap, and' \
+      '     exactly representable since doubles have unit spacing below 2^52. */' \
+      '  if (fmod(1000000.0 * 4294967296.0 + 12345.0, 4294967296.0) != 12345.0) return 1;' \
+      '  if (fmod(7.5, 2.0) != 1.5) return 2;' \
+      '  if (fmod(-7.5, 2.0) != -1.5) return 3;' \
+      '  if (!isnan(fmod(1.0, 0.0))) return 4;' \
+      '  if (fmod(3.0, INFINITY) != 3.0) return 5;' \
+      '  puts("fastfmod smoke ok"); return 0; }' \
+    > /tmp/smoke.c \
+ && gcc -O2 -fno-builtin-fmod -o /tmp/smoke /tmp/smoke.c -lm \
+ && LD_PRELOAD=/usr/lib/libfastfmod.so /tmp/smoke
+
 # Runtime libs. chromium-headless-shell has RPATH=$ORIGIN but the FROM-SOURCE
 # build (unlike the old apk one) is NOT fully self-contained — it dynamically
 # links Alpine's libxslt + double-conversion + minizip + crc32c (aports chromium
@@ -145,12 +177,19 @@ RUN sudo touch /ms-playwright/webkit-${WK_REV}/INSTALLATION_COMPLETE \
 # PW-side rewrite of that script cannot silently drop it. pw_run.sh resolves
 # everything from `$(dirname "$0")`, so it is indifferent to being renamed
 # inside its own directory.
+#
+# The same wrapper carries libfastfmod.so (built in the fastfmod-build stage
+# above). Both entries are plain interpositions of disjoint symbols, so the
+# order between them does not matter. If either object fails to load, ld.so
+# warns on stderr and continues: WebKit still runs and still returns correct
+# results, just at musl's allocator and musl's fmod speed. There is no
+# correctness dependency on the preload succeeding.
 RUN sudo mv /ms-playwright/webkit-${WK_REV}/pw_run.sh \
             /ms-playwright/webkit-${WK_REV}/pw_run.real.sh \
  && printf '%s\n' \
         '#!/bin/sh' \
         'DIR="$(dirname "$0")"' \
-        'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2' \
+        'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so' \
         'exec "$DIR/pw_run.real.sh" "$@"' \
   | sudo tee /ms-playwright/webkit-${WK_REV}/pw_run.sh >/dev/null \
  && sudo chmod +x /ms-playwright/webkit-${WK_REV}/pw_run.sh
@@ -227,6 +266,11 @@ ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
 # run the container with `--security-opt seccomp=unconfined` (documented in the
 # image README) — the two are required together (see the producer Tier-2 smoke).
 ENV WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
+
+# The fmod interposer the webkit launcher preloads. ~10 kB; reaches
+# MiniBrowser and every auxiliary process, and nothing else — not the Node
+# driver, not chromium, not firefox.
+COPY --from=fastfmod-build /usr/lib/libfastfmod.so /usr/lib/libfastfmod.so
 
 RUN pnpm install -g playwright@${PLAYWRIGHT_VERSION}
 

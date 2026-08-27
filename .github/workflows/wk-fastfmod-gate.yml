@@ -1,0 +1,66 @@
+name: WebKit fastfmod gate
+
+# Proves that libfastfmod.so — the `fmod` we preload under WebKit — returns
+# bit-identical results to musl's own fmod, before it can ship.
+#
+# This is a real gate rather than a smoke test because the object interposes a
+# libm function underneath a browser. The differential run is the load-bearing
+# artifact, so it lives here and re-runs on every change rather than sitting in
+# a transcript somewhere.
+#
+# It runs inside the same alpine base the consumer image is built from, so the
+# musl it verifies against is the musl it will ship against.
+
+on:
+  pull_request:
+    paths:
+      - 'playwright/alpine-browsers/webkit/fastfmod/**'
+      - 'playwright/Dockerfile.alpine'
+      - '.github/workflows/wk-fastfmod-gate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'playwright/alpine-browsers/webkit/fastfmod/**'
+      - '.github/workflows/wk-fastfmod-gate.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: wk-fastfmod-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    container:
+      image: alpine:edge
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain
+        run: apk add --no-cache gcc musl-dev bash
+
+      - name: Report the libc under test
+        # Which musl this ran against belongs in the log: the whole claim is
+        # "bit-identical to THIS libc's fmod".
+        run: |
+          set -eu
+          apk info musl | head -2
+          ls -l /lib/ld-musl-x86_64.so.1
+
+      - name: Differential gate
+        # run-gate.sh fails the job on: fmod being inlined away (which would
+        # make the comparison vacuous), the preload not loading (ld.so only
+        # warns), any bucket digest differing, or a deliberately corrupted
+        # build being accepted.
+        run: sh playwright/alpine-browsers/webkit/fastfmod/run-gate.sh
+             playwright/alpine-browsers/webkit/fastfmod
+             "$RUNNER_TEMP/fastfmod-gate"
+
+      - name: Keep the digests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fastfmod-gate
+          path: ${{ runner.temp }}/fastfmod-gate/*.txt
+          if-no-files-found: warn
