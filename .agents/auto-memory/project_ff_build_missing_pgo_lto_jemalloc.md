@@ -267,3 +267,17 @@ off this run — it is n=1 and those rows carry the outliers (`context_page` has
 
 So after the node preload, **`layout` is the only row still above 1.00** that is
 not pinned by physics.
+
+**The SECURE mimalloc captures nearly all of the node win** (33066499518,
+insecure vs secure on node, firefox shim held at insecure on both):
+`eval_rtt` 356.7 vs 363.9 = **0.98**, i.e. a ~2% gap between the variants
+against the 8-13% gap versus musl malloc. Controls flat (`int_math` 1.000,
+`locator_click` 1.000, `layout` 1.000, `libm_fmod` 1.014).
+
+n=1 and 2% sits inside `eval_rtt`'s own 6% spread on that run, so the honest
+statement is "secure ~= insecure, both much better than musl malloc" rather
+than a ranking between the two. That matters because it removes the security
+objection from the shipping question: `libmimalloc.so.2` keeps mimalloc's
+hardening and still gets the win, so the choice does not have to be `-insecure`.
+Note this is the opposite of the BROWSER-side finding, where mimalloc2 secure
+was a clear 10-15% loss — the driver is not allocation-bound the way gecko is.
