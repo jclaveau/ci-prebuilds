@@ -60,6 +60,35 @@ for (let y = 0; y < 720; y += 40) {
 window.__ready = true;
 </script></body>`;
 
+/*
+ * The page the CAMPAIGN's `screenshot` metric actually shoots: 800 rows of
+ * antialiased text, from runtime-probe.cjs. It matters that this exists
+ * separately from the canvas control, because on a hosted runner the canvas
+ * shot lands ON the ~33 ms compositor cadence for BOTH arms — 1.01x wall while
+ * the CPU underneath it is 1.26x. A kernel whose wall time is pinned to a frame
+ * boundary cannot reproduce the number it is supposed to explain; this one is a
+ * noisy enough bitmap to escape it.
+ *
+ * Its bytes are NOT comparable across arms: Alpine and Ubuntu antialias with
+ * different fonts, so the two sides encode genuinely different pixels. That is
+ * why the canvas control stays — it is the arm-to-arm digest check, and this
+ * one is the timing.
+ */
+const TEXT_HTML = `<!doctype html>
+<html><head><meta charset="utf-8"><title>perf-kernel</title><style>
+  body { margin: 0; font: 12px/1.2 sans-serif; }
+  #pad div { padding: 1px 2px; border-bottom: 1px solid #eee; }
+</style></head><body><div id="pad"></div>
+<script>
+  const pad = document.getElementById('pad');
+  for (let i = 0; i < 800; i++) {
+    const d = document.createElement('div');
+    d.className = 'p' + (i % 16);
+    d.textContent = 'row ' + i + ' lorem ipsum dolor sit amet';
+    pad.appendChild(d);
+  }
+</script></body></html>`;
+
 const DOM_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>perf-kernel</title><style>
   body { margin: 0; font: 12px/1.2 sans-serif; }
@@ -104,6 +133,19 @@ const KERNELS = {
   // runs (34.1 / 35.0 / 46.9 ms) and the 16x16 clip sits on the frame floor.
   screenshot_png: {
     page: CANVAS_HTML,
+    run: async (page) => {
+      const buf = await page.screenshot({ type: 'png' });
+      return { tag: digestTag(buf) };
+    },
+  },
+
+  // The campaign's own screenshot, on the campaign's own page. Not
+  // digest-comparable across arms (different fonts), so `bytes_comparable` is
+  // false and the report must not read the difference as "the arms did
+  // different work" — here they legitimately did.
+  screenshot_png_text: {
+    page: TEXT_HTML,
+    bytes_comparable: false,
     run: async (page) => {
       const buf = await page.screenshot({ type: 'png' });
       return { tag: digestTag(buf) };
@@ -188,6 +230,12 @@ async function main() {
   if (kernel.page === CANVAS_HTML) {
     await page.waitForFunction('window.__ready === true');
   }
+  // The text page builds its rows in an inline script, so the shot has to wait
+  // for layout to settle or the first frames capture a half-built document.
+  if (kernel.page === TEXT_HTML) {
+    await page.waitForFunction('document.querySelectorAll("#pad div").length'
+      + ' === 800');
+  }
 
   // Warmup is not politeness: the first screenshot pays lazy encoder init and
   // first-touch faults, and the first layout pass pays JIT and font init. A
@@ -236,6 +284,7 @@ async function main() {
     min_ms: Number(Math.min(...samples).toFixed(3)),
     max_ms: Number(Math.max(...samples).toFixed(3)),
     tag,
+    bytes_comparable: kernel.bytes_comparable !== false,
     browser_args: browserArgs,
     playwright_version: require('playwright/package.json').version,
     // The parity assert: two arms on different chromium versions are not a

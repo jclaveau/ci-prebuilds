@@ -15,10 +15,15 @@ PGO/ThinLTO bench comparison could go first. None are resolved.
    is broken, but neither config is adopted. Fix is a `docker buildx imagetools
    create` retag to `911c93b`, no rebuild. Pinned `chs-<rev>` tags unaffected.
 
-2. **The promote gate is branch-blind.** `chromium-from-source` promotes
-   `chs-latest` from ANY branch on a green dispatch, unlike firefox's
-   main-gated promote — that asymmetry is what let (1) happen, and it will
-   recur on the next perf dispatch. See [[project_promote_gates_by_browser]].
+2. **The promote gate is branch-blind — RESOLVED 2026-08-27, PR #128.**
+   `promote-chromium-from-source.yml` had NO `github.ref` check anywhere and is
+   dispatch-only, so any green dispatch from any branch retagged `chs-<rev>`,
+   `chs-<version>` and `chs-latest` on BOTH registries. Now guarded on
+   `refs/heads/main`. The guard **fails** rather than skipping, unlike the
+   webkit promote's job-level `if:`: a skipped job reports the run green, and a
+   promote workflow that says green without promoting is the shape that already
+   cost this repo a wrong conclusion once ([[project_resume_from_runs_only_r1]]).
+   See [[project_promote_gates_by_browser]].
 
 3. **`args.gn.overlay` PGO comment is now stale.** Line 151
    `chrome_pgo_phase = 0  # no PGO (build wall-clock); aports same`, plus the
