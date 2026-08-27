@@ -195,6 +195,79 @@ const KERNELS = {
 };
 
 /*
+ * Everything about the machine that could move a number, captured per run so
+ * two runs can be compared knowingly rather than hopefully.
+ *
+ * The ratio divides out the runner only WITHIN a run — both arms share the
+ * machine there. Across runs it does not: the same alpine/official pair reads
+ * libm_fmod 5.35 on an EPYC 7763, 6.3 on a 9V74 and 7.65 on a Xeon 8370C, at a
+ * within-class CV of 0.5%. So a cross-run difference is uninterpretable until
+ * you know the two runs landed on the same silicon, and that needs more than
+ * the model string: microcode and the mitigation set move measurably on
+ * identical models, cache size explains layout and dom_churn, avx512 decides
+ * whether official's simdutf takes a path our build compiles out, and steal
+ * time says whether we were sharing the core with someone else.
+ *
+ * Never throws: a probe that dies collecting metadata loses the measurement.
+ */
+function hardware() {
+  const read = (f) => {
+    try {
+      return fs.readFileSync(f, 'utf8');
+    } catch {
+      return '';
+    }
+  };
+  const cpuinfo = read('/proc/cpuinfo');
+  const field = (name) => {
+    const m = cpuinfo.match(new RegExp(`^${name}\\s*:\\s*(.+)$`, 'm'));
+    return m ? m[1].trim() : null;
+  };
+  // Only the flags that change what code runs or how fast it runs — the full
+  // list is ~250 entries and would bury the rest of the record.
+  const WATCHED = [
+    'avx2', 'avx512f', 'avx512vl', 'avx512bw', 'sse4_2', 'pclmulqdq',
+    'aes', 'sha_ni', 'bmi2', 'adx', 'rdtscp', 'constant_tsc', 'tsc_reliable',
+    'hypervisor', 'ibpb', 'ibrs', 'stibp',
+  ];
+  const flags = new Set((field('flags') || '').split(/\s+/));
+  // Column 9 of /proc/stat's cpu line is steal: time the hypervisor gave to
+  // someone else. Non-zero means we did not have the core to ourselves.
+  const stat = read('/proc/stat').match(/^cpu\s+(.+)$/m);
+  const jiffies = stat ? stat[1].trim().split(/\s+/).map(Number) : [];
+  const mitigations = {};
+  try {
+    const dir = '/sys/devices/system/cpu/vulnerabilities';
+    for (const name of fs.readdirSync(dir)) {
+      mitigations[name] = read(path.join(dir, name)).trim();
+    }
+  } catch {
+    /* not exposed in every container */
+  }
+  const speeds = os.cpus().map((c) => c.speed).filter(Boolean);
+  return {
+    cpu: field('model name') || 'unknown',
+    cores: os.cpus().length,
+    // Turbo and thermal state at probe time; a run that clocked lower is not
+    // comparable to one that did not, however identical the model string.
+    mhz_min: speeds.length ? Math.min(...speeds) : null,
+    mhz_max: speeds.length ? Math.max(...speeds) : null,
+    cache: field('cache size'),
+    microcode: field('microcode'),
+    family: [field('cpu family'), field('model'), field('stepping')].join('/'),
+    flags: WATCHED.filter((f) => flags.has(f)),
+    steal_jiffies: jiffies.length > 8 ? jiffies[7] : null,
+    mitigations,
+    kernel: os.release(),
+    mem_total_mb: Math.round(os.totalmem() / 1048576),
+    // What the container was actually allowed, which is not what the host has.
+    cgroup_mem_max: read('/sys/fs/cgroup/memory.max').trim() || null,
+    cgroup_cpu_max: read('/sys/fs/cgroup/cpu.max').trim() || null,
+    load1: os.loadavg()[0],
+  };
+}
+
+/*
  * executablePath() names the FULL chromium, but a headless launch runs
  * chrome-headless-shell and that is the only binary our from-source artifact
  * ships — so the path Playwright hands back does not exist here. Fall back to
@@ -369,7 +442,6 @@ async function main() {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
 
-  const cpu = os.cpus()[0];
   const result = {
     target,
     browser: browserName,
@@ -378,9 +450,10 @@ async function main() {
     playwright_version: require('playwright/package.json').version,
     libc: fs.existsSync('/lib/ld-musl-x86_64.so.1') ? 'musl' : 'glibc',
     node: process.version,
-    // Recorded to explain outliers, never to normalize: the runner class is the
-    // reason ratios (not absolute ms) are the reportable number.
-    runner: { cpu: cpu ? cpu.model : 'unknown', cores: os.cpus().length },
+    // Recorded to explain outliers and to decide whether two runs may be
+    // compared at all — never to normalize. The runner class is the reason
+    // ratios, not absolute ms, are the reportable number.
+    runner: hardware(),
     metrics: Object.fromEntries(
       Object.entries(metrics).map(([k, v]) => [
         k,
