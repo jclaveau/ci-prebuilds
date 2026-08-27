@@ -25,19 +25,27 @@ On official, `serif`, `sans-serif` and a deliberately-missing face all give the
 they differ, i.e. we resolve distinct real faces. The two arms are laying out
 different glyphs from different fonts.
 
-**Size of the confound:** alternating font-family inside ONE page in ONE process
-(so machine noise hits every arm equally) moves the layout kernel by up to ~25%
-— larger than the 8.7% alpine-vs-official `layout` deficit being chased. The
-exact figure was not pinned because the laptop was oversubscribed by parallel
-agents, but the direction and magnitude are established and the `fc-match` /
-width table above needs no timing at all.
+**But it does NOT explain the `layout` deficit — I checked, and my first read
+was wrong.** An alternating font-family run suggested ~25%, but its arms
+overlapped completely (one arm spanned 181-265 ms on a laptop that parallel
+agents were loading), so that was noise read as signal. The clean design is a
+text page vs a box-only page (explicit width/height, no text) measured
+INTERLEAVED in one process, which makes the ratio internal to each image:
 
-**So `layout` 1.087 is not purely a build-quality number**, and neither are
-`dom_churn`, `screenshot` or the `goto_*` rows. The fix is in the fixture, not
-in either image: pin an explicit `font-family` (or a web font served by the
-probe's own http server) so both arms shape identical glyphs. Matching the
-images' font packages instead would work but changes rendering, so it is a
-conformance question, not a free one.
+| image | text page | box-only page | text/box |
+|---|---|---|---|
+| alpine | 168 ms | 177 ms | **0.949** |
+| official | 194 ms | 182 ms | **1.066** |
+
+Both sit at ~1.0. The kernel dirties one element's width and reads
+`offsetHeight`; Gecko reflows the dirty subtree and reuses the cached text runs
+for the 800 pad rows, so shaping is not re-paid per iteration. So `layout`
+1.087 is a genuine build-quality deficit and LTO remains the right lever for it.
+
+The mismatch still stands as a real difference and still matters for the rows
+that PAINT or lay out fresh text — `screenshot`, `dom_churn`, `goto_*` — and it
+is worth pinning the fixture's font-family regardless, because "the two arms
+render different glyphs" is not a property a parity benchmark should have.
 
 **How to apply:** any cross-image comparison whose workload contains text needs
 the font checked first — `fc-match` plus one `getBoundingClientRect().width` on
