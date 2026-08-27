@@ -37,6 +37,24 @@ goto_warm       1.17-1.20    1.23-1.39   <- REGRESSED, unexplained
 layout/int_math/dom_churn/libm_fmod      flat (the control)
 ```
 
+**`goto_warm` regressed (+0.03/+0.06/+0.20 across the three pairings) and two
+mechanisms are eliminated**, both by deterministic measurement rather than by
+timing on a noisy box:
+
+- NOT memory growth. WPEWebProcess RSS over 40 warm navigations: baseline
+  271 -> 328 MB, mimalloc 258 -> 321 MB. mimalloc starts lower AND ends 7 MB
+  lower.
+- NOT purge/refault. Minor faults over the same 40 navigations: baseline
+  15,236 (381/nav), mimalloc 8,059 (201/nav); major faults 12 vs **0**. If
+  mimalloc were returning freed pages to the OS between navigations the count
+  would go UP, so `MIMALLOC_PURGE_DELAY` is a dead lead too.
+
+What is left is that `goto_warm` may not have the resolution to carry the
+claim: its absolute value is ~24 -> ~28 ms, the three deltas span 0.03 to
+0.20, and it is the ONE metric where the probe's own null arm sits at
+1.11-1.12 while every other null metric reads ~1.00. Unproven either way —
+do not record it as a real regression without a run that can resolve 4 ms.
+
 **Two dead ends recorded so nobody re-spends them.** Firefox's `nm -D`
 discriminator does NOT transfer: `malloc` is undefined in ours *and* in
 official's `libWPEWebKit`, because bmalloc never interposes global `malloc` —
