@@ -204,3 +204,39 @@ means the arm is void. [[project_ff_hardening_arm_unresolved]],
 - **`-O2` vs `-O3`.** `moz_optimize_flags` returns `-O2` for Linux; ours is `-O2`
   via `: "${CFLAGS:=-O2 -pipe}"`. Same level. `-O3` only arrives under PGO, which
   official does not use either.
+**2026-08-27 — the preload DOES reach content processes. Settled, in minutes.**
+The "loaded into N processes" proof recorded above was chromium's; firefox's had
+never been shown. Run the shipped image, drive one `page.goto` + screenshot,
+then read `/proc/*/maps`:
+
+    SUMMARY firefox_procs=6 with_mimalloc_mapped=6 with_moz_orig=5
+
+All six (parent + five children) map mimalloc, five mappings each, and the five
+children carry `MOZ_ORIG_LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2` exactly
+as Gecko's `SandboxLaunch.cpp::PreloadSandboxLib` documents — it appends the
+parent's LD_PRELOAD after `libmozsandbox.so` and records the original. So every
+`layout`/`js_alloc` number is the whole browser, not the parent alone.
+
+**2026-08-27 — NODE's allocator is worth another 8-13% on `eval_rtt`.** The shim
+deliberately scopes the preload to firefox "so it reaches firefox and its
+children and not the Node.js driving them". But `eval_rtt` is 500 pipe round
+trips through that node, and it is the one row where we were still behind
+official at n=5 (1.017). Setting `LD_PRELOAD` on the PROBE CONTAINER varies the
+driver's allocator alone — the shim re-exports its own, so firefox is untouched:
+
+| run | CPU | arm order | musl node | mimalloc node | gain |
+|---|---|---|---|---|---|
+| 33065282215 | Xeon 8370C | musl first | 343.2 | 318.3 | **+7.8%** |
+| 33065574061 | Xeon 8573C | mimalloc first | 313.5 | 277.0 | **+13.2%** |
+
+Same direction on two CPUs with the arms in opposite order, and well outside
+`eval_rtt`'s own spread (1.8% / 6%). The browser-only controls stay flat both
+times — `click_force` 1.000/0.999, `locator_click` 1.000/1.000 — which is what
+makes it readable at n=1.
+
+**Shipping it is a UX decision, not a perf one.** `ENV LD_PRELOAD` on the
+consumer image reaches every process a user runs in the container (their test
+runner, pnpm, their app), and the `-insecure` variant drops mimalloc's
+hardening. That is exactly the scoping the shim comment chose against, so it
+needs jean's call rather than a quiet flip.
+[[project_ff_probe_pinned_rows_and_timer_grain]]
