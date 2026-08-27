@@ -426,6 +426,9 @@ jobs:
       contents: read
       actions: read
     steps:
+      # The renderer is scripts/bench_summary.py, so this job needs the tree.
+      # It did not before the summary moved out of the workflow heredoc.
+      - uses: actions/checkout@v7
       - name: Download act results
         uses: actions/download-artifact@v4
         continue-on-error: true
