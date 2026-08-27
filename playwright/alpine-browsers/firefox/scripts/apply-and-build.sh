@@ -715,10 +715,16 @@ echo "===== Built: $SRC/$DIST (mach rc=$mach_rc, package rc=$pkg_rc; artifact OK
 
 # libxul's .text size is the cheapest evidence that a codegen-level option
 # (LTO here, hardening before it) actually changed the artifact: an arm whose
-# .text matches the baseline byte-for-byte varied nothing. Non-LTO baseline for
-# firefox 153.0 is 118 846 320 B. Read AFTER the build is confirmed: the
-# cbindgen two-pass means the first ./mach build fails by design, and at that
-# point there is no libxul to measure.
+# .text matches the baseline byte-for-byte varied nothing.
+#
+# Non-LTO reference, measured off the shipped ff-latest artifact rather than
+# quoted: 118 846 448 B (0x71573f0). It drifts by ~100 B between non-LTO builds
+# — an earlier note said 118 846 320 — so only a LARGE delta means anything
+# here; a three-figure difference is build noise, not a codegen change.
+#
+# Read AFTER the build is confirmed: the cbindgen two-pass means the first
+# ./mach build fails by design, and at that point there is no libxul to
+# measure.
 XUL="$SRC/obj/dist/bin/libxul.so"
 if [[ -r "$XUL" ]] && command -v readelf >/dev/null; then
   echo "===== libxul .text ====="
