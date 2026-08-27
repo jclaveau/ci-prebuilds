@@ -1,6 +1,6 @@
 ---
 name: project_chromium_perf_record_first_read
-description: the first perf profile of chromium — screenshot is 100% PNG encode and NOT deflate (libz never appears), the cost is a Skia raster-pipeline float family our build runs 3.4x more of; layout is diffuse codegen; the stack-protector difference is real on the artifact but priced inside its own instrument's spread
+description: the first perf profile of chromium — screenshot is 100% PNG encode and NOT deflate (libz never appears), the cost is a Skia raster-pipeline float family our build runs 3.4x more of; layout is diffuse codegen at +16% instructions / -13% IPC, and Alpine's default stack protector is a real artifact-level difference worth +12.0% instructions on a call-dense shape
 metadata:
   type: project
 ---
@@ -87,15 +87,46 @@ the same and a 10.8x density difference is the flag. Alpine's clang 22 defaults
 `-fno-stack-protector`); upstream clang defaults it off, and chromium enables it
 for a subset of its own.
 
-**But it is not yet priced.** `ssp-cost-bench.c` on a vector-body shape read
-1.868 / 1.864 / 1.782 ms with the flag against 1.741 / 1.747 / 1.741 without —
-a 2-7% effect from an instrument whose own spread across repeats is about ±5%.
-**A difference inside its instrument's spread is not a measurement**
-([[feedback_match_instrument_to_effect_size]]). The right instrument for
-"does this flag make us execute more" is **instructions retired**, which is
-deterministic between runs; the bench grows a call-dense kernel for exactly
-that, since layout is thousands of small out-of-line calls and a prologue is a
-much larger fraction of those than of one heavy vector body.
+**Priced at +12.0% INSTRUCTIONS on a call-dense shape**, which took three
+tries to measure honestly:
+
+1. Timed, on a vector body: 1.868 / 1.864 / 1.782 ms with the flag against
+   1.741 / 1.747 / 1.741 without. A 2-7% effect from an instrument whose own
+   spread is ±5% — **inside its own resolution, so not a measurement at all**
+   ([[feedback_match_instrument_to_effect_size]]). It also had the wrong shape:
+   one heavy vector body per prologue understates a per-call cost.
+2. Counted, call-dense, but too small: the walk finished in 0.078 ms, so
+   `perf stat` was counting process startup. Two reps of the SAME binary read
+   573 801 and 551 210 instructions — a 4% spread on an 8% claim.
+3. Counted, call-dense, scaled until the workload dwarfed startup (20 000
+   rounds, ~1.2 s):
+
+   | | instructions retired | |
+   |---|---|---|
+   | ssp on | 3 818 502 482 / 3 819 080 138 | spread **0.015%** |
+   | ssp off | 3 407 973 208 / 3 410 399 275 | spread **0.07%** |
+   | | **+12.0%** | 170x the instrument's resolution |
+
+   Same checksum both arms, canary refs 6 vs 0, so the lever provably varied
+   and the work was identical. Wall was +4.7%.
+
+**And it lands on the HOT path, not on cold code.** Per 64 KiB of the top five
+layout regions in each binary (comparable instruction counts, 15.6-19.5 k):
+
+| region rank | ours | official |
+|---|---|---|
+| 1-5 protected functions | 14 / 38 / 62 / 19 / 81 = **214** | 2 / 2 / 2 / 3 / 10 = **19** |
+
+11.3x, matching the binary-wide 10.8x. So the flag is not confined to code the
+layout kernel never runs.
+
+**Read against the browser: our layout runs +16% instructions, and a synthetic
+call-dense kernel says the stack protector alone is +12%.** That makes SSP the
+leading explanation for the INSTRUCTION half of the layout gap — with the
+caveat that the synthetic is more call-dense than real Blink, so +12% is an
+upper bound. It says nothing about the −13% IPC half, which is a separate
+question. The fix is `-fno-stack-protector` in chromium's cflags, and it costs
+a cold r1..r12 (25-30 h) because it lives in the setup layer.
 
 **Two traps that cost real time here:**
 
