@@ -1419,14 +1419,22 @@ jobs:
             fi
             # A hang must cost one target, not the job. Our WebKit used to eat
             # the whole 30-minute budget at newPage (issue #100, fixed by the
-            # base move); this bounds any repeat to 8 minutes and lets the
-            # remaining targets still be measured. --name + rm -f because a
-            # timed-out `docker run --rm` leaves the container Up and the next
-            # target then fails on the stale name.
+            # base move); the `timeout` inside the container bounds any repeat
+            # to 5 minutes, against a healthy target's ~30-60s. 3 x 5 leaves
+            # half the job's 30 minutes spare, and the budget has to hold: a
+            # job timeout skips upload-artifact, losing every measurement
+            # rather than the one that hung.
+            #
+            # The timeout wraps the probe rather than `docker run` because `sh`
+            # is PID 1 in the container and PID 1 ignores an un-handled
+            # SIGTERM: killing the client would leave the container ALIVE,
+            # burning the runner's cores while the next target is measured.
+            # Killing the probe instead lets the container exit and `--rm` fire.
+            # `timeout SECS CMD` is the one form busybox and GNU spell alike.
             cname="probe-${target}-${BROWSER}"
             docker rm -f "$cname" >/dev/null 2>&1 || true
             # shellcheck disable=SC2086  # SECURITY_FLAGS/EXTRA_ENV are flag lists — word-splitting is intended
-            timeout --foreground 480 docker run --rm --name "$cname" \
+            docker run --rm --name "$cname" \
               $SECURITY_FLAGS $EXTRA_ENV \
               --env "HOME=$home" \
               --env "PROBE_BROWSER=$BROWSER" \
@@ -1445,7 +1453,7 @@ jobs:
                 export NODE_PATH
                 node -e "require(\"playwright\")" 2>/dev/null \
                   || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
-                node /probe/runtime-probe.cjs \
+                timeout 300 node /probe/runtime-probe.cjs \
                   --browser "$PROBE_BROWSER" --target "$PROBE_TARGET" --out /out
               ' 2>&1 | tee "perf-out/probe-${target}-${BROWSER}.log" || rc=1
             docker rm -f "$cname" >/dev/null 2>&1 || true
