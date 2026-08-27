@@ -49,7 +49,8 @@ your job if you lint shell.
   layers, so each stays independently versioned.
 - **musl, not glibc.** A handful of apt-only packages (`lsb-release`, `software-properties-common`,
   `locales`, `time`) have no Alpine counterpart and are dropped; some downstream layers diverge more
-  (notably Playwright, which on Alpine is Chromium-only via the system package).
+  (notably Playwright, whose three browsers are built from source against musl rather than
+  taken from the system packages).
 - In **GitHub Actions container jobs the steps run as root** (uid 0), ignoring the image's `USER runner`.
   The baked accounts/env/aliases matter for `docker run` / `act`, not inside a GHA job.
 - Published; tagged `latest` and a version-pinned `alpineXX.YY` (e.g. `alpine3.21`) on each push to main.
