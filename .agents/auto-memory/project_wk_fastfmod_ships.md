@@ -15,9 +15,25 @@ times per kernel (30,000,033 ours vs 30,000,057 official, interposed and
 counted); `(i*1.5) % 1024.25` — the same call at small magnitudes — is 1.07x;
 `Math.sqrt` and an int-only `%` are at parity. musl walks the exponent
 difference one bit per iteration with a data-dependent branch, so ~21
-unpredictable branches per call at the probe's operands. Isolated: glibc
-54.0 ms / musl 163.8 ms per 3M. The cmov rewrite: 122.7 ms where musl takes
-289.6 on the same box.
+unpredictable branches per call at the probe's operands.
+
+**How far it actually gets, measured in containers on ONE host** (an earlier
+version of this note compared a musl CONTAINER against my glibc HOST — two
+machines, the exact error [[project_perf_probe_ratio_is_cpu_dependent]] warns
+about), `-fno-builtin-fmod`, glibc arm gated at 8,999,999 observed calls:
+
+```
+per 9M calls      ms      ns/call   vs glibc
+musl             465.2      51.7      3.02x
+this rewrite     196.2      21.8      1.27x
+glibc            154.2      17.1      1.00
+```
+
+2.37x faster than musl, and it does NOT reach glibc. In the browser it is
+further off: perf-probe puts the arm at **2.57x** official (two draws, both
+EPYC 7763, 2.57 both times) against roughly 10x before. Why C says 1.27x and
+the browser says 2.57x is unexplained — JIT call sequence, CPU, or both. Do
+not quote "parity".
 
 **Ship shape.** One more entry in the `pw_run.sh` LD_PRELOAD beside mimalloc.
 Reaches MiniBrowser + WPE aux processes only. `LD_PRELOAD` failure is
