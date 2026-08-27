@@ -121,6 +121,43 @@ extended-range 10-bit decodes, both are HIGHP_ONLY, and together with the store
 they are ~11.9% of our screenshot CPU. The lever is still the surface format;
 only the name of the stage that dominates was wrong.
 
+**CORRECTION 2 — the 66% was CANVAS-ONLY, and the flag that removes it is not
+shippable.** Measured on the campaign's real page (`screenshot_png_text`, 800
+rows of antialiased text), flags applied to the alpine arm only, XR share read
+within each arm so it survives the runner-CPU dependence:
+
+| arm | XR stage share of our CPU | CPU ratio vs control |
+|---|---|---|
+| baseline | 4.78% | 1.36x |
+| `--disable-gpu-compositing` alone | 4.57% | 1.32x |
+| `--disable-gpu` + compositing | **0.00%** | **1.28x** |
+
+Three things fall out, and two of them are corrections to me:
+
+- **`--disable-gpu` is the flag that kills the XR path**, not
+  `--disable-gpu-compositing` — the narrower one leaves the share untouched
+  (4.57 vs 4.78). Runs 33120353729 and 33121027568; both provably applied, the
+  probe records `browser_args` in its JSON, and sample volumes are comparable
+  (26-31e9 event-ns, 109-162 symbol rows) so `0.00%` is an absence rather than
+  a resolution floor.
+- **The XR family is ~17% of the main-binary delta on the real page, not 66%.**
+  The 66% came from the flat-canvas control, which has no text and therefore
+  over-weights the pixel-conversion path enormously. A control chosen to make
+  bytes comparable is not automatically a control that apportions cost. Read
+  cost on the kernel that matches the metric.
+- **So the whole XR lead is worth ~6% of the screenshot ratio** (1.36 -> 1.28),
+  and buying it costs `--disable-gpu`, which this repo already knows breaks
+  WebGL: `args.gn.overlay` records that a build without Vulkan-backed rendering
+  made chromium report "Initialization of all (0) EGL display types failed" and
+  fail `capabilities.spec.ts::should support webgl(2)`. We do not control
+  consumers' launch args either, so shipping it means baking it into a launch
+  wrapper for everyone.
+
+**Verdict: real, cheap to test, and a dead end for shipping.** It is a runtime
+flag rather than a build change — which was the question — but the answer does
+not change the chromium plan, because the flag is one nobody can ship and the
+prize is ~6% rather than the two thirds the canvas control implied.
+
 **Why this matters more than the stack protector.** It is 66% of the screenshot
 overrun against the protector's ~12% of the layout instruction count, and if it
 turns out to be a one-line gn arg it costs a rebuild rather than a redesign.
