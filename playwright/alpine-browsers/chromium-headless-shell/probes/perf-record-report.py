@@ -19,6 +19,30 @@ import sys
 
 ARMS = ('alpine', 'official')
 ROW = re.compile(r'^\s*(\d+\.\d+)%\s+(\S.*?)\s*$')
+EVENT_COUNT = re.compile(r'Event count \(approx\.\): (\d+)')
+
+
+def cpu_ms_per_iteration(root, arm, kernel, meta):
+    """What one iteration cost in CPU-ms, from the profile's own event count.
+
+    Wall time cannot carry this comparison: on a hosted runner both arms'
+    screenshot lands on the ~33 ms compositor cadence and reads 1.01x while the
+    CPU underneath it is 1.26x. `cpu-clock` counts nanoseconds of CPU across
+    every core in the window, so dividing by the iterations that fit in that
+    window gives a number a frame boundary cannot flatten.
+    """
+    dso = root / f'{arm}-{kernel}-dso.txt'
+    window = root / f'{arm}-{kernel}-window'
+    if not (dso.exists() and window.exists()):
+        return None
+    m = EVENT_COUNT.search(dso.read_text(errors='replace'))
+    if not m or not meta.get('seconds'):
+        return None
+    iterations = meta['iterations'] / meta['seconds'] \
+        * float(window.read_text().strip())
+    if iterations <= 0:
+        return None
+    return int(m.group(1)) / 1e6 / iterations
 
 
 def read_dso(path):
@@ -58,20 +82,38 @@ def main(root):
                     meta[arm].get('browser_version', '?'))
 
         print(f'### `{kernel}`\n')
+        cpu = {arm: None for arm in ARMS}
         if len(meta) == len(ARMS):
             a, o = meta['alpine'], meta['official']
-            ratio = (a['median_ms'] / o['median_ms']) if o['median_ms'] else 0
-            print('| arm | iterations | median ms | ratio | output tag |')
-            print('|---|---|---|---|---|')
-            print(f"| alpine | {a['iterations']} | {a['median_ms']:.2f} | "
-                  f"**{ratio:.2f}x** | `{a['tag']}` |")
-            print(f"| official | {o['iterations']} | {o['median_ms']:.2f} | "
-                  f"1.00x | `{o['tag']}` |")
-            if a['tag'] != o['tag']:
-                print('\n> The two arms produced DIFFERENT output. For an '
-                      'encoder kernel that is a real difference worth its own '
-                      'look; for a layout kernel it means the arms were not '
-                      'laying out the same boxes and the ratio above is void.')
+            cpu = {arm: cpu_ms_per_iteration(root, arm, kernel, meta[arm])
+                   for arm in ARMS}
+            wall = (a['median_ms'] / o['median_ms']) if o['median_ms'] else 0
+            cpu_ratio = None
+            if cpu['alpine'] and cpu['official']:
+                cpu_ratio = cpu['alpine'] / cpu['official']
+            print('| arm | iterations | median ms | wall | CPU-ms/iter | CPU |'
+                  ' output tag |')
+            print('|---|---|---|---|---|---|---|')
+            for arm, m in (('alpine', a), ('official', o)):
+                c = cpu[arm]
+                mine = arm == 'alpine'
+                print(f'| {arm} | {m["iterations"]} | {m["median_ms"]:.2f} | '
+                      + (f'**{wall:.2f}x**' if mine else '1.00x') + ' | '
+                      + ('—' if c is None else f'{c:.1f}') + ' | '
+                      + ('1.00x' if not mine else
+                         '—' if cpu_ratio is None else f'**{cpu_ratio:.2f}x**')
+                      + f' | `{m["tag"]}` |')
+            if abs(wall - 1) < 0.03 and cpu_ratio and abs(cpu_ratio - 1) > 0.1:
+                print('\n> Wall time is flat while CPU is not: this kernel is '
+                      'sitting on the compositor cadence, so its wall column '
+                      'is a frame boundary rather than a measurement. Read the '
+                      'CPU column.')
+            if a['tag'] != o['tag'] and a.get('bytes_comparable', True):
+                print('\n> The two arms produced DIFFERENT output on a kernel '
+                      'whose bytes are supposed to match. For an encoder that '
+                      'is a real difference worth its own look; for a layout '
+                      'kernel it means the arms were not laying out the same '
+                      'boxes and the ratios above are void.')
             print()
 
         dso = {arm: read_dso(root / f'{arm}-{kernel}-dso.txt') for arm in ARMS}
@@ -84,14 +126,27 @@ def main(root):
             print('_perf produced no samples for this kernel._\n')
             continue
 
-        print('Share of system-wide CPU samples, by shared object:\n')
-        print('| shared object | alpine | official |')
-        print('|---|---|---|')
+        print('CPU-ms per iteration, by shared object. A raw share would not '
+              'be comparable between the arms: they get through different '
+              'numbers of iterations in the same window, so each share is '
+              'weighted by that arm\'s own cost per iteration.\n')
+        print('| shared object | alpine | official | delta |')
+        print('|---|---|---|---|')
         for n in names[:22]:
-            a = dso['alpine'].get(n)
-            o = dso['official'].get(n)
-            print(f'| `{n}` | {"—" if a is None else f"{a:.2f}%"} '
-                  f'| {"—" if o is None else f"{o:.2f}%"} |')
+            cells, vals = [], {}
+            for arm in ARMS:
+                share, c = dso[arm].get(n), cpu[arm]
+                if c is None:
+                    vals[arm] = None
+                    cells.append('—' if share is None else f'{share:.2f}%')
+                else:
+                    vals[arm] = (share or 0.0) / 100 * c
+                    cells.append(f'{vals[arm]:.2f} ms')
+            if vals['alpine'] is None or vals['official'] is None:
+                cells.append('—')
+            else:
+                cells.append(f"{vals['alpine'] - vals['official']:+.2f} ms")
+            print(f'| `{n}` | ' + ' | '.join(cells) + ' |')
         print()
 
     print('### Version parity\n')
