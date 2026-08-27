@@ -869,6 +869,9 @@ jobs:
               pw-conformance-*)        cp -r "$d" /tmp/alp/ ;;
             esac
           done
+          # Without pipefail the step takes tee's status and a "✗ FAIL" verdict
+          # concludes green — run 32941298683 did exactly that.
+          set -o pipefail
           ./scripts/check-runtime-parity.sh /tmp/alp /tmp/ubu | tee -a "$GITHUB_STEP_SUMMARY"
 
   # ────────────────────────────────────────────────────────────────────
