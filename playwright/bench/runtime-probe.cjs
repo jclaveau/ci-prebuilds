@@ -19,8 +19,9 @@
  *     probed in the same workflow run — see the perf-report job.
  *   - Every kernel measures ONE subsystem. The `libm_fmod` kernel is split out
  *     explicitly because a `%` on a value past 2^53 compiles to an fmod() libm
- *     call, and musl's fmod is ~2.1x glibc's: folding it into an "int math"
- *     kernel once made me report a libc gap as a JIT gap.
+ *     call, and musl's is ~3x glibc's: folding it into an "int math" kernel
+ *     once made me report a libc gap as a JIT gap. Keep the divisor off a power
+ *     of two or the engines fold it away and the kernel measures nothing.
  *   - In-page kernels time themselves with performance.now(), so protocol RTT is
  *     excluded from them and measured separately by `eval_rtt`.
  */
@@ -128,7 +129,7 @@ const KERNELS = {
     const el = document.getElementById('layout');
     const t0 = performance.now();
     let acc = 0;
-    for (let i = 0; i < 2000; i++) {
+    for (let i = 0; i < 16000; i++) {
       el.style.width = (100 + (i % 200)) + 'px';
       acc += el.offsetHeight;
     }
@@ -138,7 +139,7 @@ const KERNELS = {
   dom_churn: `() => {
     const root = document.getElementById('churn');
     const t0 = performance.now();
-    for (let i = 0; i < 20000; i++) {
+    for (let i = 0; i < 160000; i++) {
       const d = document.createElement('div');
       d.className = 'c' + (i & 7);
       d.textContent = 'n' + i;
@@ -154,7 +155,7 @@ const KERNELS = {
   js_alloc: `() => {
     const t0 = performance.now();
     let acc = 0;
-    for (let i = 0; i < 2000000; i++) {
+    for (let i = 0; i < 24000000; i++) {
       const o = { a: i, b: i + 1, c: 's' + (i & 255) };
       acc += o.a + o.b + o.c.length;
     }
@@ -167,24 +168,104 @@ const KERNELS = {
   int_math: `() => {
     const t0 = performance.now();
     let x = 1 | 0;
-    for (let i = 0; i < 30000000; i++) {
+    for (let i = 0; i < 150000000; i++) {
       x = (Math.imul(x, 1664525) + 1013904223) | 0;
     }
     return { ms: performance.now() - t0, checksum: x };
   }`,
 
-  // The libc gap, isolated on purpose: `%` on a double past 2^53 is an fmod()
-  // call, and musl's fmod is ~2.1x slower than glibc's. Tracked so it can never
-  // again contaminate a kernel that claims to measure the JIT.
+  // `%` on a double past 2^53 is an fmod(). What this kernel measures is NOT
+  // settled and the name over-promises: in one run on one machine it read 0.67
+  // on firefox, 1.00 on chromium and 5.35 on webkit — same libc, so the three
+  // engines cannot all be reaching it the same way. JSC provably does call libc
+  // (interposed and counted, 30,000,033 calls), and musl's fmod isolated is the
+  // slow one, 163.8 ms against glibc's 54.0. V8 and SpiderMonkey are unexplained;
+  // a power-of-two divisor being folded was the obvious theory and it is WRONG —
+  // swapping 2^32 for the prime 4294967291 moves V8 by 3%, not 3x. Most likely
+  // they carry their own fmod. Until that is pinned, read this row per-engine
+  // and never as a libc verdict: https://github.com/jclaveau/ci-prebuilds/issues/126
   libm_fmod: `() => {
     const t0 = performance.now();
     let x = 0;
-    for (let i = 1; i < 3000000; i++) {
+    for (let i = 1; i < 9000000; i++) {
       x += (i * 2654435761) % 4294967296;
     }
     return { ms: performance.now() - t0, checksum: x };
   }`,
 };
+
+/*
+ * Everything about the machine that could move a number, captured per run so
+ * two runs can be compared knowingly rather than hopefully.
+ *
+ * The ratio divides out the runner only WITHIN a run — both arms share the
+ * machine there. Across runs it does not: the same alpine/official pair reads
+ * libm_fmod 5.35 on an EPYC 7763, 6.3 on a 9V74 and 7.65 on a Xeon 8370C, at a
+ * within-class CV of 0.5%. So a cross-run difference is uninterpretable until
+ * you know the two runs landed on the same silicon, and that needs more than
+ * the model string: microcode and the mitigation set move measurably on
+ * identical models, cache size explains layout and dom_churn, avx512 decides
+ * whether official's simdutf takes a path our build compiles out, and steal
+ * time says whether we were sharing the core with someone else.
+ *
+ * Never throws: a probe that dies collecting metadata loses the measurement.
+ */
+function hardware() {
+  const read = (f) => {
+    try {
+      return fs.readFileSync(f, 'utf8');
+    } catch {
+      return '';
+    }
+  };
+  const cpuinfo = read('/proc/cpuinfo');
+  const field = (name) => {
+    const m = cpuinfo.match(new RegExp(`^${name}\\s*:\\s*(.+)$`, 'm'));
+    return m ? m[1].trim() : null;
+  };
+  // Only the flags that change what code runs or how fast it runs — the full
+  // list is ~250 entries and would bury the rest of the record.
+  const WATCHED = [
+    'avx2', 'avx512f', 'avx512vl', 'avx512bw', 'sse4_2', 'pclmulqdq',
+    'aes', 'sha_ni', 'bmi2', 'adx', 'rdtscp', 'constant_tsc', 'tsc_reliable',
+    'hypervisor', 'ibpb', 'ibrs', 'stibp',
+  ];
+  const flags = new Set((field('flags') || '').split(/\s+/));
+  // Column 9 of /proc/stat's cpu line is steal: time the hypervisor gave to
+  // someone else. Non-zero means we did not have the core to ourselves.
+  const stat = read('/proc/stat').match(/^cpu\s+(.+)$/m);
+  const jiffies = stat ? stat[1].trim().split(/\s+/).map(Number) : [];
+  const mitigations = {};
+  try {
+    const dir = '/sys/devices/system/cpu/vulnerabilities';
+    for (const name of fs.readdirSync(dir)) {
+      mitigations[name] = read(path.join(dir, name)).trim();
+    }
+  } catch {
+    /* not exposed in every container */
+  }
+  const speeds = os.cpus().map((c) => c.speed).filter(Boolean);
+  return {
+    cpu: field('model name') || 'unknown',
+    cores: os.cpus().length,
+    // Turbo and thermal state at probe time; a run that clocked lower is not
+    // comparable to one that did not, however identical the model string.
+    mhz_min: speeds.length ? Math.min(...speeds) : null,
+    mhz_max: speeds.length ? Math.max(...speeds) : null,
+    cache: field('cache size'),
+    microcode: field('microcode'),
+    family: [field('cpu family'), field('model'), field('stepping')].join('/'),
+    flags: WATCHED.filter((f) => flags.has(f)),
+    steal_jiffies: jiffies.length > 8 ? jiffies[7] : null,
+    mitigations,
+    kernel: os.release(),
+    mem_total_mb: Math.round(os.totalmem() / 1048576),
+    // What the container was actually allowed, which is not what the host has.
+    cgroup_mem_max: read('/sys/fs/cgroup/memory.max').trim() || null,
+    cgroup_cpu_max: read('/sys/fs/cgroup/cpu.max').trim() || null,
+    load1: os.loadavg()[0],
+  };
+}
 
 /*
  * executablePath() names the FULL chromium, but a headless launch runs
@@ -304,7 +385,9 @@ async function main() {
   // 4. warm navigation — same page, everything cached: isolates the navigation
   // machinery from the download/parse cost measured above.
   metrics.goto_warm = await sample(10, async () => {
-    await page.goto(url, { waitUntil: 'load' });
+    for (let i = 0; i < 10; i++) {
+      await page.goto(url, { waitUntil: 'load' });
+    }
   });
 
   // 5. protocol round trip — 500 trivial evaluates. Multiplied by every single
@@ -359,7 +442,6 @@ async function main() {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
 
-  const cpu = os.cpus()[0];
   const result = {
     target,
     browser: browserName,
@@ -368,9 +450,10 @@ async function main() {
     playwright_version: require('playwright/package.json').version,
     libc: fs.existsSync('/lib/ld-musl-x86_64.so.1') ? 'musl' : 'glibc',
     node: process.version,
-    // Recorded to explain outliers, never to normalize: the runner class is the
-    // reason ratios (not absolute ms) are the reportable number.
-    runner: { cpu: cpu ? cpu.model : 'unknown', cores: os.cpus().length },
+    // Recorded to explain outliers and to decide whether two runs may be
+    // compared at all — never to normalize. The runner class is the reason
+    // ratios, not absolute ms, are the reportable number.
+    runner: hardware(),
     metrics: Object.fromEntries(
       Object.entries(metrics).map(([k, v]) => [
         k,
