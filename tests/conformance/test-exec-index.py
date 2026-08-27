@@ -197,9 +197,43 @@ if statistics.pstdev(lc) / statistics.fmean(lc) * 100 > 0.1:
 thin_real = {k: v[: X.MIN_RUNS - 1] for k, v in real.items()}
 expect_none("real data under MIN_RUNS refuses", exec_index(thin_real, "alpine-dood", "official")[0])
 
+# --- the cell prints a band, not a gsd ---
+# A geometric standard deviation is a multiplicative factor; printing it as a
+# percentage reads as a symmetric interval when the real one is asymmetric.
 checks += 1
-if exec_cell(None, None) != "—" or not exec_cell(-12.0, 3.0).startswith("−12%"):
-    print(f"FAIL: exec_cell formatting — {exec_cell(-12.0, 3.0)!r}", file=sys.stderr)
+if exec_cell(None, None) != "—":
+    print(f"FAIL: a missing index renders as a dash — {exec_cell(None, None)!r}", file=sys.stderr)
+    failures += 1
+checks += 1
+if exec_cell(0.0, 1.0) != "+0%":
+    print(f"FAIL: no spread means no band — {exec_cell(0.0, 1.0)!r}", file=sys.stderr)
+    failures += 1
+checks += 1
+# geomean 1.16, gsd 1.16 -> [1.16/1.16, 1.16*1.16] = [+0%, +35%], upper half wider.
+if exec_cell(16.09, 1.1638) != "+16% [−0..+35]":
+    print(f"FAIL: band is geomean x/÷ gsd — {exec_cell(16.09, 1.1638)!r}", file=sys.stderr)
+    failures += 1
+checks += 1
+if exec_cell(-12.0, 1.03) != "−12% [−15..−9]":
+    print(f"FAIL: a faster row keeps its sign across the band — "
+          f"{exec_cell(-12.0, 1.03)!r}", file=sys.stderr)
+    failures += 1
+
+# The index hands exec_cell a FACTOR, not a percentage. Mixing those up renders a
+# plausible band that is wrong by two orders of magnitude, so pin the contract.
+checks += 1
+_, real_gsd = exec_index(real, "alpine-dood", "official")
+if not (1.0 < real_gsd < 2.0):
+    print(f"FAIL: exec_index returns a gsd FACTOR, got {real_gsd}", file=sys.stderr)
+    failures += 1
+
+# Sample stdev, not population. The two round to the same displayed band on this
+# data (1.164 vs 1.156), so only a direct assertion pins the choice — and the
+# metrics ARE a sample of the kernels one could measure.
+checks += 1
+if abs(real_gsd - 1.1638) > 0.002:
+    print(f"FAIL: gsd should use the sample stdev — got {real_gsd:.4f}, "
+          f"wanted ~1.1638 (pstdev would give ~1.1564)", file=sys.stderr)
     failures += 1
 
 print(f"exec-index: {checks - failures}/{checks} checks passed")

@@ -104,11 +104,12 @@ def counts(metric):
 
 
 def exec_index(probes, scenario, reference):
-    """(percent delta, spread percent) for `scenario` against `reference`.
+    """(percent delta, geometric standard deviation) against `reference`.
 
-    Negative means faster than the reference. (None, None) when the scenario IS
-    the reference, when either side has fewer than MIN_RUNS samples, or when too
-    few metrics survive.
+    Negative percent means faster than the reference. The second value is a
+    MULTIPLICATIVE factor (>= 1), not a percentage — `exec_cell` turns it into a
+    band. (None, None) when the scenario IS the reference, when either side has
+    fewer than MIN_RUNS samples, or when too few metrics survive.
     """
     if scenario == reference:
         return None, None
@@ -128,14 +129,31 @@ def exec_index(probes, scenario, reference):
         return None, None
     logs = [math.log(r) for r in ratios]
     geomean = math.exp(statistics.fmean(logs))
-    gsd = math.exp(statistics.pstdev(logs)) if len(logs) > 1 else 1.0
-    return (geomean - 1) * 100, (gsd - 1) * 100
+    # Sample stdev: the metrics are a sample of the kernels one could measure,
+    # not the population of them, and `pstdev` understates (1.156 vs 1.164 on
+    # the tracked fixture).
+    gsd = math.exp(statistics.stdev(logs)) if len(logs) > 1 else 1.0
+    return (geomean - 1) * 100, gsd
+
+
+def _signed(percent):
+    return f"{'−' if percent < 0 else '+'}{abs(percent):.0f}"
 
 
 def exec_cell(percent, gsd):
+    """`+16% [+0..+34]` — the value, then its +/-1 sigma band.
+
+    The band is printed rather than the gsd itself because a geometric standard
+    deviation is a multiplicative factor: rendering it as a percentage invites
+    reading a symmetric +/-16 points when the real interval here is
+    [+0.4%, +34.2%], asymmetric with the wider half on top. All three numbers
+    carry the column's own sign convention, so the cell needs no legend.
+    """
     if percent is None:
         return "—"
-    cell = f"{'−' if percent < 0 else '+'}{abs(percent):.0f}%"
-    if gsd is not None:
-        cell += f" (gsd {gsd:.0f}%)"
+    cell = f"{_signed(percent)}%"
+    if gsd and gsd > 1:
+        geomean = percent / 100 + 1
+        low, high = (geomean / gsd - 1) * 100, (geomean * gsd - 1) * 100
+        cell += f" [{_signed(low)}..{_signed(high)}]"
     return cell

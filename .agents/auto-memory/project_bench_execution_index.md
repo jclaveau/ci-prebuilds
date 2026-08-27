@@ -38,7 +38,10 @@ run instead of needing a dedicated A/B.
 - `KEEP_LIBC_METRICS` toggles `libm_fmod`, which is a C-library kernel rather
   than a browser one and where musl runs ~1.7x FASTER on firefox.
 
-**Open:** the hosted tables' reference is `vm + manual install`, right for
-install cost and odd for execution; and the rendered `gsd N%` should be a
-multiplicative band, not a percent ([[feedback_bench_geomean_normalize]]).
-The act tables have no probe.
+**Settled:** the reference row is per-environment by design and stays that way
+([[project_bench_reference_rows]]) — do not re-point the execution column at the
+official container. The cell prints the band `+16% [−0..+35]`, not a gsd
+percentage ([[feedback_bench_geomean_normalize]]).
+
+**Open:** the act tables have no probe — their timings come from inside the
+nested act run, so it would have to be threaded through the inner workflow.
