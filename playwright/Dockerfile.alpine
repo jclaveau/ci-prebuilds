@@ -184,12 +184,24 @@ RUN sudo touch /ms-playwright/webkit-${WK_REV}/INSTALLATION_COMPLETE \
 # warns on stderr and continues: WebKit still runs and still returns correct
 # results, just at musl's allocator and musl's fmod speed. There is no
 # correctness dependency on the preload succeeding.
+# EXPERIMENT (perf/webkit-mimalloc-purge): MIMALLOC_PURGE_DELAY=-1 never
+# returns freed pages to the OS. `goto_warm` is the one metric the allocator
+# preload made WORSE (1.17-1.20 -> 1.23-1.39 across three same-CPU pairings)
+# and it is now shipped, so it needs an explanation or a fix.
+#
+# Note the leading hypothesis is already WEAK: if purging were the mechanism
+# the next navigation would re-fault the pages, and measured over 40 warm
+# navigations mimalloc takes FEWER minor faults than musl (201/nav vs 381) and
+# zero major faults vs 12. So this arm is expected to be flat, and a flat
+# result is the useful outcome — it retires the last mechanism I have and
+# leaves "goto_warm cannot resolve 4 ms" as the explanation.
 RUN sudo mv /ms-playwright/webkit-${WK_REV}/pw_run.sh \
             /ms-playwright/webkit-${WK_REV}/pw_run.real.sh \
  && printf '%s\n' \
         '#!/bin/sh' \
         'DIR="$(dirname "$0")"' \
         'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so' \
+        'export MIMALLOC_PURGE_DELAY=-1' \
         'exec "$DIR/pw_run.real.sh" "$@"' \
   | sudo tee /ms-playwright/webkit-${WK_REV}/pw_run.sh >/dev/null \
  && sudo chmod +x /ms-playwright/webkit-${WK_REV}/pw_run.sh
