@@ -3383,13 +3383,22 @@ jobs:
     # the default "a failed need skips this job" for EVERY need, not just the
     # gtk one it was added for. Without it, run 31724164357 promoted a WebKit
     # that cannot open a page to wk-latest.
+    #
+    # `github.ref == main` hoisted out of the push arm so it covers DISPATCH
+    # too. It did not before, so any branch dispatch with build_webkit=true
+    # published wk-latest the moment its conformance went green — which made
+    # running conformance on an experiment branch unsafe, and left an arm
+    # unverifiable for exactly the reason it needed verifying. Branch dispatches
+    # still build, smoke and run conformance; they publish only the sha-scoped
+    # wk-sha-<sha> tags. The moving tags come from main.
     if: |
       !cancelled()
       && needs.build-webkit-finalize.result == 'success'
       && needs.smoke-webkit.result == 'success'
       && needs.conformance-webkit.result == 'success'
+      && github.ref == 'refs/heads/main'
       && ((github.event_name == 'workflow_dispatch' && inputs.build_webkit == 'true')
-          || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+          || github.event_name == 'push')
     runs-on: ubuntu-latest
     steps:
       - uses: docker/setup-buildx-action@v3

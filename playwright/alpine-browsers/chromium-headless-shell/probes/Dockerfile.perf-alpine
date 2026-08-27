@@ -1,0 +1,12 @@
+# Our arm, plus the tools that read it back.
+#
+# ARG-before-FROM rather than interpolating the ref into the file: image tags
+# carry characters a shell heredoc would eat, and a mangled FROM surfaces as a
+# confusing pull error rather than a syntax one.
+#
+# binutils is for objdump/nm, not for perf: both artifacts ship stripped, so
+# naming a hot address means disassembling it in place.
+ARG BASE
+FROM ${BASE}
+USER root
+RUN apk add --no-cache perf binutils

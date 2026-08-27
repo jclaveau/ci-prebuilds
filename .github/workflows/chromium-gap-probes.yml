@@ -50,6 +50,16 @@ name: chromium residual-gap probes
 #                  microbenchmark has been wrong about magnitude before, also
 #                  in-browser by the typed_array_* kernels.
 #
+#   perf-record    Nine of the arms above are eliminations, and every one of
+#                  them cost a round trip and moved nothing. This arm stops
+#                  asking whether one more hypothesis is true and samples the
+#                  running browser instead: it loops ONE kernel in a steady
+#                  state and reports where the CPU time went by shared object.
+#                  Its own job, gated by its own input, because it takes a
+#                  CONSUMER image (the shipped browser) rather than the
+#                  from-source scratch artifact the arms above take, and
+#                  because neither needs the other to be dispatched.
+#
 # Informational, dispatch-only, gates nothing.
 
 on:
@@ -71,8 +81,30 @@ on:
         description: 'Playwright version to drive the probes'
         default: '1.62.1'
         type: string
+      run_static_probes:
+        description: 'The arms above (timing, fonts, symbols, libc, fast-string)'
+        default: true
+        type: boolean
+      run_perf_record:
+        description: 'The perf-record arm (samples the running browser)'
+        default: true
+        type: boolean
+      perf_image:
+        description: 'perf-record arm: a CONSUMER image carrying the shipped browser (Docker Hub has :latest, GHCR has sha-<40> and edge)'
+        default: 'jclaveau/alpine-dood-playwright:latest'
+        type: string
+      perf_kernels:
+        description: 'perf-record arm, CSV: screenshot_png, screenshot_jpeg, layout_boxonly, layout_text'
+        default: 'screenshot_png,screenshot_jpeg,layout_boxonly'
+        type: string
+      perf_loop_seconds:
+        description: 'perf-record arm: how long each kernel loops in steady state'
+        default: '80'
+        type: string
 
 concurrency:
+  # Scoped by ref only, and the two jobs below are independent — a dispatch of
+  # one arm should not queue behind a dispatch of the other.
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
@@ -84,6 +116,7 @@ jobs:
   probe:
     # All three arms in ONE job: hosted runners hand out different CPU models
     # per job, and a control on a sibling runner is not a control.
+    if: inputs.run_static_probes
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -548,3 +581,136 @@ jobs:
           name: chromium-gap-probes
           path: gap-out/
           if-no-files-found: warn
+
+  perf-record:
+    # Both arms in ONE job: hosted runners hand out different CPU models per
+    # job, and two profiles taken on different machines cannot be compared
+    # cell for cell.
+    if: inputs.run_perf_record
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Let perf see the machine
+        run: |
+          set -euo pipefail
+          # Ubuntu ships perf_event_paranoid=4, which forbids system-wide
+          # sampling outright. The runner is disposable and we are root on it.
+          sudo sysctl -w kernel.perf_event_paranoid=-1
+          sudo sysctl -w kernel.kptr_restrict=0
+          cat /proc/sys/kernel/perf_event_paranoid
+
+      - name: Resolve both image refs before spending the run
+        env:
+          OURS: ${{ inputs.perf_image }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -euo pipefail
+          # The two registries carry different tag namespaces — Docker Hub has
+          # :latest, GHCR has sha-<40 chars> and edge — so a plausible-looking
+          # ref fails as `manifest unknown` only once the job is already
+          # burning. Seconds here, minutes saved there.
+          docker manifest inspect "$OURS" > /dev/null
+          docker manifest inspect "mcr.microsoft.com/playwright:v${PW}-noble" > /dev/null
+          echo "both refs resolve"
+
+      - name: Build the arms (each with its own distro's perf)
+        env:
+          OURS: ${{ inputs.perf_image }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p perf-out && chmod 777 perf-out
+          PROBES=playwright/alpine-browsers/chromium-headless-shell/probes
+
+          docker build --build-arg "BASE=$OURS" \
+            -t perf-alpine:${{ github.run_id }} \
+            -f "$PROBES/Dockerfile.perf-alpine" "$PROBES"
+
+          docker build \
+            --build-arg "BASE=mcr.microsoft.com/playwright:v${PW}-noble" \
+            -t perf-official:${{ github.run_id }} \
+            -f "$PROBES/Dockerfile.perf-official" "$PROBES"
+
+      - name: Profile every kernel on both arms
+        env:
+          KERNELS: ${{ inputs.perf_kernels }}
+          PW: ${{ inputs.pw_version }}
+          LOOP: ${{ inputs.perf_loop_seconds }}
+        run: |
+          set -o pipefail
+          rc=0
+          for kernel in $(echo "$KERNELS" | tr ',' ' '); do
+            # Arms interleaved per kernel rather than run in blocks, for the
+            # same reason perf-probe.yml interleaves: a runner that slows down
+            # partway through would otherwise land entirely on whichever arm
+            # went second.
+            for target in alpine official; do
+              if [ "$target" = official ]; then
+                image="perf-official:${{ github.run_id }}"
+                home=/root
+                perfbin=/usr/local/bin/perf-real
+              else
+                image="perf-alpine:${{ github.run_id }}"
+                home=/root
+                perfbin=perf
+              fi
+              echo "::group::${target} / ${kernel}"
+              cname="perfrec-${target}-${kernel}"
+              docker rm -f "$cname" >/dev/null 2>&1 || true
+              # --privileged for perf_event_open on every CPU, and root because
+              # capabilities in a privileged container only reach uid 0 (our
+              # consumer image runs as `runner`). PW disables the chromium
+              # sandbox by default, so running as root is not a launch problem.
+              docker run --rm --name "$cname" \
+                --privileged \
+                --user root \
+                --security-opt seccomp=unconfined \
+                --env "HOME=$home" \
+                --env "PROBE_TARGET=$target" \
+                --env "PROBE_KERNEL=$kernel" \
+                --env "PW_VERSION=$PW" \
+                --env "PERF_BIN=$perfbin" \
+                --env "PERF_LOOP_SECONDS=$LOOP" \
+                -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/probes:/probes:ro" \
+                -v "$PWD/playwright/scripts:/pwscripts:ro" \
+                -v "$PWD/perf-out:/out" \
+                "$image" \
+                sh -c '
+                  NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+                  export NODE_PATH
+                  node -e "require(\"playwright\")" 2>/dev/null \
+                    || npm install -g --no-fund --no-audit \
+                         "playwright@$PW_VERSION" >/dev/null 2>&1
+                  sh /probes/perf-profile.sh "$PROBE_TARGET" "$PROBE_KERNEL" \
+                     /out /probes/perf-kernel.cjs "$PERF_BIN"
+                ' 2>&1 | tee "perf-out/perfrec-${target}-${kernel}.log" || rc=1
+              docker rm -f "$cname" >/dev/null 2>&1 || true
+              echo "::endgroup::"
+            done
+          done
+          exit "$rc"
+
+      - name: Report
+        if: always()
+        env:
+          OURS: ${{ inputs.perf_image }}
+        run: |
+          echo "### perf record — \`$OURS\` vs official" >> "$GITHUB_STEP_SUMMARY"
+          python3 playwright/alpine-browsers/chromium-headless-shell/probes/perf-record-report.py \
+            perf-out >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chromium-perf-record
+          path: perf-out/
+          if-no-files-found: warn
+          retention-days: 30

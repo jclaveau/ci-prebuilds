@@ -49,3 +49,38 @@ copy of the library each side links — see [[project_ff_png_encoder_gap]] and
 image_b=official -f browser_rev=<PW browsers.json rev>`.
 
 **2026-08-21:** libpng-vs-zlib is separated — the zlib-only arm left `png_canvas_control` at 40150 B (unchanged), so libpng carries the whole gap. See [[project_ff_png_encoder_gap]].
+
+**2026-08-27 — for chromium, byte identity exonerates the BYTES and says nothing
+about the TIME, and the "chromium timings are unusable" rule above is too broad.**
+Measured locally, both containers back to back, chromium 151.0.7922.34 both sides:
+
+| case | ours | official |
+|---|---|---|
+| `png_viewport` | 54.1 / 54.7 / 56.9 ms | 42.9 / 33.6 / **33.4** |
+| `jpeg_q80_viewport` | ~33 (frame floor) | ~33 (frame floor) |
+| `png_clip_16x16` | 33.4 (floor) | 33.2 (floor) |
+
+The JPEG full-viewport shot is AT THE FLOOR on our side — same capture, same
+readback, same transport, same pixel count, only the codec differs. So
+capture/readback is **exonerated for chromium**, the opposite of firefox
+([[project_ff_png_encoder_gap]]). The 16x16 PNG is at the floor too, so it is not
+per-call PNG overhead. The whole ~21 ms overrun is full-viewport PNG deflate.
+
+At symbol level: `deflate`/`deflateInit2_`/`crc32`/`adler32` are all `U` on ours
+(imported from Alpine's plain madler zlib 1.3.2 — no PCLMUL crc32, no SSSE3
+adler32, no SSE2 slide_hash) and **absent entirely** from official, which bundles
+chromium's SIMD zlib. The bundled copy is output-identical to madler's *by
+construction*, which is exactly why the same-sha row above reads as exoneration
+and is not one.
+
+Sizing the lever: LD_PRELOADing a zlib-ng-compat `libz.so.1` into the same binary
+took `png_viewport` 54.7 -> 50.0 ms, i.e. **~4.7 ms of the ~21 ms overrun (22%)**,
+with PNG bytes and sha unchanged (so the lever was provably connected and
+output-neutral). The repo's AVX2 string shim buys ~15% more, not additive.
+
+**Method: `png_canvas_control` is BIMODAL on chromium** — 34.1 / 35.0 / 46.9 ms
+across identical baseline runs. A first A/B read 46.9 -> 35.7 and looked like a
+clean 82% win; the repeat reversed it. Only `png_viewport` is stable enough to
+carry a chromium timing claim; the canvas control stays the right instrument for
+BYTES. [[feedback_check_reference_stability_across_runs]],
+[[feedback_match_instrument_to_effect_size]]

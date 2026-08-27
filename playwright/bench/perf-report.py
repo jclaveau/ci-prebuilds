@@ -12,6 +12,7 @@ Usage: perf-report.py <current-dir> [<previous-dir>]
 
 import json
 import pathlib
+import statistics
 import sys
 
 CONTROL = "official"
@@ -25,8 +26,18 @@ DRIFT_WARN = 0.20
 
 
 def load(directory):
-    """{browser: {target: {metric: median_ms}}} from every <target>-<browser>.json."""
-    out = {}
+    """{browser: {target: {metric: median_ms}}} from every <target>-<browser>*.json.
+
+    A (browser, target) pair may be measured more than once — `perf_runs` re-runs
+    the whole probe container, which is the only way to average out the noise
+    that lives between container starts rather than inside one browser session.
+    Each repetition lands in its own file, and this medians across them.
+
+    Keying straight into a dict here would have let the last file win silently,
+    reporting one draw while the run had paid for several.
+    """
+    collected = {}
+    metas = {}
     for path in sorted(pathlib.Path(directory).rglob("*.json")):
         try:
             doc = json.loads(path.read_text())
@@ -35,10 +46,18 @@ def load(directory):
             continue
         if "metrics" not in doc or "browser" not in doc or "target" not in doc:
             continue
-        per_target = out.setdefault(doc["browser"], {})
-        per_target[doc["target"]] = {
-            "meta": doc,
-            "metrics": {k: v["median_ms"] for k, v in doc["metrics"].items()},
+        key = (doc["browser"], doc["target"])
+        metas.setdefault(key, doc)
+        for metric, value in doc["metrics"].items():
+            collected.setdefault(key, {}).setdefault(metric, []).append(
+                value["median_ms"]
+            )
+    out = {}
+    for (browser, target), per_metric in collected.items():
+        out.setdefault(browser, {})[target] = {
+            "meta": metas[(browser, target)],
+            "runs": max(len(v) for v in per_metric.values()),
+            "metrics": {k: statistics.median(v) for k, v in per_metric.items()},
         }
     return out
 
