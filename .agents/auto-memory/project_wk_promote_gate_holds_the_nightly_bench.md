@@ -1,11 +1,11 @@
 ---
 name: project_wk_promote_gate_holds_the_nightly_bench
-description: The nightly bench's alpine 3-browser arms are red because promote-webkit never fires; promote needs conformance-webkit green, and GTK-off is NOT the blocker — three named tests are
+description: RESOLVED 2026-08-26 — the three conformance-webkit blockers were fixed and one dispatch off a COMBINED branch promoted wk-latest to ff0d9b55; GTK-off never blocked the promote
 metadata:
   type: project
 ---
 
-Chain, measured 2026-08-26:
+The chain that kept the nightly alpine 3-browser bench red for three nights:
 
 ```
 3 red conformance-webkit shards
@@ -16,32 +16,27 @@ Chain, measured 2026-08-26:
   -> nightly benchmark-playwright alpine-*-all arms red every night
 ```
 
-The bench failure surfaces as `Unknown setting: PushAPIEnabled` at
-`newPage`, which is [[project_pw_webkit_base_lags_shipped_build]] one layer down.
-`alpine-*-chromium` arms and every ubuntu baseline stay green — a clean
-structural split, so it was never the bench harness.
+The three blockers and their fixes:
 
-**GTK-off does NOT block promote.** Run 32843700425 built with
-`build-webkit-gtk-4` skipped and still got `build-webkit-finalize` and
-`smoke-webkit` green with 17/20 conformance shards. An earlier note claiming the
-promote was unreachable without GTK was wrong; the gate only reads
-finalize/smoke/conformance results.
+- shard 13 — `permissions.spec.ts camera and microphone` → PR #112, the
+  UIProcess never consulted `Browser.grantPermissions`
+  ([[project_wk_camera_mic_and_noxserver_dispositioned]]).
+- shard 7 — `CacheStorage entry should survive page.reload()` → PR #116, PW's
+  bootstrap.diff patches decode and not encode
+  ([[project_wk_cachestorage_disk_records_invisible]]).
+- shard 12 — `launcher.spec.ts no xserver` → PR #115, the suite now probes the
+  artifact for a headed binary instead of assuming one
+  ([[feedback_gate_on_measured_capability_not_skip_list]]).
 
-The three blockers:
+**GTK-off never blocked the promote** — the gate reads only
+finalize/smoke/conformance results. An earlier note claiming otherwise was
+wrong.
 
-- shard 13 — `permissions.spec.ts:364/:373/:386 camera and microphone`,
-  what PR #112 fixes ([[project_wk_camera_mic_and_noxserver_dispositioned]]).
-- shard 7 — `CacheStorage entry should survive page.reload()`, a real read-path
-  bug ([[project_wk_cachestorage_disk_records_invisible]]).
-- shard 12 — `launcher.spec.ts:45 no xserver` fails with
-  `minibrowser-gtk/MiniBrowser: No such file or directory` because the test
-  launches HEADED and GTK was not built. chromium already skips this exact title
-  for the same reason (headless-shell has no headed binary), so a webkit skip
-  would be the parallel move — jean's call, never skip unasked.
-
-**How to apply:** fixing camera/mic alone does not green the bench. All three
-shards must go green (or shard 12 be dispositioned) before a promote can ship a
-1.62.1-capable WebKit. Do not "fix" the bench by skipping webkit there — jean
-chose to wait for the real artifact, and the skip already exists in
-`test-and-publish.yml` + `playwright.config.ts` but not in
-`benchmark-playwright.yml`, which hardcodes `--project=webkit` at lines 163/229.
+**What actually shortened it.** Each fix landed on its own branch, and every
+in-flight producer run predated the other two, so no single run could ever go
+green. Merging all three onto ONE branch and dispatching that
+(`build_webkit=true`) validated them together AND promoted, because
+`promote-webkit` fires on any dispatch carrying the flag — not only on a push
+to main. Run 32958171855: conformance summary success, promote success,
+`wk-latest` and `wk-gtk-latest` at revision ff0d9b55. Reach for the combined
+branch as soon as two fixes for one gate are in flight separately.
