@@ -1,0 +1,206 @@
+name: Runtime perf probe
+
+# Measures how fast ALREADY-PUBLISHED browsers execute, against Playwright's
+# official glibc image, and repeats the measurement enough times to support a
+# claim. Nothing is built here: it pulls tags, so a re-measure costs minutes
+# rather than the hours `test-and-publish.yml` needs to reach its inline probe.
+#
+# Why it exists as its own workflow: the inline probe runs at runs=1 as a
+# regression alarm, which cannot certify "alpine is faster" — at n=1 the
+# instrument's own null arm moves several percent. This one takes `runs` and
+# medians across whole container starts, which is where that noise lives.
+#
+# One job per browser on purpose. All of a browser's arms must land on the SAME
+# runner or the ratio picks up the CPU draw instead of the build difference;
+# GHA gives no control over which machine a job gets, so the arms travel
+# together inside one job and the ratio divides the runner out.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: 'Our image to measure. Docker Hub carries `latest`/`main`/`main-<sha>`; GHCR carries `sha-<full-40-char-sha>` and `edge` but NO `latest`.'
+        default: 'jclaveau/alpine-dood-playwright:latest'
+        type: string
+      browsers:
+        description: 'CSV: chromium,firefox,webkit'
+        default: 'chromium,firefox,webkit'
+        type: string
+      runs:
+        description: 'Repetitions per arm. 1 = quick look; 5 = the point where subsampling showed the index converge (sd 1.2%); 10 = diminishing (sd 0.0%).'
+        default: '5'
+        type: string
+      pw_version:
+        description: 'Playwright version driving the probe, and the MCR control tag'
+        default: '1.62.1'
+        type: string
+      label:
+        description: 'Free-text note recorded in the summary (e.g. "wk mimalloc arm")'
+        default: ''
+        type: string
+
+concurrency:
+  # Keyed on the image so independent experiments never queue behind each
+  # other; three browser loops dispatch these constantly.
+  group: perf-probe-${{ inputs.image }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      browsers: ${{ steps.split.outputs.browsers }}
+    steps:
+      - id: split
+        env:
+          BROWSERS: ${{ inputs.browsers }}
+        run: |
+          set -euo pipefail
+          json=$(jq -Rc 'split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length > 0))' \
+            <<< "$BROWSERS")
+          echo "browsers=$json" >> "$GITHUB_OUTPUT"
+          echo "browsers: $json"
+
+  probe:
+    name: probe-${{ matrix.browser }}
+    needs: matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: ${{ fromJSON(needs.matrix.outputs.browsers) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Probe both arms, ${{ inputs.runs }}x each
+        env:
+          BROWSER: ${{ matrix.browser }}
+          OURS: ${{ inputs.image }}
+          RUNS: ${{ inputs.runs }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -o pipefail
+          mkdir -p perf-out && chmod 777 perf-out   # the container writes as its own uid
+          rc=0
+          # Arms are interleaved rather than run in blocks: a runner that
+          # slows down partway through would otherwise land entirely on
+          # whichever arm went second and read as a build difference.
+          for i in $(seq 1 "$RUNS"); do
+            for target in alpine official; do
+              if [ "$target" = official ]; then
+                image="mcr.microsoft.com/playwright:v${PW}-noble"
+                home=/root                          # the MCR image runs as root
+              else
+                image="$OURS"
+                home=/home/runner
+              fi
+              echo "::group::run $i/$RUNS — $target/$BROWSER ($image)"
+              cname="probe-${target}-${BROWSER}-${i}"
+              docker rm -f "$cname" >/dev/null 2>&1 || true
+              docker run --rm --name "$cname" \
+                --security-opt seccomp=unconfined \
+                --env "HOME=$home" \
+                --env "PROBE_BROWSER=$BROWSER" \
+                --env "PROBE_TARGET=$target" \
+                --env "PROBE_RUN=$i" \
+                --env "PW_VERSION=$PW" \
+                -v "$PWD/playwright/bench:/probe:ro" \
+                -v "$PWD/playwright/scripts:/pwscripts:ro" \
+                -v "$PWD/perf-out:/out" \
+                "$image" \
+                sh -c '
+                  NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+                  export NODE_PATH
+                  node -e "require(\"playwright\")" 2>/dev/null \
+                    || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
+                  timeout 300 node /probe/runtime-probe.cjs \
+                    --browser "$PROBE_BROWSER" --target "$PROBE_TARGET" --out /out
+                  # One file per repetition; perf-report.py medians across them.
+                  # Without the rename each run would overwrite the last and the
+                  # report would show a single draw while the job paid for N.
+                  mv "/out/$PROBE_TARGET-$PROBE_BROWSER.json" \
+                     "/out/$PROBE_TARGET-$PROBE_BROWSER-run$PROBE_RUN.json"
+                ' 2>&1 | tee "perf-out/probe-${target}-${BROWSER}-${i}.log" || rc=1
+              docker rm -f "$cname" >/dev/null 2>&1 || true
+              echo "::endgroup::"
+            done
+          done
+          exit "$rc"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-probe-${{ matrix.browser }}
+          path: perf-out/
+          if-no-files-found: warn
+          retention-days: 30
+
+  report:
+    needs: [matrix, probe]
+    if: '!cancelled()'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: perf-probe-*
+          path: perf-current
+          merge-multiple: true
+
+      # A missing arm must be LOUD. The first smoke run of this workflow pointed
+      # at a tag that did not exist, every alpine probe died on `manifest
+      # unknown`, and this job still went green rendering an official-only
+      # table — the same blindness that hid webkit for weeks, reproduced by the
+      # workflow built to end it. An absent arm cannot look like a measured one.
+      - name: Assert both arms reported
+        env:
+          BROWSERS: ${{ needs.matrix.outputs.browsers }}
+          RUNS: ${{ inputs.runs }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for browser in $(jq -r '.[]' <<< "$BROWSERS"); do
+            for arm in alpine official; do
+              got=$(find perf-current -name "$arm-$browser-run*.json" | wc -l)
+              if [ "$got" -ne "$RUNS" ]; then
+                echo "::error::$arm/$browser produced $got of $RUNS runs"
+                missing=1
+              else
+                echo "ok: $arm/$browser $got/$RUNS"
+              fi
+            done
+          done
+          exit "$missing"
+
+      - name: Render
+        # Runs even when the assert failed: a partial table is still worth
+        # reading, as long as the job is already red and nobody mistakes it
+        # for a complete one.
+        if: '!cancelled()'
+        env:
+          OURS: ${{ inputs.image }}
+          RUNS: ${{ inputs.runs }}
+          LABEL: ${{ inputs.label }}
+        run: |
+          set -o pipefail
+          {
+            echo "### Runtime perf — \`$OURS\` vs official, n=$RUNS"
+            if [ -n "$LABEL" ]; then echo "_${LABEL}_"; fi
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          python3 playwright/bench/perf-report.py perf-current >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: runtime-perf
+          path: perf-current/*.json
+          retention-days: 90
