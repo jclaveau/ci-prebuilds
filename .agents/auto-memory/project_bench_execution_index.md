@@ -12,7 +12,9 @@ could not stand in for it — both its tests fetch `https://playwright.dev/`, so
 that column is mostly internet.
 
 Logic lives in `scripts/exec_index.py`, tested by
-`tests/conformance/test-exec-index.py`.
+`tests/conformance/test-exec-index.py` — which asserts against a tracked
+dataset, `tests/conformance/fixtures/chromium-probe-10-runs/` (20 probe JSONs,
+its README carries the provenance and every number below).
 
 **The measurement, on 10 runs (33038504763):** alpine-dood chromium is
 **+16% (gsd 16%)** against official, matching a same-CPU ground truth of +16%.

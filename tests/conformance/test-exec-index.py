@@ -14,7 +14,7 @@ import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "scripts"))
 import exec_index as X  # noqa: E402
-from exec_index import exec_cell, exec_index, load_probes, profile  # noqa: E402
+from exec_index import exec_cell, exec_index, load_probes  # noqa: E402
 
 failures = 0
 checks = 0
@@ -140,9 +140,62 @@ with tempfile.TemporaryDirectory() as d:
         print(f"FAIL: load_probes drops unusable records — got {loaded}", file=sys.stderr)
         failures += 1
     checks += 1
-    if profile(loaded[("alpine", "chromium")])["launch"] != 200.0:
+    if X.profile(loaded[("alpine", "chromium")])["launch"] != 200.0:
         print("FAIL: profile takes the median, not the first or the mean", file=sys.stderr)
         failures += 1
+
+# --- against the real dataset, not just fixtures built to pass ---
+# fixtures/chromium-probe-10-runs/ is 10 runs of each scenario from one bench
+# dispatch; its README says what each number below is and how to regenerate it.
+# Synthetic cases pin the logic, this pins it against measurements — a normalizer
+# reinstated or the median swapped for a mean shows up here first.
+import math  # noqa: E402
+import statistics  # noqa: E402
+
+FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "chromium-probe-10-runs")
+real = load_probes(os.path.join(FIXTURES, "*.json"))
+checks += 1
+if sorted(len(v) for v in real.values()) != [10, 10]:
+    print(f"FAIL: fixture should hold 10 runs of 2 scenarios — got "
+          f"{ {k: len(v) for k, v in real.items()} }", file=sys.stderr)
+    failures += 1
+
+# Ground truth: both sides restricted to the CPU model that hosted most jobs, so
+# no runner correction is involved at all. This is what the index has to match.
+GROUND_TRUTH_CPU = "AMD EPYC 7763 64-Core Processor"
+same_cpu = {}
+for path in sorted(__import__("glob").glob(os.path.join(FIXTURES, "*.json"))):
+    record = json.load(open(path))
+    if record["runner"]["cpu"] == GROUND_TRUTH_CPU:
+        same_cpu.setdefault(record["target"], []).append(
+            {k: v["median_ms"] for k, v in record["metrics"].items() if v.get("median_ms")})
+def median_ms(runs, metric):
+    return statistics.median([r[metric] for r in runs if metric in r])
+
+a = {m: median_ms(same_cpu["alpine-dood"], m) for m in same_cpu["alpine-dood"][0]}
+o = {m: median_ms(same_cpu["official"], m) for m in same_cpu["official"][0]}
+truth_ratios = [a[m] / o[m] for m in a if X.counts(m) and o.get(m)]
+truth = (math.exp(statistics.fmean([math.log(r) for r in truth_ratios])) - 1) * 100
+expect("ground truth is the +15.8% on record", truth, 15.8, tolerance=1.0)
+
+measured, _ = exec_index(real, "alpine-dood", "official")
+expect("the index reproduces ground truth on real data", measured, truth, tolerance=2.0)
+
+# The headline the column exists to show, per metric.
+expect("layout is the biggest contributor", a["layout"] / o["layout"] * 100, 160.3, tolerance=5.0)
+expect("launch is the second", a["launch"] / o["launch"] * 100, 147.9, tolerance=5.0)
+
+# locator_click is why CLOCK_BOUND_METRICS exists: it cannot move.
+lc = [r["locator_click"] for v in real.values() for r in v]
+checks += 1
+if statistics.pstdev(lc) / statistics.fmean(lc) * 100 > 0.1:
+    print(f"FAIL: locator_click should be frame-quantized (CV ~0%) — got {lc[:4]}",
+          file=sys.stderr)
+    failures += 1
+
+# And the guard: the same data cut to MIN_RUNS-1 must refuse rather than answer.
+thin_real = {k: v[: X.MIN_RUNS - 1] for k, v in real.items()}
+expect_none("real data under MIN_RUNS refuses", exec_index(thin_real, "alpine-dood", "official")[0])
 
 checks += 1
 if exec_cell(None, None) != "—" or not exec_cell(-12.0, 3.0).startswith("−12%"):

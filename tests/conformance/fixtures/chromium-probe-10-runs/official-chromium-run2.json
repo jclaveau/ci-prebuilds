@@ -1,0 +1,136 @@
+{
+  "target": "official",
+  "browser": "chromium",
+  "browser_version": "151.0.7922.34",
+  "binary_version": "Google Chrome for Testing 151.0.7922.34",
+  "playwright_version": "1.62.1",
+  "libc": "glibc",
+  "node": "v24.18.1",
+  "runner": {
+    "cpu": "AMD EPYC 7763 64-Core Processor",
+    "cores": 4
+  },
+  "metrics": {
+    "launch": {
+      "median_ms": 104.014,
+      "samples": [
+        128.954,
+        104.16,
+        103.868,
+        99.417
+      ]
+    },
+    "context_page": {
+      "median_ms": 39.897,
+      "samples": [
+        41.525,
+        41.411,
+        40.037,
+        45.117,
+        61.477,
+        34.21,
+        34.713,
+        36.309,
+        35.997,
+        39.758
+      ]
+    },
+    "goto_cold": {
+      "median_ms": 49.397,
+      "samples": [
+        63.003,
+        49.397,
+        49.462,
+        49.252,
+        48.262
+      ]
+    },
+    "goto_warm": {
+      "median_ms": 18.847,
+      "samples": [
+        16.709,
+        19.365,
+        25.782,
+        15.665,
+        18.783,
+        21.613,
+        18.162,
+        18.244,
+        24.284,
+        18.912
+      ]
+    },
+    "eval_rtt": {
+      "median_ms": 253.165,
+      "samples": [
+        260.815,
+        253.165,
+        251.971
+      ]
+    },
+    "locator_click": {
+      "median_ms": 3333.233,
+      "samples": [
+        3333.233,
+        3332.552,
+        3333.882
+      ]
+    },
+    "click_force": {
+      "median_ms": 425.121,
+      "samples": [
+        447.037,
+        419.498,
+        425.121
+      ]
+    },
+    "screenshot": {
+      "median_ms": 499.939,
+      "samples": [
+        500.022,
+        499.939,
+        499.222
+      ]
+    },
+    "layout": {
+      "median_ms": 17.7,
+      "samples": [
+        18.1,
+        17.7,
+        17.7
+      ]
+    },
+    "dom_churn": {
+      "median_ms": 20.5,
+      "samples": [
+        20.5,
+        20.2,
+        23.8
+      ]
+    },
+    "js_alloc": {
+      "median_ms": 6.6,
+      "samples": [
+        6.6,
+        6.5,
+        7.4
+      ]
+    },
+    "int_math": {
+      "median_ms": 39.1,
+      "samples": [
+        37.4,
+        56.2,
+        39.1
+      ]
+    },
+    "libm_fmod": {
+      "median_ms": 55.2,
+      "samples": [
+        55.2,
+        55.2,
+        55.2
+      ]
+    }
+  }
+}
