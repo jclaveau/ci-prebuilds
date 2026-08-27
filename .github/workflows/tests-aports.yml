@@ -12,6 +12,8 @@ on:
     paths:
       - 'playwright/alpine-browsers/versions.env'
       - 'playwright/alpine-browsers/chromium-headless-shell/scripts/resolve-aports-ref.sh'
+      - 'playwright/alpine-browsers/chromium-headless-shell/scripts/fetch-aports.sh'
+      - 'playwright/alpine-browsers/chromium-headless-shell/tests/fetch-aports-fallback.sh'
       - 'tests/aports/**'
       - '.github/workflows/tests-aports.yml'
   push:
@@ -19,6 +21,8 @@ on:
     paths:
       - 'playwright/alpine-browsers/versions.env'
       - 'playwright/alpine-browsers/chromium-headless-shell/scripts/resolve-aports-ref.sh'
+      - 'playwright/alpine-browsers/chromium-headless-shell/scripts/fetch-aports.sh'
+      - 'playwright/alpine-browsers/chromium-headless-shell/tests/fetch-aports-fallback.sh'
       - 'tests/aports/**'
 
 permissions:
@@ -35,3 +39,17 @@ jobs:
         run: bash tests/aports/test-aports-pkgver.sh
       - name: versions.env consistency
         run: bash tests/aports/test-versions-env-consistency.sh
+
+      # Exercises BOTH hosts of the chromium aports fetch, including the
+      # negative control where both are blackholed. A fallback that has never
+      # executed is not a fallback, and this one guards the head of a chain
+      # whose cold path is 25-30 h — the failure it defends against cost three
+      # firefox builds on 2026-08-27.
+      #
+      # It talks to the network on purpose: the claim being tested is that
+      # github.com/alpinelinux/aports still mirrors gitlab byte-for-byte at our
+      # pinned sha, and a mocked version of that would assert nothing.
+      - name: aports fetch failover (both hosts)
+        run: |
+          set -a; . playwright/alpine-browsers/versions.env; set +a
+          bash playwright/alpine-browsers/chromium-headless-shell/tests/fetch-aports-fallback.sh
