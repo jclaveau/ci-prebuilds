@@ -1,0 +1,13 @@
+# The control arm — Playwright's official glibc image — plus a perf it can run.
+#
+# noble has no `perf` package. linux-tools-generic drops the binary under a
+# kernel-versioned directory, and /usr/bin/perf is a wrapper that refuses to run
+# when the booted kernel differs from the package's. Link the real binary and
+# call that: the version skew costs warnings, not samples.
+ARG BASE
+FROM ${BASE}
+RUN apt-get update -qq \
+ && apt-get install -y -qq --no-install-recommends linux-tools-generic \
+ && ln -sf "$(ls -d /usr/lib/linux-tools-*/perf | head -1)" \
+      /usr/local/bin/perf-real \
+ && rm -rf /var/lib/apt/lists/*
