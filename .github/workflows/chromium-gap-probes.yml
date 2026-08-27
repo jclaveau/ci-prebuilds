@@ -101,6 +101,10 @@ on:
         description: 'perf-record arm: how long each kernel loops in steady state'
         default: '80'
         type: string
+      perf_browser_args:
+        description: 'perf-record arm: extra chromium flags for the ALPINE arm only (space separated). A build-config difference and a runtime-flag one produce the same profile, and only one of them costs a rebuild.'
+        default: ''
+        type: string
 
 concurrency:
   # Scoped by ref only, and the two jobs below are independent — a dispatch of
@@ -671,6 +675,7 @@ jobs:
           KERNELS: ${{ inputs.perf_kernels }}
           PW: ${{ inputs.pw_version }}
           LOOP: ${{ inputs.perf_loop_seconds }}
+          BROWSER_ARGS: ${{ inputs.perf_browser_args }}
         run: |
           set -o pipefail
           rc=0
@@ -680,11 +685,15 @@ jobs:
             # partway through would otherwise land entirely on whichever arm
             # went second.
             for target in alpine official; do
+              # Flags go to OUR arm only. Handing them to the control too
+              # would move both arms and measure nothing.
+              ARGS_FOR_ARM=""
               if [ "$target" = official ]; then
                 image="perf-official:${{ github.run_id }}"
                 home=/root
                 perfbin=/usr/local/bin/perf-real
               else
+                ARGS_FOR_ARM="$BROWSER_ARGS"
                 image="perf-alpine:${{ github.run_id }}"
                 home=/root
                 perfbin=perf
@@ -706,6 +715,7 @@ jobs:
                 --env "PW_VERSION=$PW" \
                 --env "PERF_BIN=$perfbin" \
                 --env "PERF_LOOP_SECONDS=$LOOP" \
+                --env "PERF_BROWSER_ARGS=$ARGS_FOR_ARM" \
                 -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/probes:/probes:ro" \
                 -v "$PWD/playwright/scripts:/pwscripts:ro" \
                 -v "$PWD/perf-out:/out" \
