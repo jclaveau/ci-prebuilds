@@ -19,8 +19,8 @@ on:
   workflow_dispatch:
     inputs:
       image:
-        description: 'Our image to measure (tag or full ref)'
-        default: 'ghcr.io/jclaveau/alpine-dood-playwright:latest'
+        description: 'Our image to measure. Docker Hub carries `latest`/`main`/`main-<sha>`; GHCR carries `sha-<full-40-char-sha>` and `edge` but NO `latest`.'
+        default: 'jclaveau/alpine-dood-playwright:latest'
         type: string
       browsers:
         description: 'CSV: chromium,firefox,webkit'
@@ -143,7 +143,7 @@ jobs:
           retention-days: 30
 
   report:
-    needs: probe
+    needs: [matrix, probe]
     if: '!cancelled()'
     runs-on: ubuntu-latest
     steps:
@@ -155,7 +155,36 @@ jobs:
           path: perf-current
           merge-multiple: true
 
+      # A missing arm must be LOUD. The first smoke run of this workflow pointed
+      # at a tag that did not exist, every alpine probe died on `manifest
+      # unknown`, and this job still went green rendering an official-only
+      # table — the same blindness that hid webkit for weeks, reproduced by the
+      # workflow built to end it. An absent arm cannot look like a measured one.
+      - name: Assert both arms reported
+        env:
+          BROWSERS: ${{ needs.matrix.outputs.browsers }}
+          RUNS: ${{ inputs.runs }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for browser in $(jq -r '.[]' <<< "$BROWSERS"); do
+            for arm in alpine official; do
+              got=$(find perf-current -name "$arm-$browser-run*.json" | wc -l)
+              if [ "$got" -ne "$RUNS" ]; then
+                echo "::error::$arm/$browser produced $got of $RUNS runs"
+                missing=1
+              else
+                echo "ok: $arm/$browser $got/$RUNS"
+              fi
+            done
+          done
+          exit "$missing"
+
       - name: Render
+        # Runs even when the assert failed: a partial table is still worth
+        # reading, as long as the job is already red and nobody mistakes it
+        # for a complete one.
+        if: '!cancelled()'
         env:
           OURS: ${{ inputs.image }}
           RUNS: ${{ inputs.runs }}

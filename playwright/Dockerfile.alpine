@@ -99,7 +99,8 @@ RUN sudo touch /ms-playwright/firefox-${FF_REV}/INSTALLATION_COMPLETE \
 #    allocate nothing, stay identical (runs 32833439914, 32833725968).
 #    Scoped to the shim rather than ENV so it reaches firefox and its
 #    children and not the Node.js driving them, and so chromium's
-#    PartitionAlloc and webkit's bmalloc are left alone.
+#    PartitionAlloc is left alone. WebKit gets the same preload from its
+#    own pw_run.sh wrapper below — bmalloc covers only fastMalloc there.
 RUN sudo mv /ms-playwright/firefox-${FF_REV}/firefox/firefox \
             /ms-playwright/firefox-${FF_REV}/firefox/firefox.real \
  && printf '%s\n' \
@@ -126,6 +127,33 @@ COPY --from=wk-source /webkit/minibrowser-wpe /ms-playwright/webkit-${WK_REV}/mi
 COPY --from=wk-source /webkit/pw_run.sh /ms-playwright/webkit-${WK_REV}/pw_run.sh
 RUN sudo touch /ms-playwright/webkit-${WK_REV}/INSTALLATION_COMPLETE \
  && sudo chmod 755 /ms-playwright/webkit-${WK_REV}
+
+# The allocator, same lever as firefox's above. bmalloc/libpas is compiled in
+# (`USE_SYSTEM_MALLOC_DEFAULT OFF` for x86_64, no libc condition) but it backs
+# `WTF::fastMalloc` only — WebCore and JSC. Every other allocation in the
+# process goes to musl's mallocng: GLib/GObject, GStreamer, Skia, Cairo,
+# HarfBuzz, ICU, libsoup, fontconfig, freetype. That is the startup and
+# page-setup half of the process, and it is exactly the half measured slow
+# (goto_cold 1.52x, launch 1.37x, click_force 1.30x, context_page 1.26x
+# against official, while layout 0.95x and int_math 0.97x — engine code, the
+# part bmalloc already covers — is faster). `malloc` reads undefined in BOTH
+# libWPEWebKit and official's, so firefox's `nm -D` discriminator says nothing
+# here; the tell is which allocator answers the NON-fastMalloc calls.
+#
+# Wrapping pw_run.sh rather than exporting ENV keeps the preload off the Node
+# driver and off chromium, and rather than editing pw_run.sh's text so that a
+# PW-side rewrite of that script cannot silently drop it. pw_run.sh resolves
+# everything from `$(dirname "$0")`, so it is indifferent to being renamed
+# inside its own directory.
+RUN sudo mv /ms-playwright/webkit-${WK_REV}/pw_run.sh \
+            /ms-playwright/webkit-${WK_REV}/pw_run.real.sh \
+ && printf '%s\n' \
+        '#!/bin/sh' \
+        'DIR="$(dirname "$0")"' \
+        'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2' \
+        'exec "$DIR/pw_run.real.sh" "$@"' \
+  | sudo tee /ms-playwright/webkit-${WK_REV}/pw_run.sh >/dev/null \
+ && sudo chmod +x /ms-playwright/webkit-${WK_REV}/pw_run.sh
 
 # WebKit's bundle carries Mesa's software-GL closure (libgallium → libLLVM +
 # EGL/GL/gbm/drm/X11/xcb, ~225 MB on-disk) copied in by the producer's
