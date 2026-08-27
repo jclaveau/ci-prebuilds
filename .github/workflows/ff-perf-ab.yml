@@ -57,6 +57,14 @@ on:
         description: 'Extra env for arm B''s firefox shim, same form as env_a'
         default: ''
         type: string
+      node_preload_a:
+        description: 'LD_PRELOAD for arm A''s PROBE CONTAINER, i.e. node — the firefox shim sets its own, so this varies the driver''s allocator alone'
+        default: ''
+        type: string
+      node_preload_b:
+        description: 'LD_PRELOAD for arm B''s probe container, same form as node_preload_a'
+        default: ''
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -91,6 +99,8 @@ jobs:
           PRELOAD_B: ${{ inputs.preload_b }}
           ENV_A: ${{ inputs.env_a }}
           ENV_B: ${{ inputs.env_b }}
+          NODE_PRELOAD_A: ${{ inputs.node_preload_a }}
+          NODE_PRELOAD_B: ${{ inputs.node_preload_b }}
         run: |
           set -o pipefail
           mkdir -p perf-out && chmod 777 perf-out
@@ -123,7 +133,7 @@ jobs:
           }
 
           probe_one() {
-            local image="$1" label="$2" preload="$3" extra_env="$4"
+            local image="$1" label="$2" preload="$3" extra_env="$4" node_preload="$5"
             if [ "$image" = official ]; then
               # No preload arm for official: noble carries no mimalloc, and the
               # question the preload asks — can a general-purpose allocator
@@ -187,10 +197,22 @@ jobs:
                 || { echo "env '${extra_env}' missing from arm ${label}'s shim" >&2; exit 1; }
               echo "arm ${label} shim env: ${extra_env}"
             fi
+            # node_preload lands on the CONTAINER, so it reaches node; the shim
+            # re-exports its own LD_PRELOAD, so firefox is untouched by it and
+            # the driver's allocator is the only thing that varies.
+            local node_env=""
+            if [ -n "$node_preload" ]; then
+              docker run --rm "ff-probe-${label}:${{ github.run_id }}" \
+                test -f "$node_preload" \
+                || { echo "node preload $node_preload absent from arm ${label}" >&2; exit 1; }
+              node_env="--env LD_PRELOAD=${node_preload}"
+              echo "arm ${label} node preloads ${node_preload}"
+            fi
             # The probe is CommonJS precisely so NODE_PATH resolution applies to
             # the global playwright install — ESM ignores NODE_PATH.
             docker run --rm \
               --env "PROBE_TARGET=${label}" \
+              $node_env \
               -v "$PWD/playwright/bench:/probe:ro" \
               -v "$PWD/perf-out:/out" \
               "ff-probe-${label}:${{ github.run_id }}" \
@@ -202,8 +224,8 @@ jobs:
             echo "::endgroup::"
           }
 
-          probe_one "$IMAGE_A" "$LABEL_A" "$PRELOAD_A" "$ENV_A"
-          probe_one "$IMAGE_B" "$LABEL_B" "$PRELOAD_B" "$ENV_B"
+          probe_one "$IMAGE_A" "$LABEL_A" "$PRELOAD_A" "$ENV_A" "$NODE_PRELOAD_A"
+          probe_one "$IMAGE_B" "$LABEL_B" "$PRELOAD_B" "$ENV_B" "$NODE_PRELOAD_B"
 
       - name: Report
         env:
