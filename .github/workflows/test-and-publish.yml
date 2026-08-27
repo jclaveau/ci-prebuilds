@@ -1396,22 +1396,41 @@ jobs:
               image="ghcr.io/jclaveau/${target}-dood-playwright:${TAG}"
               home=/home/runner
             fi
-            # Our WebKit cannot serve Playwright 1.62.1 — newPage never
-            # returns, and this job burned its whole 30-minute budget on it.
-            # Only OUR images are affected; the `official` control still
-            # measures webkit, so the comparison keeps a leg to stand on.
-            # Drop this once a wk-<rev> from the new patch series ships:
-            # https://github.com/jclaveau/ci-prebuilds/issues/100
-            if [ "$BROWSER" = webkit ] && [ "$target" != official ]; then
-              echo "skipping $target/webkit — see issue #100"
-              continue
-            fi
             echo "::group::probe $target/$BROWSER ($image)"
             # seccomp=unconfined: WebKit-WPE's bwrap needs it on our alpine images
             # (no-op for the chromium/firefox legs and for the MCR control).
             # One target failing must not cost us the others' measurements, so the
             # loop records the failure and carries on; `rc` is re-raised at the end.
-            docker run --rm \
+            # seccomp alone is enough for webkit here, and it is what every
+            # target already gets. pw-conformance.yml additionally strips
+            # apparmor and grants SYS_ADMIN + NET_ADMIN, but that peel is for a
+            # LIVE bwrap; our images bake
+            # WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1, so bwrap is off and
+            # the caps buy nothing. The nightly bench is the witness: run
+            # 33030702952 launches webkit from this same image with seccomp as
+            # its only security flag and passes its spec.
+            #
+            # Keeping it at seccomp matters for the control. Granting the MCR
+            # arm privileges it did not have in earlier runs would move its
+            # numbers, and a step change in the official column reads as news
+            # when it is only a flag set.
+            # A hang must cost one target, not the job. Our WebKit used to eat
+            # the whole 30-minute budget at newPage (issue #100, fixed by the
+            # base move); the `timeout` inside the container bounds any repeat
+            # to 5 minutes, against a healthy target's ~30-60s. 3 x 5 leaves
+            # half the job's 30 minutes spare, and the budget has to hold: a
+            # job timeout skips upload-artifact, losing every measurement
+            # rather than the one that hung.
+            #
+            # The timeout wraps the probe rather than `docker run` because `sh`
+            # is PID 1 in the container and PID 1 ignores an un-handled
+            # SIGTERM: killing the client would leave the container ALIVE,
+            # burning the runner's cores while the next target is measured.
+            # Killing the probe instead lets the container exit and `--rm` fire.
+            # `timeout SECS CMD` is the one form busybox and GNU spell alike.
+            cname="probe-${target}-${BROWSER}"
+            docker rm -f "$cname" >/dev/null 2>&1 || true
+            docker run --rm --name "$cname" \
               --security-opt seccomp=unconfined \
               --env "HOME=$home" \
               --env "PROBE_BROWSER=$BROWSER" \
@@ -1430,9 +1449,10 @@ jobs:
                 export NODE_PATH
                 node -e "require(\"playwright\")" 2>/dev/null \
                   || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
-                node /probe/runtime-probe.cjs \
+                timeout 300 node /probe/runtime-probe.cjs \
                   --browser "$PROBE_BROWSER" --target "$PROBE_TARGET" --out /out
               ' 2>&1 | tee "perf-out/probe-${target}-${BROWSER}.log" || rc=1
+            docker rm -f "$cname" >/dev/null 2>&1 || true
             echo "::endgroup::"
           done
           exit "$rc"

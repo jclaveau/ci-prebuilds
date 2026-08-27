@@ -421,6 +421,21 @@ COPY strip-bundled-libs.sh /tmp/strip-bundled-libs.sh
 RUN bash /tmp/strip-mesa-closure.sh /ms-playwright/webkit-${ARTIFACT_REV}/minibrowser-wpe \\
  && bash /tmp/strip-bundled-libs.sh /ms-playwright/webkit-${ARTIFACT_REV}/minibrowser-wpe webkit \\
  && touch /ms-playwright/webkit-${ARTIFACT_REV}/INSTALLATION_COMPLETE
+# Allocator parity with playwright/Dockerfile.alpine's pw_run.sh wrapper, for
+# the same reason as firefox's above: bmalloc backs fastMalloc only, so GLib,
+# GStreamer, Skia, Cairo, HarfBuzz, ICU, libsoup and fontconfig all allocate
+# through musl's mallocng, and conformance has to exercise the allocator we
+# actually ship. pw_run.sh resolves everything from \$(dirname "\$0"), so it
+# does not care that it was renamed inside its own directory.
+RUN WKRUN=/ms-playwright/webkit-${ARTIFACT_REV}/pw_run.sh \\
+ && mv "\$WKRUN" "\$(dirname "\$WKRUN")/pw_run.real.sh" \\
+ && printf '%s\\n' \\
+      '#!/bin/sh' \\
+      'D=\$(dirname "\$0")' \\
+      'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2' \\
+      'exec "\$D/pw_run.real.sh" "\$@"' \\
+      > "\$WKRUN" \\
+ && chmod +x "\$WKRUN"
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
