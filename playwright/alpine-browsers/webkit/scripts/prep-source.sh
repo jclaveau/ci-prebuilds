@@ -798,6 +798,196 @@ patch_keep_synthetic_mouse_events() {
 }
 patch_keep_synthetic_mouse_events
 
+# WebKit's mock capture devices — the fake camera/microphone that PW's
+# permissions suite requires. Without them `getUserMedia({video,audio})`
+# rejects with OverconstrainedError and `enumerateDevices()` returns [], which
+# is the whole of the camera/mic conformance cluster
+# (permissions.spec.ts:349 and its three siblings).
+#
+# Diagnosed by running the same probe against our artifact and against
+# mcr.microsoft.com/playwright:v1.62.1-noble, with GST_DEBUG_FILE to get the
+# GStreamer log out of the web process (PW discards its stderr):
+#
+#   ours      GStreamerMockDeviceProvider.cpp:53  "Mock capture sources are
+#                                                  disabled, returning empty
+#                                                  device list"
+#   official  GStreamerMockDeviceProvider.cpp:57  "Probing" -> 6 mock devices
+#
+# Same binary layout, opposite branch of the same `if`, so the gate is purely
+# `MockRealtimeMediaSourceCenter::mockRealtimeMediaSourceCenterEnabled()`. Its
+# only UI-process caller reads `preferences->mockCaptureDevicesEnabled()`,
+# whose default is false at BOTH our base (4d05d732) and PW's (6b34ac51) — and
+# PW neither sends `Page.overrideSetting: MockCaptureDevicesEnabled` (verified
+# on a live protocol trace: it sends seven settings, not that one) nor touches
+# mock capture in any revision of bootstrap.diff. Official must therefore set
+# it in the build recipe, which Playwright no longer publishes — their
+# browser_patches build scripts 404 on every tag. So we set it ourselves.
+#
+# Scoped to the WebKit layer only; WebKitLegacy and WebCore keep their upstream
+# false. WebCore's false is load-bearing, not an oversight: the generated setter
+# fires `webcoreOnChange: mockCaptureDevicesEnabledChanged` — the only thing that
+# enables the mock centre in the WebProcess — ONLY on a change, so flipping
+# WebCore too would make the write a no-op and silence the hook.
+#
+# Enabling the devices is necessary and NOT sufficient — see
+# patch_user_media_automation_permissions below, which supplies the grant.
+# MockCaptureDevicesPromptEnabled is deliberately left at its upstream true:
+# flipping it makes the UIProcess auto-grant EVERY request, which trades the
+# three failing camera/mic tests for three different ones (measured, not
+# guessed: run 32843700425 went from :349/:373/:386 red to :364/:373/:386 red).
+# Rewrite one pref's `WebKit:` default in place: arm on the block header, then
+# on `    WebKit:` INSIDE it, because a pref carries a default per layer and only
+# the WebKit one drives the UIProcess preference.
+set_webkit_pref_default() {
+  local yaml="$1" pref="$2" from="$3" to="$4" marker="$5"
+
+  awk -v pref="$pref" -v from="      default: $from" -v to="      default: $to" \
+      -v marker="$marker" '
+    $0 == pref ":" { in_pref = 1; print; next }
+    in_pref && /^[A-Za-z]/ { in_pref = 0; in_webkit = 0 }
+    in_pref && /^    WebKit:$/ { in_webkit = 1; print; next }
+    in_webkit && $0 == from {
+      print "      # " marker
+      print to
+      in_webkit = 0
+      next
+    }
+    { print }
+  ' "$yaml" > "${yaml}.new"
+  mv "${yaml}.new" "$yaml"
+
+  local applied
+  applied=$(grep -c "$marker" "$yaml")
+  if [[ "$applied" != 1 ]]; then
+    echo "ERROR: $pref default applied $applied time(s) in $yaml, expected exactly 1" >&2
+    exit 1
+  fi
+}
+
+patch_mock_capture_devices_defaults() {
+  local yaml=Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml
+  local marker='prep-source.sh: mock capture devices on by default'
+
+  if grep -q "$marker" "$yaml"; then
+    echo "  mock capture defaults already patched — drop patch_mock_capture_devices_defaults"
+    return 0
+  fi
+
+  echo "  default MockCaptureDevicesEnabled to true (WebKit layer)"
+  set_webkit_pref_default "$yaml" MockCaptureDevicesEnabled false true "$marker"
+}
+patch_mock_capture_devices_defaults
+
+# Honour Browser.grantPermissions for camera/microphone.
+#
+# PW's bootstrap.diff adds WebPageProxy::permissionForAutomation() and wires it
+# into exactly three places — clipboard-read, geolocation, and queryPermission —
+# but nothing in the getUserMedia path. Same in the series at PW's own v1.62.1
+# tag, so this is not our patch pin drifting.
+#
+# The consequence, measured on wk-gtk-sha-ed83438 and mcr…:v1.62.1-noble with an
+# identical probe. navigator.permissions.query agrees on all three rows, because
+# that is the path PW DID wire; only getUserMedia diverges:
+#
+#   grant         query                        official      ours
+#   none          prompt / prompt              NotAllowed    NotAllowed
+#   camera only   granted / denied             NotAllowed    NotAllowed
+#   both          granted / granted            audio+video   NotAllowed
+#
+# So PW's permissions reach the browser correctly and the UIProcess decision
+# ignores them. Neither build's UI client is ever asked — upstream's WPE
+# MiniBrowser decidePermissionRequest() allows everything and prints "Accepting
+# <type> request", and that line appears on NEITHER side — so the decision is
+# made inside UserMediaPermissionRequestManagerProxy.
+#
+# Why official reaches the right answer without this patch is not settled. Its
+# shipped webkit-2336 is past our pinned 4d05d732, and the likeliest explanation
+# is that the newer revision consults the permission state itself. What IS
+# settled is the table above, and this patch reproduces it by construction, in
+# the same idiom PW used for geolocation:
+#
+#   ungranted     -> permissionForAutomation returns nullopt -> Deny
+#   camera only   -> video Grant, anything needing audio Deny
+#   both          -> Grant
+#
+# Scoped to isControlledByAutomation() so a non-automation embedder keeps
+# upstream behaviour, and to non-display capture so getDisplayMedia still
+# prompts.
+patch_user_media_automation_permissions() {
+  local cpp=Source/WebKit/UIProcess/UserMediaPermissionRequestManagerProxy.cpp
+  local hdr=Source/WebKit/UIProcess/WebPageProxy.h
+  local marker='prep-source.sh: honour Browser.grantPermissions for capture'
+
+  if grep -q "$marker" "$cpp"; then
+    echo "  user-media automation permissions already patched — drop this step"
+    return 0
+  fi
+
+  # bootstrap.diff declares permissionForAutomation under `private:`, which is
+  # enough for PW's own three call sites because they are WebPageProxy members.
+  # Ours is not, so widen it to public and close the section straight after.
+  local decl='  std::optional<bool> permissionForAutomation(const String& origin, const String& permission) const;'
+  if [[ "$(grep -cF "$decl" "$hdr")" != 1 ]]; then
+    echo "ERROR: expected exactly 1 permissionForAutomation declaration in $hdr" >&2
+    exit 1
+  fi
+
+  echo "  widen WebPageProxy::permissionForAutomation to public"
+  awk -v decl="$decl" -v marker="$marker" '
+    index($0, decl) && !done {
+      print "public:"
+      print "    // " marker
+      print $0
+      print "private:"
+      done = 1
+      next
+    }
+    { print }
+  ' "$hdr" > "${hdr}.new"
+  mv "${hdr}.new" "$hdr"
+
+  if [[ "$(grep -c "$marker" "$hdr")" != 1 ]]; then
+    echo "ERROR: permissionForAutomation visibility patch did not apply" >&2
+    exit 1
+  fi
+
+  # Anchor on the wasRequestDenied guard, the first statement of
+  # getRequestAction after the three request-shape bools it needs.
+  local anchor='    if (!request.isUserGesturePriviledged() \&\& wasRequestDenied('
+  if [[ "$(grep -c "$anchor" "$cpp")" != 1 ]]; then
+    echo "ERROR: expected exactly 1 getRequestAction anchor in $cpp" >&2
+    exit 1
+  fi
+
+  echo "  honour Browser.grantPermissions for camera/microphone"
+  awk -v marker="$marker" '
+    /^    if \(!request\.isUserGesturePriviledged\(\) && wasRequestDenied\(/ && !done {
+      print "    // " marker
+      print "    if (RefPtr automationPage = m_page.get(); automationPage && automationPage->isControlledByAutomation() && !requestingScreenCapture && (requestingCamera || requestingMicrophone)) {"
+      print "        auto automationOrigin = request.topLevelDocumentSecurityOrigin().toString();"
+      print "        bool automationGranted = true;"
+      print "        if (requestingCamera)"
+      print "            automationGranted = automationGranted && automationPage->permissionForAutomation(automationOrigin, \"camera\"_s).value_or(false);"
+      print "        if (requestingMicrophone)"
+      print "            automationGranted = automationGranted && automationPage->permissionForAutomation(automationOrigin, \"microphone\"_s).value_or(false);"
+      print "        return automationGranted ? RequestAction::Grant : RequestAction::Deny;"
+      print "    }"
+      print ""
+      done = 1
+    }
+    { print }
+  ' "$cpp" > "${cpp}.new"
+  mv "${cpp}.new" "$cpp"
+
+  local applied
+  applied=$(grep -c "$marker" "$cpp")
+  if [[ "$applied" != 1 ]]; then
+    echo "ERROR: user-media automation patch applied $applied time(s) in $cpp, expected exactly 1" >&2
+    exit 1
+  fi
+}
+patch_user_media_automation_permissions
+
 # CacheStorage records are written 8 bytes short and no build can read them back.
 #
 # bootstrap.diff adds httpRequestHeaderFields to ResourceResponseData and teaches

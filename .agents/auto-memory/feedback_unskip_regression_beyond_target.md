@@ -32,3 +32,22 @@ Net-negative → reverted the whole commit.
 
 Related: [[project_wk_media_gst_registry_env]] (additive env, zero blast radius,
 worked), [[feedback_config_first_layered_diagnosis]].
+
+## Same count, different names = not a fix (webkit camera/mic, 2026-08-25)
+
+`525f238` flipped `MockCaptureDevicesPromptEnabled` to make the UIProcess
+auto-grant. Conformance came back with **the same number of camera/mic
+failures**, so a count-only read said "no change". The names said otherwise:
+
+    before   :349 capture-when-granted   :373   :386
+    after    :364 reject-when-ungranted  :373   :386
+
+It had fixed the granted case by breaking the ungranted one — a blanket grant.
+`:373`/`:386` were red both ways, which is the tell that neither state honoured
+the actual permission.
+
+**How to apply:** diff the SET of failing test ids across a fix, never the
+count. A swap means the lever is global where the requirement is conditional;
+a lever that flips some tests green and others red is nearly always in the wrong
+layer. Same instinct as reverting net-negatives above.
+
