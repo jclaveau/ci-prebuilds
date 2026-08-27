@@ -64,7 +64,7 @@ Image names follow `<os>-<mode>[-<layer>][-sudoer]`. Pick one of each axis:
 | **Layer** | none · `-node` · `-pnpm` · `-pnpm-gyp` · `-playwright` · `-playwright-gyp` | your needs |
 | **Flavor** | default (no runtime sudo) · `-sudoer` | hardened |
 
-- **One exception**: Playwright on Alpine is **Chromium-only** for now (using a --shell-only Chromium).
+- Playwright on Alpine carries **all three browsers** — chromium, firefox and webkit, built from source against musl rather than taken from the system packages.
 
 | Image | What it adds | Docs |
 | --- | --- | --- |

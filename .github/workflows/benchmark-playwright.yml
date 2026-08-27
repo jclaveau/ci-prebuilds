@@ -240,7 +240,7 @@ jobs:
   # Same benchmark, but executed through nektos/act (the "use these images as your local act runner"
   # path). act runs inside this hosted job and drives the host Docker, so time-to-tests can't come from
   # the jobs API — the inner workflow prints a timestamp right before the tests and we measure from the
-  # `act` invocation, writing the result to an artifact the summary picks up. Chromium-only, 3 runs each.
+  # `act` invocation, writing the result to an artifact the summary picks up. 3 runs each.
   act:
     name: bench-act-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}
     needs: config
@@ -832,7 +832,9 @@ jobs:
               "The `…-playwright-gyp` rows are the same image **plus the node-gyp toolchain** "
               "(build-essential / build-base); compare each slim row with its `-gyp` twin to read the "
               "compiler's pull cost. "
-              "`alpine-dood-playwright` and `alpine-dind-playwright` are Chromium-only (no Firefox/WebKit on musl). The **act** tables run each "
+              "`alpine-dood-playwright` and `alpine-dind-playwright` carry all three browsers "
+              "(chromium, firefox and webkit, all built from source against musl), so the "
+              "*All browsers* tables measure the same work on every row. The **act** tables run each "
               "image as a local `nektos/act` runner, self-measured from `act` start; their *Image pull* "
               "also includes act's own start-up overhead, so it isn't directly comparable to the hosted "
               "`Initialize containers` time. The **warm** Δ columns exclude the pull (= install only) — "
