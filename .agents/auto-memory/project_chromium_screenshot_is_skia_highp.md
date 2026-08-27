@@ -1,6 +1,6 @@
 ---
 name: project_chromium_screenshot_is_skia_highp
-description: the chromium screenshot stage is NAMED — Skia's from_1010102_xr highp raster-pipeline stage — and our artifact carries 11.5x fewer of lowp's signature instructions than official's, which is what forces every raster op into the float path
+description: the chromium screenshot stage is NAMED — Skia's from_1010102_xr — and the mechanism is PINNED: every 1010102/XR op is HIGHP_ONLY by construction, so an XR surface forces the float pipeline regardless of lowp, making the raster fix a surface-format change rather than a build flag
 metadata:
   type: project
 ---
@@ -49,15 +49,38 @@ elsewhere:
 | `vpavgw` | 202 | 478 | 2.4x |
 | `vpackuswb` | 899 | 1777 | 2.0x |
 
-**What is established and what is not.** Established: the stage's identity, and
-that our binary carries far less of lowp's characteristic code. NOT yet
-established: *which* of the three defines does it, or whether it is a define at
-all rather than a smaller set of compiled SkOpts ISA variants — the per-opcode
-ratios (11.5x, 1.8x, 2.4x, 2.0x) are not uniform, and a wholly-nulled lowp
-would read closer to zero than 380. Do not write "lowp is disabled" into a
-commit until that is pinned.
+**PINNED 2026-08-27, and it is NOT the lowp gate.** `SK_RASTER_PIPELINE_OPS_LOWP`
+in `src/core/SkRasterPipelineOpList.h` contains **zero** 1010102 or XR ops;
+every one of them lives in `SK_RASTER_PIPELINE_OPS_HIGHP_ONLY` (line 162):
 
-Ruled out as the source so far:
+```
+M(load_1010102)       M(load_1010102_dst)    M(store_1010102)     M(gather_1010102)
+M(load_1010102_xr)    M(load_1010102_xr_dst) M(store_1010102_xr)  M(gather_1010102_xr)
+M(load_10x6)          ...
+M(gather_10101010_xr) M(load_10101010_xr)    M(load_10101010_xr_dst) M(store_10101010_xr)
+```
+
+So **an XR surface forces the float pipeline by construction**, whether or not
+lowp is compiled — there is no lowp implementation to fall back to. The gating
+`#if` and the 11.5x `vpmulhrsw` deficit are real observations but they are NOT
+the mechanism for the screenshot gap, and the earlier "which of the three
+defines" question is the wrong question.
+
+**Therefore the raster fix is a SURFACE-FORMAT change, not a build flag.** It
+cannot ride a cflags chain; what has to be found is why our screenshot path
+hands Skia an extended-range 10-bit surface where official's does not. Both
+arms report identical display characteristics (`colorDepth` 24, no HDR, no wide
+gamut) and `--force-color-profile=srgb`, `--disable-gpu`,
+`--disable-gpu-compositing` and `--use-gl=swiftshader` all left it unmoved, so
+it is decided inside the build rather than by the environment or a runtime flag.
+
+The per-opcode ratios being non-uniform (11.5x, 1.8x, 2.4x, 2.0x) is consistent
+with this: a wholly-nulled lowp would read near zero, and what we are looking at
+is probably a different count of compiled SkOpts ISA variants — interesting, but
+a separate question from the screenshot.
+
+Ruled out as the source of the lowp thinness (a separate, still-open
+question):
 - **aports** — its chromium APKBUILD mentions no `optimize_for_size`, no skia
   patch, no lowp flag.
 - **our `args.gn.overlay`** — sets none of them, and the composed args.gn is
