@@ -94,8 +94,8 @@ on:
         default: 'jclaveau/alpine-dood-playwright:latest'
         type: string
       perf_kernels:
-        description: 'perf-record arm, CSV: screenshot_png, screenshot_jpeg, layout_boxonly, layout_text'
-        default: 'screenshot_png,screenshot_jpeg,layout_boxonly'
+        description: 'perf-record arm, CSV: screenshot_png_text, screenshot_png, screenshot_jpeg, layout_boxonly, layout_text'
+        default: 'screenshot_png_text,screenshot_png,screenshot_jpeg,layout_boxonly'
         type: string
       perf_loop_seconds:
         description: 'perf-record arm: how long each kernel loops in steady state'
@@ -697,6 +697,14 @@ jobs:
             done
           done
           exit "$rc"
+
+      # perf runs as root inside the container and perf.data is mode 0600, so
+      # upload-artifact — which runs as the unprivileged runner — dies with
+      # EACCES on it and takes the whole job red AFTER every measurement has
+      # already been taken. Hand the tree back before it gets there.
+      - name: Give the profile back to the runner
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" perf-out || true
 
       - name: Report
         if: always()

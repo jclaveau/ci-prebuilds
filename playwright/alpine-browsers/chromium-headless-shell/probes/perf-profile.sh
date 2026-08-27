@@ -92,6 +92,12 @@ if [ "$(samples_in)" -eq 0 ]; then
   record
 fi
 
+# The record window length, so the report can turn a share-of-samples into
+# CPU-ms per iteration. It has to: on a hosted runner both arms' screenshot
+# wall time sits on the compositor cadence, and a percentage of an unknown
+# total says nothing about which arm did more work.
+echo "$RECORD_WINDOW" > "${OUT}/${TARGET}-${KERNEL}-window"
+
 echo "--- ${TARGET} / ${KERNEL}: by DSO ---"
 "$PERF" report -i "$DATA" --stdio --sort dso --percent-limit 0.1 -g none \
   > "${OUT}/${TARGET}-${KERNEL}-dso.txt" 2>&1 || true
