@@ -1401,22 +1401,19 @@ jobs:
             # (no-op for the chromium/firefox legs and for the MCR control).
             # One target failing must not cost us the others' measurements, so the
             # loop records the failure and carries on; `rc` is re-raised at the end.
-            SECURITY_FLAGS="--security-opt seccomp=unconfined"
-            EXTRA_ENV=""
-            if [ "$BROWSER" = webkit ]; then
-              # Same peel as pw-conformance.yml and the Tier-2 smoke: our
-              # WebKit-WPE's bwrap wants apparmor unconfined + SYS_ADMIN +
-              # NET_ADMIN on top of seccomp, and the escape hatch has to be
-              # spelled WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS — the shorter
-              # WEBKIT_DISABLE_SANDBOX is silently ignored and leaves bwrap live.
-              #
-              # Applied to EVERY target including the MCR control, which does not
-              # need it: an A/B whose arms run under different container
-              # privileges is measuring two variables. The flags only ever
-              # subtract restrictions, so the control keeps its meaning.
-              SECURITY_FLAGS="$SECURITY_FLAGS --security-opt apparmor=unconfined --cap-add SYS_ADMIN --cap-add NET_ADMIN"
-              EXTRA_ENV="--env WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 --env WEBKIT_FORCE_SANDBOX=0"
-            fi
+            # seccomp alone is enough for webkit here, and it is what every
+            # target already gets. pw-conformance.yml additionally strips
+            # apparmor and grants SYS_ADMIN + NET_ADMIN, but that peel is for a
+            # LIVE bwrap; our images bake
+            # WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1, so bwrap is off and
+            # the caps buy nothing. The nightly bench is the witness: run
+            # 33030702952 launches webkit from this same image with seccomp as
+            # its only security flag and passes its spec.
+            #
+            # Keeping it at seccomp matters for the control. Granting the MCR
+            # arm privileges it did not have in earlier runs would move its
+            # numbers, and a step change in the official column reads as news
+            # when it is only a flag set.
             # A hang must cost one target, not the job. Our WebKit used to eat
             # the whole 30-minute budget at newPage (issue #100, fixed by the
             # base move); the `timeout` inside the container bounds any repeat
@@ -1433,9 +1430,8 @@ jobs:
             # `timeout SECS CMD` is the one form busybox and GNU spell alike.
             cname="probe-${target}-${BROWSER}"
             docker rm -f "$cname" >/dev/null 2>&1 || true
-            # shellcheck disable=SC2086  # SECURITY_FLAGS/EXTRA_ENV are flag lists — word-splitting is intended
             docker run --rm --name "$cname" \
-              $SECURITY_FLAGS $EXTRA_ENV \
+              --security-opt seccomp=unconfined \
               --env "HOME=$home" \
               --env "PROBE_BROWSER=$BROWSER" \
               --env "PROBE_TARGET=$target" \
