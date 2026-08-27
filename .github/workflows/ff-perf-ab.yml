@@ -49,6 +49,14 @@ on:
         description: 'LD_PRELOAD baked into arm B''s firefox shim, same form as preload_a'
         default: ''
         type: string
+      env_a:
+        description: 'Extra env for arm A''s firefox shim, space-separated K=V (e.g. MIMALLOC_PURGE_DELAY=-1)'
+        default: ''
+        type: string
+      env_b:
+        description: 'Extra env for arm B''s firefox shim, same form as env_a'
+        default: ''
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -81,6 +89,8 @@ jobs:
           PW: ${{ inputs.pw_version }}
           PRELOAD_A: ${{ inputs.preload_a }}
           PRELOAD_B: ${{ inputs.preload_b }}
+          ENV_A: ${{ inputs.env_a }}
+          ENV_B: ${{ inputs.env_b }}
         run: |
           set -o pipefail
           mkdir -p perf-out && chmod 777 perf-out
@@ -113,7 +123,7 @@ jobs:
           }
 
           probe_one() {
-            local image="$1" label="$2" preload="$3"
+            local image="$1" label="$2" preload="$3" extra_env="$4"
             if [ "$image" = official ]; then
               # No preload arm for official: noble carries no mimalloc, and the
               # question the preload asks — can a general-purpose allocator
@@ -149,7 +159,7 @@ jobs:
            && printf '%s\\n' \\
                   '#!/bin/sh' \\
                   'DIR="\$(dirname "\$0")"' \\
-                  'LD_PRELOAD="${preload}" ICU_DATA="\$DIR" exec "\$DIR/firefox.real" --remote-debugging-port=0 "\$@"' \\
+                  'LD_PRELOAD="${preload}" ${extra_env} ICU_DATA="\$DIR" exec "\$DIR/firefox.real" --remote-debugging-port=0 "\$@"' \\
                 > /ms-playwright/firefox-${FF_REV}/firefox/firefox \\
            && chmod +x /ms-playwright/firefox-${FF_REV}/firefox/firefox
           ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
@@ -168,6 +178,15 @@ jobs:
                 || { echo "preload $preload absent from arm ${label}" >&2; exit 1; }
               echo "arm ${label} preloads ${preload}"
             fi
+            # Same reason as the preload check: an env line that never reached
+            # the shim reports a clean null result. Read it back off the built
+            # image rather than trusting the input.
+            if [ -n "$extra_env" ]; then
+              docker run --rm --entrypoint sh "ff-probe-${label}:${{ github.run_id }}" \
+                -c "grep -qF '${extra_env}' /ms-playwright/firefox-${FF_REV}/firefox/firefox" \
+                || { echo "env '${extra_env}' missing from arm ${label}'s shim" >&2; exit 1; }
+              echo "arm ${label} shim env: ${extra_env}"
+            fi
             # The probe is CommonJS precisely so NODE_PATH resolution applies to
             # the global playwright install — ESM ignores NODE_PATH.
             docker run --rm \
@@ -183,8 +202,8 @@ jobs:
             echo "::endgroup::"
           }
 
-          probe_one "$IMAGE_A" "$LABEL_A" "$PRELOAD_A"
-          probe_one "$IMAGE_B" "$LABEL_B" "$PRELOAD_B"
+          probe_one "$IMAGE_A" "$LABEL_A" "$PRELOAD_A" "$ENV_A"
+          probe_one "$IMAGE_B" "$LABEL_B" "$PRELOAD_B" "$ENV_B"
 
       - name: Report
         env:
