@@ -53,6 +53,20 @@ rm -f "$OUT/libVkLayer_khronos_validation.so"
 # needs is left untouched by `--strip-all`. `binutils` (strip) + `file` come
 # from the builder base (Dockerfile setup). Non-ELF files (.pak/.dat/.bin,
 # locales) are skipped via the `file` type check.
+# Did the stack-protector parity flag actually reach the compiler? A build that
+# silently ignored it is a null arm that would otherwise ship looking like a
+# result — and the answer is only visible in the linked binary, which exists
+# here and nowhere earlier. Reported, not enforced: failing a 25-30 h chain at
+# the last step over a diagnostic would cost more than reading the number.
+# Reference points: official 33 166 canary loads, our strong-by-default build
+# 358 107.
+if command -v objdump >/dev/null 2>&1; then
+  canaries=$(objdump -d "$OUT/$VARIANT_DIST_BIN" 2>/dev/null \
+    | grep -c 'fs:0x28' || true)
+  echo "Stack-protector canary loads in $VARIANT_DIST_BIN: ${canaries}" \
+       "(official 33166, alpine-strong 358107)"
+fi
+
 before=$(du -sh "$OUT" | cut -f1)
 find "$OUT" -type f -print0 | while IFS= read -r -d '' f; do
   case "$(file -b "$f" 2>/dev/null)" in
