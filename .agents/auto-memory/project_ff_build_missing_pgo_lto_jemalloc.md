@@ -255,11 +255,29 @@ same EPYC 7763 model as the n=5 baseline it is being compared with:
 
 | row | baseline (n=5, no node fix) | with node preload |
 |---|---|---|
-| `eval_rtt` | 1.017 | **0.957** |
+| `eval_rtt` | 1.017 | **RETRACTED — see below** |
 | `layout` | 1.087 | 1.120 (n=1) |
 | `dom_churn` | 0.805 | 0.756 |
 | `libm_fmod` | 0.667 | 0.667 |
 | `int_math` / `js_alloc` / `click_force` / `locator_click` | 1.000 | 1.000 / 1.000 / 1.001 / 1.000 |
+
+**The 0.957 was one draw and it did not reproduce.** Draw 2, same CPU model,
+read **1.022**: official's own arm moved 365.9 -> 390.7 ms between the runs while
+ours carried a 447 ms outlier among three samples. The n=10 baseline had already
+said so (23/100 cross-pairs, tied) — a ~2% difference is not readable off n=1 per
+arm however clean the A/B that produced it.
+
+What survives is narrower: **preloading mimalloc into node improves OUR OWN image
+by 7.8-13.2%** (two runs, tight within-run spreads, flat browser-only controls).
+That is a real gain and worth shipping on its own merits. It is NOT evidence that
+we beat official on that row, and it must not be quoted as such.
+
+Three rows reproduce across everything measured this session — n=5, n=10, and four
+`ff-perf-ab` draws on three CPU models: `layout` 1.065-1.12 (slower, the one real
+deficit), `dom_churn` 0.756-0.82 (faster) and `libm_fmod` 0.66-0.67 (faster, and
+see the kernel's own comment before reading that as a libc verdict). **Every other
+row wanders between draws and should be quoted as parity — not as a win, and not
+as a work item.**
 
 Do not read `context_page` (1.061), `goto_cold` (1.009) or `screenshot` (1.025)
 off this run — it is n=1 and those rows carry the outliers (`context_page` has a
