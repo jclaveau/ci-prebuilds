@@ -50,14 +50,97 @@ static void convert8(const uint32_t *in, float *out) {
   }
 }
 
+/*
+ * The second shape, and the one that matters more.
+ *
+ * `convert8` above is a heavy vector body behind one prologue, so a canary is
+ * a small fraction of it — which is exactly the reading that made the first
+ * measurement say 2-7% and nearly closed the question. But `perf stat` on the
+ * browser says our layout pass runs 16% MORE INSTRUCTIONS than official's at
+ * 13% lower IPC, and layout is not one heavy loop: it is thousands of small
+ * out-of-line calls over a box tree. A prologue is a large fraction of THAT.
+ *
+ * So this kernel is call-dense on purpose: small `noinline` callees, each with
+ * a local array so -fstack-protector-strong applies, walked over a tree. Same
+ * caveat as above about magnitude — but here the instruction COUNT is the
+ * output, and a count is not a timing.
+ */
+#define NODES 4096
+
+/*
+ * The call kernel needs its OWN round count, and a big one. At the vector
+ * kernel's 12 rounds the whole walk finished in 0.078 ms and `perf stat` was
+ * counting process startup rather than the workload: two reps of the SAME
+ * binary came back 573 801 and 551 210 instructions, a 4% spread on an 8%
+ * effect. Startup is a fixed ~500 k instructions, so the fix is to make the
+ * workload dwarf it rather than to try to subtract it.
+ */
+#define CALL_ROUNDS 20000
+
+static float node_w[NODES];
+static float node_h[NODES];
+
+__attribute__((noinline))
+static float measure_edge(const float *in) {
+  float r[4] = { in[0], in[1], in[0] + in[1], in[0] - in[1] };
+  return r[2] * 0.5f + r[3] * 0.25f;
+}
+
+__attribute__((noinline))
+static float place_box(float w, float h) {
+  float edge[2] = { w, h };
+  return measure_edge(edge) + measure_edge(edge + 0) * 0.5f;
+}
+
+__attribute__((noinline))
+static float walk(unsigned node, unsigned depth) {
+  float acc[2] = { node_w[node % NODES], node_h[node % NODES] };
+  float out = place_box(acc[0], acc[1]);
+  if (depth) {
+    out += walk(node * 2 + 1, depth - 1);
+    out += walk(node * 2 + 2, depth - 1);
+  }
+  return out;
+}
+
 static double now_ms(void) {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
 }
 
+/*
+ * Which kernel runs is an argument, because the two want different
+ * instruments. `vector` is timed. `calls` is COUNTED — run it under
+ * `perf stat -e instructions` and difference the counts.
+ *
+ * That distinction is the whole point. Timing this at all was nearly a mistake:
+ * three repeats of the vector arm spread 1.782-1.868 ms, so the instrument
+ * resolves about +-5%, and the effect it was asked to price was 2-7%. A
+ * difference inside its own instrument's spread is not a measurement. An
+ * instruction count has no such spread — it is deterministic to well under
+ * 0.1% between runs of the same binary — so for "does this flag make us
+ * execute more instructions", counting answers what timing cannot.
+ */
 int main(int argc, char **argv) {
   const char *label = argc > 1 ? argv[1] : "arm";
+  const char *which = argc > 2 ? argv[2] : "vector";
+
+  if (strcmp(which, "calls") == 0) {
+    for (unsigned i = 0; i < NODES; i++) {
+      node_w[i] = (float)(i % 97) + 1.0f;
+      node_h[i] = (float)(i % 31) + 1.0f;
+    }
+    float acc = 0;
+    double t0 = now_ms();
+    for (unsigned r = 0; r < CALL_ROUNDS; r++) {
+      acc += walk(1 + (r % 7), 11);
+    }
+    printf("%s\tcalls\t%.3f ms\tchecksum %.3f\n",
+           label, now_ms() - t0, acc);
+    return 0;
+  }
+
   for (unsigned i = 0; i < PIXELS; i++) {
     src[i] = (i * 2654435761u) & 0x3fffffffu;
   }
@@ -77,6 +160,6 @@ int main(int argc, char **argv) {
   }
   // Printed so the loop cannot be optimised away, and so two arms that
   // disagree on it are not comparable in the first place.
-  printf("%s\t%.3f ms\tchecksum %.6f\n", label, best, checksum);
+  printf("%s\tvector\t%.3f ms\tchecksum %.6f\n", label, best, checksum);
   return 0;
 }

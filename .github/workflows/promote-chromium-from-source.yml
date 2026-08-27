@@ -47,6 +47,27 @@ jobs:
   promote:
     runs-on: ubuntu-latest
     steps:
+      # chs-latest is what the alpine-*-playwright consumer ships and what the
+      # nightly bench measures, and NOTHING above restricts who may write it:
+      # this workflow is dispatch-only, so until now a green dispatch from any
+      # branch republished the canonical consumer tags on both registries. That
+      # is a live hazard whenever an experiment build is being dispatched off a
+      # perf branch — the bench would then be measuring the arm as if it were
+      # shipped, and nothing in the run would say so.
+      #
+      # This FAILS rather than skipping, unlike the job-level `if:` the webkit
+      # promote uses. A skipped job reports the run green, and a promote
+      # workflow that reports green without promoting is the exact shape that
+      # has already cost this repo a wrong conclusion once (resume_from running
+      # only r1). Off main there is no correct outcome to be quiet about.
+      - name: Refuse to promote canonical tags from anywhere but main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::promote writes chs-<rev> / chs-<version> / chs-latest \
+          on GHCR and Docker Hub; it ran on ${{ github.ref }}. Merge first, \
+          then dispatch against main."
+          exit 1
+
       - name: Resolve chromium rev/version from PW browsers.json
         id: pins
         env:
