@@ -9,12 +9,14 @@ on:
   pull_request:
     paths:
       - 'scripts/check-runtime-parity.sh'
+      - 'scripts/exec_index.py'
       - 'tests/conformance/**'
       - '.github/workflows/tests-conformance.yml'
   push:
     branches: [main]
     paths:
       - 'scripts/check-runtime-parity.sh'
+      - 'scripts/exec_index.py'
       - 'tests/conformance/**'
 
 permissions:
@@ -27,3 +29,5 @@ jobs:
       - uses: actions/checkout@v7
       - name: runtime parity gate unit test
         run: bash tests/conformance/test-check-runtime-parity.sh
+      - name: execution index unit test
+        run: python3 tests/conformance/test-exec-index.py

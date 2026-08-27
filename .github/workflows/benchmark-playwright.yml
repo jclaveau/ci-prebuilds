@@ -165,6 +165,44 @@ jobs:
             P=(--project=chromium)
           fi
           pnpm exec playwright test "${P[@]}"
+      # The bench's `Test run` fetches a live site, so its wall clock is mostly
+      # internet. This measures the browser itself: runtime-probe serves its own
+      # page from 127.0.0.1 and times launch, navigation, layout, screenshot and
+      # a set of in-page kernels. Absolute ms are not comparable across scenarios
+      # (one runner each, ±20-30% between CPU models) — the summary divides every
+      # metric by that job's own `int_math` before comparing. See the normalize
+      # block there.
+      #
+      # No NODE_PATH dance, unlike the payload probes in test-and-publish: this
+      # job has already run `pnpm install`, and `playwright` is a direct
+      # devDependency, so it resolves from playwright/node_modules like the test
+      # step above.
+      - name: Runtime probe (browser execution speed)
+        working-directory: playwright
+        # Informational: a probe that cannot launch must not red a bench whose
+        # subject is install cost. The step still shows yellow so it is visible.
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          SCENARIO="${{ matrix.scenario }}"
+          [[ "$SCENARIO" == official* ]] && export HOME=/root
+          if [ "${{ matrix.browsers }}" = "all" ]; then
+            B=(chromium firefox webkit)
+          else
+            B=(chromium)
+          fi
+          for b in "${B[@]}"; do
+            node bench/runtime-probe.cjs \
+              --browser "$b" --target "$SCENARIO" --out /tmp/runtime-probe
+          done
+      - name: Upload runtime probe
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-probe-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}
+          path: /tmp/runtime-probe/
+          if-no-files-found: ignore
       - name: Upload install download size
         if: always()
         uses: actions/upload-artifact@v4
@@ -229,6 +267,44 @@ jobs:
             P=(--project=chromium --project=firefox --project=webkit)
           fi
           pnpm exec playwright test "${P[@]}"
+      # The bench's `Test run` fetches a live site, so its wall clock is mostly
+      # internet. This measures the browser itself: runtime-probe serves its own
+      # page from 127.0.0.1 and times launch, navigation, layout, screenshot and
+      # a set of in-page kernels. Absolute ms are not comparable across scenarios
+      # (one runner each, ±20-30% between CPU models) — the summary divides every
+      # metric by that job's own `int_math` before comparing. See the normalize
+      # block there.
+      #
+      # No NODE_PATH dance, unlike the payload probes in test-and-publish: this
+      # job has already run `pnpm install`, and `playwright` is a direct
+      # devDependency, so it resolves from playwright/node_modules like the test
+      # step above.
+      - name: Runtime probe (browser execution speed)
+        working-directory: playwright
+        # Informational: a probe that cannot launch must not red a bench whose
+        # subject is install cost. The step still shows yellow so it is visible.
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          SCENARIO="${{ matrix.scenario }}"
+          [[ "$SCENARIO" == official* ]] && export HOME=/root
+          if [ "${{ matrix.browsers }}" = "all" ]; then
+            B=(chromium firefox webkit)
+          else
+            B=(chromium)
+          fi
+          for b in "${B[@]}"; do
+            node bench/runtime-probe.cjs \
+              --browser "$b" --target "$SCENARIO" --out /tmp/runtime-probe
+          done
+      - name: Upload runtime probe
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-probe-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}
+          path: /tmp/runtime-probe/
+          if-no-files-found: ignore
       - name: Upload install download size
         if: always()
         uses: actions/upload-artifact@v4
@@ -357,6 +433,15 @@ jobs:
           pattern: act-*
           path: act-results
           merge-multiple: true
+      - name: Download runtime-probe artifacts (hosted)
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: runtime-probe-*
+          path: runtime-probe
+          # Each artifact holds <scenario>-<browser>.json, so the filenames alone
+          # carry the key and the directories can be flattened.
+          merge-multiple: true
       - name: Download install-dl artifacts (hosted)
         uses: actions/download-artifact@v4
         continue-on-error: true
@@ -404,7 +489,7 @@ jobs:
         run: |
           gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" --jq '.jobs[]' > jobs.ndjson
           python3 - <<'PY'
-          import json, os, glob, statistics, urllib.parse
+          import json, os, glob, statistics, sys, urllib.parse
           from collections import defaultdict
           from datetime import datetime
 
@@ -591,6 +676,16 @@ jobs:
               "alpine-dind-gyp": "alpine-dind-playwright-gyp",
           }
 
+          # ---- runtime probe: browser execution speed, normalized per job ----
+          # `Test run` above fetches a live site, so it is mostly internet. This is
+          # the other half of what a consumer pays. The normalization — and WHY
+          # int_math is the divisor, why it is excluded from the index and why
+          # libm_fmod is not — lives in scripts/exec_index.py, which
+          # tests/conformance/test-exec-index.py exercises directly.
+          sys.path.insert(0, "scripts")
+          from exec_index import load_probes, exec_index, exec_cell
+          probe = load_probes("runtime-probe/*.json")
+
           def table(mode, order_list, ref, title):
               """Hosted table (HTML). Per-cell rgba background — each duration AND each Δ column gets
               its own per-table gradient (deltas are the most important signal)."""
@@ -612,6 +707,7 @@ jobs:
                       d_num = ttt_m - base
                       p_num = d_num / base * 100
                   ok, n = oks[key]
+                  x_num, x_gsd = exec_index(probe, sc, ref)
                   rows.append({
                       "sc": sc,
                       "pull":    mean_of(agg[key]["pull"]),
@@ -620,9 +716,10 @@ jobs:
                       "test":    mean_of(agg[key]["test"]),
                       "total":   mean_of(agg[key]["total"]),
                       "d_num": d_num, "p_num": p_num,
+                      "x_num": x_num, "x": exec_cell(x_num, x_gsd),
                       "cell_str": cell_str, "d": d_str, "p": p_str, "ok": ok, "n": n,
                   })
-              R = {k: col_range([r[k] for r in rows]) for k in ("d_num", "p_num")}
+              R = {k: col_range([r[k] for r in rows]) for k in ("d_num", "p_num", "x_num")}
               out = [
                   f"### {title}",
                   "",
@@ -630,7 +727,9 @@ jobs:
                   '<thead><tr>'
                   '<th width="240">Scenario</th><th width="60">Runs OK</th><th width="90">Image&nbsp;size</th>'
                   '<th>pull</th><th>install</th><th width="90">full&nbsp;dl&nbsp;size</th><th>time to tests</th>'
-                  '<th>Test run</th><th>Total</th>'
+                  '<th>Test run</th>'
+                  '<th width="130">Δ&nbsp;execution&nbsp;%</th>'
+                  '<th>Total</th>'
                   '<th>Δ</th>'
                   '<th>Δ %</th>'
                   '</tr></thead>',
@@ -647,6 +746,7 @@ jobs:
                       f'<td>{full_dl_cell(r["sc"], mode)}</td>'
                       f'<td>{r["cell_str"]}</td>'
                       f'<td>{fmt(r["test"])}</td>'
+                      f'<td>{badge(r["x_num"], *R["x_num"], r["x"])}</td>'
                       f'<td>{fmt(r["total"])}</td>'
                       f'<td>{badge(r["d_num"], *R["d_num"], r["d"])}</td>'
                       f'<td>{badge(r["p_num"], *R["p_num"], r["p"])}</td>'
@@ -832,6 +932,16 @@ jobs:
               "The `…-playwright-gyp` rows are the same image **plus the node-gyp toolchain** "
               "(build-essential / build-base); compare each slim row with its `-gyp` twin to read the "
               "compiler's pull cost. "
+              "**Δ execution %** is the other half of the chain: `pull`/`install`/`time to tests` "
+              "are what a consumer pays to REACH a running test, and this is how fast the browser "
+              "then executes. It comes from `playwright/bench/runtime-probe.cjs`, which serves its "
+              "own page from `127.0.0.1` (so, unlike *Test run*, no CDN is in the measurement) and "
+              "times launch, navigation, layout, screenshot and a set of in-page kernels. Each "
+              "scenario gets its own runner and hosted CPU models differ 20-30%, so every metric is "
+              "divided by that job's own `int_math` — a pure-JS kernel touching no libc, no DOM and "
+              "no allocator — before the geometric mean against the reference row; `gsd` is the "
+              "spread of the underlying per-metric ratios, and a wide one means the metrics disagree "
+              "and the single number should not be quoted alone. Negative is faster. "
               "`alpine-dood-playwright` and `alpine-dind-playwright` carry all three browsers "
               "(chromium, firefox and webkit, all built from source against musl), so the "
               "*All browsers* tables measure the same work on every row. The **act** tables run each "

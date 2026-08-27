@@ -4,3 +4,4 @@ metrics/.*.lock
 # report.md; the chart is a binary that would churn on every snapshot.
 metrics/report.png
 metrics/report-recent.png
+__pycache__/
