@@ -19,9 +19,9 @@
  *     probed in the same workflow run — see the perf-report job.
  *   - Every kernel measures ONE subsystem. The `libm_fmod` kernel is split out
  *     explicitly because a `%` on a value past 2^53 compiles to an fmod() libm
- *     call, and musl's is ~3x glibc's: folding it into an "int math" kernel
- *     once made me report a libc gap as a JIT gap. Keep the divisor off a power
- *     of two or the engines fold it away and the kernel measures nothing.
+ *     call: folding it into an "int math" kernel once made me report a libc
+ *     gap as a JIT gap. What the row measures per engine is NOT settled — see
+ *     the kernel's own comment before quoting it in either direction.
  *   - In-page kernels time themselves with performance.now(), so protocol RTT is
  *     excluded from them and measured separately by `eval_rtt`.
  */
