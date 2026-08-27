@@ -67,6 +67,16 @@ static void convert8(const uint32_t *in, float *out) {
  */
 #define NODES 4096
 
+/*
+ * The call kernel needs its OWN round count, and a big one. At the vector
+ * kernel's 12 rounds the whole walk finished in 0.078 ms and `perf stat` was
+ * counting process startup rather than the workload: two reps of the SAME
+ * binary came back 573 801 and 551 210 instructions, a 4% spread on an 8%
+ * effect. Startup is a fixed ~500 k instructions, so the fix is to make the
+ * workload dwarf it rather than to try to subtract it.
+ */
+#define CALL_ROUNDS 20000
+
 static float node_w[NODES];
 static float node_h[NODES];
 
@@ -123,8 +133,8 @@ int main(int argc, char **argv) {
     }
     float acc = 0;
     double t0 = now_ms();
-    for (unsigned r = 0; r < ROUNDS; r++) {
-      acc += walk(1, 11);
+    for (unsigned r = 0; r < CALL_ROUNDS; r++) {
+      acc += walk(1 + (r % 7), 11);
     }
     printf("%s\tcalls\t%.3f ms\tchecksum %.3f\n",
            label, now_ms() - t0, acc);
