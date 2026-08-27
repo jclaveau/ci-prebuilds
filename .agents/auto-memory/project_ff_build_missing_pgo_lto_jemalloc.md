@@ -240,3 +240,30 @@ runner, pnpm, their app), and the `-insecure` variant drops mimalloc's
 hardening. That is exactly the scoping the shim comment chose against, so it
 needs jean's call rather than a quiet flip.
 [[project_ff_probe_pinned_rows_and_timer_grain]]
+**2026-08-27 — the open question above ("never empirically shown to reach a
+content process") is ANSWERED, see the `firefox_procs=6 with_mimalloc_mapped=6`
+measurement earlier in this file.** Both entries were written the same day by
+parallel agents and the merge put the answer before the question; the answer is
+the later fact. The LTO arm it asks for is building as run 33063836129, with
+`preload_a == preload_b` so the allocator is held constant, and
+`apply-and-build.sh` now asserts `MOZ_LTO` in autoconf.mk and prints libxul's
+`.text` so the arm cannot come back void unnoticed.
+
+**2026-08-27 — the node fix takes `eval_rtt` BELOW official.** ff-perf-ab
+33066228735, our artifact with the node preload against `official`, same runner,
+same EPYC 7763 model as the n=5 baseline it is being compared with:
+
+| row | baseline (n=5, no node fix) | with node preload |
+|---|---|---|
+| `eval_rtt` | 1.017 | **0.957** |
+| `layout` | 1.087 | 1.120 (n=1) |
+| `dom_churn` | 0.805 | 0.756 |
+| `libm_fmod` | 0.667 | 0.667 |
+| `int_math` / `js_alloc` / `click_force` / `locator_click` | 1.000 | 1.000 / 1.000 / 1.001 / 1.000 |
+
+Do not read `context_page` (1.061), `goto_cold` (1.009) or `screenshot` (1.025)
+off this run — it is n=1 and those rows carry the outliers (`context_page` has a
+1050 ms sample among ~230 ms ones). At n=5 they are 0.965 / 0.968 / 1.009.
+
+So after the node preload, **`layout` is the only row still above 1.00** that is
+not pinned by physics.
