@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Unit test for the bench's CPU-normalized execution index.
+"""Unit test for the bench's execution index.
 
-The whole point of the index is that it survives the runner lottery: the bench
-gives every scenario its own machine, and hosted CPU models differ by 20-30%. A
-version of this that reported machine speed as browser speed would look
-perfectly reasonable in the table, so the machine-cancels property is asserted
-first and directly.
+The index compares browser speed across scenarios that each ran on their own
+hosted runner, so the properties worth pinning are the ones that decide whether
+a number is real: enough samples for the median to have converged, and no
+kernel in the set that cannot express a difference in the first place.
 """
 
 import json
@@ -15,27 +14,22 @@ import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "scripts"))
 import exec_index as X  # noqa: E402
-from exec_index import exec_cell, exec_index, load_probes  # noqa: E402
+from exec_index import exec_cell, exec_index, load_probes, profile  # noqa: E402
 
 failures = 0
 checks = 0
 
 METRICS = ["launch", "goto_cold", "layout", "screenshot", "dom_churn", "libm_fmod"]
+N = X.MIN_RUNS
 
 
-def probes(**scenarios):
-    """{scenario: (cpu_factor, browser_factor)} -> a probe dict.
-
-    cpu_factor scales EVERY metric including the normalizer, so it stands for a
-    slower runner. browser_factor scales only the measured metrics, so it stands
-    for a slower browser. The index must see the second and not the first.
-    """
-    out = {}
-    for name, (cpu, browser) in scenarios.items():
-        metrics = {"int_math": 40.0 * cpu}
-        for i, metric in enumerate(METRICS):
-            metrics[metric] = (100.0 + i) * cpu * browser
-        out[(name, "chromium")] = [metrics]
+def runs(factor, n=None, **overrides):
+    """n identical runs whose metrics are `factor` times the 100ms baseline."""
+    out = []
+    for _ in range(n if n is not None else N):
+        metrics = {m: 100.0 * factor for m in METRICS}
+        metrics.update(overrides)
+        out.append(metrics)
     return out
 
 
@@ -55,104 +49,58 @@ def expect_none(label, got):
         failures += 1
 
 
-# The load-bearing one: same browser, a runner 2x slower. Every raw ms doubles,
-# and the index must still read parity.
-p = probes(official=(1.0, 1.0), alpine=(2.0, 1.0))
-expect("a 2x slower runner cancels", exec_index(p, "alpine", "official")[0], 0.0)
+base = {("official", "chromium"): runs(1.0)}
 
-# Same runner, a browser 25% slower.
-p = probes(official=(1.0, 1.0), alpine=(1.0, 1.25))
+# The plain reading.
+p = {**base, ("alpine", "chromium"): runs(1.25)}
 expect("a 25% slower browser shows +25%", exec_index(p, "alpine", "official")[0], 25.0)
+expect_none("the reference row is blank", exec_index(p, "official", "official")[0])
 
-# Both at once — the browser delta must survive the machine delta untouched.
-p = probes(official=(1.0, 1.0), alpine=(3.0, 0.80))
-expect("browser gain survives a 3x slower runner",
-       exec_index(p, "alpine", "official")[0], -20.0)
+# --- sample count is load-bearing ---
+# Subsampling real data put n=3 at sd 6.6% with a worst draw of +40.8% against a
+# +15.8% truth, so anything under MIN_RUNS must report nothing rather than a
+# number. This is the guard that keeps a fast dispatch from publishing garbage.
+thin = {("official", "chromium"): runs(1.0, n=N - 1),
+        ("alpine", "chromium"): runs(1.25, n=N - 1)}
+expect_none("under MIN_RUNS on both sides", exec_index(thin, "alpine", "official")[0])
+half = {("official", "chromium"): runs(1.0),
+        ("alpine", "chromium"): runs(1.25, n=N - 1)}
+expect_none("under MIN_RUNS on one side", exec_index(half, "alpine", "official")[0])
 
-# The reference compares to nothing.
-expect_none("reference row is blank", exec_index(p, "official", "official")[0])
+# --- the median is what cancels the runner lottery ---
+# One job landing on a much slower CPU inflates every metric in that sample. The
+# median must ignore it; a mean would not.
+lottery = {**base, ("alpine", "chromium"): runs(1.25)[:-1] + runs(8.0, n=1)}
+expect("an outlier runner is medianed away",
+       exec_index(lottery, "alpine", "official")[0], 25.0)
 
-# A scenario with no probe at all, and a reference with none.
-expect_none("absent scenario", exec_index(p, "ubuntu", "official")[0])
-expect_none("absent reference", exec_index(p, "alpine", "nosuch")[0])
+# --- clock-bound kernels cannot discriminate, so they must not dilute ---
+# locator_click measured 3333.x ms on BOTH sides, CV 0.0%. Left in, it drags a
+# real regression toward parity.
+clocked = {
+    ("official", "chromium"): runs(1.0, locator_click=3333.0),
+    ("alpine", "chromium"): runs(1.5, locator_click=3333.0),
+}
+expect("a clock-bound kernel does not dilute the index",
+       exec_index(clocked, "alpine", "official")[0], 50.0)
 
-# Too few usable metrics is not a geometric mean.
-thin = {("official", "chromium"): [{"int_math": 40.0, "launch": 100.0}],
-        ("alpine", "chromium"): [{"int_math": 40.0, "launch": 150.0}]}
-expect_none("one metric is not a geomean", exec_index(thin, "alpine", "official")[0])
-
-# int_math must not be counted as one of the metrics: with it excluded these two
-# scenarios differ on every remaining metric by exactly 50%.
-half = {("official", "chromium"): [{"int_math": 40.0, **{m: 100.0 for m in METRICS}}],
-        ("alpine", "chromium"): [{"int_math": 40.0, **{m: 150.0 for m in METRICS}}]}
-expect("normalizer excluded from the index",
-       exec_index(half, "alpine", "official")[0], 50.0)
-
-# A browser present on one side only contributes nothing rather than exploding.
-mixed = dict(probes(official=(1.0, 1.0), alpine=(1.0, 1.5)))
-mixed[("alpine", "webkit")] = [{"int_math": 40.0, **{m: 999.0 for m in METRICS}}]
-expect("a browser the reference lacks is skipped",
-       exec_index(mixed, "alpine", "official")[0], 50.0)
-
-# load_probes: newest-wins is wrong, least-contended-wins is the rule.
-with tempfile.TemporaryDirectory() as d:
-    for i, norm in enumerate([40.0, 80.0]):
-        json.dump({"target": "alpine", "browser": "chromium",
-                   "metrics": {"int_math": {"median_ms": norm},
-                               "launch": {"median_ms": 100.0}}},
-                  open(os.path.join(d, f"{i}.json"), "w"))
-    json.dump({"nonsense": True}, open(os.path.join(d, "broken.json"), "w"))
-    loaded = load_probes(os.path.join(d, "*.json"))
-    checks += 1
-    norms = sorted(r["int_math"] for r in loaded.get(("alpine", "chromium"), []))
-    if norms != [40.0, 80.0]:
-        print(f"FAIL: load_probes keeps EVERY run — got {norms}", file=sys.stderr)
-        failures += 1
-    checks += 1
-    if len(loaded) != 1:
-        print(f"FAIL: load_probes drops unusable records — got {loaded}", file=sys.stderr)
-        failures += 1
-
+# --- parity is a finding, not a reason to drop a metric ---
+# screenshot came back ~1.000x for real. It stays, and it correctly pulls a
+# mixed picture toward the middle.
+mixed = {
+    ("official", "chromium"): runs(1.0),
+    ("alpine", "chromium"): runs(1.0, screenshot=100.0, launch=400.0),
+}
+got = exec_index(mixed, "alpine", "official")[0]
 checks += 1
-if exec_cell(None, None) != "—" or not exec_cell(-12.0, 3.0).startswith("−12%"):
-    print(f"FAIL: exec_cell formatting — {exec_cell(-12.0, 3.0)!r}", file=sys.stderr)
+if got is None or not (20.0 < got < 30.0):
+    print(f"FAIL: a metric at parity still counts — got {got}, wanted 20..30", file=sys.stderr)
     failures += 1
 
-# --- runs > 1: median across runs, normalized inside each run first ---
-# A contended runner inflates every metric INCLUDING the normalizer, so it must
-# not move the index. Picking one run by any rule (the old "fastest normalizer
-# wins") throws away the redundancy that runs>1 was bought for.
-contended = {
-    ("official", "chromium"): [{"int_math": 40.0, **{m: 100.0 for m in METRICS}}],
-    ("alpine", "chromium"): [
-        {"int_math": 40.0, **{m: 120.0 for m in METRICS}},
-        {"int_math": 40.0, **{m: 120.0 for m in METRICS}},
-        {"int_math": 200.0, **{m: 600.0 for m in METRICS}},   # 5x contended
-    ],
-}
-expect("a contended run does not move the median",
-       exec_index(contended, "alpine", "official")[0], 20.0)
-
-# The median is a median, not a mean: one wild run cannot drag it.
-wild = {
-    ("official", "chromium"): [{"int_math": 40.0, **{m: 100.0 for m in METRICS}}],
-    ("alpine", "chromium"): [
-        {"int_math": 40.0, **{m: 100.0 for m in METRICS}},
-        {"int_math": 40.0, **{m: 100.0 for m in METRICS}},
-        {"int_math": 40.0, **{m: 4000.0 for m in METRICS}},
-    ],
-}
-expect("an outlier run is medianed away", exec_index(wild, "alpine", "official")[0], 0.0)
-
 # --- the libc switch ---
-# libm_fmod measured ~1.7x in musl's FAVOUR, so including it moves an otherwise
-# identical alpine row below parity. Both readings are defensible; the point is
-# that the flag actually changes the number.
 libc = {
-    ("official", "chromium"): [{"int_math": 40.0, "libm_fmod": 170.0,
-                                **{m: 100.0 for m in METRICS if m != "libm_fmod"}}],
-    ("alpine", "chromium"): [{"int_math": 40.0, "libm_fmod": 100.0,
-                              **{m: 100.0 for m in METRICS if m != "libm_fmod"}}],
+    ("official", "chromium"): runs(1.0, libm_fmod=170.0),
+    ("alpine", "chromium"): runs(1.0, libm_fmod=100.0),
 }
 X.KEEP_LIBC_METRICS = True
 with_libc = exec_index(libc, "alpine", "official")[0]
@@ -166,6 +114,40 @@ if with_libc is None or with_libc >= -1.0:
           file=sys.stderr)
     failures += 1
 
+# --- a browser the reference lacks contributes nothing rather than exploding ---
+lopsided = {**base, ("alpine", "chromium"): runs(1.5)}
+lopsided[("alpine", "webkit")] = runs(99.0)
+expect("a browser the reference lacks is skipped",
+       exec_index(lopsided, "alpine", "official")[0], 50.0)
+
+expect_none("absent scenario", exec_index(base, "ubuntu", "official")[0])
+expect_none("absent reference", exec_index(base, "official", "nosuch")[0])
+
+# --- load_probes / profile ---
+with tempfile.TemporaryDirectory() as d:
+    for i, launch in enumerate([100.0, 300.0, 200.0]):
+        json.dump({"target": "alpine", "browser": "chromium",
+                   "metrics": {"launch": {"median_ms": launch}}},
+                  open(os.path.join(d, f"{i}.json"), "w"))
+    json.dump({"nonsense": True}, open(os.path.join(d, "broken.json"), "w"))
+    loaded = load_probes(os.path.join(d, "*.json"))
+    checks += 1
+    if len(loaded.get(("alpine", "chromium"), [])) != 3:
+        print(f"FAIL: load_probes keeps every run — got {loaded}", file=sys.stderr)
+        failures += 1
+    checks += 1
+    if len(loaded) != 1:
+        print(f"FAIL: load_probes drops unusable records — got {loaded}", file=sys.stderr)
+        failures += 1
+    checks += 1
+    if profile(loaded[("alpine", "chromium")])["launch"] != 200.0:
+        print("FAIL: profile takes the median, not the first or the mean", file=sys.stderr)
+        failures += 1
+
+checks += 1
+if exec_cell(None, None) != "—" or not exec_cell(-12.0, 3.0).startswith("−12%"):
+    print(f"FAIL: exec_cell formatting — {exec_cell(-12.0, 3.0)!r}", file=sys.stderr)
+    failures += 1
 
 print(f"exec-index: {checks - failures}/{checks} checks passed")
 sys.exit(1 if failures else 0)

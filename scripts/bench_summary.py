@@ -200,11 +200,12 @@ LABEL = {
     "alpine-dind-gyp": "alpine-dind-playwright-gyp",
 }
 
-# ---- runtime probe: browser execution speed, normalized per job ----
+# ---- runtime probe: browser execution speed ----
 # `Test run` above fetches a live site, so it is mostly internet. This is
-# the other half of what a consumer pays. The normalization — and WHY
-# int_math is the divisor, why it is excluded from the index and why
-# libm_fmod is not — lives in scripts/exec_index.py, which
+# the other half of what a consumer pays. Why the median over runs is what
+# cancels the runner lottery, why an int_math normalization was tried and
+# removed, and how many runs the index needs before it says anything at
+# all, are in scripts/exec_index.py — which
 # tests/conformance/test-exec-index.py exercises directly.
 from exec_index import load_probes, exec_index, exec_cell
 probe = load_probes("runtime-probe/*.json")
@@ -460,13 +461,15 @@ parts = [
     "then executes. It comes from `playwright/bench/runtime-probe.cjs`, which serves its "
     "own page from `127.0.0.1` (so, unlike *Test run*, no CDN is in the measurement) and "
     "times launch, navigation, layout, screenshot and a set of in-page kernels. Each "
-    "scenario gets its own runner and hosted CPU models differ 20-30%, so every metric is "
-    "divided by that job's own `int_math` — a pure-JS kernel touching no libc, no DOM and "
-    "no allocator — before the geometric mean against the reference row. With `runs > 1` "
-    "each metric is normalized INSIDE its own run and the runs are then medianed, so a "
-    "contended runner cannot move the figure. `gsd` is the spread of the underlying "
+    "scenario gets its own runner and the CPU model varies, so the figure is the geometric "
+    "mean, against the reference row, of each metric's MEDIAN across runs — the median is "
+    "what cancels the runner lottery. Below **5 runs** the column reads `—` rather than a "
+    "number: subsampling real data put n=3 at a standard deviation of 6.6% with a worst "
+    "draw of +40.8% against a +15.8% truth. `gsd` is the spread of the underlying "
     "per-metric ratios, and a wide one means the metrics disagree and the single number "
-    "should not be quoted alone. Negative is faster. One caveat worth carrying: "
+    "should not be quoted alone. Negative is faster. `locator_click` is excluded because it "
+    "is frame-quantized — 3333.x ms on both sides, CV 0.0% over ten runs — so it can "
+    "express no difference and would only dilute the column. One caveat worth carrying: "
     "`libm_fmod` is a C-library kernel, not a browser one, and musl measures ~1.7x FASTER "
     "there — so an alpine row's index includes a libc gain of roughly 4% that has nothing "
     "to do with how the browser was built. "

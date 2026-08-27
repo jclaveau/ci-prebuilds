@@ -1,34 +1,37 @@
-"""Browser execution speed across bench scenarios, with the runner cancelled out.
+"""Browser execution speed across bench scenarios.
 
 `benchmark-playwright.yml` measures what a consumer pays to GET to a running
 test: pull, install, time-to-tests. This is the other half — how fast the
 browser in the image then executes — so the two together describe the whole
 chain rather than only its first leg.
 
-The bench runs one job per scenario and hosted runners hand out different CPU
-models per job, so raw milliseconds compare machines, not browsers. Every metric
-is therefore divided by that job's OWN `int_math` before any comparison: a
-pure-JS integer kernel that touches no libc, no DOM and no allocator, and that
-has measured flat across every build variant this repo has shipped (DCHECKs on
-and off, PGO, ThinLTO). What survives the division is the browser.
+Each scenario runs on its own hosted runner and the CPU model varies (three
+models across twenty jobs in run 33038504763), so a single sample compares
+machines as much as browsers. **The median over runs is what cancels that.**
 
-Two deliberate choices about which metrics count:
+An earlier version of this file also divided every metric by that run's own
+`int_math`, on the theory that a pure-JS kernel stands in for the runner's
+speed. Measured against ground truth — alpine vs official restricted to the
+same CPU model, 8 and 7 samples — that normalization does nothing:
 
-- `int_math` is EXCLUDED. Normalized by itself both sides become x/x, so its
-  ratio is exactly 1.0 and including it would only pull every scenario toward
-  parity while shrinking the spread.
-- `libm_fmod` is KEPT, and it is the one metric here that is NOT about the
-  browser build. Measured on this repo's own artifacts, musl's fmod is ~1.7x
-  FASTER than glibc's (50 vs 85 ms and 64 vs 110 ms across two runs), while a
-  same-libc arm reads 0.99x — so the kernel really is libc-sensitive and the
-  win is real. It stays because the consumer does get it, but it means an
-  alpine row carries a libc effect on top of its browser effect: worth about
-  -4% on a twelve-metric index. Drop it from KEEP_LIBC_METRICS if you want the
-  index to describe only the build.
+    ground truth                  geomean 1.158
+    normalized      mean |log err| 0.0083
+    raw, no normalizer            0.0085
 
-  (`runtime-probe.cjs` long claimed musl's fmod was ~2.1x SLOWER. That is
-  contradicted by every cross-libc run this repo has recorded; the comment
-  there has been corrected too.)
+Worse, on the alpine side `int_math` ANTI-correlates with the CPU-bound
+kernels it is supposed to track (`layout` r=-0.98, `eval_rtt` r=-0.84), so at
+low run counts it injected error rather than removing it. It is gone; the
+median does the work.
+
+Sample count is therefore load-bearing. Subsampling the same data:
+
+    n=1   mean +19.9%  sd 13.1%   worst +52.2%
+    n=3   mean +17.6%  sd  6.6%   worst +40.8%
+    n=5   mean +16.2%  sd  1.2%   worst +19.4%
+    n=10  mean +16.1%  sd  0.0%            (truth +15.8%)
+
+so below MIN_RUNS the index reports nothing rather than a number that was
+wrong by 25 points on a bad draw.
 """
 
 import glob
@@ -36,26 +39,34 @@ import json
 import math
 import statistics
 
-NORMALIZER = "int_math"
+# Below this the geometric mean is a coin toss — see the table above.
+MIN_RUNS = 5
 
-# Kernels whose result is dominated by the C library rather than by the browser
-# build. Keeping them answers "what does this image cost me"; dropping them
-# answers "how good is this build". See the module docstring for the numbers.
+# Fewer surviving metrics than this is not a geometric mean.
+MIN_RATIOS = 4
+
+# Wall-clock-bound kernels. `locator_click` is frame-quantized: it measured
+# 3333.x ms on BOTH sides with a coefficient of variation of 0.0% across ten
+# runs each, so it can express no difference between two browsers and only
+# dilutes the index toward parity.
+#
+# Note the rule is "cannot discriminate", not "did not discriminate this time".
+# `screenshot`, `js_alloc` and `libm_fmod` all came back ~1.000x against
+# official — that is a finding, not a reason to drop them, and dropping a
+# metric because it showed parity would bias every future index upward.
+CLOCK_BOUND_METRICS = {"locator_click"}
+
+# `libm_fmod` measures the C library rather than the browser build. Measured on
+# firefox, musl runs it ~1.7x FASTER than glibc (50 vs 85 ms, 64 vs 110 ms)
+# while a same-libc arm reads 0.99x; on chromium the same kernel comes back
+# 1.001x. Keeping it answers "what does this image cost me"; dropping it
+# answers "how good is this build".
 LIBC_METRICS = {"libm_fmod"}
 KEEP_LIBC_METRICS = True
 
-# Below this, a "geometric mean" is a couple of kernels that happened to
-# survive. Report nothing rather than a figure nobody should quote.
-MIN_RATIOS = 4
-
 
 def load_probes(pattern):
-    """Read runtime-probe JSONs into {(scenario, browser): [{metric: median_ms}]}.
-
-    Every run is kept. `runs > 1` exists to survive a contended runner, and
-    picking one sample by any rule throws that away — `normalized_profile`
-    medians them instead.
-    """
+    """Read runtime-probe JSONs into {(scenario, browser): [{metric: median_ms}]}."""
     probes = {}
     for path in sorted(glob.glob(pattern)):
         try:
@@ -68,53 +79,50 @@ def load_probes(pattern):
             for name, value in (record.get("metrics") or {}).items()
             if isinstance(value, dict) and value.get("median_ms")
         }
-        if not scenario or not browser or not metrics.get(NORMALIZER):
+        if not scenario or not browser or not metrics:
             continue
         probes.setdefault((scenario, browser), []).append(metrics)
     return probes
 
 
-def normalized_profile(runs):
-    """{metric: median across runs of (metric / that run's normalizer)}.
-
-    Normalizing INSIDE each run and medianing after is the order that matters:
-    each run got its own machine, so a median of raw milliseconds would be a
-    median over CPU models.
-    """
+def profile(runs):
+    """{metric: median milliseconds across runs}."""
     per_metric = {}
     for metrics in runs:
-        divisor = metrics.get(NORMALIZER)
-        if not divisor:
-            continue
         for metric, value in metrics.items():
-            if metric == NORMALIZER or not value:
-                continue
-            per_metric.setdefault(metric, []).append(value / divisor)
+            if value:
+                per_metric.setdefault(metric, []).append(value)
     return {m: statistics.median(v) for m, v in per_metric.items() if v}
+
+
+def counts(metric):
+    if metric in CLOCK_BOUND_METRICS:
+        return False
+    if metric in LIBC_METRICS and not KEEP_LIBC_METRICS:
+        return False
+    return True
 
 
 def exec_index(probes, scenario, reference):
     """(percent delta, spread percent) for `scenario` against `reference`.
 
-    Negative means faster than the reference. Returns (None, None) when the
-    scenario IS the reference, or when either side lacks a usable probe.
+    Negative means faster than the reference. (None, None) when the scenario IS
+    the reference, when either side has fewer than MIN_RUNS samples, or when too
+    few metrics survive.
     """
     if scenario == reference:
         return None, None
     ratios = []
     for (name, browser), runs in probes.items():
-        if name != scenario:
+        if name != scenario or len(runs) < MIN_RUNS:
             continue
         base_runs = probes.get((reference, browser))
-        if not base_runs:
+        if not base_runs or len(base_runs) < MIN_RUNS:
             continue
-        ours = normalized_profile(runs)
-        theirs = normalized_profile(base_runs)
+        ours, theirs = profile(runs), profile(base_runs)
         for metric, value in ours.items():
-            if metric in LIBC_METRICS and not KEEP_LIBC_METRICS:
-                continue
             other = theirs.get(metric)
-            if value > 0 and other and other > 0:
+            if counts(metric) and value > 0 and other and other > 0:
                 ratios.append(value / other)
     if len(ratios) < MIN_RATIOS:
         return None, None

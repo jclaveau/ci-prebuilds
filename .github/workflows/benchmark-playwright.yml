@@ -168,10 +168,9 @@ jobs:
       # The bench's `Test run` fetches a live site, so its wall clock is mostly
       # internet. This measures the browser itself: runtime-probe serves its own
       # page from 127.0.0.1 and times launch, navigation, layout, screenshot and
-      # a set of in-page kernels. Absolute ms are not comparable across scenarios
-      # (one runner each, ±20-30% between CPU models) — the summary divides every
-      # metric by that job's own `int_math` before comparing. See the normalize
-      # block there.
+      # a set of in-page kernels. One sample is not comparable across scenarios
+      # (a runner each, three CPU models across twenty jobs in run 33038504763);
+      # the summary medians the runs, and reports nothing below five of them.
       #
       # No NODE_PATH dance, unlike the payload probes in test-and-publish: this
       # job has already run `pnpm install`, and `playwright` is a direct
@@ -270,10 +269,9 @@ jobs:
       # The bench's `Test run` fetches a live site, so its wall clock is mostly
       # internet. This measures the browser itself: runtime-probe serves its own
       # page from 127.0.0.1 and times launch, navigation, layout, screenshot and
-      # a set of in-page kernels. Absolute ms are not comparable across scenarios
-      # (one runner each, ±20-30% between CPU models) — the summary divides every
-      # metric by that job's own `int_math` before comparing. See the normalize
-      # block there.
+      # a set of in-page kernels. One sample is not comparable across scenarios
+      # (a runner each, three CPU models across twenty jobs in run 33038504763);
+      # the summary medians the runs, and reports nothing below five of them.
       #
       # No NODE_PATH dance, unlike the payload probes in test-and-publish: this
       # job has already run `pnpm install`, and `playwright` is a direct
