@@ -607,19 +607,6 @@ else
   echo "WARNING: no autoconf.mk at $AUTOCONF_MK — hardening flags unreportable" >&2
 fi
 
-# libxul's .text size is the cheapest evidence that a codegen-level option
-# (LTO here, hardening before it) actually changed the artifact: an arm whose
-# .text matches the baseline byte-for-byte varied nothing. Non-LTO baseline for
-# firefox 153.0 is 118 846 320 B.
-XUL="$SRC/obj/dist/bin/libxul.so"
-if [[ -r "$XUL" ]] && command -v readelf >/dev/null; then
-  echo "===== libxul .text ====="
-  readelf -S "$XUL" | grep -A1 '\.text ' | sed 's/^/  /' || echo "  (no .text section)"
-  echo "===== end libxul .text ====="
-else
-  echo "WARNING: libxul .text unreportable ($XUL / readelf)" >&2
-fi
-
 # cbindgen 0.29.4 (Alpine edge) has a regression where impl-associated
 # constants used in Rust array-size expressions (e.g. `[BudgetType;
 # BudgetType::COUNT]`) get emitted as bare `[COUNT]` in the generated
@@ -725,6 +712,21 @@ if [ -z "$DIST" ] || [ ! -x "$DIST/firefox" ]; then
   exit 1
 fi
 echo "===== Built: $SRC/$DIST (mach rc=$mach_rc, package rc=$pkg_rc; artifact OK) ====="
+
+# libxul's .text size is the cheapest evidence that a codegen-level option
+# (LTO here, hardening before it) actually changed the artifact: an arm whose
+# .text matches the baseline byte-for-byte varied nothing. Non-LTO baseline for
+# firefox 153.0 is 118 846 320 B. Read AFTER the build is confirmed: the
+# cbindgen two-pass means the first ./mach build fails by design, and at that
+# point there is no libxul to measure.
+XUL="$SRC/obj/dist/bin/libxul.so"
+if [[ -r "$XUL" ]] && command -v readelf >/dev/null; then
+  echo "===== libxul .text ====="
+  readelf -S "$XUL" | grep -A1 '\.text ' | sed 's/^/  /' || echo "  (no .text section)"
+  echo "===== end libxul .text ====="
+else
+  echo "WARNING: libxul .text unreportable ($XUL / readelf)" >&2
+fi
 # `| head -20` would trigger SIGPIPE under `set -o pipefail` (ls writes ~100s
 # of lines, head closes stdin at 20, ls exits 141, pipefail propagates). Use
 # `|| true` so the diagnostic dump can't kill a build that already succeeded.
