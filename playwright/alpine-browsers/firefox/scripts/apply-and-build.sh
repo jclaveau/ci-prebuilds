@@ -516,7 +516,8 @@ unset CARGO_PROFILE_RELEASE_LTO
 # `--disable-lto` covers C/C++ LTO but Firefox's Rust crates pick LTO up from
 # CARGO_PROFILE_RELEASE_LTO / RUSTFLAGS. Setting RUSTFLAGS here bypasses both
 # the cargo profile and any inherited toolchain default. Diagnostic-only path —
-# the musl producer build (aports' mozconfig) keeps LTO on for shipping perf.
+# the musl producer build gets LTO from mozconfig.overlay, not from aports'
+# mozconfig, which has no `lto` line at all.
 if [[ "$PW_SKIP_APORTS" == "1" ]]; then
   export CARGO_PROFILE_RELEASE_LTO=false
   export RUSTFLAGS="-Copt-level=2 -Cdebuginfo=0 -Cembed-bitcode=no"
@@ -589,8 +590,34 @@ if [[ -r "$AUTOCONF_MK" ]]; then
   grep -E '^(MOZ_HARDENING|MOZ_TRIVIAL_AUTO_VAR_INIT|MOZ_OPTIMIZE|MOZ_LTO|MOZ_PGO)' \
     "$AUTOCONF_MK" | sed 's/^/  /' || echo "  (no match — grep is broken, see control above)"
   echo "===== end configure flags ====="
+
+  # The producer mozconfig asks for --enable-lto=cross. Assert configure agreed
+  # rather than trusting the flag: a silently-dropped option produces a green
+  # build whose numbers mean nothing, which is how the hardening arm went VOID.
+  # The PW_SKIP_APORTS diagnostic path disables LTO on purpose, so it is exempt.
+  if [[ "$PW_SKIP_APORTS" != "1" ]]; then
+    if grep -qE '^MOZ_LTO[[:space:]]*=[[:space:]]*\S' "$AUTOCONF_MK"; then
+      echo "  LTO reached configure ✓"
+    else
+      echo "ERROR: mozconfig asked for LTO but autoconf.mk has no MOZ_LTO" >&2
+      exit 1
+    fi
+  fi
 else
   echo "WARNING: no autoconf.mk at $AUTOCONF_MK — hardening flags unreportable" >&2
+fi
+
+# libxul's .text size is the cheapest evidence that a codegen-level option
+# (LTO here, hardening before it) actually changed the artifact: an arm whose
+# .text matches the baseline byte-for-byte varied nothing. Non-LTO baseline for
+# firefox 153.0 is 118 846 320 B.
+XUL="$SRC/obj/dist/bin/libxul.so"
+if [[ -r "$XUL" ]] && command -v readelf >/dev/null; then
+  echo "===== libxul .text ====="
+  readelf -S "$XUL" | grep -A1 '\.text ' | sed 's/^/  /' || echo "  (no .text section)"
+  echo "===== end libxul .text ====="
+else
+  echo "WARNING: libxul .text unreportable ($XUL / readelf)" >&2
 fi
 
 # cbindgen 0.29.4 (Alpine edge) has a regression where impl-associated
