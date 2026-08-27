@@ -1396,23 +1396,38 @@ jobs:
               image="ghcr.io/jclaveau/${target}-dood-playwright:${TAG}"
               home=/home/runner
             fi
-            # Our WebKit cannot serve Playwright 1.62.1 — newPage never
-            # returns, and this job burned its whole 30-minute budget on it.
-            # Only OUR images are affected; the `official` control still
-            # measures webkit, so the comparison keeps a leg to stand on.
-            # Drop this once a wk-<rev> from the new patch series ships:
-            # https://github.com/jclaveau/ci-prebuilds/issues/100
-            if [ "$BROWSER" = webkit ] && [ "$target" != official ]; then
-              echo "skipping $target/webkit — see issue #100"
-              continue
-            fi
             echo "::group::probe $target/$BROWSER ($image)"
             # seccomp=unconfined: WebKit-WPE's bwrap needs it on our alpine images
             # (no-op for the chromium/firefox legs and for the MCR control).
             # One target failing must not cost us the others' measurements, so the
             # loop records the failure and carries on; `rc` is re-raised at the end.
-            docker run --rm \
-              --security-opt seccomp=unconfined \
+            SECURITY_FLAGS="--security-opt seccomp=unconfined"
+            EXTRA_ENV=""
+            if [ "$BROWSER" = webkit ]; then
+              # Same peel as pw-conformance.yml and the Tier-2 smoke: our
+              # WebKit-WPE's bwrap wants apparmor unconfined + SYS_ADMIN +
+              # NET_ADMIN on top of seccomp, and the escape hatch has to be
+              # spelled WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS — the shorter
+              # WEBKIT_DISABLE_SANDBOX is silently ignored and leaves bwrap live.
+              #
+              # Applied to EVERY target including the MCR control, which does not
+              # need it: an A/B whose arms run under different container
+              # privileges is measuring two variables. The flags only ever
+              # subtract restrictions, so the control keeps its meaning.
+              SECURITY_FLAGS="$SECURITY_FLAGS --security-opt apparmor=unconfined --cap-add SYS_ADMIN --cap-add NET_ADMIN"
+              EXTRA_ENV="--env WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 --env WEBKIT_FORCE_SANDBOX=0"
+            fi
+            # A hang must cost one target, not the job. Our WebKit used to eat
+            # the whole 30-minute budget at newPage (issue #100, fixed by the
+            # base move); this bounds any repeat to 8 minutes and lets the
+            # remaining targets still be measured. --name + rm -f because a
+            # timed-out `docker run --rm` leaves the container Up and the next
+            # target then fails on the stale name.
+            cname="probe-${target}-${BROWSER}"
+            docker rm -f "$cname" >/dev/null 2>&1 || true
+            # shellcheck disable=SC2086  # SECURITY_FLAGS/EXTRA_ENV are flag lists — word-splitting is intended
+            timeout --foreground 480 docker run --rm --name "$cname" \
+              $SECURITY_FLAGS $EXTRA_ENV \
               --env "HOME=$home" \
               --env "PROBE_BROWSER=$BROWSER" \
               --env "PROBE_TARGET=$target" \
@@ -1433,6 +1448,7 @@ jobs:
                 node /probe/runtime-probe.cjs \
                   --browser "$PROBE_BROWSER" --target "$PROBE_TARGET" --out /out
               ' 2>&1 | tee "perf-out/probe-${target}-${BROWSER}.log" || rc=1
+            docker rm -f "$cname" >/dev/null 2>&1 || true
             echo "::endgroup::"
           done
           exit "$rc"
