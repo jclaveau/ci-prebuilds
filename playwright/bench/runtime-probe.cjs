@@ -19,8 +19,9 @@
  *     probed in the same workflow run — see the perf-report job.
  *   - Every kernel measures ONE subsystem. The `libm_fmod` kernel is split out
  *     explicitly because a `%` on a value past 2^53 compiles to an fmod() libm
- *     call, and musl's fmod is ~2.1x glibc's: folding it into an "int math"
- *     kernel once made me report a libc gap as a JIT gap.
+ *     call, and musl's is ~3x glibc's: folding it into an "int math" kernel
+ *     once made me report a libc gap as a JIT gap. Keep the divisor off a power
+ *     of two or the engines fold it away and the kernel measures nothing.
  *   - In-page kernels time themselves with performance.now(), so protocol RTT is
  *     excluded from them and measured separately by `eval_rtt`.
  */
@@ -128,7 +129,7 @@ const KERNELS = {
     const el = document.getElementById('layout');
     const t0 = performance.now();
     let acc = 0;
-    for (let i = 0; i < 2000; i++) {
+    for (let i = 0; i < 16000; i++) {
       el.style.width = (100 + (i % 200)) + 'px';
       acc += el.offsetHeight;
     }
@@ -138,7 +139,7 @@ const KERNELS = {
   dom_churn: `() => {
     const root = document.getElementById('churn');
     const t0 = performance.now();
-    for (let i = 0; i < 20000; i++) {
+    for (let i = 0; i < 160000; i++) {
       const d = document.createElement('div');
       d.className = 'c' + (i & 7);
       d.textContent = 'n' + i;
@@ -154,7 +155,7 @@ const KERNELS = {
   js_alloc: `() => {
     const t0 = performance.now();
     let acc = 0;
-    for (let i = 0; i < 2000000; i++) {
+    for (let i = 0; i < 24000000; i++) {
       const o = { a: i, b: i + 1, c: 's' + (i & 255) };
       acc += o.a + o.b + o.c.length;
     }
@@ -167,19 +168,26 @@ const KERNELS = {
   int_math: `() => {
     const t0 = performance.now();
     let x = 1 | 0;
-    for (let i = 0; i < 30000000; i++) {
+    for (let i = 0; i < 150000000; i++) {
       x = (Math.imul(x, 1664525) + 1013904223) | 0;
     }
     return { ms: performance.now() - t0, checksum: x };
   }`,
 
-  // The libc gap, isolated on purpose: `%` on a double past 2^53 is an fmod()
-  // call, and musl's fmod is ~2.1x slower than glibc's. Tracked so it can never
-  // again contaminate a kernel that claims to measure the JIT.
+  // `%` on a double past 2^53 is an fmod(). What this kernel measures is NOT
+  // settled and the name over-promises: in one run on one machine it read 0.67
+  // on firefox, 1.00 on chromium and 5.35 on webkit — same libc, so the three
+  // engines cannot all be reaching it the same way. JSC provably does call libc
+  // (interposed and counted, 30,000,033 calls), and musl's fmod isolated is the
+  // slow one, 163.8 ms against glibc's 54.0. V8 and SpiderMonkey are unexplained;
+  // a power-of-two divisor being folded was the obvious theory and it is WRONG —
+  // swapping 2^32 for the prime 4294967291 moves V8 by 3%, not 3x. Most likely
+  // they carry their own fmod. Until that is pinned, read this row per-engine
+  // and never as a libc verdict: https://github.com/jclaveau/ci-prebuilds/issues/126
   libm_fmod: `() => {
     const t0 = performance.now();
     let x = 0;
-    for (let i = 1; i < 3000000; i++) {
+    for (let i = 1; i < 9000000; i++) {
       x += (i * 2654435761) % 4294967296;
     }
     return { ms: performance.now() - t0, checksum: x };
@@ -304,7 +312,9 @@ async function main() {
   // 4. warm navigation — same page, everything cached: isolates the navigation
   // machinery from the download/parse cost measured above.
   metrics.goto_warm = await sample(10, async () => {
-    await page.goto(url, { waitUntil: 'load' });
+    for (let i = 0; i < 10; i++) {
+      await page.goto(url, { waitUntil: 'load' });
+    }
   });
 
   // 5. protocol round trip — 500 trivial evaluates. Multiplied by every single
