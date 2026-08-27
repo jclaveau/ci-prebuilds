@@ -11,6 +11,33 @@
 # Bash array form so apply-and-build.sh can splice this into a single
 # cmake invocation per port.
 
+# EXPERIMENT (perf/webkit-relr): pack relative relocations as DT_RELR.
+#
+# `launch` is WebKit's largest remaining gap (1.36x official) and it is the
+# LOADER, not our build's shape. Measured on a quiet runner (EPYC 9V74), a bare
+# dlopen of libWPEWebKit takes 48.7 ms for ours against 28.5 ms for official's
+# — while ours has FEWER relocations (320,694 vs 339,342), a SMALLER .text and
+# fewer DT_NEEDED. That is ~1.8x per relocation, i.e. musl's ld.so applying
+# them, and the two build-shape candidates (the DSO closure, BIND_NOW) are
+# already dead by measurement.
+#
+# 313,989 of our 320,694 relocations are R_X86_64_RELATIVE, and those are
+# exactly what DT_RELR compresses: a bitmap instead of 24 bytes each, which
+# both shrinks the file and cuts the loader's work per relocation.
+#
+# Feasibility gated BEFORE spending a build (alpine:edge, musl 1.2.6-r2): the
+# linker accepts `-z pack-relative-relocs`, emits DT_RELR/RELRSZ/RELRENT,
+# leaves zero R_X86_64_RELATIVE behind, and musl's loader applies them
+# correctly — a dlopen'd test library returned a live pointer into its own
+# relocated table.
+#
+# Set here rather than relying on the script's `: "${LDFLAGS:=-fuse-ld=lld}"`
+# default, which only applies when LDFLAGS is unset; the overlay is sourced
+# first, so this wins. Keep -fuse-ld=lld — dropping it would silently change
+# the linker as well and confound the arm.
+LDFLAGS="-fuse-ld=lld -Wl,-z,pack-relative-relocs"
+export LDFLAGS
+
 CMAKE_SHARED_FLAGS=(
   -DCMAKE_BUILD_TYPE=Release
   -DCMAKE_C_COMPILER_LAUNCHER=sccache
