@@ -62,7 +62,7 @@ runs:
         # and the action silently logged `Unexpected input(s) 'image'`
         # and fell back to docker.io).
         driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
-    - uses: docker/login-action@v3
+    - uses: docker/login-action@v4
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
