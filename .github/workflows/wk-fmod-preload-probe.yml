@@ -206,21 +206,29 @@ jobs:
             'exec "$DIR/pw_run.real.sh" "$@"' \
             > count/pw_run.sh
           chmod +x count/pw_run.sh
+          # Built in a sibling alpine:edge rather than in the image: `sudo apk
+          # add` prompts for a password there, which is how run 34048634463
+          # died with `gcc: not found`. Same musl either way, and the object
+          # only dlsym()s.
+          docker run --rm \
+            -v "$PWD/playwright/alpine-browsers/webkit/fastfmod:/src:ro" \
+            -v "$PWD/count:/count" \
+            alpine:edge sh -c '
+              apk add --no-cache gcc musl-dev >/dev/null 2>&1
+              gcc -O2 -fPIC -shared -o /count/libcounter.so /src/fmod-call-counter.c -ldl
+            '
+          # The wrapper is bind-mounted over the image's own, for the same
+          # reason: no sudo in the probe container.
           docker run --rm \
             --security-opt seccomp=unconfined \
             --env HOME=/home/runner \
             --env PW_VERSION="$PW" \
             -v "$PWD/playwright/bench:/probe:ro" \
             -v "$PWD/playwright/scripts:/pwscripts:ro" \
-            -v "$PWD/playwright/alpine-browsers/webkit/fastfmod:/src:ro" \
             -v "$PWD/count:/count" \
+            -v "$PWD/count/pw_run.sh:/ms-playwright/webkit-2336/pw_run.sh:ro" \
             "$OURS" \
             sh -c '
-              sudo apk add --no-cache gcc musl-dev >/dev/null 2>&1
-              gcc -O2 -fPIC -shared -o /count/libcounter.so /src/fmod-call-counter.c -ldl
-              # Swap the wrapper for one that also preloads the counter. Same
-              # directory, so pw_run.real.sh still resolves from $(dirname $0).
-              sudo cp /count/pw_run.sh /ms-playwright/webkit-2336/pw_run.sh
               NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
               export NODE_PATH
               node -e "require(\"playwright\")" 2>/dev/null \
