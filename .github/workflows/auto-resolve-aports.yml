@@ -70,7 +70,8 @@ jobs:
           # compares the first three dot-segments, not the whole version —
           # strict equality is unsatisfiable for 1.62.1, whose .34 no aports
           # commit ever packaged.
-          APKBUILD=$(curl -fsSL "https://gitlab.alpinelinux.org/alpine/aports/-/raw/${NEW_SHA}/community/chromium/APKBUILD")
+          . playwright/alpine-browsers/chromium-headless-shell/scripts/aports-fetch.sh
+          APKBUILD=$(aports_raw "$NEW_SHA" community/chromium/APKBUILD)
           PKGVER=$(echo "$APKBUILD" | awk -F= '/^pkgver=/ { gsub(/"/, "", $2); print $2; exit }')
           . playwright/alpine-browsers/chromium-headless-shell/scripts/aports-pkgver.sh
           pkgver_status=0

@@ -13,6 +13,7 @@ on:
       - 'playwright/alpine-browsers/versions.env'
       - 'playwright/alpine-browsers/chromium-headless-shell/scripts/resolve-aports-ref.sh'
       - 'playwright/alpine-browsers/chromium-headless-shell/scripts/fetch-aports.sh'
+      - 'playwright/alpine-browsers/chromium-headless-shell/scripts/aports-fetch.sh'
       - 'playwright/alpine-browsers/chromium-headless-shell/tests/fetch-aports-fallback.sh'
       - 'tests/aports/**'
       - '.github/workflows/tests-aports.yml'
@@ -22,6 +23,7 @@ on:
       - 'playwright/alpine-browsers/versions.env'
       - 'playwright/alpine-browsers/chromium-headless-shell/scripts/resolve-aports-ref.sh'
       - 'playwright/alpine-browsers/chromium-headless-shell/scripts/fetch-aports.sh'
+      - 'playwright/alpine-browsers/chromium-headless-shell/scripts/aports-fetch.sh'
       - 'playwright/alpine-browsers/chromium-headless-shell/tests/fetch-aports-fallback.sh'
       - 'tests/aports/**'
 

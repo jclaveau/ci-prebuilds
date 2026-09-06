@@ -42,7 +42,8 @@ fi
 echo "CHS_VER=$CHS_VER"
 
 echo "=== fetch aports@${ALPINE_APORTS_CHROMIUM_REF} community/chromium/APKBUILD ==="
-APKBUILD=$(curl -fsSL "https://gitlab.alpinelinux.org/alpine/aports/-/raw/${ALPINE_APORTS_CHROMIUM_REF}/community/chromium/APKBUILD")
+. "$ROOT/playwright/alpine-browsers/chromium-headless-shell/scripts/aports-fetch.sh"
+APKBUILD=$(aports_raw "$ALPINE_APORTS_CHROMIUM_REF" community/chromium/APKBUILD)
 PKGVER=$(echo "$APKBUILD" | awk -F= '/^pkgver=/ { gsub(/"/, "", $2); print $2; exit }')
 [[ -n "$PKGVER" ]] || { echo "FAIL: could not parse pkgver from APKBUILD at $ALPINE_APORTS_CHROMIUM_REF" >&2; exit 1; }
 echo "PKGVER=$PKGVER"
