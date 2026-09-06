@@ -144,6 +144,7 @@ jobs:
             --security-opt seccomp=unconfined \
             --env HOME=/home/runner \
             --env PW_VERSION="$PW" \
+            -v "$PWD/playwright/scripts:/pwscripts:ro" \
             "$OURS" \
             sh -c '
               NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
