@@ -189,7 +189,12 @@ RUN sudo mv /ms-playwright/webkit-${WK_REV}/pw_run.sh \
  && printf '%s\n' \
         '#!/bin/sh' \
         'DIR="$(dirname "$0")"' \
-        'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so' \
+        # EXPERIMENT (perf/webkit-no-preload): both preloads OFF, to
+        # re-take the mimalloc verdict on #129's rescaled kernels. The
+        # goto_warm regression was measured when that metric was ~24 ms
+        # absolute; it is ~268 ms now, so the old reading cannot simply
+        # be carried forward — in either direction.
+        'true # LD_PRELOAD deliberately unset' \
         'exec "$DIR/pw_run.real.sh" "$@"' \
   | sudo tee /ms-playwright/webkit-${WK_REV}/pw_run.sh >/dev/null \
  && sudo chmod +x /ms-playwright/webkit-${WK_REV}/pw_run.sh
