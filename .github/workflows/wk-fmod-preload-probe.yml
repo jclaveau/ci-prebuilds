@@ -175,6 +175,61 @@ jobs:
               wait
             '
 
+      - name: Does JSC reach libc fmod at all
+        # The shim is mapped in the WebProcess and the kernel is still ~175 ms
+        # against glibc's 59, so either JSC never calls libc `fmod` or it calls
+        # it and our replacement is simply slow. fmod-call-counter.c already
+        # exists to tell those apart — it was written for exactly this trap,
+        # where a benchmark that never enters libc looks identical to one that
+        # does.
+        #
+        # It has to go in through pw_run.sh rather than the container env: the
+        # wrapper does `export LD_PRELOAD=…`, which OVERWRITES anything
+        # inherited. That is also why the container-wide arm in run 34045878448
+        # was not a second condition at all.
+        env:
+          OURS: ${{ inputs.image }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p count
+          # printf rather than a heredoc: this block is indented inside the
+          # YAML, and an unindented terminator is the only one `<<` accepts.
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'DIR="$(dirname "$0")"' \
+            'export FMOD_COUNT_OUT=/count/calls' \
+            'export LD_PRELOAD=/count/libcounter.so:/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so' \
+            'exec "$DIR/pw_run.real.sh" "$@"' \
+            > count/pw_run.sh
+          chmod +x count/pw_run.sh
+          docker run --rm \
+            --security-opt seccomp=unconfined \
+            --env HOME=/home/runner \
+            --env PW_VERSION="$PW" \
+            -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/playwright/scripts:/pwscripts:ro" \
+            -v "$PWD/playwright/alpine-browsers/webkit/fastfmod:/src:ro" \
+            -v "$PWD/count:/count" \
+            "$OURS" \
+            sh -c '
+              sudo apk add --no-cache gcc musl-dev >/dev/null 2>&1
+              gcc -O2 -fPIC -shared -o /count/libcounter.so /src/fmod-call-counter.c -ldl
+              # Swap the wrapper for one that also preloads the counter. Same
+              # directory, so pw_run.real.sh still resolves from $(dirname $0).
+              sudo cp /count/pw_run.sh /ms-playwright/webkit-2336/pw_run.sh
+              NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+              export NODE_PATH
+              node -e "require(\"playwright\")" 2>/dev/null \
+                || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
+              timeout 300 node /probe/runtime-probe.cjs \
+                --browser webkit --target alpine --out /count
+              echo "--- calls that reached libc fmod"
+              cat /count/calls* 2>/dev/null || echo "no counter output — the preload did not take"
+              echo "--- kernel under the counter (it costs ~65 ns/call, so this is SLOW on purpose)"
+              jq -r ".metrics.libm_fmod.median_ms" /count/alpine-webkit.json
+            '
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
