@@ -195,6 +195,9 @@ jobs:
           mkdir -p count
           # printf rather than a heredoc: this block is indented inside the
           # YAML, and an unindented terminator is the only one `<<` accepts.
+          # The single quotes are the point — these lines are the script being
+          # written, not expressions for this shell to expand.
+          # shellcheck disable=SC2016
           printf '%s\n' \
             '#!/bin/sh' \
             'DIR="$(dirname "$0")"' \
