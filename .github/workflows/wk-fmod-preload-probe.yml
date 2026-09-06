@@ -128,6 +128,52 @@ jobs:
             jq -r '.metrics | to_entries[] | "  \(.key) \(.value.median_ms)"' "out/$arm.json"
           done
 
+      - name: Which processes actually map the shim
+        # The A/B above cannot separate "JSC does not call libc fmod" from
+        # "WebKit's ProcessLauncher builds a fresh environment for the
+        # WebProcess": both arms put LD_PRELOAD in the PARENT's env, so a
+        # launcher that scrubs it defeats them identically. /proc/<pid>/maps
+        # is the direct observation — the shim is either mapped in the process
+        # running the JS or it is not.
+        env:
+          OURS: ${{ inputs.image }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --security-opt seccomp=unconfined \
+            --env HOME=/home/runner \
+            --env PW_VERSION="$PW" \
+            "$OURS" \
+            sh -c '
+              NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+              export NODE_PATH
+              node -e "require(\"playwright\")" 2>/dev/null \
+                || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
+              # Hold a page open long enough to look at the process tree, and
+              # keep it busy so the WebProcess is the one doing the arithmetic.
+              node -e "
+                const { webkit } = require(\"playwright\");
+                (async () => {
+                  const b = await webkit.launch();
+                  const p = await b.newPage();
+                  await p.evaluate(() => { let s=0; for (let i=1;i<3e7;i++) s += i % 7.7; return s; });
+                  await new Promise(r => setTimeout(r, 25000));
+                  await b.close();
+                })();
+              " &
+              sleep 12
+              echo "shim  pid  cmdline"
+              for d in /proc/[0-9]*; do
+                cmd=$(tr "\0" " " < "$d/cmdline" 2>/dev/null | cut -c1-90)
+                [ -n "$cmd" ] || continue
+                if grep -q fastfmod "$d/maps" 2>/dev/null; then m=MAPPED; else m=absent; fi
+                if grep -qa fastfmod "$d/environ" 2>/dev/null; then e=in-env; else e=no-env; fi
+                echo "$m/$e  $d  $cmd"
+              done
+              wait
+            '
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
