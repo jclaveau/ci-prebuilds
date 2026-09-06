@@ -8,11 +8,24 @@ ARG FF_REV=1538
 ARG WK_REV=2336
 ARG BASE_IMAGE=jclaveau/alpine-dood-pnpm:latest
 
+# Which WebKit artifact to consume, held SEPARATE from WK_REV on purpose.
+# WK_REV is browsers.json's revision and decides where PW discovers the
+# browser (/ms-playwright/webkit-${WK_REV}/), so it cannot be repointed at an
+# experiment without breaking discovery. This tag decides only which producer
+# artifact the bits come from. Normally `wk-${WK_REV}`, the promoted one.
+#
+# EXPERIMENT (perf/webkit-thinlto): pinned to this branch's own ThinLTO
+# artifact so the arm can be measured. Verified connected before measuring —
+# against wk-2336 the .text grew 91.9 -> 106.1 MB (+15.4%) and .eh_frame
+# shrank 20.7%, which is the same shape chromium's ThinLTO arm showed. Revert
+# this default to wk-${WK_REV} before any merge.
+ARG WK_SOURCE_TAG=wk-sha-7210a5d296bb2ff7fc016c1b53e67100da31097d
+
 # Producer-image stage aliases — Renovate's custom manager bumps the tag
 # revision in lockstep with PLAYWRIGHT_VERSION below.
 FROM ghcr.io/jclaveau/playwright-alpine-browsers:chs-${CHS_REV} AS chs-source
 FROM ghcr.io/jclaveau/playwright-alpine-browsers:ff-${FF_REV} AS ff-source
-FROM ghcr.io/jclaveau/playwright-alpine-browsers:wk-${WK_REV} AS wk-source
+FROM ghcr.io/jclaveau/playwright-alpine-browsers:${WK_SOURCE_TAG} AS wk-source
 
 # libfastfmod.so — a drop-in `fmod` for musl, preloaded under WebKit alongside
 # mimalloc. musl's fmod walks the exponent difference one bit per iteration
