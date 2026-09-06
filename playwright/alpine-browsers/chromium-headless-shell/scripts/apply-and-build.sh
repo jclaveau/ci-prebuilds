@@ -362,6 +362,45 @@ echo "  AR=$AR  CC=$CC  CXX=$CXX  NM=$NM"
 export RUSTC_BOOTSTRAP=1
 echo "  RUSTC_BOOTSTRAP=1 (allow -Z flags on stable rust)"
 
+# Stack-protector PARITY with the build we are chasing.
+#
+# Our shipped artifact carries 358 107 canary loads against official's 33 166 —
+# counted on both binaries, not inferred from a recipe. Chromium asks for the
+# WEAK variant on linux (`-fstack-protector`, the is_posix branch of
+# build/config/compiler/BUILD.gn) and official's artifact agrees; Alpine's clang
+# overrides that with strong and chromium's own flag does not win.
+#
+# Measured on alpine clang 22.1.8, counting protected functions in a file with
+# one char array, one int array and one address-taken local (weak protects the
+# first only, strong all three):
+#
+#   default / -fstack-protector / -fstack-protector-strong   4 refs  (strong)
+#   -fno-stack-protector                                     0 refs
+#   -Xclang -stack-protector -Xclang 1                       2 refs  (WEAK)
+#
+# So the driver-level flag is inert here — `clang -###` shows Alpine handing
+# cc1 `-stack-protector 2` regardless — and `--no-default-config` does not lift
+# it either, because it is compiled into the driver rather than read from
+# /etc/clang22. Passing the level straight to cc1 does work, and 1 is exactly
+# official's posture.
+#
+# Deliberately NOT -fno-stack-protector: that would leave us LESS protected than
+# the reference we are chasing, which is a security regression rather than a
+# parity fix. The cost being recovered is real either way — the same flag change
+# measured +12.0% instructions retired on a call-dense kernel (spread 0.015%),
+# and 214 protected functions per 64 KiB of our hot layout regions against
+# official's 19.
+#
+# This reaches the compiler through the ENVIRONMENT, not a gn arg: we build with
+# `custom_toolchain = //build/toolchain/linux/unbundle:default`, and that
+# toolchain reads `extra_cflags = getenv("CFLAGS")`. Same mechanism as the
+# CC/CXX/AR/NM exports above, which is why it lives beside them.
+SSP_PARITY="-Xclang -stack-protector -Xclang 1"
+export CFLAGS="${CFLAGS:+$CFLAGS }$SSP_PARITY"
+export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }$SSP_PARITY"
+echo "  CFLAGS=$CFLAGS"
+echo "  CXXFLAGS=$CXXFLAGS"
+
 # VARIANT (headless|headed) selects the out dir, args overlay + ninja target.
 . "$WORK/chromium-headless-shell/scripts/variant-config.sh"
 OUT_DIR="$VARIANT_OUT_DIR"

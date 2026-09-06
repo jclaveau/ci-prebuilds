@@ -30,9 +30,10 @@ glibc            154.2      17.1      1.00
 ```
 
 2.37x faster than musl, and it does NOT reach glibc. In the browser it is
-further off: perf-probe puts the arm at **2.57x** official (two draws, both
-EPYC 7763, 2.57 both times) against roughly 10x before. Why C says 1.27x and
-the browser says 2.57x is unexplained — JIT call sequence, CPU, or both. Do
+further off: against a TRUE no-preload control on one CPU model (EPYC 9V74),
+`sha-cf1d73d` 6.24/6.33 -> shipped `edge` 3.07/3.12 — a **2.03x** improvement
+landing at **3.09x** official. Why C says 1.27x and the browser says 3.09x is
+unexplained — JIT call sequence, CPU, or both. Do
 not quote "parity".
 
 **Ship shape.** One more entry in the `pw_run.sh` LD_PRELOAD beside mimalloc.
@@ -64,3 +65,21 @@ edge cases — `fmod(NaN, -NaN)` and `fmod(-NaN, NaN)`, where musl propagates th
 FIRST NaN operand's sign and `(x*y)/(x*y)` does not. Fix is `x + y` for the
 NaN-operand case. Not findable by reading the code.
 [[project_fmod_microbench_is_vacuous]]
+
+
+**A merged over-claim, and how it happened.** #131's commit body on main says
+`libm_fmod` goes to "~0.97x. Under official, not merely closer." **It is
+~3.09x.** The 0.97 came from an end-to-end run on a loaded laptop whose two
+arms were internally inconsistent: `fastfmod` measured 1.13x slower there than
+on a runner, `official` measured 3.6x slower. A slower machine slows BOTH — so
+the official arm was anomalous and no comparison should have been drawn from
+it. The tempting explanation (glibc's fmod being an IFUNC picking a slow
+variant on an older CPU) is REFUTED: `readelf` shows one plain `FUNC` at
+`fmod@@GLIBC_2.38`, no dispatch. Why that arm was slow is still unexplained.
+
+Worse, the disproof was already in my own data: `sha-cf1d73d` predates BOTH
+preloads and I had already probed it. I read the shipped 3.07/3.12 as
+"confirms the preload is in edge" — true, and far weaker than the check I
+should have run, because against 0.97 the same number is a refutation.
+**When a number is supposed to prove a claim, difference it against the
+claim, not against zero.** [[feedback_verify_ab_varied_the_variable]]
