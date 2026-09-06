@@ -174,22 +174,22 @@ const KERNELS = {
     return { ms: performance.now() - t0, checksum: x };
   }`,
 
-  // `%` on a double past 2^53 is an fmod() — but ONLY if the divisor is not a
-  // power of two. This kernel shipped with 4294967296 = 2^32, which the engines
-  // fold into a mask: run 34048835048 preloaded fmod-call-counter.c into every
-  // WebKit process and counted ZERO calls into libc while the row still read
-  // 3.12x. With the prime below, an earlier interposed run counted one call per
-  // iteration under JSC, so the divisor IS what decides whether libm is reached.
+  // NOT a libc kernel, whatever the name says. fmod-call-counter.c preloaded
+  // into every WebKit process counted ZERO calls into libc with the 2^32
+  // divisor (run 34048835048) and ZERO again with the prime (run 34049965630),
+  // so JSC serves `%` on doubles itself. V8 does too — swapping the divisor
+  // moves chromium ~3%. Only firefox behaves like something reaching a libm.
   //
-  // The engines differ and the row must be read per-engine, never as a single
-  // libc verdict (issue #126). JSC reaches libc. V8 does not: swapping the
-  // divisor moves it ~3%, so it carries its own fmod, which is why chromium
-  // reads 1.00 on a musl-vs-glibc comparison.
+  // The divisor still matters and stays off a power of two: 2^32 lets the
+  // engines fold the whole thing into a mask, and the three ratios moved when
+  // it was restored (chromium 1.00 -> 0.99, firefox 0.64 -> 0.51, webkit
+  // 3.12 -> 2.65). Every number taken before that is void, wins included.
   //
-  // Left open by the folded version, and worth its own investigation: with the
-  // mask path on BOTH sides, our WebKit ran it 3x slower than Playwright's
-  // (175 ms against 59), on builds the probe reports as the same 26.5. That is
-  // an engine-build gap, not a libc one.
+  // What this row actually reports is the ENGINE's double-modulo path, so read
+  // it per-engine and never as a musl-vs-glibc verdict (issue #126). On that
+  // reading webkit's 2.65 is the live question: our JSC runs this loop 2.65x
+  // slower than Playwright's on builds the probe calls the same 26.5, with no
+  // libc involved on either side.
   libm_fmod: `() => {
     const t0 = performance.now();
     let x = 0;
