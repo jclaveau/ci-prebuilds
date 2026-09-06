@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Fetch community/chromium from gitlab.alpinelinux.org/alpine/aports.
+# Fetch community/chromium from alpine's aports, pinned to
+# ALPINE_APORTS_CHROMIUM_REF.
 #
 # We pull aports' APKBUILD + *.patch files (musl-side patches: sandbox-musl,
 # tid-caching-musl, etc.) so we can build Chromium for musl on top of vanilla
@@ -18,36 +19,28 @@ REF="${ALPINE_APORTS_CHROMIUM_REF:?ALPINE_APORTS_CHROMIUM_REF must be set}"
 
 mkdir -p "$OUT"
 
-API="https://gitlab.alpinelinux.org/api/v4/projects/alpine%2Faports"
-LIST_URL="$API/repository/tree?path=community/chromium&ref=$REF&per_page=100"
+# Both hosts, the wide retry budget and the failure message all live in the
+# shared helper — this file only says WHICH files it wants. See aports-fetch.sh
+# for why gitlab alone is not enough.
+. "$(dirname "${BASH_SOURCE[0]}")/aports-fetch.sh"
 
-# gitlab.alpinelinux.org drops connections: run 32892351327 lost a whole Firefox
-# round to `curl: (28) Failed to connect ... after 133306 ms`, and the aports
-# fetch was the only un-retried curl left in the build. Same 3-try shape as
-# firefox/scripts/fetch-pw-patches.sh — duplicated rather than shared because
-# each image COPYs only its own scripts/ dir. --connect-timeout so a dead socket
-# fails fast enough for the retries to fit inside the step.
-retry_curl() {
-  local n=1
-  while (( n <= 3 )); do
-    if curl -fsSL --connect-timeout 20 "$@"; then
-      return 0
-    fi
-    echo "  retry $n/3 (gitlab unreachable?) — sleep $((n*5))s" >&2
-    sleep $((n*5))
-    n=$((n+1))
-  done
-  return 1
-}
+GL_LIST="$APORTS_GL_BASE/api/v4/projects/alpine%2Faports/repository/tree?path=community/chromium&ref=$REF&per_page=100"
+GH_LIST="$APORTS_GH_API_BASE/repos/alpinelinux/aports/contents/community/chromium?ref=$REF"
 
-files=$(retry_curl "$LIST_URL" | jq -r '.[] | select(.type=="blob") | .name')
+# GitLab calls them "blob", GitHub calls them "file" — accept either so one
+# listing parser serves both hosts.
+aports_fetch "file listing" "$GL_LIST" "$GH_LIST" -o "$OUT/.listing.json"
+files=$(jq -r '.[] | select(.type=="blob" or .type=="file") | .name' "$OUT/.listing.json")
+rm -f "$OUT/.listing.json"
 
-[[ -z "$files" ]] && { echo "fetch-aports: no files at ref=$REF (gitlab API empty)" >&2; exit 1; }
+if [[ -z "$files" ]]; then
+  echo "fetch-aports: no files at ref=$REF (listing empty — wrong ref?)" >&2
+  exit 1
+fi
 
 for f in $files; do
-  raw="https://gitlab.alpinelinux.org/alpine/aports/-/raw/$REF/community/chromium/$f"
   echo "  fetch $f"
-  retry_curl "$raw" -o "$OUT/$f"
+  aports_raw "$REF" "community/chromium/$f" -o "$OUT/$f"
 done
 
 echo "aports community/chromium fetched to $OUT ($(ls -1 "$OUT" | wc -l) files)"
