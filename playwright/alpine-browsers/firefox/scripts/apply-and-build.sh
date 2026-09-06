@@ -490,6 +490,21 @@ export MOZ_BUILD_DATE="$(date '+%Y%m%d%H%M%S')"
 export SHELL=/bin/sh
 export BUILD_OFFICIAL=1
 export MOZILLA_OFFICIAL=1
+
+# MOZILLA_OFFICIAL=1 makes packaging include source info, and `mach build
+# package` then preprocesses obj/source-repo.h for MOZ_SOURCE_URL. We build
+# from a release TARBALL, so nothing populates that header and the packager
+# dies with "no preprocessor directives found" — 1.5s in, after a ~4h compile.
+# aports never hits this because it packages with `./mach install`, which does
+# not run make-sourcestamp-file at all.
+#
+# Set the two variables the header is generated from. They are metadata only:
+# they appear in about:buildconfig, and nothing links against them.
+export MOZ_SOURCE_REPO="https://hg.mozilla.org/releases/mozilla-release"
+# PKGVER is only set on the aports path; PW_SKIP_APORTS builds fall back to
+# PW's pinned version so `set -u` cannot abort here.
+_src_ver="${PKGVER:-$PW_FF_VER}"
+export MOZ_SOURCE_CHANGESET="FIREFOX_${_src_ver//./_}_RELEASE"
 export USE_SHORT_LIBNAME=1
 export MACH_BUILD_PYTHON_NATIVE_PACKAGE_SOURCE=system
 export MOZ_NOSPAM=1
@@ -673,11 +688,18 @@ if [ -z "$DIST" ]; then
   fi
 fi
 
-if [ -z "$DIST" ]; then
-  # Packaging-free fallback (PW_SKIP_APORTS=1 path): obj/dist/bin/ has the
-  # built firefox binary + libxul.so + chrome/ + omni.ja + everything else
-  # needed at runtime. It's the same content the packaged dist contains —
-  # just without the post-process layout.
+if [ -z "$DIST" ] && [ "$PW_SKIP_APORTS" == "1" ]; then
+  # Packaging-free fallback, DIAGNOSTIC PATH ONLY: obj/dist/bin/ has the built
+  # firefox binary + libxul.so + chrome/ + omni.ja, but NOT the packaged
+  # layout — it is the raw build output, ~8700 files against a packaged
+  # tree's ~130, and it carries test binaries like xpcshell.
+  #
+  # Gated on PW_SKIP_APORTS because it was written for that path and never
+  # restricted to it. On 2026-08-27 a producer build whose `mach build package`
+  # failed fell through to here, published 8730 files under a normal sha- tag
+  # labelled "artifact OK", and killed all 20 conformance shards on
+  # xpcshell's unresolved XRE_GetBootstrap. A build that cannot package must
+  # not publish. See project_ff_cold_build_ships_unpackaged_tree.
   for candidate in obj/dist/bin obj-*/dist/bin; do
     if [ -d "$candidate" ] && [ -x "$candidate/firefox" ]; then
       DIST="$candidate"
@@ -690,6 +712,13 @@ set -e
 echo "===== DIST resolution: DIST='$DIST' ====="
 
 if [ -z "$DIST" ] || [ ! -x "$DIST/firefox" ]; then
+  if [ "$pkg_rc" != "0" ] && [ "$PW_SKIP_APORTS" != "1" ]; then
+    echo "ERROR: './mach build package' failed (rc=$pkg_rc) and there is no" >&2
+    echo "packaged tree to ship. The obj/dist/bin fallback is diagnostic-only" >&2
+    echo "and deliberately does not rescue a producer build — it would publish" >&2
+    echo "the raw build output (~8700 files incl. xpcshell) under a normal tag." >&2
+    echo "Fix packaging; see project_ff_cold_build_ships_unpackaged_tree." >&2
+  fi
   echo "ERROR: mach build rc=$mach_rc, package rc=$pkg_rc, no firefox binary at '$DIST'" >&2
   echo "obj/ contents:" >&2
   find obj* -maxdepth 3 -type d 2>/dev/null | head -50 >&2 || true

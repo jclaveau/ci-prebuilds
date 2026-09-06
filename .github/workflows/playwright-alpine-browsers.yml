@@ -282,7 +282,7 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -418,7 +418,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -476,7 +476,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -540,7 +540,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -588,7 +588,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -676,12 +676,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -919,12 +919,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -991,7 +991,7 @@ jobs:
           echo "PW v${PW_VERSION} → chromium-headless-shell revision=${REV} browserVersion=${VER}"
 
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1104,7 +1104,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1166,7 +1166,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1211,7 +1211,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1256,7 +1256,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1301,7 +1301,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1346,7 +1346,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1391,7 +1391,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1436,7 +1436,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1481,7 +1481,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1526,7 +1526,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1571,7 +1571,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1616,7 +1616,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1661,7 +1661,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1743,7 +1743,7 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1830,7 +1830,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1874,7 +1874,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1917,7 +1917,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1960,7 +1960,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2003,7 +2003,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2046,7 +2046,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2089,7 +2089,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2132,7 +2132,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2175,7 +2175,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2218,7 +2218,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2261,7 +2261,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2304,7 +2304,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2347,7 +2347,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2390,7 +2390,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2433,7 +2433,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2500,7 +2500,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2573,7 +2573,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2644,7 +2644,7 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2803,7 +2803,7 @@ jobs:
             /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
           df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2831,7 +2831,7 @@ jobs:
       - name: Free up runner disk
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2858,7 +2858,7 @@ jobs:
       - name: Free up runner disk
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2885,7 +2885,7 @@ jobs:
       - name: Free up runner disk
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2912,7 +2912,7 @@ jobs:
       - name: Free up runner disk
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2955,7 +2955,7 @@ jobs:
       - name: Free up runner disk
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -2985,7 +2985,7 @@ jobs:
       - name: Free up runner disk
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -3015,7 +3015,7 @@ jobs:
       - name: Free up runner disk
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -3045,7 +3045,7 @@ jobs:
       - name: Free up runner disk
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -3093,7 +3093,7 @@ jobs:
       - name: Free up runner disk
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"; df -h /
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -3198,7 +3198,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -3402,12 +3402,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}

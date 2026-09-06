@@ -1,0 +1,144 @@
+name: WebKit load probe
+
+# `launch` is WebKit's largest remaining gap (1.37x official) and it did not
+# move with the allocator. Two candidates are already dead, both by
+# measurement: the DSO closure (ours carries 60 DT_NEEDED against official's
+# 70 — ours is the LEANER side, so chromium's explanation does not transfer)
+# and BIND_NOW (a within-binary RTLD_NOW/RTLD_LAZY A/B on official showed no
+# cost for eager binding).
+#
+# What is left is that ours has FEWER relocations and a SMALLER .text yet
+# appeared to dlopen slower — which points at musl's dynamic loader rather
+# than at anything in our build. That reading came off a loaded laptop where
+# official's spread was 55.8-133 ms, so it is a lead and not a finding. This
+# workflow re-takes it on a quiet runner, with both libraries measured in the
+# SAME job so the machine divides out — the same reason perf-probe interleaves
+# its arms.
+
+on:
+  pull_request:
+    paths:
+      - 'playwright/alpine-browsers/webkit/loadprobe/**'
+      - '.github/workflows/wk-load-probe.yml'
+  workflow_dispatch:
+    inputs:
+      image:
+        # `edge` and not `latest`: GHCR has NO `latest` for this image — only
+        # Docker Hub does — and a default that does not resolve fails the
+        # probe with `manifest unknown`, which is how this workflow's first
+        # run died.
+        description: 'Our image to measure'
+        default: 'ghcr.io/jclaveau/alpine-dood-playwright:edge'
+        type: string
+      pw_version:
+        description: 'PW version, for the official control tag'
+        default: '1.62.1'
+        type: string
+      wk_rev:
+        description: 'WebKit revision, for the cache-path layout'
+        default: '2336'
+        type: string
+
+concurrency:
+  group: wk-load-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Record the runner
+        # The alpine/official ratio is CPU-dependent, so the model belongs in
+        # the log even though both arms here share one machine.
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          nproc
+
+      - name: Ours (musl)
+        env:
+          OURS: ${{ inputs.image || 'ghcr.io/jclaveau/alpine-dood-playwright:edge' }}
+          REV: ${{ inputs.wk_rev || '2336' }}
+        run: |
+          set -o pipefail
+          docker run --rm --security-opt seccomp=unconfined \
+            -v "$PWD/playwright/alpine-browsers/webkit/loadprobe:/probe:ro" \
+            --entrypoint sh "$OURS" -c '
+              sudo apk add --no-cache gcc musl-dev binutils >/dev/null 2>&1
+              gcc -O2 -o /tmp/loadbench /probe/loadbench.c
+              sh /probe/run-load-probe.sh \
+                 "/ms-playwright/webkit-'"$REV"'/minibrowser-wpe/libWPEWebKit-2.0.so.1" 12
+            ' 2>&1 | tee ours.txt
+
+      - name: Official (glibc)
+        # One arm failing must not cost us the other's measurement — the same
+        # reason perf-probe records a failure and carries on through its target
+        # loop. The summary step decides what is and is not a measurement.
+        if: always()
+        env:
+          PW: ${{ inputs.pw_version || '1.62.1' }}
+          REV: ${{ inputs.wk_rev || '2336' }}
+        run: |
+          set -o pipefail
+          # Official's layout is bin/ + lib/ + sys/lib/, not our flat one, so
+          # its peer libraries need an explicit search path or dlopen fails
+          # with a missing libwpe / libbacktrace rather than a slow load.
+          docker run --rm --security-opt seccomp=unconfined \
+            -v "$PWD/playwright/alpine-browsers/webkit/loadprobe:/probe:ro" \
+            --entrypoint sh "mcr.microsoft.com/playwright:v${PW}-noble" -c '
+              (apt-get -qq update && apt-get -qq install -y gcc binutils) >/dev/null 2>&1
+              gcc -O2 -o /tmp/loadbench /probe/loadbench.c -ldl
+              D=/ms-playwright/webkit-'"$REV"'/minibrowser-wpe
+              export LD_LIBRARY_PATH="$D/lib:$D/sys/lib"
+              sh /probe/run-load-probe.sh "$D/lib/libWPEWebKit-2.0.so.1" 12
+            ' 2>&1 | tee official.txt
+
+      - name: Best-of summary
+        if: always()
+        run: |
+          set -eu
+          # A failed dlopen prints FAILED and no timing; awk over an empty set
+          # would report "inf" and look like a result, so assert we have rows.
+          summarise() {
+            # A missing file means the arm's docker step never produced output
+            # at all; without this the count is empty, the -lt test is a syntax
+            # error, and the function prints an empty best-of that reads like a
+            # measurement. That is exactly what the first run did.
+            if [ ! -f "$1" ]; then
+              echo "$2: no output file — arm did not run, not a measurement"
+              return
+            fi
+            n=$(grep -cE '^(LAZY|NOW)' "$1" || true)
+            if [ -z "$n" ] || [ "$n" -lt 4 ]; then
+              echo "$2: only $n timed loads — probe did not run, not a measurement"
+              return
+            fi
+            for mode in LAZY NOW; do
+              best=$(awk -v m="$mode" '$1==m {print $2}' "$1" | sort -n | head -1)
+              echo "$2 $mode best-of-12: ${best} ms"
+            done
+          }
+          summarise ours.txt "ours    "
+          summarise official.txt "official"
+          {
+            echo '### WebKit load probe'
+            echo '```'
+            summarise ours.txt "ours    "
+            summarise official.txt "official"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wk-load-probe
+          path: '*.txt'
+          if-no-files-found: warn

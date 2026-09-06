@@ -89,3 +89,15 @@ n scales as (spread/effect)^2, so:
 as wins or as work items, and spend build budget only on rows the probe can
 actually resolve. [[feedback_match_instrument_to_effect_size]],
 [[feedback_size_verification_to_failure_rate]]
+
+**A row whose NULL arm is off 1.00 cannot resolve its own effect size.** The
+three-arm probe's `ubuntu` arm is the instrument's null — same browser binary,
+so any deviation from 1.00 there is the harness, not the build. When that null
+sits at 1.11-1.12 on a row (`goto_warm` did, and the webkit arm hit the same
+thing), the row's own noise floor is >10%, and an arm landing anywhere inside
+that band is reporting the SIGN of a coin flip.
+
+So for those rows: report "inside the null arm's band, not resolvable" rather
+than the direction. This is the same rule as the n=10 tie list above, stated
+against a per-row reference instead of a cross-pair count — and it is cheaper
+to apply, because the null arm is already in every three-arm run.

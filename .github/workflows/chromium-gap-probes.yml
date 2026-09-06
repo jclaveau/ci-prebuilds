@@ -121,7 +121,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -265,6 +265,33 @@ jobs:
             '(clang|GCC) version [0-9][0-9.]*' | sort -u | head -5
           strings -a "$BIN" | grep -aoE 'clang version [0-9][0-9.]*' \
             | sort | uniq -c | sort -rn | head -3
+
+          echo
+          echo "-- Skia's lowp raster pipeline: compiled in, or nulled out? --"
+          # `perf record` put 66% of the screenshot overrun in Skia's HIGHP
+          # (float) raster-pipeline stages: ours 18.24% of CPU against
+          # official's 3.72%, running the SAME function — matched by its
+          # instruction bytes in both artifacts, and identified from Skia
+          # source as from_1010102_xr, the extended-range 10-bit decode
+          # (SkRasterPipeline_opts.h: "float = (xr10_value - 384) / 510.0f").
+          #
+          # Skia nulls its ENTIRE lowp stage table under SKRP_CPU_SCALAR,
+          # SK_ENABLE_OPTIMIZE_SIZE or SK_DISABLE_LOWP_RASTER_PIPELINE, and
+          # says what that costs: "Having nullptr for every stage will cause
+          # SkRasterPipeline to always use the highp stages." That would
+          # produce exactly the observed shape — same stages present, ours
+          # entered far more often.
+          #
+          # lowp is 16-lane 8/16-bit code whose div255/scale helpers lower to
+          # vpmulhrsw and vpmaddubsw, both rare outside it. Thousands means
+          # lowp is compiled; near-zero means it was nulled. Asked of the
+          # SHIPPED artifact, because aports sets no such flag and chromium's
+          # own default is off for linux — so a recipe answers nothing here.
+          for op in vpmulhrsw vpmaddubsw vpavgw vpackuswb; do
+            printf '  %-14s %s\n' "$op" \
+              "$(objdump -d --no-show-raw-insn "$BIN" 2>/dev/null \
+                   | grep -c "	$op " || true)"
+          done
 
           echo
           echo "-- libc++ hardening: are the assertion messages compiled in? --"
@@ -592,7 +619,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

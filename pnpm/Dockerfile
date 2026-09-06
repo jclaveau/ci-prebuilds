@@ -3,7 +3,7 @@ ARG BASE_IMAGE=jclaveau/ubuntu-dood-node:latest
 FROM ${BASE_IMAGE}
 
 # Renovate will update this
-ARG PNPM_VERSION=11.23.0
+ARG PNPM_VERSION=11.24.0
 
 
 # LABEL maintainer="your-email@example.com"
