@@ -5,7 +5,7 @@ metadata:
   type: project
 ---
 
-With the vacuous 2^32 divisor, both arms run JSC's own masked-modulo path and no libc `fmod` is entered (counted: 0 calls, run 34048835048). Ours still took **175 ms against Playwright's 59** — 3x — on builds the probe labels identically as `26.5`.
+With the vacuous 2^32 divisor, both arms run JSC's own masked-modulo path and no libc `fmod` is entered (counted: 0 calls, run 34048835048). Ours still took **175 ms against Playwright's 59** — 3x — and 180 vs 68 (2.65x) once the divisor was fixed — on builds the probe labels identically as `26.5`.
 
 **Why it matters:** this is not a musl-vs-glibc gap and not an fmod gap. It is our WebKit build executing JIT-emitted integer-ish arithmetic 3x slower than PW's build of the same version, which contradicts [[project_wk_jit_kernels_are_at_the_floor]] ("a JIT-only kernel runs code JSC emits at RUNTIME, so it is the same code on both sides by construction"). One of the two readings is wrong and the difference is worth its own dig.
 
