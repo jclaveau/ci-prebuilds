@@ -666,13 +666,30 @@ jobs:
             '
 
   promote-firefox:
-    # Only on main pushes: copy the GHCR sha tag to Docker Hub under
-    # version-pinned + moving tags. Imagetools server-side copy — no rebuild.
-    # Every gate the artifact has to clear is in `needs:` — a failed or skipped
-    # need skips this job, which is the intended answer for both. Nothing ships
-    # without smoke AND conformance.
+    # Copy the GHCR sha tag to Docker Hub under version-pinned + moving tags.
+    # Imagetools server-side copy — no rebuild.
+    #
+    # Same shape as promote-webkit, deliberately: `github.ref == main` covers
+    # BOTH trigger arms, so a branch never moves ff-latest, and a DISPATCH from
+    # main promotes just like a push. It used to be push-only, which is why run
+    # 34044534504 — build, both smokes and 20/20 conformance shards green —
+    # shipped nothing, and why ff-latest went months stale while dispatches
+    # kept succeeding.
+    #
+    # `!cancelled()` with an explicit `== 'success'` per need rather than bare
+    # `needs:`: the prefix waives "a failed need skips this job" for EVERY
+    # need, so each gate has to be spelled out or a skipped conformance would
+    # ship. Nothing promotes without smoke AND conformance.
     needs: [build-firefox, smoke-firefox, smoke-firefox-library, conformance-firefox]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: |
+      !cancelled()
+      && needs.build-firefox.result == 'success'
+      && needs.smoke-firefox.result == 'success'
+      && needs.smoke-firefox-library.result == 'success'
+      && needs.conformance-firefox.result == 'success'
+      && github.ref == 'refs/heads/main'
+      && ((github.event_name == 'workflow_dispatch' && inputs.build_firefox == 'true')
+          || github.event_name == 'push')
     runs-on: ubuntu-latest
     steps:
       - uses: docker/setup-buildx-action@v3
@@ -906,16 +923,24 @@ jobs:
     # SUPERSEDED + conformance-limited (task #13); keeping it on a separate
     # namespace means exercising the escape hatch can never clobber the
     # from-source chs-<rev> the alpine-*-playwright consumer COPYs.
-    # Triggers:
+    # Triggers, same shape as promote-firefox and promote-webkit:
     # - push to main (uses versions.env default PW)
     # - workflow_dispatch with build_chromium_headless_shell=true (on-demand
     #   catalog accumulation: dispatcher can pass pw_version to publish the
     #   chs-apk-${rev} tag matching a non-default PW pin)
+    #
+    # `github.ref == main` is hoisted OUT of the push arm so it covers the
+    # dispatch arm too. It did not before, so a dispatch from any branch
+    # published the moving chs-apk tags — the same defect promote-webkit had,
+    # where an experiment arm shipped the moment its conformance went green.
+    # A schedule only ever runs on the default branch, so the check is a no-op
+    # for it rather than a restriction.
     needs: [build-chromium-headless-shell, smoke-chromium-headless-shell, conformance-chromium-headless-shell]
     if: |
-      (github.event_name == 'push' && github.ref == 'refs/heads/main')
-      || github.event_name == 'schedule'
-      || (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell == 'true')
+      github.ref == 'refs/heads/main'
+      && (github.event_name == 'push'
+          || github.event_name == 'schedule'
+          || (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell == 'true'))
     runs-on: ubuntu-latest
     steps:
       - uses: docker/setup-buildx-action@v3
