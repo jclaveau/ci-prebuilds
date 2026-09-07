@@ -16,13 +16,32 @@
 #     believing the POST. `gh run list --limit 1` straight after a dispatch
 #     routinely returns the PREVIOUS still-finishing run.
 #
-# usage: dispatch-once.sh <workflow-file> <ref> [-f key=value ...]
+# usage: dispatch-once.sh <workflow-file> <ref> [--jobs <job-prefix>] [-f key=value ...]
+#
+# --jobs narrows "already running" to one pipeline inside a workflow that
+# hosts several, e.g. --jobs build-webkit while a chromium chain is live.
 set -euo pipefail
 
 REPO="${REPO:-jclaveau/ci-prebuilds}"
 WF="${1:?workflow file, e.g. playwright-alpine-browsers.yml}"
 REF="${2:?git ref}"
 shift 2
+
+# Optional flavour: --jobs <prefix>. playwright-alpine-browsers.yml runs several
+# unrelated pipelines behind one workflow file, and its own `concurrency:` key
+# already separates them (pab-<ref>-wk, -ff, -chs-source, …) so they run in
+# parallel by design. A guard keyed on the workflow alone therefore refuses a
+# webkit dispatch because a 25-30 h chromium chain is live, which is not the
+# double-fire this exists to prevent — and that lockout lasts a day.
+#
+# With --jobs, "already running" means a live run that owns a job whose name
+# starts with the prefix. A live webkit build still blocks a webkit dispatch,
+# which is the case that matters.
+JOBS_PREFIX=""
+if [ "${1:-}" = "--jobs" ]; then
+  JOBS_PREFIX="${2:?--jobs needs a job-name prefix, e.g. build-webkit}"
+  shift 2
+fi
 
 ids_now() {
   gh run list -R "$REPO" --workflow="$WF" --branch "$REF" --limit 20 \
@@ -34,11 +53,33 @@ active() {
     --jq '.[] | select(.status=="queued" or .status=="in_progress")
           | .databaseId' 2>/dev/null
 }
+# A run counts for THIS flavour when it has a job with the prefix that is not
+# finished. A run still spawning its jobs has none yet, so it counts too —
+# refusing on an ambiguous run is the safe direction for a guard.
+owns_flavour() {
+  local id="$1" n
+  [ -n "$JOBS_PREFIX" ] || return 0
+  n=$(gh run view "$id" -R "$REPO" --json jobs \
+        --jq "[.jobs[] | select(.name | startswith(\"$JOBS_PREFIX\"))] | length" \
+      2>/dev/null || echo 0)
+  [ "${n:-0}" -eq 0 ] && return 1
+  n=$(gh run view "$id" -R "$REPO" --json jobs \
+        --jq "[.jobs[] | select(.name | startswith(\"$JOBS_PREFIX\"))
+               | select(.conclusion == null or .conclusion == \"\")] | length" \
+      2>/dev/null || echo 0)
+  [ "${n:-0}" -gt 0 ]
+}
 
-running="$(active || true)"
-if [ -n "$running" ]; then
-  echo "REFUSING: $WF already queued/running on $REF:" >&2
-  echo "$running" | sed 's/^/  https:\/\/github.com\/'"${REPO//\//\\/}"'\/actions\/runs\//' >&2
+blocking=""
+for id in $(active || true); do
+  if owns_flavour "$id"; then
+    blocking="$blocking$id
+"
+  fi
+done
+if [ -n "$blocking" ]; then
+  echo "REFUSING: $WF already queued/running on $REF${JOBS_PREFIX:+ for $JOBS_PREFIX}:" >&2
+  printf '%s' "$blocking" | sed 's/^/  https:\/\/github.com\/'"${REPO//\//\\/}"'\/actions\/runs\//' >&2
   echo "If that is a stale run rather than your own retry, cancel it first." >&2
   exit 3
 fi
