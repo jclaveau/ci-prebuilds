@@ -149,6 +149,12 @@ jobs:
               continue
             fi
             echo "$target WebProcess pid=$wpid"
+            # What the process actually has mapped, kept beside the profile:
+            # official's samples came back as `[unknown]`, which is either JIT
+            # with no map file or a library perf never saw mapped, and only
+            # this says which.
+            sudo grep -E 'WPEWebKit|MiniBrowser|\.so' "/proc/$wpid/maps" \
+              | head -40 > "perf-out/$target.maps.txt" || true
             echo "::endgroup::"
 
             # System-wide, not --pid: WebKit recycles the WebProcess and the
@@ -194,22 +200,23 @@ jobs:
               name=$(echo "$sort" | tr ',' '-')
               "$PERF" report -i "perf-out/$target.data" --stdio --no-children \
                 --comms 'WPEWebProcess,WebKitWebProces,WPENetworkProce,MiniBrowser' \
-                --sort "$sort" --percent-limit 0.4 \
+                --sort "$sort" --percent-limit 0.1 -g none \
                 --symfs "$sym" \
                 2>/dev/null | head -70 > "perf-out/$target.$name.txt" || true
             done
             # Unfiltered comm table too: if the comm filter matched nothing,
             # this is what says which processes the samples actually landed in.
             "$PERF" report -i "perf-out/$target.data" --stdio --no-children \
-              --sort comm --percent-limit 0.5 2>/dev/null | head -30 \
+              --sort comm --percent-limit 0.2 -g none 2>/dev/null | head -30 \
               > "perf-out/$target.all-comms.txt" || true
 
             docker rm -f "$cname" >/dev/null 2>&1 || true
-            # The symfs is hundreds of MB per arm and the raw samples are
-            # another few hundred; only the reports travel. `sudo`, because
-            # `docker cp` lands root-owned trees that the artifact upload
-            # cannot even scandir (it failed on lib/ssl/private).
-            sudo rm -rf "$sym" "perf-out/$target.data"
+            # The symfs is hundreds of MB per arm; `sudo`, because `docker
+            # cp` lands root-owned trees that the artifact upload cannot even
+            # scandir (it failed on lib/ssl/private). The samples themselves
+            # are 13 MB and DO travel — re-reporting them locally beats
+            # re-running the job to change a sort order.
+            sudo rm -rf "$sym"
           done
 
       - name: Summarise
@@ -235,12 +242,14 @@ jobs:
       # then dies on it instead of shipping the reports that DID get written.
       - name: Drop the symfs before uploading
         if: always()
-        run: sudo rm -rf perf-out/symfs-* perf-out/*.data || true
+        run: sudo rm -rf perf-out/symfs-* || true
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: wk-perf-record-${{ inputs.kernel }}
-          path: perf-out/*.txt
+          path: |
+            perf-out/*.txt
+            perf-out/*.data
           if-no-files-found: warn
           retention-days: 30
