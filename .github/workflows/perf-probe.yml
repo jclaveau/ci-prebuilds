@@ -22,6 +22,18 @@ on:
         description: 'Our image to measure. Docker Hub carries `latest`/`main`/`main-<sha>`; GHCR carries `sha-<full-40-char-sha>` and `edge` but NO `latest`.'
         default: 'jclaveau/alpine-dood-playwright:latest'
         type: string
+      image_b:
+        # A SECOND image of ours, probed in the same job as the first and as the
+        # control. Without it, comparing an arm against the shipped build means
+        # differencing two workflow runs on two machines, and the ratio is
+        # runner-dependent: the same webkit reads libm_fmod 5.35 on an EPYC 7763,
+        # 6.3 on a 9V74 and 7.65 on a Xeon 8370C. That comparison has twice been
+        # rescued by hand, by checking a fingerprint metric matched — a habit,
+        # not a guarantee. Pass the arm here and the shipped build above (or the
+        # reverse) and both land on one machine by construction.
+        description: 'Optional second image of ours, measured on the SAME runner as `image` (e.g. an experiment arm against the shipped build)'
+        default: ''
+        type: string
       browsers:
         description: 'CSV: chromium,firefox,webkit'
         default: 'chromium,firefox,webkit'
@@ -83,24 +95,36 @@ jobs:
         env:
           BROWSER: ${{ matrix.browser }}
           OURS: ${{ inputs.image }}
+          OURS_B: ${{ inputs.image_b }}
           RUNS: ${{ inputs.runs }}
           PW: ${{ inputs.pw_version }}
         run: |
           set -o pipefail
           mkdir -p perf-out && chmod 777 perf-out   # the container writes as its own uid
           rc=0
+          # Every arm runs in THIS job, so they share one machine by
+          # construction — that is why the arms are not split across matrix
+          # entries, and `Assert one machine per browser` below checks it held.
+          targets="alpine official"
+          if [ -n "$OURS_B" ]; then
+            targets="alpine alpine-b official"
+          fi
           # Arms are interleaved rather than run in blocks: a runner that
           # slows down partway through would otherwise land entirely on
           # whichever arm went second and read as a build difference.
           for i in $(seq 1 "$RUNS"); do
-            for target in alpine official; do
-              if [ "$target" = official ]; then
-                image="mcr.microsoft.com/playwright:v${PW}-noble"
-                home=/root                          # the MCR image runs as root
-              else
-                image="$OURS"
-                home=/home/runner
-              fi
+            for target in $targets; do
+              case "$target" in
+                official)
+                  image="mcr.microsoft.com/playwright:v${PW}-noble"
+                  home=/root ;;                     # the MCR image runs as root
+                alpine-b)
+                  image="$OURS_B"
+                  home=/home/runner ;;
+                *)
+                  image="$OURS"
+                  home=/home/runner ;;
+              esac
               echo "::group::run $i/$RUNS — $target/$BROWSER ($image)"
               cname="probe-${target}-${BROWSER}-${i}"
               docker rm -f "$cname" >/dev/null 2>&1 || true
@@ -164,11 +188,16 @@ jobs:
         env:
           BROWSERS: ${{ needs.matrix.outputs.browsers }}
           RUNS: ${{ inputs.runs }}
+          HAS_B: ${{ inputs.image_b != '' }}
         run: |
           set -euo pipefail
           missing=0
+          arms="alpine official"
+          if [ "$HAS_B" = true ]; then
+            arms="alpine alpine-b official"
+          fi
           for browser in $(jq -r '.[]' <<< "$BROWSERS"); do
-            for arm in alpine official; do
+            for arm in $arms; do
               got=$(find perf-current -name "$arm-$browser-run*.json" | wc -l)
               if [ "$got" -ne "$RUNS" ]; then
                 echo "::error::$arm/$browser produced $got of $RUNS runs"
@@ -179,6 +208,13 @@ jobs:
             done
           done
           exit "$missing"
+
+      # The ratio is runner-dependent, so "same hardware" is CHECKED rather than
+      # merely arranged. Every arm of a browser runs in one job and therefore on
+      # one machine; different browsers run in different jobs and legitimately
+      # differ, so the check is per-browser.
+      - name: Assert one machine per browser
+        run: python3 playwright/bench/assert-one-machine.py perf-current
 
       - name: Render
         # Runs even when the assert failed: a partial table is still worth
