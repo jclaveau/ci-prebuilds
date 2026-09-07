@@ -39,7 +39,7 @@ on:
         default: ''
         type: string
       kernel:
-        description: 'Which kernel to profile: click_force | eval_rtt | goto_cold | screenshot | locator_click'
+        description: 'Which kernel to profile: click_force | eval_rtt | goto_cold | launch | screenshot | locator_click'
         default: 'click_force'
         type: string
       seconds:
@@ -191,7 +191,7 @@ jobs:
             for sort in comm dso dso,symbol; do
               name=$(echo "$sort" | tr ',' '-')
               "$PERF" report -i "perf-out/$target.data" --stdio --no-children \
-                --comms 'WPEWebProcess,WebKitWebProces,MiniBrowser' \
+                --comms 'WPEWebProcess,WebKitWebProces,WPENetworkProce,MiniBrowser' \
                 --sort "$sort" --percent-limit 0.4 \
                 --symfs "$sym" \
                 2>/dev/null | head -70 > "perf-out/$target.$name.txt" || true

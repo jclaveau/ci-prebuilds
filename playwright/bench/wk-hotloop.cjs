@@ -104,6 +104,14 @@ const PAGE_HTML = `<!doctype html>
       const p = await fresh.newPage();
       await p.goto(url);
       await fresh.close();
+    } else if (kernel === 'launch') {
+      // The only kernel that closes the whole browser: `launch` is 1.34 and
+      // `goto_cold` 1.11, and the loader is the surviving suspect for both
+      // (DSO closure, BIND_NOW and DT_RELR are all measured dead). Profiling
+      // it means sampling the dynamic linker in a SHORT-LIVED process, so the
+      // arm runs launch/close back to back with nothing else in the window.
+      const fresh = await browserType.launch();
+      await fresh.close();
     } else if (kernel === 'screenshot') {
       for (let i = 0; i < 10; i++) {
         await page.screenshot({ type: 'png' });
