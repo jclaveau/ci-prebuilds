@@ -13,8 +13,28 @@
  * The mechanism is musl's loop: it walks the exponent difference one bit per
  * iteration with a data-dependent branch in the body, so for operands like
  * the probe's (~21 bits of difference) every call eats ~21 unpredictable
- * branches. Replacing that branch with a conditional move is the whole fix;
- * the arithmetic is unchanged, which is why the result is bit-identical.
+ * branches. Removing that branch was the first fix and took musl's 372.2 ms
+ * per 9M calls down to 175.0 on an EPYC 9V74 — but glibc answers the same
+ * stream in 64.3, so a cmov'd bit-at-a-time loop was still 2.6x off. That
+ * 2.6x IS the browser row: `libm_fmod` reads 2.60 against official on that
+ * same core.
+ *
+ * So the bits themselves are the cost, and this now consumes up to 11 of them
+ * per hardware divide instead of one per iteration. Read out of glibc's own
+ * __fmod_finite rather than invented: it shifts the DIVISOR right — a
+ * normalised significand always has 11 spare low bits — so the dividend never
+ * outgrows 64 bits and the divide stays the fast `xor %edx; div` form. The
+ * identity is M = 2^k * M' => (X * 2^k) mod M == 2^k * (X mod M'). Measured
+ * at 58.7 ms, which is FASTER than glibc's own 64.3 on that core.
+ *
+ * Two traps, both paid for by measurement rather than avoided by reasoning:
+ *   - the 128-bit `divq` form (shifting the dividend up instead of the
+ *     divisor down) is the slow path of the divider, and measured WORSE than
+ *     the bit loop it was meant to replace;
+ *   - dividers differ enormously between cores. On an older dev box this
+ *     algorithm read 247 ms against the bit loop's 241 — the ranking
+ *     inverted. Zen 4's 64-bit DIV is ~19 cycles and is what the shipped
+ *     images run on, so candidates are timed in CI, never locally.
  *
  * SELF-CONTAINED ON PURPOSE. An earlier prototype deferred NaN/inf/subnormal
  * corners to `fmod()`. That is fine for a normal function and catastrophic
@@ -105,18 +125,32 @@ double fmod(double x, double y) {
     m |= IMPLICIT;
   }
 
-  /* The hot loop, and the entire point of this file. `i` is committed with a
-   * conditional move, never a branch. Letting `i` reach zero is safe: 0 - m
-   * stays negative forever after, so the cmov holds it at zero and the shifts
-   * keep it there — which is why the zero test lives after the loop and not
-   * inside it, where it would put the branch straight back. */
-  for (; ex > ey; ex--) {
-    uint64_t r = i - m;
-    i = (r >> 63) ? i : r;
-    i <<= 1;
+  /* The hot loop, and the entire point of this file: (i << d) mod m, where d
+   * is the exponent difference.
+   *
+   * Both significands are lifted to bit 63 first. That is what buys the 11
+   * spare low bits in the divisor, and it is why each iteration is worth at
+   * least 11 bits of d rather than one: the probe's ~21-bit case costs two
+   * divides instead of 21 dependent cmovs. `ctz` is read per iteration
+   * because a divisor with trailing zeros of its own gives more than 11.
+   *
+   * The remainder stays a multiple of 2^11 throughout — it is a remainder
+   * modulo a value with 11 low zero bits — so shifting back down afterwards
+   * is exact rather than a truncation. */
+  int d = ex - ey;
+  ex = ey;
+
+  uint64_t mx = i << 11;
+  uint64_t my = m << 11;
+
+  mx %= my;
+  while (d > 0) {
+    int tz = __builtin_ctzll(my);
+    int k = d < tz ? d : tz;
+    mx = (mx % (my >> k)) << k;
+    d -= k;
   }
-  uint64_t r = i - m;
-  i = (r >> 63) ? i : r;
+  i = mx >> 11;
 
   if (i == 0) {
     return to_double(sign);
