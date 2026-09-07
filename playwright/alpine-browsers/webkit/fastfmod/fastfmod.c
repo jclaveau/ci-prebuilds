@@ -143,7 +143,14 @@ double fmod(double x, double y) {
   uint64_t mx = i << 11;
   uint64_t my = m << 11;
 
-  mx %= my;
+  /* One conditional subtract, not a divide. Both significands carry the
+   * implicit bit, so mx < 2*my on entry and a single subtract establishes the
+   * mx < my the loop assumes. Writing it as `mx %= my` cost a full hardware
+   * divide — a third one on the probe's operands, where the reduction itself
+   * needs only two — and divides are the expensive instruction here. */
+  uint64_t excess = mx - my;
+  mx = (excess >> 63) ? mx : excess;
+
   while (d > 0) {
     int tz = __builtin_ctzll(my);
     int k = d < tz ? d : tz;
