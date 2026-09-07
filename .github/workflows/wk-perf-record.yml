@@ -160,8 +160,18 @@ jobs:
             # System-wide, not --pid: WebKit recycles the WebProcess and the
             # pid found above can be gone before perf attaches. Only one
             # container runs at a time, and the reports select the comm.
-            "$PERF" record -a -F 499 -g -o "perf-out/$target.data" \
+            #
+            # sudo, and that is not incidental. perf names an already-running
+            # process's mappings by reading /proc/<pid>/maps, and the official
+            # image runs its container as root while ours runs as the runner's
+            # own uid — so an unprivileged perf could synthesise ours and not
+            # theirs, and the official arm came back with every sample under
+            # `[unknown]` and every thread named `:3911`. The launch kernel
+            # resolved BOTH arms in the same run, because processes that START
+            # inside the window emit live mmap events and need no synthesis.
+            sudo "$PERF" record -a -F 499 -o "perf-out/$target.data" \
               -- sleep "$window" || echo "::warning::perf record failed for $target"
+            sudo chown "$(id -u):$(id -g)" "perf-out/$target.data" || true
 
             # symfs BEFORE the container dies: perf resolves the paths recorded
             # in the mmap events, and those live inside the container.
