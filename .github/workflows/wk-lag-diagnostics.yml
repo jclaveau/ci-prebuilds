@@ -12,6 +12,7 @@ name: WebKit lag diagnostics
 #   jsc-arms   which JIT tier compiles the modulo loop, via `JSC_*` options
 #   elf-audit  the shape of the dynamic link, plus the canary posture that
 #              already cost chromium 12% instructions
+#   fmod-cost  the shipped shim and its candidates against each image's libc
 #   strace     what `launch()` actually spends its syscalls on
 #
 # Everything runs in ONE job: the arms are compared against each other, and
@@ -131,6 +132,36 @@ jobs:
                    sh /probe/webkit-elf-audit.sh /ms-playwright official' \
             2>&1 | tee elf-out/official.txt
 
+      # ----------------------------------------------------------- fmod cost
+      # The `libm_fmod` row is a libc call after all. A slowed-down `fmod`
+      # interposed into Playwright's own image moved its kernel 193 -> 1943 ms
+      # and its WebProcess counted 54,000,030 calls, so BOTH engines go to
+      # libc and the row is musl-vs-glibc after the shim, exactly as the
+      # kernel's name says. (An earlier reading of "zero calls" was mine and
+      # was wrong: the interposer had not loaded.)
+      #
+      # This times the shipped shim and each candidate against the libc of
+      # each image, on one runner. Locally the ranking inverted between
+      # candidates because a dev box's divider is several times slower than
+      # Zen 4's, which is why it is measured here rather than there.
+      - name: fmod candidates against each libc
+        if: '!cancelled()'
+        run: |
+          set -o pipefail
+          mkdir -p fmod-out
+          docker run --rm --user 0 \
+            -v "$PWD/playwright/alpine-browsers/webkit/fastfmod:/ff:ro" "$OURS" \
+            sh -c 'apk add --no-cache gcc musl-dev >/dev/null 2>&1;
+                   echo "== vs musl"; sh /ff/candidates/run-bench.sh' \
+            2>&1 | tee fmod-out/alpine.txt
+          docker run --rm --user 0 \
+            -v "$PWD/playwright/alpine-browsers/webkit/fastfmod:/ff:ro" \
+            "mcr.microsoft.com/playwright:v${PW}-noble" \
+            sh -c 'apt-get update >/dev/null 2>&1;
+                   apt-get install -y gcc >/dev/null 2>&1;
+                   echo "== vs glibc"; sh /ff/candidates/run-bench.sh' \
+            2>&1 | tee fmod-out/official.txt
+
       # -------------------------------------------------------------- launch
       # `launch()` is 1.31 while our binary carries FEWER relocations than
       # official's, so the syscall trace decides between loader work and
@@ -190,6 +221,11 @@ jobs:
             cat elf-out/alpine.txt elf-out/official.txt
             echo '```'
             echo
+            echo "### fmod candidates (best of 5, bit-gated)"
+            echo '```'
+            cat fmod-out/alpine.txt fmod-out/official.txt
+            echo '```'
+            echo
             echo "### launch syscalls (5 launches)"
             echo '```'
             cat strace-out/alpine.txt strace-out/official.txt
@@ -203,6 +239,7 @@ jobs:
           path: |
             jsc-out/
             elf-out/
+            fmod-out/
             strace-out/
           if-no-files-found: warn
           retention-days: 30
