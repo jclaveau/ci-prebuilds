@@ -15,7 +15,17 @@ here="$(dirname "$0")"
 cc="${CC:-gcc}"
 out="${TMPDIR:-/tmp}"
 
-for src in "$here/../fastfmod.c" "$here"/*.c; do
+# The entry reduction PR #170 replaced: a full hardware divide where the
+# shipped source now does one conditional subtract. It was justified on a dev
+# box (269.5 ms -> 170.2), and this file's own header says dividers rank
+# differently per core — so it gets timed here, on the CI part, beside the
+# thing it replaced. Generated from the shipped source rather than copied, so
+# the two candidates cannot drift apart.
+sed -e 's|uint64_t excess = mx - my;|uint64_t excess = mx % my;|' \
+    -e 's|mx = (excess >> 63) ? mx : excess;|mx = excess;|' \
+    "$here/../fastfmod.c" > "$out/entry-divide.c"
+
+for src in "$here/../fastfmod.c" "$here"/*.c "$out/entry-divide.c"; do
   name="$(basename "$src" .c)"
   case "$name" in
     bench-harness) continue ;;
