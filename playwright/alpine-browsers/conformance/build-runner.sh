@@ -348,14 +348,34 @@ FROM alpine:edge AS webrtc-build
 # a partially extracted tree that still contained ext/webrtc — a silent half
 # success. Verifying the archive before extracting is what makes the retry
 # mean anything.
+#
+# libnice gets the same treatment now, for the reason the note above already
+# gave and this leg had not acted on. Shard 4 of run 34124287051 failed with
+# `Dependency "nice" not found (tried pkg-config)` — a dependency error, which
+# reads as a recipe fault — 8.5 seconds into a step where compiling libnice
+# alone takes far longer. The recipe reproduces clean locally; what the timing
+# says is that the libnice half never did any work. `curl | tar` on busybox
+# tar accepts an empty body without complaint, so a dropped fetch arrives
+# later disguised as a missing package, and it took the webkit promote with
+# it. Verify the archive, retry the fetch, and assert the package is really
+# installed before moving on: a broken fetch must not be able to present as
+# anything else.
 RUN apk add --no-cache build-base meson ninja pkgconf curl \\
     gstreamer-dev gst-plugins-base-dev gst-plugins-bad-dev openssl-dev libsrtp-dev glib-dev
 RUN set -e; GSTVER=\$(pkg-config --modversion gstreamer-1.0); cd /tmp \\
- && curl -fsSL "https://gitlab.freedesktop.org/libnice/libnice/-/archive/0.1.23/libnice-0.1.23.tar.gz" | tar xz \\
+ && for attempt in 1 2 3 4 5; do \\
+      curl -fsSL --retry 3 --retry-all-errors -o nice.tar.gz \\
+        "https://gitlab.freedesktop.org/libnice/libnice/-/archive/0.1.23/libnice-0.1.23.tar.gz" \\
+        && gzip -t nice.tar.gz && break; \\
+      echo "libnice fetch attempt \$attempt failed; retrying" >&2; sleep \$((attempt * 5)); \\
+    done \\
+ && gzip -t nice.tar.gz \\
+ && tar xzf nice.tar.gz && rm nice.tar.gz \\
  && cd libnice-0.1.23 \\
  && meson setup b --prefix=/usr --libdir=lib -Dgstreamer=enabled \\
       -Dtests=disabled -Dexamples=disabled -Dintrospection=disabled -Dgtk_doc=disabled \\
  && ninja -C b install \\
+ && pkg-config --atleast-version=0.1.23 nice \\
  && cd /tmp \\
  && { curl -fsSL -o gpb.tar.xz "https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-\${GSTVER}.tar.xz" && xz -t gpb.tar.xz; } \\
       || { curl -fsSL -o gpb.tar.xz "https://distfiles.alpinelinux.org/distfiles/edge/gst-plugins-bad-\${GSTVER}.tar.xz" && xz -t gpb.tar.xz; } \\
