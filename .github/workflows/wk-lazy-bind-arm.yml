@@ -1,0 +1,93 @@
+name: WebKit lazy-bind arm
+
+# Publishes an arm of the shipped consumer image whose WebKit bundle binds
+# LAZILY, so `launch` can be measured against the shipped eager-binding build
+# without a WebKit rebuild.
+#
+# Why this is the next experiment: the launch profile puts the top cost on BOTH
+# arms in the dynamic loader, and the hot address in ours resolves to musl's
+# `gnu_lookup_filtered` — symbol lookup — at ~5.2% of all samples against
+# official's ~3.5% loader cluster. Alpine's toolchain links `-z now` by
+# default, so we resolve every symbol in all 22 bundle ELFs at load; PW's build
+# carries neither DF_BIND_NOW nor DF_1_NOW and resolves only what it calls.
+#
+# `-z now` is two bits in the dynamic section and the PLT stubs are emitted
+# either way, so clearing the bits hands the loader the same binary as a lazily
+# bound one. That turns a link-flag change into a tag and a probe. If it pays,
+# it belongs in the build's link flags rather than here.
+#
+# The arm differs from `image` by the patch plus a python3 install and removal;
+# nothing else is touched.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: 'Consumer image to derive the arm from'
+        default: 'jclaveau/alpine-dood-playwright:latest'
+        type: string
+      tag:
+        description: 'GHCR tag to publish the arm under'
+        default: 'wk-lazybind'
+        type: string
+
+concurrency:
+  group: wk-lazy-bind-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    env:
+      BASE: ${{ inputs.image }}
+      ARM: ghcr.io/jclaveau/alpine-dood-playwright:${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the lazy-bind arm
+        run: |
+          set -euo pipefail
+          docker pull "$BASE"
+          user=$(docker inspect --format '{{.Config.User}}' "$BASE")
+          echo "base user: ${user:-<root>}"
+          docker build -f playwright/bench/Dockerfile.lazybind \
+            --build-arg "BASE=$BASE" --build-arg "ORIG_USER=${user:-root}" \
+            -t "$ARM" .
+          docker push "$ARM"
+
+      - name: Assert the arm actually binds lazily
+        run: |
+          set -euo pipefail
+          for image in "$BASE" "$ARM"; do
+            echo "== $image"
+            docker run --rm --user 0 "$image" sh -c '
+              apk add --no-cache binutils >/dev/null 2>&1
+              lib=$(ls /ms-playwright/webkit-*/minibrowser-wpe/libWPEWebKit-2.0.so.1)
+              readelf -d "$lib" | grep -E "BIND_NOW|Flags: NOW" || echo "(no eager-binding flags)"
+              ldd "$lib" 2>&1 | grep -c "not found" | sed "s/^/unresolved deps: /"
+            '
+          done
+
+      - name: Summarise
+        if: '!cancelled()'
+        run: |
+          {
+            echo "## WebKit lazy-bind arm"
+            echo
+            echo "\`$ARM\` — derived from \`$BASE\`, bundle patched to bind lazily."
+            echo
+            echo "Probe it against the shipped build on one runner:"
+            echo '```'
+            echo "perf-probe.yml  image=$BASE  image_b=$ARM  browsers=webkit  runs=10"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
