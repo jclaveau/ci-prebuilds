@@ -3,7 +3,7 @@ ARG BASE_IMAGE=jclaveau/ubuntu-dood-node:latest
 FROM ${BASE_IMAGE}
 
 # Renovate will update this (keep in sync with pnpm/Dockerfile)
-ARG PNPM_VERSION=11.24.0
+ARG PNPM_VERSION=11.26.0
 
 # The node-gyp variant: pnpm + the C/C++ toolchain that the base gha-tools deliberately drops. Built as a
 # SIBLING of the slim `pnpm` layer (both FROM node) so the two chains build in parallel. The pnpm install
