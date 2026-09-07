@@ -34,6 +34,16 @@ on:
       pnpm_version:    { type: string,  default: '' }   # e.g. '9.15.3'
       pw_version:      { type: string,  default: '' }   # e.g. '1.50.1'
       chs_rev:         { type: string,  default: '' }   # e.g. '1217' (chromium-headless-shell revision; alpine-only); derived from pw_version's browsers.json by on-demand-build.yml. Empty = use Dockerfile.alpine's ARG CHS_REV default (current pin).
+      # Which producer tag each browser is COPYed from (alpine-only). Empty =
+      # Dockerfile.alpine's default, i.e. the moving version-pinned tag the
+      # promote jobs write. Point ONE of them at an arm's sha-scoped artifact
+      # to build a consumer image carrying that arm, so it can be probed
+      # without being merged. Dispatch from the ARM's branch, not from main:
+      # the image tag is derived from the ref, and an override dispatched on
+      # main would overwrite main's own published image.
+      chs_source_tag:  { type: string,  default: '' }   # e.g. 'chs-fs-sha-<sha>'
+      ff_source_tag:   { type: string,  default: '' }   # e.g. 'sha-<sha>'
+      wk_source_tag:   { type: string,  default: '' }   # e.g. 'wk-sha-<sha>'
       # All three `only_*` axes use the same convention: comma-separated friendly names,
       # empty = no filter (every default-matrix entry runs, byte-identical to today).
       # Whitespace around commas is tolerated.
@@ -56,6 +66,12 @@ on:
   # Manual full rebuild — refresh consumer `:latest` when a producer moving tag
   # (e.g. chs-<rev>) updates with no code change here (push-path gating skips it).
   workflow_dispatch:
+    inputs:
+      # Same three as workflow_call above, so an arm can be built straight from
+      # the Actions tab. Dispatch on the arm's branch.
+      chs_source_tag:  { type: string,  default: '', description: 'Producer tag for chromium (empty = the shipped pin)' }
+      ff_source_tag:   { type: string,  default: '', description: 'Producer tag for firefox (empty = the shipped pin)' }
+      wk_source_tag:   { type: string,  default: '', description: 'Producer tag for webkit (empty = the shipped pin)' }
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -676,6 +692,9 @@ jobs:
           build_args: |
             ${{ inputs.pw_version && format('PLAYWRIGHT_VERSION={0}', inputs.pw_version) || '' }}
             ${{ inputs.chs_rev && format('CHS_REV={0}', inputs.chs_rev) || '' }}
+            ${{ inputs.chs_source_tag && format('CHS_SOURCE_TAG={0}', inputs.chs_source_tag) || '' }}
+            ${{ inputs.ff_source_tag && format('FF_SOURCE_TAG={0}', inputs.ff_source_tag) || '' }}
+            ${{ inputs.wk_source_tag && format('WK_SOURCE_TAG={0}', inputs.wk_source_tag) || '' }}
 
   build-playwright-dind:
     runs-on: ubuntu-latest
@@ -701,6 +720,9 @@ jobs:
           build_args: |
             ${{ inputs.pw_version && format('PLAYWRIGHT_VERSION={0}', inputs.pw_version) || '' }}
             ${{ inputs.chs_rev && format('CHS_REV={0}', inputs.chs_rev) || '' }}
+            ${{ inputs.chs_source_tag && format('CHS_SOURCE_TAG={0}', inputs.chs_source_tag) || '' }}
+            ${{ inputs.ff_source_tag && format('FF_SOURCE_TAG={0}', inputs.ff_source_tag) || '' }}
+            ${{ inputs.wk_source_tag && format('WK_SOURCE_TAG={0}', inputs.wk_source_tag) || '' }}
 
 
   # Playwright on the node-gyp base: the SAME ./playwright layer, only the base differs (pnpm-gyp), for
@@ -729,6 +751,9 @@ jobs:
           build_args: |
             ${{ inputs.pw_version && format('PLAYWRIGHT_VERSION={0}', inputs.pw_version) || '' }}
             ${{ inputs.chs_rev && format('CHS_REV={0}', inputs.chs_rev) || '' }}
+            ${{ inputs.chs_source_tag && format('CHS_SOURCE_TAG={0}', inputs.chs_source_tag) || '' }}
+            ${{ inputs.ff_source_tag && format('FF_SOURCE_TAG={0}', inputs.ff_source_tag) || '' }}
+            ${{ inputs.wk_source_tag && format('WK_SOURCE_TAG={0}', inputs.wk_source_tag) || '' }}
 
   build-playwright-gyp-dind:
     runs-on: ubuntu-latest
@@ -754,6 +779,9 @@ jobs:
           build_args: |
             ${{ inputs.pw_version && format('PLAYWRIGHT_VERSION={0}', inputs.pw_version) || '' }}
             ${{ inputs.chs_rev && format('CHS_REV={0}', inputs.chs_rev) || '' }}
+            ${{ inputs.chs_source_tag && format('CHS_SOURCE_TAG={0}', inputs.chs_source_tag) || '' }}
+            ${{ inputs.ff_source_tag && format('FF_SOURCE_TAG={0}', inputs.ff_source_tag) || '' }}
+            ${{ inputs.wk_source_tag && format('WK_SOURCE_TAG={0}', inputs.wk_source_tag) || '' }}
 
 
   # ----------------------------------------------------------------------------
