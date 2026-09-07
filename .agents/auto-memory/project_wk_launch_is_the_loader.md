@@ -1,6 +1,6 @@
 ---
 name: project_wk_launch_is_the_loader
-description: WebKit's launch 1.33 is not our build's shape — ours has FEWER relocations and a SMALLER .text than official yet dlopens slower; BIND_NOW is exonerated by a within-binary A/B, so the remaining suspect is musl's dynamic loader
+description: WebKit's launch 1.33 is not our build's shape — ours has FEWER relocations and a SMALLER .text than official yet dlopens slower; BIND_NOW and DT_RELR are both exonerated by measurement, so the remaining suspect is musl's dynamic loader
 metadata:
   type: project
 ---
@@ -27,6 +27,25 @@ relocation entries     320,694       339,342
 RELACOUNT (RELATIVE)   313,989       332,177
 dynamic symbols          4,036         3,955
 ```
+
+**Not relocation PROCESSING either — `DT_RELR` measured and verified applied.**
+A cold arm linked with `-Wl,-z,pack-relative-relocs` cut the dynamic
+relocations 21x, and `launch` did not move:
+
+```
+                       RELR arm      shipped
+relocation entries       15,064      320,694
+has .relr.dyn                 1            0
+launch (x official)        1.42         1.44
+```
+
+Verified end-to-end on the CONSUMER image that was probed
+(`alpine-dood-playwright:sha-25531bd6`), not on the build log — the same
+standard the stack-protector arm was held to. Caveat worth carrying: that arm
+was built before ThinLTO landed (`.text` 106.4 MB against the shipped 92.0),
+so both sides read ~1.4 and the comparison is only good for the RELR question
+it was built to answer. It answers it: whatever `launch` is paying for, it is
+not walking the relocation table.
 
 **Not BIND_NOW**, though ours links it and official does not (ours carries
 `FLAGS BIND_NOW` + `FLAGS_1 NOW`; official's dynamic section has neither). A
