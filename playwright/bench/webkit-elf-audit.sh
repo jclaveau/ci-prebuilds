@@ -33,7 +33,15 @@ echo "has-sysv-hash:    $(readelf -S "$lib" | grep -cE ' \.hash ')"
 echo "has-relr:         $(readelf -S "$lib" | grep -c '\.relr\.dyn')"
 echo "dynsyms:          $(readelf --dyn-syms -W "$lib" | grep -c '^ *[0-9]')"
 echo "relocs:           $(readelf -r -W "$lib" | grep -c '^[0-9a-f]')"
-echo "text-bytes:       $(readelf -S -W "$lib" | awk '$2==".text"{print strtonum("0x" $6)}')"
+# printf rather than awk's strtonum, which is a gawk extension that neither
+# busybox awk (alpine) nor mawk (the MCR image) defines.
+echo "text-bytes:       $(printf '%d' "0x$(readelf -S -W "$lib" | awk '$2==".text"{print $6}')")"
+
+# Corroborates the canary count from the other side: a build with the
+# protector on references the failure handler, one without it does not. Two
+# independent readings, because a single grep for one instruction pattern
+# reporting a clean ZERO is exactly what a broken grep also reports.
+echo "stack-chk-refs:   $(readelf --dyn-syms -W "$lib" | grep -c '__stack_chk' || true)"
 
 # One disassembly pass: two greps over a multi-GB stream would double a
 # minutes-long step for no extra information.
@@ -43,7 +51,10 @@ objdump -d --no-show-raw-insn "$lib" | awk '
   END { printf "canary-loads:     %d\ninsns:            %d\ncanary-per-1k:    %.3f\n",
         canary, insn, (insn ? 1000 * canary / insn : 0) }'
 
-mb="$(find "$root" -name 'MiniBrowser*' -type f | head -1)"
+# Searched from the library's OWN directory: `find $root` picked official's
+# minibrowser-gtk while the library audited above is the wpe one, and ldd on a
+# binary from another port reported a closure of 0.
+mb="$(find "$(dirname "$lib")/.." -name 'MiniBrowser*' -type f | head -1)"
 if [ -n "$mb" ]; then
   echo "minibrowser:      $mb"
   echo "ldd-closure:      $(ldd "$mb" 2>/dev/null | grep -c '=>' || echo '?')"
