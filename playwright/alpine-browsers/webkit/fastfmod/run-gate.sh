@@ -33,9 +33,16 @@ echo "===== build ====="
 $CC -O2 -fno-builtin-fmod -o "$OUT/vectors" "$SRC/fastfmod-vectors.c" -lm
 $CC -O2 -fPIC -shared -o "$OUT/libfastfmod.so" "$SRC/fastfmod.c"
 $CC -O2 -fPIC -shared -o "$OUT/libcounter.so" "$SRC/fmod-call-counter.c" -ldl
-# The corrupted twin: the cmov's two arms swapped. Derived from the same
-# source so it cannot drift away from the real one, and it must fail step 5.
-sed 's/i = (r >> 63) ? i : r;/i = (r >> 63) ? r : i;/' "$SRC/fastfmod.c" > "$OUT/broken.c"
+# The corrupted twin: the reduction shifts one bit too far, so every non-zero
+# remainder comes back doubled. Derived from the same source so it cannot
+# drift away from the real one, and it must fail step 5.
+#
+# This sed is COUPLED to the hot loop's shape, deliberately. When the loop was
+# rewritten from one-bit-per-iteration cmovs to chunked divides, the previous
+# sed matched nothing and this gate refused to run — which is the behaviour to
+# keep. A negative control that corrupts nothing is worse than none.
+sed 's|mx = (mx % (my >> k)) << k;|mx = (mx % (my >> k)) << (k + 1);|' \
+  "$SRC/fastfmod.c" > "$OUT/broken.c"
 if cmp -s "$SRC/fastfmod.c" "$OUT/broken.c"; then
   echo "FAIL: the corruption did not apply — the negative control would be vacuous" >&2
   exit 1
