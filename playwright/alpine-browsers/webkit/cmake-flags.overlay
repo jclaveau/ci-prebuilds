@@ -122,6 +122,21 @@ CMAKE_SHARED_FLAGS=(
   #   = UD2. Manifest: WPEWebProcess SIGILL at +14s during page creation
   #   in SkAutoDescriptor move ctor → SkFont::getMetrics → Font::platformInit.
   #   See: project_webkit_fortify_source_skia_trap.md
-  "-DCMAKE_C_FLAGS=-DSIMDUTF_IMPLEMENTATION_ICELAKE=0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
-  "-DCMAKE_CXX_FLAGS=-DSIMDUTF_IMPLEMENTATION_ICELAKE=0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+  # Why the stack-protector pair:
+  #   Counted on the two shipped libWPEWebKit binaries rather than inferred
+  #   from either recipe — ours carries 233 941 canary loads against
+  #   Playwright's ZERO, at near-identical instruction counts (23.99M vs
+  #   24.65M). That is 9.75 canary loads per 1k instructions of overhead the
+  #   build we are chasing does not pay, and it is the only static difference
+  #   found that touches every hot path at once.
+  #
+  #   Alpine's clang forces `-fstack-protector-strong` from the DRIVER, so
+  #   `-fno-stack-protector` and `--no-default-config` are both inert here:
+  #   `-###` shows cc1 receiving `-stack-protector 2` either way. Only the
+  #   `-Xclang` pair reaches cc1. The chromium arm set it to 1 rather than 0
+  #   because official chromium asks for the weak variant and 0 would have
+  #   left us LESS protected than the reference; for WebKit the reference
+  #   itself is 0, so 0 is the parity value rather than a weakening.
+  "-DCMAKE_C_FLAGS=-DSIMDUTF_IMPLEMENTATION_ICELAKE=0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -Xclang -stack-protector -Xclang 0"
+  "-DCMAKE_CXX_FLAGS=-DSIMDUTF_IMPLEMENTATION_ICELAKE=0 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0 -Xclang -stack-protector -Xclang 0"
 )

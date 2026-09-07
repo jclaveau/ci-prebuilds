@@ -94,3 +94,18 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 echo "===== Self-contained $(basename "$DST"): $(du -sh "$DST" | cut -f1) ====="
+
+# Did the stack-protector parity flag reach cc1? Alpine's clang forces
+# `-fstack-protector-strong` from the driver and ignores the plain negations,
+# so a build that quietly dropped the `-Xclang` pair would ship looking exactly
+# like a result while measuring nothing. The answer exists only in the linked
+# library. Reported, not enforced: failing a multi-hour chain at its last step
+# over a diagnostic costs more than reading the number.
+# Reference points: official 0 canary loads, our strong-by-default build
+# 233 941 — both counted on the shipped libWPEWebKit in run 34139683751.
+ssp_lib="$(find "$DST" -name 'libWPEWebKit*.so.*' -type f -exec ls -S {} + 2>/dev/null | head -1)"
+if [ -n "$ssp_lib" ] && command -v objdump >/dev/null 2>&1; then
+  echo "Stack-protector canary loads in $(basename "$ssp_lib"):" \
+       "$(objdump -d "$ssp_lib" 2>/dev/null | grep -c 'fs:0x28' || true)" \
+       "(official 0, alpine-strong 233941)"
+fi
