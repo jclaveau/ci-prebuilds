@@ -23,6 +23,17 @@ set -euo pipefail
 : "${ARTIFACT_REV:?ARTIFACT_REV must be set}"
 IMAGE_TAG_OUT="${IMAGE_TAG_OUT:-pw-conformance-runner:latest}"
 
+# npm's own retry, spliced into every `npm install` below. Without it a single
+# reset connection fails a whole conformance shard: run 34148143527 lost
+# `conformance-firefox / shard (14)` — and with it the summary, and with that
+# the firefox promote — to
+#
+#   npm error code ECONNRESET / npm error network read ECONNRESET
+#
+# npm defaults to 2 retries with a 10s ceiling, which is short for a 20-shard
+# fan-out where every shard installs the same package at the same moment.
+NPM_RETRY="--fetch-retries=5 --fetch-retry-mintimeout=10000 --fetch-retry-maxtimeout=120000"
+
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
@@ -76,7 +87,7 @@ RUN mkdir -p /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/chrome-headl
       /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/chrome-headless-shell-linux64/chrome-headless-shell \
  && touch /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/INSTALLATION_COMPLETE
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN npm install -g playwright@${PW_VERSION}
+RUN npm install -g ${NPM_RETRY} playwright@${PW_VERSION}
 RUN playwright install ffmpeg
 EOF
     else
@@ -105,7 +116,7 @@ COPY --from=${IMAGE_REF} \\
      /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/chrome-headless-shell-linux64
 RUN touch /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/INSTALLATION_COMPLETE
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN npm install -g playwright@${PW_VERSION}
+RUN npm install -g ${NPM_RETRY} playwright@${PW_VERSION}
 # browserType.executablePath() resolves to /ms-playwright/chromium-<rev>/
 # chrome-linux64/chrome (the full chromium, NOT headless-shell), which the
 # conformance tests never launch but `executablePath should work` existsSync-
@@ -253,7 +264,7 @@ RUN apk add --no-cache curl \\
       > /ms-playwright/firefox-${ARTIFACT_REV}/firefox/browser/defaults/preferences/01-alpine-pointer.js
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \\
     LD_LIBRARY_PATH=/ms-playwright/firefox-${ARTIFACT_REV}/firefox
-RUN npm install -g playwright@${PW_VERSION}
+RUN npm install -g ${NPM_RETRY} playwright@${PW_VERSION}
 RUN playwright install ffmpeg
 # Place chromium at PW's auto-discovery path so recorder-UI (\_enableRecorder)
 # finds a musl-native chromium instead of throwing 'No chromium-based browser
@@ -474,7 +485,7 @@ ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
 ENV GST_PLUGIN_SYSTEM_PATH_1_0=/usr/lib/gstreamer-1.0
 ENV GST_PLUGIN_SCANNER_1_0=/usr/libexec/gstreamer-1.0/gst-plugin-scanner
 ENV GST_REGISTRY_1_0=/tmp/gst-registry.bin
-RUN npm install -g playwright@${PW_VERSION}
+RUN npm install -g ${NPM_RETRY} playwright@${PW_VERSION}
 # ffmpeg-1011 needed by recordVideo + screencast fixtures; skip-list narrows the
 # affected suite, but downloading lets the rest of tests/library boot cleanly.
 RUN playwright install ffmpeg
