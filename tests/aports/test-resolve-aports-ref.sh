@@ -4,7 +4,8 @@
 # Happy path: a known-good chromium pkgver resolves to a hex aports SHA.
 # Sad path:   a fabricated pkgver returns "no aports commit found".
 #
-# Network-dependent (hits gitlab.alpinelinux.org).
+# Network-dependent — it reads aports for real, over both hosts
+# (see chromium-headless-shell/scripts/aports-fetch.sh).
 
 set -euo pipefail
 

@@ -174,21 +174,27 @@ const KERNELS = {
     return { ms: performance.now() - t0, checksum: x };
   }`,
 
-  // `%` on a double past 2^53 is an fmod(). What this kernel measures is NOT
-  // settled and the name over-promises: in one run on one machine it read 0.67
-  // on firefox, 1.00 on chromium and 5.35 on webkit — same libc, so the three
-  // engines cannot all be reaching it the same way. JSC provably does call libc
-  // (interposed and counted, 30,000,033 calls), and musl's fmod isolated is the
-  // slow one, 163.8 ms against glibc's 54.0. V8 and SpiderMonkey are unexplained;
-  // a power-of-two divisor being folded was the obvious theory and it is WRONG —
-  // swapping 2^32 for the prime 4294967291 moves V8 by 3%, not 3x. Most likely
-  // they carry their own fmod. Until that is pinned, read this row per-engine
-  // and never as a libc verdict: https://github.com/jclaveau/ci-prebuilds/issues/126
+  // NOT a libc kernel, whatever the name says. fmod-call-counter.c preloaded
+  // into every WebKit process counted ZERO calls into libc with the 2^32
+  // divisor (run 34048835048) and ZERO again with the prime (run 34049965630),
+  // so JSC serves `%` on doubles itself. V8 does too — swapping the divisor
+  // moves chromium ~3%. Only firefox behaves like something reaching a libm.
+  //
+  // The divisor still matters and stays off a power of two: 2^32 lets the
+  // engines fold the whole thing into a mask, and the three ratios moved when
+  // it was restored (chromium 1.00 -> 0.99, firefox 0.64 -> 0.51, webkit
+  // 3.12 -> 2.65). Every number taken before that is void, wins included.
+  //
+  // What this row actually reports is the ENGINE's double-modulo path, so read
+  // it per-engine and never as a musl-vs-glibc verdict (issue #126). On that
+  // reading webkit's 2.65 is the live question: our JSC runs this loop 2.65x
+  // slower than Playwright's on builds the probe calls the same 26.5, with no
+  // libc involved on either side.
   libm_fmod: `() => {
     const t0 = performance.now();
     let x = 0;
     for (let i = 1; i < 9000000; i++) {
-      x += (i * 2654435761) % 4294967296;
+      x += (i * 2654435761) % 4294967291;
     }
     return { ms: performance.now() - t0, checksum: x };
   }`,

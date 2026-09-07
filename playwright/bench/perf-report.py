@@ -177,7 +177,9 @@ def _footer(current):
         "| `dom_churn` | 20000 create/append/remove in-page. 5.3x on the same build. |",
         "| `js_alloc` | 2M short-lived object allocations in-page. |",
         "| `int_math` | 30M integer ops (`Math.imul` + `\\|0`) in-page. No libm call — that is the point. |",
-        "| `libm_fmod` | 3M `%` on doubles past 2^53, i.e. `fmod()`. Isolated because musl's fmod is ~2.1x glibc's and it used to contaminate the JIT number. |",
+        "| `libm_fmod` | 9M `%` on doubles past 2^53. Named for a libm call that "
+        "the engines mostly do NOT make — counted zero under JSC — so read it as the "
+        "engine's own double-modulo path, per-engine, never as a libc verdict. |",
         "",
         "</details>",
         "",

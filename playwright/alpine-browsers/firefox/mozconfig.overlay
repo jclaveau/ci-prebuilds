@@ -1,12 +1,38 @@
 # Overlay applied on top of aports' community/firefox/mozconfig.
 #
-# aports' mozconfig is already tuned for an Alpine distro build (system libs,
-# release channel, hardening on, updater off). aports' build() function
-# CONDITIONALLY adds PGO (--enable-profile-generate / --enable-profile-use) at
-# build time on x86_64/aarch64/ppc64le, but we don't run that function — we
-# invoke ./mach build directly, so PGO never enters the picture.
+# aports' mozconfig is tuned for an Alpine distro build (system libs, release
+# channel, hardening on, updater off) — not for speed. Every optimisation sits
+# in the APKBUILD's build() function, which we never run because we invoke
+# ./mach build ourselves, so `grep -c lto` on the base mozconfig returns 0.
 #
-# Result: minimal overrides. We do enable sccache here so mach wraps every CC
-# / rustc invocation, which combined with the Dockerfile cache mount makes
-# incremental rebuilds across CI runs fast (3h cold → ~5min hot).
+# `apply-and-build.sh` builds .mozconfig as `cat aports/mozconfig overlay`, so
+# options here are appended and win over the base.
+#
+# We enable sccache here so mach wraps every CC / rustc invocation, which
+# combined with the Dockerfile cache mount makes incremental rebuilds across CI
+# runs fast (3h cold → ~5min hot).
 ac_add_options --with-ccache=sccache
+
+# LTO. aports puts `--enable-lto=cross` in its optimised-mozconfig, beside the
+# PGO options, so skipping build() dropped both together and we shipped a
+# non-LTO firefox for months. Two ours-vs-ours A/Bs on different runners
+# (32819403911, 32819736659) put `layout` at 0.91x and 0.90x with every
+# allocation-free control flat, and the arm linked in 4h18m on a 4-vCPU/16GB
+# runner without OOM — so `cross` is affordable and `cross,thin` is unnecessary.
+#
+# Kept at exactly `cross` because that is the recipe proven to build firefox on
+# Alpine x86_64. If a future final link OOMs, `cross,thin` is the fallback, and
+# the failure lands late at the link step.
+#
+# apply-and-build.sh asserts MOZ_LTO in autoconf.mk right after configure: the
+# hardening arm was VOID because a flag that never reached configure produced a
+# byte-identical .text and nobody checked.
+ac_add_options --enable-lto=cross
+
+# jemalloc is NOT AVAILABLE ON MUSL, do not re-add it. `--enable-jemalloc`
+# compiles memory/build/, whose mozmemory_wrap.h declares free_impl /
+# memalign_impl `noexcept(true)` to match glibc's __THROW; musl does not mark
+# them, so every declaration mismatches and the build dies ~2 min into memory/
+# (run 32800234529). aports' `--disable-jemalloc` is a musl requirement, not
+# performance it declined. The allocator win ships at RUNTIME instead, as the
+# mimalloc preload in playwright/Dockerfile.alpine's firefox shim.

@@ -42,16 +42,22 @@ PREFIX=$(echo "$TARGET" | awk -F. '{ print $1 "." $2 "." $3 }')
 command -v jq   >/dev/null || { echo "resolve-aports-ref: jq required"   >&2; exit 1; }
 command -v curl >/dev/null || { echo "resolve-aports-ref: curl required" >&2; exit 1; }
 
-# URL-encoded project path: alpine/aports → alpine%2Faports.
-PROJECT="alpine%2Faports"
-COMMITS_URL="https://gitlab.alpinelinux.org/api/v4/projects/${PROJECT}/repository/commits"
-RAW_URL_BASE="https://gitlab.alpinelinux.org/alpine/aports/-/raw"
+# Both aports reads below go through the shared two-host helper. This script
+# is what the PR-time unit test drives, and reading gitlab directly is exactly
+# how it went red on the outage the fetch was hardened against.
+. "$(dirname "${BASH_SOURCE[0]}")/aports-fetch.sh"
 
 echo "resolve-aports-ref: searching aports for chromium pkgver matching ${PREFIX}.*" >&2
 
 # 100 commits / page; one page is enough for ~6 months of chromium activity.
 # If we ever need older history, bump per_page or paginate.
-commits_json=$(curl -fsSL "${COMMITS_URL}?path=community/chromium/APKBUILD&per_page=100")
+commits=$(aports_commits community/chromium/APKBUILD 100)
+
+# The scan below fetches one APKBUILD per commit until it matches, so the full
+# budget would be paid per commit in a total outage. It cannot be one here: the
+# listing above already proved a host answers, so a miss in the loop is a
+# transient blip, not the outage this budget exists for.
+APORTS_ATTEMPTS=2
 
 # Iterate newest-first. `< <(…)` (process substitution) keeps the loop in the
 # current shell so `exit` propagates, unlike `… | while` which spawns a subshell
@@ -59,7 +65,7 @@ commits_json=$(curl -fsSL "${COMMITS_URL}?path=community/chromium/APKBUILD&per_p
 while read -r sha; do
   # Fetch the APKBUILD at this commit. The raw URL serves the file unchanged;
   # awk grabs the first pkgver line; `tr -d` strips quotes.
-  pkgver=$(curl -fsSL "${RAW_URL_BASE}/${sha}/community/chromium/APKBUILD" 2>/dev/null \
+  pkgver=$(aports_raw "$sha" community/chromium/APKBUILD 2>/dev/null \
     | awk -F= '/^pkgver=/ { print $2; exit }' \
     | tr -d '"' \
     || true)
@@ -72,7 +78,7 @@ while read -r sha; do
       exit 0
       ;;
   esac
-done < <(echo "$commits_json" | jq -r '.[].id')
+done < <(echo "$commits")
 
 echo "resolve-aports-ref: no aports commit found shipping chromium ${PREFIX}.* within the latest 100 APKBUILD commits" >&2
 exit 2

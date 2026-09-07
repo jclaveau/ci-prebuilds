@@ -1,0 +1,249 @@
+name: WebKit fmod preload probe
+
+# WebKit's `libm_fmod` reads 3.12x official on the SHIPPED image (run
+# 34044034800, n=5, `latest` at cc14e44) — 184 ms against official's 59 —
+# even though Dockerfile.alpine wraps pw_run.sh with
+# `LD_PRELOAD=…libmimalloc-insecure.so.2:…libfastfmod.so`, and the fastfmod
+# gate proves that object is bit-identical to musl's fmod and roughly 2.4x
+# faster. Firefox, whose shim reaches its content process, reads 0.64x on the
+# same kernel in the same run.
+#
+# So either the wrapper is not in the image, or its LD_PRELOAD does not reach
+# the process that runs the JS. WebKit splits UIProcess from WebProcess and
+# the kernel runs in the latter, which is also consistent with what mimalloc
+# DID move: context_page and goto_cold, both UIProcess-side.
+#
+# Three observations in ONE job so the runner divides out:
+#   1. what the shipped webkit's pw_run.sh actually contains
+#   2. the kernel as shipped
+#   3. the kernel with LD_PRELOAD set container-wide, which every process
+#      inherits, WebKit's spawns included
+#
+# (2) vs (3) is the whole experiment. If (3) is fast, the wrapper's preload is
+# being dropped below the UIProcess and the fix is in how WebKit spawns; if (3)
+# is also slow, the shim is not effective under WebKit at all and the memory
+# claiming 289.6 -> 122.7 needs re-establishing on the shipped path.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: 'Our image to inspect (Docker Hub carries `latest`; GHCR does not)'
+        default: 'jclaveau/alpine-dood-playwright:latest'
+        type: string
+      pw_version:
+        description: 'Playwright version driving the probe'
+        default: '1.62.1'
+        type: string
+
+concurrency:
+  group: wk-fmod-preload-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Record the runner
+        # libm_fmod is the CPU fingerprint of this repo's probe — its absolute
+        # value moves with the model — so the model belongs in the log.
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          nproc
+
+      - name: What the image actually ships
+        env:
+          OURS: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          docker pull "$OURS"
+          docker run --rm --entrypoint sh "$OURS" -c '
+            echo "--- libfastfmod.so"
+            ls -l /usr/lib/libfastfmod.so /usr/lib/libmimalloc-insecure.so.2 || true
+            echo "--- pw_run.sh (the wrapper, if it shipped)"
+            for f in /ms-playwright/webkit-*/pw_run.sh; do
+              echo "== $f"; cat "$f"
+            done
+            echo "--- pw_run.real.sh present?"
+            ls -l /ms-playwright/webkit-*/pw_run.real.sh || echo "MISSING — the wrapper never applied"
+          '
+
+      - name: Kernel as shipped, then with a container-wide preload
+        env:
+          OURS: ${{ inputs.image }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          # `as-shipped` relies on the pw_run.sh wrapper alone. `forced` sets
+          # the same two objects on the container, which every descendant
+          # inherits — the ONLY difference between the arms.
+          for arm in as-shipped forced; do
+            preload=""
+            if [ "$arm" = forced ]; then
+              preload="--env LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so"
+            fi
+            echo "::group::$arm"
+            # shellcheck disable=SC2086
+            docker run --rm \
+              --security-opt seccomp=unconfined \
+              --env HOME=/home/runner \
+              --env PW_VERSION="$PW" \
+              --env "ARM=$arm" \
+              $preload \
+              -v "$PWD/playwright/bench:/probe:ro" \
+              -v "$PWD/playwright/scripts:/pwscripts:ro" \
+              -v "$PWD/out:/out" \
+              "$OURS" \
+              sh -c '
+                NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+                export NODE_PATH
+                node -e "require(\"playwright\")" 2>/dev/null \
+                  || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
+                timeout 300 node /probe/runtime-probe.cjs \
+                  --browser webkit --target alpine --out /out
+                mv /out/alpine-webkit.json "/out/$ARM.json"
+              '
+            echo "::endgroup::"
+          done
+
+      - name: Read the two kernels
+        run: |
+          set -euo pipefail
+          for arm in as-shipped forced; do
+            jq -r --arg arm "$arm" \
+              '"\($arm) libm_fmod = \(.metrics.libm_fmod.median_ms) ms  samples=\(.metrics.libm_fmod.samples|tostring)"' \
+              "out/$arm.json"
+          done
+          # The neighbouring rows say whether the arm moved ONE kernel or the
+          # whole browser — a container-wide preload also reaches node itself.
+          for arm in as-shipped forced; do
+            echo "--- $arm, all metrics"
+            jq -r '.metrics | to_entries[] | "  \(.key) \(.value.median_ms)"' "out/$arm.json"
+          done
+
+      - name: Which processes actually map the shim
+        # The A/B above cannot separate "JSC does not call libc fmod" from
+        # "WebKit's ProcessLauncher builds a fresh environment for the
+        # WebProcess": both arms put LD_PRELOAD in the PARENT's env, so a
+        # launcher that scrubs it defeats them identically. /proc/<pid>/maps
+        # is the direct observation — the shim is either mapped in the process
+        # running the JS or it is not.
+        env:
+          OURS: ${{ inputs.image }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --security-opt seccomp=unconfined \
+            --env HOME=/home/runner \
+            --env PW_VERSION="$PW" \
+            -v "$PWD/playwright/scripts:/pwscripts:ro" \
+            "$OURS" \
+            sh -c '
+              NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+              export NODE_PATH
+              node -e "require(\"playwright\")" 2>/dev/null \
+                || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
+              # Hold a page open long enough to look at the process tree, and
+              # keep it busy so the WebProcess is the one doing the arithmetic.
+              node -e "
+                const { webkit } = require(\"playwright\");
+                (async () => {
+                  const b = await webkit.launch();
+                  const p = await b.newPage();
+                  await p.evaluate(() => { let s=0; for (let i=1;i<3e7;i++) s += i % 7.7; return s; });
+                  await new Promise(r => setTimeout(r, 25000));
+                  await b.close();
+                })();
+              " &
+              sleep 12
+              echo "shim  pid  cmdline"
+              for d in /proc/[0-9]*; do
+                cmd=$(tr "\0" " " < "$d/cmdline" 2>/dev/null | cut -c1-90)
+                [ -n "$cmd" ] || continue
+                if grep -q fastfmod "$d/maps" 2>/dev/null; then m=MAPPED; else m=absent; fi
+                if grep -qa fastfmod "$d/environ" 2>/dev/null; then e=in-env; else e=no-env; fi
+                echo "$m/$e  $d  $cmd"
+              done
+              wait
+            '
+
+      - name: Does JSC reach libc fmod at all
+        # The shim is mapped in the WebProcess and the kernel is still ~175 ms
+        # against glibc's 59, so either JSC never calls libc `fmod` or it calls
+        # it and our replacement is simply slow. fmod-call-counter.c already
+        # exists to tell those apart — it was written for exactly this trap,
+        # where a benchmark that never enters libc looks identical to one that
+        # does.
+        #
+        # It has to go in through pw_run.sh rather than the container env: the
+        # wrapper does `export LD_PRELOAD=…`, which OVERWRITES anything
+        # inherited. That is also why the container-wide arm in run 34045878448
+        # was not a second condition at all.
+        env:
+          OURS: ${{ inputs.image }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p count
+          # printf rather than a heredoc: this block is indented inside the
+          # YAML, and an unindented terminator is the only one `<<` accepts.
+          # The single quotes are the point — these lines are the script being
+          # written, not expressions for this shell to expand.
+          # shellcheck disable=SC2016
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'DIR="$(dirname "$0")"' \
+            'export FMOD_COUNT_OUT=/count/calls' \
+            'export LD_PRELOAD=/count/libcounter.so:/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so' \
+            'exec "$DIR/pw_run.real.sh" "$@"' \
+            > count/pw_run.sh
+          chmod +x count/pw_run.sh
+          # Built in a sibling alpine:edge rather than in the image: `sudo apk
+          # add` prompts for a password there, which is how run 34048634463
+          # died with `gcc: not found`. Same musl either way, and the object
+          # only dlsym()s.
+          docker run --rm \
+            -v "$PWD/playwright/alpine-browsers/webkit/fastfmod:/src:ro" \
+            -v "$PWD/count:/count" \
+            alpine:edge sh -c '
+              apk add --no-cache gcc musl-dev >/dev/null 2>&1
+              gcc -O2 -fPIC -shared -o /count/libcounter.so /src/fmod-call-counter.c -ldl
+            '
+          # The wrapper is bind-mounted over the image's own, for the same
+          # reason: no sudo in the probe container.
+          docker run --rm \
+            --security-opt seccomp=unconfined \
+            --env HOME=/home/runner \
+            --env PW_VERSION="$PW" \
+            -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/playwright/scripts:/pwscripts:ro" \
+            -v "$PWD/count:/count" \
+            -v "$PWD/count/pw_run.sh:/ms-playwright/webkit-2336/pw_run.sh:ro" \
+            "$OURS" \
+            sh -c '
+              NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+              export NODE_PATH
+              node -e "require(\"playwright\")" 2>/dev/null \
+                || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
+              timeout 300 node /probe/runtime-probe.cjs \
+                --browser webkit --target alpine --out /count
+              echo "--- calls that reached libc fmod"
+              cat /count/calls* 2>/dev/null || echo "no counter output — the preload did not take"
+              echo "--- kernel under the counter (it costs ~65 ns/call, so this is SLOW on purpose)"
+              jq -r ".metrics.libm_fmod.median_ms" /count/alpine-webkit.json
+            '
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wk-fmod-preload
+          path: out/*.json
+          retention-days: 90
