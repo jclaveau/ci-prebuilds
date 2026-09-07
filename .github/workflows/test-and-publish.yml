@@ -12,6 +12,14 @@ on:
       # Skip TP when only the producer sub-project changes to avoid wasting
       # runner minutes.
       - 'playwright/alpine-browsers/**'
+      # …except the two paths under it that Dockerfile.alpine COPYs, which are
+      # therefore inputs to THIS image and not the producer's. libfastfmod.so
+      # is compiled here from fastfmod/, and strip-bundled-libs.sh runs here.
+      # Without these negations a change to either lands on main and never
+      # reaches a published image: #167 rewrote the fmod shim, merged green,
+      # and published nothing.
+      - '!playwright/alpine-browsers/webkit/fastfmod/**'
+      - '!playwright/alpine-browsers/webkit/scripts/strip-bundled-libs.sh'
       - '.github/workflows/playwright-alpine-browsers.yml'
       # The weekly metrics snapshot commits its JSONL back to main. Publishing
       # every image again because a measurement was recorded would make the
@@ -21,6 +29,8 @@ on:
     branches: [ main ]
     paths-ignore:
       - 'playwright/alpine-browsers/**'
+      - '!playwright/alpine-browsers/webkit/fastfmod/**'
+      - '!playwright/alpine-browsers/webkit/scripts/strip-bundled-libs.sh'
       - '.github/workflows/playwright-alpine-browsers.yml'
       - 'metrics/**'
   # Reusable entry point: lets `on-demand-build.yml` (issue-triggered) call
