@@ -15,6 +15,17 @@ name: WebKit differential profile
 # has to match the running kernel, and on a hosted runner it does not. The
 # container's binaries are copied out into a symfs so the host's perf can
 # resolve container paths that no longer exist once the run ends.
+#
+# Two things the first attempt (34166720981) got wrong, both fixed here:
+#   - it attached with `--pid`, and the official arm's WebProcess was gone
+#     between `pgrep` and `perf record` ("Couldn't create thread/CPU maps: No
+#     such process"). WebKit recycles that process, so recording is now
+#     system-wide and the reports select the comm instead.
+#   - both images ship a STRIPPED libWPEWebKit (Dockerfile.finalize strips ours,
+#     PW ships its zip stripped), so every frame came back as a raw address.
+#     Ours has an unstripped twin: the strip happens in the finalize overlay, so
+#     the producer's `wk-wpe-4-sha-<sha>` intermediate still carries .symtab.
+#     Point `symbols_image` at it and the alpine arm resolves.
 
 on:
   workflow_dispatch:
@@ -22,6 +33,10 @@ on:
       image:
         description: 'Our consumer image to profile'
         default: 'jclaveau/alpine-dood-playwright:latest'
+        type: string
+      symbols_image:
+        description: 'Unstripped producer image for the alpine arm (ghcr.io/jclaveau/playwright-alpine-browsers:wk-wpe-4-sha-<sha>)'
+        default: ''
         type: string
       kernel:
         description: 'Which kernel to profile: click_force | eval_rtt | goto_cold | screenshot | locator_click'
@@ -46,6 +61,7 @@ jobs:
     timeout-minutes: 60
     env:
       OURS: ${{ inputs.image }}
+      SYMBOLS: ${{ inputs.symbols_image }}
       KERNEL: ${{ inputs.kernel }}
       SECONDS_PER_ARM: ${{ inputs.seconds }}
       PW: ${{ inputs.pw_version }}
@@ -86,11 +102,14 @@ jobs:
           set -euo pipefail
           docker pull "$OURS"
           docker pull "mcr.microsoft.com/playwright:v${PW}-noble"
+          [ -z "$SYMBOLS" ] || docker pull "$SYMBOLS"
 
       - name: Profile both arms
         run: |
           set -o pipefail
           mkdir -p perf-out
+          window=$(( SECONDS_PER_ARM - 15 ))
+          [ "$window" -ge 10 ] || window=10
           for target in alpine official; do
             if [ "$target" = official ]; then
               image="mcr.microsoft.com/playwright:v${PW}-noble"; home=/root
@@ -132,23 +151,61 @@ jobs:
             echo "$target WebProcess pid=$wpid"
             echo "::endgroup::"
 
+            # System-wide, not --pid: WebKit recycles the WebProcess and the
+            # pid found above can be gone before perf attaches. Only one
+            # container runs at a time, and the reports select the comm.
+            "$PERF" record -a -F 499 -g -o "perf-out/$target.data" \
+              -- sleep "$window" || echo "::warning::perf record failed for $target"
+
             # symfs BEFORE the container dies: perf resolves the paths recorded
             # in the mmap events, and those live inside the container.
-            mkdir -p "perf-out/symfs-$target"
-            docker cp "$cname:/ms-playwright" "perf-out/symfs-$target/ms-playwright" \
-              >/dev/null 2>&1 || echo "::warning::symfs copy failed for $target"
+            echo "::group::$target — symfs"
+            rev=$(docker exec "$cname" sh -c 'ls -d /ms-playwright/webkit-* 2>/dev/null | head -1' | tr -d '\r')
+            sym="perf-out/symfs-$target"
+            mkdir -p "$sym/lib" "$sym/usr/lib"
+            docker cp "$cname:/lib/." "$sym/lib/" >/dev/null 2>&1 || true
+            docker cp "$cname:/usr/lib/." "$sym/usr/lib/" >/dev/null 2>&1 || true
+            if [ -n "$rev" ]; then
+              mkdir -p "$sym$rev"
+              docker cp "$cname:$rev/minibrowser-wpe" "$sym$rev/minibrowser-wpe" \
+                >/dev/null 2>&1 || true
+            fi
+            # The shipped lib is stripped in both images; swap ours for the
+            # unstripped producer copy so the frames carry names.
+            if [ "$target" = alpine ] && [ -n "$SYMBOLS" ] && [ -n "$rev" ]; then
+              docker rm -f wk-symbols >/dev/null 2>&1 || true
+              docker create --name wk-symbols "$SYMBOLS" /bin/true >/dev/null
+              rm -rf "$sym$rev/minibrowser-wpe"
+              docker cp wk-symbols:/work/minibrowser-wpe-dist \
+                "$sym$rev/minibrowser-wpe" >/dev/null
+              docker rm -f wk-symbols >/dev/null 2>&1 || true
+            fi
+            lib=$(find "$sym$rev" -name 'libWPEWebKit*.so.*' -type f 2>/dev/null | head -1)
+            if [ -n "$lib" ]; then
+              echo "$target symfs lib: $lib"
+              readelf -S -W "$lib" | grep -cE '\.symtab' \
+                | sed "s/^/$target symtab sections: /"
+            fi
+            echo "::endgroup::"
 
-            "$PERF" record -F 499 -g --pid "$wpid" -o "perf-out/$target.data" \
-              -- sleep 25 || echo "::warning::perf record failed for $target"
-
+            for sort in comm dso dso,symbol; do
+              name=$(echo "$sort" | tr ',' '-')
+              "$PERF" report -i "perf-out/$target.data" --stdio --no-children \
+                --comms 'WPEWebProcess,WebKitWebProces,MiniBrowser' \
+                --sort "$sort" --percent-limit 0.4 \
+                --symfs "$sym" \
+                2>/dev/null | head -70 > "perf-out/$target.$name.txt" || true
+            done
+            # Unfiltered comm table too: if the comm filter matched nothing,
+            # this is what says which processes the samples actually landed in.
             "$PERF" report -i "perf-out/$target.data" --stdio --no-children \
-              --sort dso,symbol --percent-limit 0.4 \
-              --symfs "perf-out/symfs-$target" \
-              2>/dev/null | head -60 > "perf-out/$target.report.txt" || true
+              --sort comm --percent-limit 0.5 2>/dev/null | head -30 \
+              > "perf-out/$target.all-comms.txt" || true
 
             docker rm -f "$cname" >/dev/null 2>&1 || true
-            # The symfs is hundreds of MB per arm and only the report travels.
-            rm -rf "perf-out/symfs-$target"
+            # The symfs is hundreds of MB per arm and the raw samples are
+            # another few hundred; only the reports travel.
+            rm -rf "$sym" "perf-out/$target.data"
           done
 
       - name: Summarise
@@ -160,11 +217,13 @@ jobs:
             echo
             echo "\`$OURS\` vs \`mcr.microsoft.com/playwright:v${PW}-noble\`"
             for target in alpine official; do
-              echo
-              echo "### $target"
-              echo '```'
-              cat "perf-out/$target.report.txt" 2>/dev/null || echo "(no report)"
-              echo '```'
+              for name in all-comms dso dso-symbol; do
+                echo
+                echo "### $target — $name"
+                echo '```'
+                cat "perf-out/$target.$name.txt" 2>/dev/null || echo "(no report)"
+                echo '```'
+              done
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
