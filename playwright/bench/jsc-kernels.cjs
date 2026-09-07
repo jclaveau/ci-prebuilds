@@ -113,7 +113,11 @@ function median(values) {
   for (const [name, body] of Object.entries(KERNELS)) {
     const samples = [];
     for (let i = 0; i < reps; i++) {
-      const { ms } = await page.evaluate(body);
+      // `(body)()`, not `body`: a string argument is evaluated as an
+      // EXPRESSION, so handing over the arrow function's source returns the
+      // function itself and every kernel reports undefined. Same wrapping as
+      // runtime-probe.cjs, which this file's kernels were lifted from.
+      const { ms } = await page.evaluate(`(${body})()`);
       samples.push(ms);
     }
     metrics[name] = Math.round(median(samples) * 10) / 10;
