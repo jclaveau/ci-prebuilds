@@ -37,12 +37,22 @@ CMAKE_SHARED_FLAGS=(
   # Sampling profiler relies on glibc-ish signal/timer plumbing; aports turns it off.
   -DENABLE_SAMPLING_PROFILER=OFF
 
-  # LTO (thin) — shrinks the shipped libs meaningfully, but the link step's
-  # memory + wall-time balloon, risking the GHA build cap on this already
-  # multi-hour build (same reason chromium skips is_official_build's PGO/LTO).
-  # Kept wired-but-OFF: uncomment when building on a higher-cap / self-hosted
-  # runner. Values: thin | full.
-  # -DLTO_MODE=thin
+  # LTO (thin). Alpine's own community/webkit2gtk-6.0 APKBUILD sets this for
+  # x86_64 alongside the clang + lld + llvm-ar we already match, and this
+  # repo's chromium arms measured ThinLTO ALONE at geomean 1.42 -> 1.31, so
+  # the "skip it like chromium does" rationale this line used to carry is
+  # stale — chromium built those arms and they won. Values: thin | full.
+  #
+  # The original worry was the link step's memory and wall-time on an already
+  # multi-hour build. That is what this arm is measuring; if the link blows the
+  # runner, the round fails visibly rather than silently, and the flag goes
+  # back to being commented out.
+  #
+  # MUST be built COLD. apply-and-build-port.sh runs cmake configure only
+  # `if [[ ! -f "$BUILD_DIR/CMakeCache.txt" ]]`, so a dispatch that resumes an
+  # existing checkpoint image skips configure entirely, never puts this in the
+  # cache, and hands back an arm that changed nothing while looking green.
+  -DLTO_MODE=thin
 
   # Docs need gi-docgen which isn't a CI dep; we don't ship them anyway.
   -DENABLE_DOCUMENTATION=OFF
