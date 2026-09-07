@@ -199,7 +199,7 @@ jobs:
             for sort in comm dso dso,symbol; do
               name=$(echo "$sort" | tr ',' '-')
               "$PERF" report -i "perf-out/$target.data" --stdio --no-children \
-                --comms 'WPEWebProcess,WebKitWebProces,WPENetworkProce,MiniBrowser' \
+                --comms 'WPEWebProcess,WebKitWebProces,WPENetworkProce,MiniBrowser,node' \
                 --sort "$sort" --percent-limit 0.1 -g none \
                 --symfs "$sym" \
                 2>/dev/null | head -70 > "perf-out/$target.$name.txt" || true
