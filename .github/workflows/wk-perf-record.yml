@@ -182,9 +182,11 @@ jobs:
             fi
             lib=$(find "$sym$rev" -name 'libWPEWebKit*.so.*' -type f 2>/dev/null | head -1)
             if [ -n "$lib" ]; then
-              echo "$target symfs lib: $lib"
-              readelf -S -W "$lib" | grep -cE '\.symtab' \
-                | sed "s/^/$target symtab sections: /"
+              # `grep -c` exits 1 on zero matches and the step runs under
+              # bash -e, so official — which legitimately has no .symtab —
+              # killed the whole run right here on the first attempt.
+              symtabs=$(readelf -S -W "$lib" | grep -cE '\.symtab' || true)
+              echo "$target symfs lib: $lib (symtab sections: ${symtabs:-0})"
             fi
             echo "::endgroup::"
 
@@ -204,8 +206,10 @@ jobs:
 
             docker rm -f "$cname" >/dev/null 2>&1 || true
             # The symfs is hundreds of MB per arm and the raw samples are
-            # another few hundred; only the reports travel.
-            rm -rf "$sym" "perf-out/$target.data"
+            # another few hundred; only the reports travel. `sudo`, because
+            # `docker cp` lands root-owned trees that the artifact upload
+            # cannot even scandir (it failed on lib/ssl/private).
+            sudo rm -rf "$sym" "perf-out/$target.data"
           done
 
       - name: Summarise
@@ -227,10 +231,16 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # A failure mid-loop leaves a root-owned symfs behind, and the upload
+      # then dies on it instead of shipping the reports that DID get written.
+      - name: Drop the symfs before uploading
+        if: always()
+        run: sudo rm -rf perf-out/symfs-* perf-out/*.data || true
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: wk-perf-record-${{ inputs.kernel }}
-          path: perf-out/
+          path: perf-out/*.txt
           if-no-files-found: warn
           retention-days: 30
