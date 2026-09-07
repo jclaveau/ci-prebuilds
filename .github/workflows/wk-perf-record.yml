@@ -1,0 +1,177 @@
+name: WebKit differential profile
+
+# Profiles one runtime-probe kernel in OUR image and in Playwright's, on one
+# runner, and prints both symbol tables side by side.
+#
+# Why: `click_force` 1.24, `eval_rtt` 1.13 and `goto_cold` 1.11 have no
+# candidate cause left. ThinLTO barely moves them; the stack protector looked
+# certain — 233 941 canary loads against official's zero, and +12% instructions
+# when chromium paid the same tax — and removing it changed nothing measurable
+# (run 34160320006, verified on the probed image). Static inspection is spent,
+# so this asks the profiler which symbols the time is actually in, the way the
+# chromium screenshot row was settled once its own static list ran out.
+#
+# perf runs on the HOST, not in the container: `linux-tools` inside an image
+# has to match the running kernel, and on a hosted runner it does not. The
+# container's binaries are copied out into a symfs so the host's perf can
+# resolve container paths that no longer exist once the run ends.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: 'Our consumer image to profile'
+        default: 'jclaveau/alpine-dood-playwright:latest'
+        type: string
+      kernel:
+        description: 'Which kernel to profile: click_force | eval_rtt | goto_cold | screenshot | locator_click'
+        default: 'click_force'
+        type: string
+      seconds:
+        description: 'Profile window per arm'
+        default: '45'
+        type: string
+      pw_version:
+        description: 'Playwright version driving the probe, and the MCR control tag'
+        default: '1.62.1'
+        type: string
+
+concurrency:
+  group: wk-perf-record-${{ inputs.image }}-${{ inputs.kernel }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      OURS: ${{ inputs.image }}
+      KERNEL: ${{ inputs.kernel }}
+      SECONDS_PER_ARM: ${{ inputs.seconds }}
+      PW: ${{ inputs.pw_version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Free up runner disk
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc; df -h /
+
+      - name: Install perf and unlock event access
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y linux-tools-common linux-tools-generic
+          # linux-tools-generic is built for the generic kernel and a hosted
+          # runner runs the azure one, so the wrapper on PATH often refuses to
+          # run. Resolve a real binary once and export it for the later steps
+          # rather than discovering the mismatch mid-profile.
+          if perf --version >/dev/null 2>&1; then
+            PERF=perf
+          else
+            PERF="$(find /usr/lib/linux-tools -name perf -type f | head -1)"
+          fi
+          [ -n "$PERF" ] || { echo "no usable perf binary" >&2; exit 1; }
+          "$PERF" --version
+          echo "PERF=$PERF" >> "$GITHUB_ENV"
+          sudo sysctl -w kernel.perf_event_paranoid=-1
+          sudo sysctl -w kernel.kptr_restrict=0
+
+      - name: Pull both arms
+        run: |
+          set -euo pipefail
+          docker pull "$OURS"
+          docker pull "mcr.microsoft.com/playwright:v${PW}-noble"
+
+      - name: Profile both arms
+        run: |
+          set -o pipefail
+          mkdir -p perf-out
+          for target in alpine official; do
+            if [ "$target" = official ]; then
+              image="mcr.microsoft.com/playwright:v${PW}-noble"; home=/root
+            else
+              image="$OURS"; home=/home/runner
+            fi
+            cname="hotloop-$target"
+            docker rm -f "$cname" >/dev/null 2>&1 || true
+            echo "::group::$target — start hotloop"
+            docker run -d --name "$cname" \
+              --security-opt seccomp=unconfined \
+              --env "HOME=$home" --env "PW_VERSION=$PW" \
+              --env "KERNEL=$KERNEL" --env "SECS=$SECONDS_PER_ARM" \
+              -v "$PWD/playwright/bench:/probe:ro" \
+              -v "$PWD/playwright/scripts:/pwscripts:ro" \
+              "$image" \
+              sh -c '
+                NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+                export NODE_PATH
+                node -e "require(\"playwright\")" 2>/dev/null \
+                  || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
+                node /probe/wk-hotloop.cjs --browser webkit --kernel "$KERNEL" \
+                  --seconds "$SECS"
+              '
+            # Wait for the WebProcess, which is where the work happens — the
+            # driver is node and profiling it would answer a different question.
+            wpid=""
+            for _ in $(seq 1 60); do
+              sleep 2
+              wpid=$(pgrep -f 'WPEWebProcess|WebKitWebProcess' | head -1 || true)
+              [ -n "$wpid" ] && break
+            done
+            if [ -z "$wpid" ]; then
+              echo "::warning::no WebProcess appeared for $target"
+              docker logs "$cname" 2>&1 | tail -20
+              docker rm -f "$cname" >/dev/null 2>&1 || true
+              continue
+            fi
+            echo "$target WebProcess pid=$wpid"
+            echo "::endgroup::"
+
+            # symfs BEFORE the container dies: perf resolves the paths recorded
+            # in the mmap events, and those live inside the container.
+            mkdir -p "perf-out/symfs-$target"
+            docker cp "$cname:/ms-playwright" "perf-out/symfs-$target/ms-playwright" \
+              >/dev/null 2>&1 || echo "::warning::symfs copy failed for $target"
+
+            "$PERF" record -F 499 -g --pid "$wpid" -o "perf-out/$target.data" \
+              -- sleep 25 || echo "::warning::perf record failed for $target"
+
+            "$PERF" report -i "perf-out/$target.data" --stdio --no-children \
+              --sort dso,symbol --percent-limit 0.4 \
+              --symfs "perf-out/symfs-$target" \
+              2>/dev/null | head -60 > "perf-out/$target.report.txt" || true
+
+            docker rm -f "$cname" >/dev/null 2>&1 || true
+            # The symfs is hundreds of MB per arm and only the report travels.
+            rm -rf "perf-out/symfs-$target"
+          done
+
+      - name: Summarise
+        if: '!cancelled()'
+        run: |
+          set -euo pipefail
+          {
+            echo "## WebKit differential profile — \`$KERNEL\`"
+            echo
+            echo "\`$OURS\` vs \`mcr.microsoft.com/playwright:v${PW}-noble\`"
+            for target in alpine official; do
+              echo
+              echo "### $target"
+              echo '```'
+              cat "perf-out/$target.report.txt" 2>/dev/null || echo "(no report)"
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: wk-perf-record-${{ inputs.kernel }}
+          path: perf-out/
+          if-no-files-found: warn
+          retention-days: 30
