@@ -43,9 +43,15 @@ if [ "${1:-}" = "--jobs" ]; then
   shift 2
 fi
 
+# Fails when `gh` fails, instead of returning an empty listing: piping into
+# `sort` would hand back sort's exit status, so a dropped connection read as
+# "this ref has no runs" — which is what made the confirmation loop below
+# declare two landed dispatches dead.
 ids_now() {
-  gh run list -R "$REPO" --workflow="$WF" --branch "$REF" --limit 20 \
-    --json databaseId --jq '.[].databaseId' 2>/dev/null | sort
+  local out
+  out="$(gh run list -R "$REPO" --workflow="$WF" --branch "$REF" --limit 20 \
+    --json databaseId --jq '.[].databaseId' 2>/dev/null)" || return 1
+  printf '%s\n' "$out" | sort
 }
 active() {
   gh run list -R "$REPO" --workflow="$WF" --branch "$REF" --limit 20 \
@@ -96,15 +102,38 @@ set -e
 [ "$post_rc" -eq 0 ] || echo "note: the dispatch POST returned $post_rc;" \
   "checking whether it landed anyway" >&2
 
-for _ in $(seq 1 20); do
+# Five minutes, and every listing failure counted rather than swallowed.
+#
+# Two dispatches in a row were reported as "did NOT land" while both had
+# landed: 34140776274 registered as a queued run about 3 minutes after the
+# POST, and 34142548027 appeared right at the edge of the old 2-minute window.
+# Between them the local link was also dropping `gh` calls outright ("error
+# connecting to api.github.com"), which `ids_now` swallowed into an empty
+# listing indistinguishable from "no new run".
+#
+# The direction of the error matters here. This guard exists to stop a SECOND
+# dispatch of a multi-hour chain, so a false "did not land" is the dangerous
+# outcome, not a slow confirmation: it invites exactly the retry the script was
+# written to prevent.
+polls=50
+misses=0
+for _ in $(seq 1 "$polls"); do
   sleep 6
-  new="$(comm -13 <(printf '%s\n' "$before") <(ids_now || true) | head -1)"
+  listing="$(ids_now)" || { misses=$((misses + 1)); continue; }
+  new="$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$listing") | head -1)"
   if [ -n "$new" ]; then
     echo "dispatched: https://github.com/$REPO/actions/runs/$new"
     exit 0
   fi
 done
 
-echo "no new run appeared within 2 minutes — the dispatch did NOT land." >&2
+if [ "$misses" -gt 0 ]; then
+  echo "COULD NOT CONFIRM: $misses of $polls run listings failed outright," \
+    "so an unseen run is not the same as an absent one." >&2
+  echo "Check before retrying:" \
+    "gh run list -R $REPO --workflow=$WF --branch $REF" >&2
+  exit 5
+fi
+echo "no new run appeared within 5 minutes — the dispatch did NOT land." >&2
 echo "Safe to retry: the guard above will refuse if it actually did." >&2
 exit 4
