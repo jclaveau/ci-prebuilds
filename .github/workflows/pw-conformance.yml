@@ -136,6 +136,11 @@ jobs:
             # Root-caused via iter 29565116253 bucket-C + 3-agent source dive.
             SECURITY_FLAGS="$SECURITY_FLAGS --security-opt apparmor=unconfined --cap-add SYS_ADMIN --cap-add NET_ADMIN"
             EXTRA_ENV="-e WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 -e WEBKIT_FORCE_SANDBOX=0"
+            # Skia paints on the CPU in the shipped image — see the pw_run.sh
+            # wrapper in playwright/Dockerfile.alpine for the measurement. The
+            # runner sets it too, or conformance signs off on a raster path
+            # nobody ships.
+            EXTRA_ENV="$EXTRA_ENV -e WEBKIT_SKIA_ENABLE_CPU_RENDERING=1"
             # webkit/probes/run-probe.sh mirrors this block so a local
             # probe measures the same browser CI does — change both together.
           fi
