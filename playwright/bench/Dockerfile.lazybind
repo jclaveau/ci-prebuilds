@@ -1,0 +1,16 @@
+# The lazy-bind arm: the shipped consumer image with DF_BIND_NOW / DF_1_NOW
+# cleared on every ELF in the WebKit bundle. See clear-bind-now.py for why.
+#
+# Build context is the repo root; wk-lazy-bind-arm.yml passes BASE and the
+# base image's own user, which has to be restored or the arm would run as root
+# and stop being a control for anything.
+ARG BASE
+FROM ${BASE}
+ARG ORIG_USER=root
+USER root
+COPY playwright/bench/clear-bind-now.py /tmp/clear-bind-now.py
+RUN apk add --no-cache python3 \
+ && sh -c 'python3 /tmp/clear-bind-now.py /ms-playwright/webkit-*/minibrowser-wpe' \
+ && apk del python3 \
+ && rm -f /tmp/clear-bind-now.py
+USER ${ORIG_USER}
