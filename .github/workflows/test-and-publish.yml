@@ -1512,7 +1512,11 @@ jobs:
     if: ${{ !cancelled() && fromJSON(needs.github-context.outputs.test_filters).playwright }}
     needs: [github-context, perf-probe]
     timeout-minutes: 10
-    continue-on-error: true
+    # NOT continue-on-error, unlike perf-probe: the assertion step below is the
+    # only thing in this chain that can go red, and a probe that cannot fail
+    # measures nothing. Deliberately still absent from `promote`'s `needs:`, so
+    # a breach is loud on main without blocking publish — wire it into promote
+    # once the budgets have a few weeks of runs behind them.
     permissions:
       contents: read
       actions: read   # `gh run download` of the previous main run's report artifact
@@ -1550,6 +1554,11 @@ jobs:
         run: |
           python3 playwright/bench/perf-report.py perf-current perf-previous \
             | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Runs after the report on purpose: when this fails, the table explaining
+      # why is already in the step summary.
+      - name: Assert the probe reported, and every row is within budget
+        run: python3 playwright/bench/assert-perf-budgets.py perf-current
 
       # Published under a stable name so the NEXT run can find it by artifact name.
       - uses: actions/upload-artifact@v4

@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "Per-row ceilings on the alpine/official ratio, enforced by",
+    "assert-perf-budgets.py. These are REGRESSION ALARMS, not parity targets:",
+    "the goal is <= 1.00, the budget is where a build has gone visibly wrong.",
+    "",
+    "Seeded from three consecutive main runs (34257752564, 34269667105,",
+    "34276244690) at runs=1, plus perf-probe n=10 draws on three CPU models for",
+    "webkit. A ceiling is roughly the worst observed value plus 15%, because the",
+    "inline probe runs at n=1 where chromium's launch alone swung 0.69-1.51.",
+    "",
+    "Rows that read exactly 1.00 in every run are budgeted tight (1.15). They are",
+    "frame-bound or JIT-bound and do not drift, which makes them the sharpest",
+    "detector we have: int_math read 5-9x when chromium shipped with DCHECKs on.",
+    "",
+    "A row whose budget must be raised is a finding. Raise it in the same PR that",
+    "causes it, so the number moves where a reviewer can see it."
+  ],
+  "chromium": {
+    "click_force": 1.3, "context_page": 1.4, "dom_churn": 1.4,
+    "eval_rtt": 1.35, "goto_cold": 1.5, "goto_warm": 1.5,
+    "int_math": 1.15, "js_alloc": 1.15, "launch": 1.75,
+    "layout": 1.75, "libm_fmod": 1.15, "locator_click": 1.15,
+    "screenshot": 1.75
+  },
+  "firefox": {
+    "click_force": 1.15, "context_page": 1.1, "dom_churn": 1.1,
+    "eval_rtt": 1.15, "goto_cold": 1.2, "goto_warm": 1.15,
+    "int_math": 1.15, "js_alloc": 1.2, "launch": 1.25,
+    "layout": 1.3, "libm_fmod": 1.15, "locator_click": 1.15,
+    "screenshot": 1.3
+  },
+  "webkit": {
+    "click_force": 1.3, "context_page": 1.1, "dom_churn": 1.15,
+    "eval_rtt": 1.2, "goto_cold": 1.15, "goto_warm": 1.15,
+    "int_math": 1.15, "js_alloc": 1.4, "launch": 1.2,
+    "layout": 1.1, "libm_fmod": 1.2, "locator_click": 1.15,
+    "screenshot": 1.1
+  }
+}
