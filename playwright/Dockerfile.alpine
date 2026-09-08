@@ -24,6 +24,18 @@ ARG BASE_IMAGE=jclaveau/alpine-dood-pnpm:latest
 # One arg per browser rather than one shared: an arm moves ONE browser and the
 # other two must stay on the shipped tags, or the comparison measures two
 # changes at once.
+#
+# Measuring an arm is not shipping it, and the gap is easy to miss because the
+# arm's PR merges green. `promote-webkit` (and its firefox/chromium siblings)
+# require `github.ref == 'refs/heads/main'`, so a branch dispatch publishes
+# only `wk-sha-<sha>`; the following merge then runs a PUSH build, where the
+# producer is dispatch-gated off and so builds nothing to promote. The fix
+# never reaches the moving tag either way. That is how #180's launch fix sat
+# unshipped while main carried its source: `wk-latest` still resolved to the
+# build before it. Shipping such an arm is a deliberate retag of its sha
+# artifact onto the moving tags with the same `docker buildx imagetools
+# create` promote runs, and the consumer only picks it up on the NEXT push to
+# main, since publishing here is gated on `push` too.
 ARG CHS_SOURCE_TAG=chs-${CHS_REV}
 ARG FF_SOURCE_TAG=ff-${FF_REV}
 ARG WK_SOURCE_TAG=wk-${WK_REV}
