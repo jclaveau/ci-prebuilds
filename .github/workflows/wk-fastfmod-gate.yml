@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: wk-fastfmod-gate-${{ github.ref }}
+  group: wk-fastfmod-gate-${{ github.ref }}-${{ github.run_id }}
   cancel-in-progress: true
 
 jobs:

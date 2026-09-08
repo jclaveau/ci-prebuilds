@@ -129,18 +129,20 @@ static uint64_t B(double d){uint64_t u;memcpy(&u,&d,8);return u;}
 static double ms(struct timespec a){struct timespec b;clock_gettime(CLOCK_MONOTONIC,&b);
   return (b.tv_sec-a.tv_sec)*1e3+(b.tv_nsec-a.tv_nsec)/1e6;}
 #define N 9000000
-static double *xs;
 
-static double run(double(*f)(double,double), uint64_t *ck){
+/* Operands are generated in the loop, not read from an array: the browser's
+ * JIT computes them the same way, and a 72 MB stream would price the memory
+ * system beside the divider. */
+static double run(double(*f)(double,double), double y, uint64_t *ck){
   struct timespec t; double best=1e18;
   for(int r=0;r<5;r++){
     uint64_t c=0; clock_gettime(CLOCK_MONOTONIC,&t);
-    for(long i=0;i<N-1;i++) c+=B(f(xs[i],4294967291.0));
+    for(long i=1;i<N;i++) c+=B(f((double)i*2654435761.0,y));
     double e=ms(t); if(e<best)best=e; *ck=c;
   }
   return best;
 }
-static double libc_fmod(double a,double b){return fmod(a,b);}
+double libc_fmod(double a,double b){return fmod(a,b);}
 
 /* ---- raw DIV ladder ----
  * dependent chain: each divide's dividend carries 16 bits of the previous
@@ -163,23 +165,37 @@ int main(void){
   FILE*fp=fopen("/proc/cpuinfo","r"); char L[512];
   while(fp&&fgets(L,sizeof L,fp)) if(!strncmp(L,"model name",10)){fputs(L,stdout);break;}
   if(fp)fclose(fp);
-  xs=malloc(sizeof(double)*N);
-  for(long i=1;i<N;i++) xs[i-1]=(double)i*2654435761.0;
+  printf("libc: %s\n",
+#ifdef __GLIBC__
+    "glibc"
+#else
+    "musl"
+#endif
+  );
 
-  uint64_t ref=0,ck=0;
-  double t_libc=run(libc_fmod,&ref);
   struct { const char*n; double(*f)(double,double); } arms[]={
-    {"fastfmod-main",cand_main},{"cand-clz",cand_clz},
+    {"platform fmod",libc_fmod},{"fastfmod-main",cand_main},{"cand-clz",cand_clz},
     {"cand-narrow",cand_narrow},{"cand-narrow-loop",cand_narrow_loop}};
-  printf("\n== fmod, %d calls, best of 5 (ms) ==\n",N-1);
-  printf("  %-18s %8.2f  %6.2fx  checksum %016llx\n","libc fmod",t_libc,1.0,
-         (unsigned long long)ref);
-  for(unsigned k=0;k<sizeof arms/sizeof*arms;k++){
-    double t=run(arms[k].f,&ck);
-    printf("  %-18s %8.2f  %6.2fx  %s\n",arms[k].n,t,t/t_libc,
-           ck==ref?"BIT-EXACT":"*** MISMATCH ***");
+  struct { const char*n; double y; } streams[]={
+    {"runtime-probe.cjs   y=4294967291 (prime)", 4294967291.0},
+    {"wk-hotloop.cjs      y=4294967296 (2^32)",  4294967296.0}};
+  for(unsigned s=0;s<2;s++){
+    uint64_t ref=0,ck=0; double t0=0;
+    printf("\n== %s, %d calls, best of 5 ==\n",streams[s].n,N-1);
+    for(unsigned k=0;k<sizeof arms/sizeof*arms;k++){
+      double t=run(arms[k].f,streams[s].y,&ck);
+      if(k==0){ ref=ck; t0=t;
+        printf("  %-18s %8.2f ms  %6.2fx  %5.2f ns/call  checksum %016llx\n",
+               arms[k].n,t,1.0,t*1e6/(N-1),(unsigned long long)ref);
+      } else {
+        printf("  %-18s %8.2f ms  %6.2fx  %5.2f ns/call  %s\n",arms[k].n,t,t/t0,
+               t*1e6/(N-1),ck==ref?"BIT-EXACT":"*** MISMATCH ***");
+      }
+    }
   }
-  printf("\n== raw 64-bit DIV, 20M ops (ms) ==\n");
+
+  printf("\n== raw 64-bit DIV, 20M ops ==\n");
+
   struct { const char*n; uint64_t mask; uint64_t divisor; } sh[]={
     {"dvd64 dsr42 (ours)",   0x8000000000000000ULL, 0x3ffffffffffULL},
     {"dvd54 dsr32 (glibc)",  0x0020000000000000ULL, 0xfffffffbULL},
