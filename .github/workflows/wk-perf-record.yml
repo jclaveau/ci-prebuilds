@@ -39,7 +39,7 @@ on:
         default: ''
         type: string
       kernel:
-        description: 'Which kernel to profile: click_force | eval_rtt | goto_cold | launch | screenshot | locator_click'
+        description: 'Which kernel to profile: click_force | eval_rtt | goto_cold | launch | screenshot | locator_click | loader'
         default: 'click_force'
         type: string
       seconds:
@@ -127,6 +127,20 @@ jobs:
               -v "$PWD/playwright/scripts:/pwscripts:ro" \
               "$image" \
               sh -c '
+                # `loader` is not a hotloop kernel: it re-runs MiniBrowser
+                # --version, which loads the whole 123-object closure, prints a
+                # version string and exits. That prices the loader and library
+                # init on their own, with no driver, no page and no browsing —
+                # 69 ms against official 41 ms, which is most of what `launch`
+                # is short by.
+                if [ "$KERNEL" = loader ]; then
+                  cd /ms-playwright/webkit-*/minibrowser-wpe || exit 1
+                  end=$(( $(date +%s) + SECS ))
+                  while [ "$(date +%s)" -lt "$end" ]; do
+                    ./MiniBrowser --version >/dev/null 2>&1
+                  done
+                  exit 0
+                fi
                 NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
                 export NODE_PATH
                 node -e "require(\"playwright\")" 2>/dev/null \
@@ -136,13 +150,19 @@ jobs:
               '
             # Wait for the WebProcess, which is where the work happens — the
             # driver is node and profiling it would answer a different question.
+            # The loader kernel has none to wait for: every MiniBrowser it
+            # starts lives ~70 ms, and a process that starts INSIDE the perf
+            # window emits its own mmap events, so there is nothing to attach
+            # to and nothing to synthesise.
             wpid=""
-            for _ in $(seq 1 60); do
-              sleep 2
-              wpid=$(pgrep -f 'WPEWebProcess|WebKitWebProcess' | head -1 || true)
-              [ -n "$wpid" ] && break
-            done
-            if [ -z "$wpid" ]; then
+            if [ "$KERNEL" != loader ]; then
+              for _ in $(seq 1 60); do
+                sleep 2
+                wpid=$(pgrep -f 'WPEWebProcess|WebKitWebProcess' | head -1 || true)
+                [ -n "$wpid" ] && break
+              done
+            fi
+            if [ -z "$wpid" ] && [ "$KERNEL" != loader ]; then
               echo "::warning::no WebProcess appeared for $target"
               docker logs "$cname" 2>&1 | tail -20
               docker rm -f "$cname" >/dev/null 2>&1 || true
@@ -153,8 +173,10 @@ jobs:
             # official's samples came back as `[unknown]`, which is either JIT
             # with no map file or a library perf never saw mapped, and only
             # this says which.
-            sudo grep -E 'WPEWebKit|MiniBrowser|\.so' "/proc/$wpid/maps" \
-              | head -40 > "perf-out/$target.maps.txt" || true
+            if [ -n "$wpid" ]; then
+              sudo grep -E 'WPEWebKit|MiniBrowser|\.so' "/proc/$wpid/maps" \
+                | head -40 > "perf-out/$target.maps.txt" || true
+            fi
             echo "::endgroup::"
 
             # System-wide, not --pid: WebKit recycles the WebProcess and the

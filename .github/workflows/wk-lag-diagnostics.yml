@@ -216,6 +216,7 @@ jobs:
               image="$OURS"
             fi
             docker run --rm --user 0 --security-opt seccomp=unconfined \
+              --cap-add SYS_ADMIN \
               "$image" sh -c '
                 cd /ms-playwright/webkit-*/minibrowser-wpe || exit 1
                 for i in 1 2 3; do ./MiniBrowser --version >/dev/null 2>&1; done
@@ -228,6 +229,12 @@ jobs:
                 e=$(date +%s%N)
                 echo "minibrowser-version-ms $(( (e - s) / 30000000 ))"
                 ./MiniBrowser --version
+                echo "bundle-bytes $(cat *.so* MiniBrowser 2>/dev/null | wc -c)"
+                echo "bundle-files $(ls *.so* 2>/dev/null | wc -l)"
+                echo "closure-dsos $(ldd ./MiniBrowser 2>/dev/null | wc -l)"
+                for f in libWPEWebKit*.so* libjavascriptcore*.so*; do
+                  [ -f "$f" ] && echo "lib-bytes $f $(wc -c < "$f")"
+                done
               ' 2>&1 | tee "loader-out/$target.txt"
           done
           for target in alpine official; do
