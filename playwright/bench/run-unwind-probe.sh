@@ -51,7 +51,9 @@ node "$probe/wk-hotloop.cjs" --browser webkit --kernel launch \
 # output, hence the newline squeeze before reading the fields.
 for f in "$UNWIND_OUT"/[0-9]*; do
   [ -f "$f" ] || continue
-  set -- $(od -A n -t u8 -N 48 "$f" | tr -s ' \n' ' ')
+  # -v because od collapses runs of identical lines to "*", and an all-zero
+  # counter file is exactly that — the first reading lost four of six fields.
+  set -- $(od -A n -v -t u8 -N 48 "$f" | tr -s ' \n' ' ')
   echo "unwind-counter pid=$(basename "$f") throws=$1 walks=$2" \
     "raises=$3 resumes=$4 forced=$5 phdr_scans=$6"
 done
