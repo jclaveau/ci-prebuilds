@@ -115,12 +115,17 @@ const PAGE_HTML = `<!doctype html>
     } else if (kernel === 'libm_fmod') {
       // Duplicated from runtime-probe.cjs, divisor included: keep it off a
       // power of two and the engines fold the modulo away, profiling nothing.
+      // The divisor is 4294967291, a prime, and NOT 4294967296 = 2^32, which
+      // this branch shipped for a day: the profiles it produced were of a
+      // different operand stream than the probe row they were read as
+      // explaining. Cross-check it against runtime-probe.cjs before trusting a
+      // libm_fmod profile.
       // One evaluate is 9M iterations, so the window fills with the kernel
       // rather than with protocol RTT.
       await page.evaluate(() => {
         let x = 0;
         for (let i = 1; i < 9000000; i++) {
-          x += (i * 2654435761) % 4294967296;
+          x += (i * 2654435761) % 4294967291;
         }
         return x;
       });
