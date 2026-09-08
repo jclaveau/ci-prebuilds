@@ -107,3 +107,36 @@ main since #167/#170. A pre-Zen dev box inverts the ranking between
 candidates (the file header records 247 against 241), and jean's laptop has
 `perf_event_paranoid=4` so it cannot even count cycles — time fmod
 candidates in CI. See [[feedback_diff_against_main_before_optimising]].
+
+## RESOLVED: the shim wins on Zen 3 and loses on Zen 4 (2026-09-08)
+
+Profiled with `wk-perf-record.yml kernel=libm_fmod`, both arms in one job,
+image `sha-ea0b8149`. Per round, DSO share divided by rounds completed:
+
+| | EPYC 7763 (Zen 3, n=3) | EPYC 9V74 (Zen 4, n=1) |
+|---|---|---|
+| ms/round, ours vs official | 67.0 / 70.6 -> 0.94 | 51.5 / 46.4 -> 1.11 |
+| fmod DSO share per round | 0.92-0.94 | 1.16 |
+| JIT share per round | ~1.0 | 0.96 |
+
+The row ratio tracks the fmod ratio on both, and JIT is at or below parity on
+both, so the row IS our shim against glibc's and nothing else. Symbol level
+agrees: ours is a single symbol, `fmod`, at 19.73%.
+
+Both implementations get faster on Zen 4 — ours 1.30x, glibc 1.52x — so this
+is not us failing to gain, it is glibc gaining more. Both are divide-based;
+which instruction glibc stops paying for on Zen 4 is NOT established, and
+that is the only open thread.
+
+Dead ends closed by this measurement, do not re-open: the preload not
+reaching the WebProcess (libfastfmod.so is 17-20% of the window), a transfer
+gap between the isolated bench and the browser (the isolated 0.91x transfers
+exactly on Zen 3), and the JS loop hiding the gap (the kernel is ~70% fmod).
+
+CAUTION, two instruments disagree on absolutes: the runtime probe's
+`libm_fmod` metric reads our arm FLAT across the two CPUs (65-68 vs 63-68 ms)
+while the hotloop reads it gaining 1.30x (67.0 -> 51.5 ms/round). They agree
+exactly on the ratios (1.11-1.12 and ~0.94). The hotloop is fully JIT-warmed
+and the probe is not, which is the likely cause. Compare hotloop rounds only
+against hotloop rounds.
+
