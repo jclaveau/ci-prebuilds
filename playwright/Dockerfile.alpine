@@ -198,6 +198,17 @@ RUN sudo touch /ms-playwright/webkit-${WK_REV}/INSTALLATION_COMPLETE \
 # everything from `$(dirname "$0")`, so it is indifferent to being renamed
 # inside its own directory.
 #
+# The wrapper also turns Skia's GPU painting OFF. On this image "GPU" means
+# llvmpipe, Mesa's software rasteriser, and the click profile shows llvmpipe
+# burning 1.89x the CPU per iteration that Playwright's does — with a
+# SkiaGPUWorker thread on our side that theirs does not have at all. Painting
+# on the CPU instead skips the round trip through a GL context that is itself
+# the CPU. Measured twice, n=10, on one runner each time: goto_cold 1.07 ->
+# 0.89 and 1.13 -> 0.92, goto_warm 1.01 -> 0.90 and 1.01 -> 0.91, context_page
+# 0.97 -> 0.91 and 0.94 -> 0.89, everything else flat. pw-conformance.yml
+# passes the same variable so the browser conformance tests is the browser we
+# ship.
+#
 # The same wrapper carries libfastfmod.so (built in the fastfmod-build stage
 # above). Both entries are plain interpositions of disjoint symbols, so the
 # order between them does not matter. If either object fails to load, ld.so
@@ -210,6 +221,7 @@ RUN sudo mv /ms-playwright/webkit-${WK_REV}/pw_run.sh \
         '#!/bin/sh' \
         'DIR="$(dirname "$0")"' \
         'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so' \
+        'export WEBKIT_SKIA_ENABLE_CPU_RENDERING=1' \
         'exec "$DIR/pw_run.real.sh" "$@"' \
   | sudo tee /ms-playwright/webkit-${WK_REV}/pw_run.sh >/dev/null \
  && sudo chmod +x /ms-playwright/webkit-${WK_REV}/pw_run.sh
