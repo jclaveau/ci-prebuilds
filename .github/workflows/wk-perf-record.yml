@@ -108,7 +108,10 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p perf-out
-          window=$(( SECONDS_PER_ARM - 15 ))
+          # Room for three things after the container starts: the sample
+          # window, a 10 s syscall-count window on the same live container,
+          # and the symfs copy, which needs it still running.
+          window=$(( SECONDS_PER_ARM - 25 ))
           [ "$window" -ge 10 ] || window=10
           for target in alpine official; do
             if [ "$target" = official ]; then
@@ -195,6 +198,16 @@ jobs:
               -- sleep "$window" || echo "::warning::perf record failed for $target"
             sudo chown "$(id -u):$(id -g)" "perf-out/$target.data" || true
 
+            # A sample profile says where CPU went, not how often the kernel
+            # was entered — and the two rows still above parity spend MORE
+            # system time and LESS user time than Playwright's. So count the
+            # syscalls an allocator and a run loop generate, over a second
+            # window on the same live container.
+            sudo "$PERF" stat -a -e context-switches,page-faults \
+              -e syscalls:sys_enter_mmap,syscalls:sys_enter_munmap \
+              -e syscalls:sys_enter_madvise,syscalls:sys_enter_futex \
+              -- sleep 10 2> "perf-out/$target.stat.txt" || true
+
             # symfs BEFORE the container dies: perf resolves the paths recorded
             # in the mmap events, and those live inside the container.
             echo "::group::$target — symfs"
@@ -242,6 +255,12 @@ jobs:
               --sort comm --percent-limit 0.2 -g none 2>/dev/null | head -30 \
               > "perf-out/$target.all-comms.txt" || true
 
+            # The iteration count is what makes that window comparable: the
+            # arms do not run at the same rate, and a raw count would just
+            # restate that.
+            docker wait "$cname" >/dev/null 2>&1 || true
+            docker logs "$cname" 2>&1 | grep -o 'rounds=[0-9]*' | tail -1 \
+              > "perf-out/$target.rounds.txt" || true
             docker rm -f "$cname" >/dev/null 2>&1 || true
             # The symfs is hundreds of MB per arm; `sudo`, because `docker
             # cp` lands root-owned trees that the artifact upload cannot even
@@ -259,6 +278,14 @@ jobs:
             echo "## WebKit differential profile — \`$KERNEL\`"
             echo
             echo "\`$OURS\` vs \`mcr.microsoft.com/playwright:v${PW}-noble\`"
+            echo "### syscalls and switches, 10 s window"
+            echo '```'
+            for target in alpine official; do
+              echo "== $target ($(cat "perf-out/$target.rounds.txt" 2>/dev/null || echo 'rounds=?'))"
+              grep -E 'sys_enter|context-switches|page-faults' \
+                "perf-out/$target.stat.txt" 2>/dev/null || echo "(no stat)"
+            done
+            echo '```'
             for target in alpine official; do
               for name in all-comms dso dso-symbol; do
                 echo
