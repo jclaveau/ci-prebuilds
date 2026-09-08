@@ -198,6 +198,40 @@ jobs:
             sed -n '/dl_iterate_phdr callers/,$p' "unwind-out/$target.txt" | head -20
           done
 
+      # ----------------------------------------------------------- ipc cost
+      # `eval_rtt` and `click_force` are round-trip rows and their profiles are
+      # ~50% idle, so what a wait costs is worth pricing directly. Two
+      # primitives, both real syscall traffic and both pinned to one CPU so the
+      # reading is the primitive rather than the scheduler's migration policy.
+      - name: Round-trip latency, socket and condvar
+        if: '!cancelled()'
+        run: |
+          set -o pipefail
+          mkdir -p ipc-out
+          for target in alpine official; do
+            if [ "$target" = official ]; then
+              image="mcr.microsoft.com/playwright:v${PW}-noble"
+            else
+              image="$OURS"
+            fi
+            docker run --rm --user 0 \
+              -v "$PWD/playwright/bench:/probe:ro" \
+              "$image" sh -c '
+                if command -v apk >/dev/null 2>&1; then
+                  apk add --no-cache gcc musl-dev >/dev/null 2>&1
+                else
+                  apt-get update >/dev/null 2>&1
+                  apt-get install -y gcc >/dev/null 2>&1
+                fi
+                cc -O2 -o /tmp/ipc /probe/ipc-rtt-bench.c -lpthread
+                for i in 1 2 3; do /tmp/ipc 100000; done
+              ' 2>&1 | tee "ipc-out/$target.txt"
+          done
+          for target in alpine official; do
+            echo "== $target"
+            cat "ipc-out/$target.txt"
+          done
+
       # --------------------------------------------------------- loader cost
       # `MiniBrowser --version` loads the whole 123-object closure, prints a
       # string and exits, so it prices the loader and library init with no
@@ -337,6 +371,11 @@ jobs:
             echo '```'
             cat loader-out/alpine.txt loader-out/official.txt
             echo '```'
+            echo
+            echo "### round-trip latency (best of 3, one CPU)"
+            echo '```'
+            cat ipc-out/alpine.txt ipc-out/official.txt
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
@@ -350,5 +389,6 @@ jobs:
             strace-out/
             loader-out/
             unwind-out/
+            ipc-out/
           if-no-files-found: warn
           retention-days: 30
