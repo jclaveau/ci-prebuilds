@@ -198,6 +198,43 @@ jobs:
             sed -n '/dl_iterate_phdr callers/,$p' "unwind-out/$target.txt" | head -20
           done
 
+      # --------------------------------------------------------- loader cost
+      # `MiniBrowser --version` loads the whole 123-object closure, prints a
+      # string and exits, so it prices the loader and library init with no
+      # browsing at all. `launch` is the worst row at 1.34 and every candidate
+      # so far — DSO closure, BIND_NOW, DT_RELR, lazy binding — has measured
+      # flat, so the open question is whether the gap is even in startup.
+      - name: Loader-only startup cost
+        if: '!cancelled()'
+        run: |
+          set -o pipefail
+          mkdir -p loader-out
+          for target in alpine official; do
+            if [ "$target" = official ]; then
+              image="mcr.microsoft.com/playwright:v${PW}-noble"
+            else
+              image="$OURS"
+            fi
+            docker run --rm --user 0 --security-opt seccomp=unconfined \
+              "$image" sh -c '
+                cd /ms-playwright/webkit-*/minibrowser-wpe || exit 1
+                for i in 1 2 3; do ./MiniBrowser --version >/dev/null 2>&1; done
+                s=$(date +%s%N)
+                i=0
+                while [ $i -lt 30 ]; do
+                  ./MiniBrowser --version >/dev/null 2>&1
+                  i=$((i + 1))
+                done
+                e=$(date +%s%N)
+                echo "minibrowser-version-ms $(( (e - s) / 30000000 ))"
+                ./MiniBrowser --version
+              ' 2>&1 | tee "loader-out/$target.txt"
+          done
+          for target in alpine official; do
+            echo "== $target"
+            cat "loader-out/$target.txt"
+          done
+
       # -------------------------------------------------------------- launch
       # `launch()` is 1.31 while our binary carries FEWER relocations than
       # official's, so the syscall trace decides between loader work and
@@ -266,6 +303,11 @@ jobs:
             echo '```'
             cat strace-out/alpine.txt strace-out/official.txt
             echo '```'
+            echo
+            echo "### loader-only startup (MiniBrowser --version, 30 runs)"
+            echo '```'
+            cat loader-out/alpine.txt loader-out/official.txt
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
@@ -277,5 +319,7 @@ jobs:
             elf-out/
             fmod-out/
             strace-out/
+            loader-out/
+            unwind-out/
           if-no-files-found: warn
           retention-days: 30
