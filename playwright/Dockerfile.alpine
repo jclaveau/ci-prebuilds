@@ -84,44 +84,20 @@ RUN sudo apk add --no-cache gcc musl-dev \
 #
 # zlib-ng is the larger and cheaper win: preloaded into an otherwise unmodified
 # image it takes full PNG encode from 1.10x official to 0.73x (crc32 11x,
-# adler32 9.6x, deflate 2.35x). Alpine's own zlib-ng package cannot do this —
-# it ships only libz-ng.so.2 with zng_-prefixed symbols, which interposes
-# nothing — hence the ZLIB_COMPAT=ON source build.
+# adler32 9.6x, deflate 2.35x).
 #
-# zlib-ng emits DIFFERENT bytes from zlib (2% smaller at L6, valid PNG), so any
-# assertion on a screenshot's byte length or hash moves. The smoke below checks
-# a round trip and the standard CRC-32 vector, never byte equality.
+# The build, the ZLIB_COMPAT rationale and the smoke live in the script, which
+# the conformance runner runs too so that conformance exercises the browser we
+# ship (playwright/alpine-browsers/conformance/build-runner.sh).
+#
+# zlib-ng emits DIFFERENT bytes from zlib (2% smaller at L6, valid PNG). PW's
+# own suite is byte-insensitive here — `getComparator('image/png')` decodes
+# with PNG.sync.read and compares pixels (packages/utils/comparators.ts), the
+# only byteLength assertions are on jpeg/webp, and every screenshot .equals()
+# compares two shots from the same encoder in the same run.
 FROM ${BASE_IMAGE} AS zlibng-build
-ARG ZLIB_NG_VERSION=2.3.3
-RUN sudo apk add --no-cache gcc musl-dev cmake make curl zlib-dev \
- && curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -o /tmp/zng.tar.gz \
-      "https://github.com/zlib-ng/zlib-ng/archive/refs/tags/${ZLIB_NG_VERSION}.tar.gz" \
- && tar -xzf /tmp/zng.tar.gz -C /tmp \
- && cmake -S /tmp/zlib-ng-${ZLIB_NG_VERSION} -B /tmp/zng-build \
-      -DCMAKE_BUILD_TYPE=Release -DZLIB_COMPAT=ON -DBUILD_SHARED_LIBS=ON \
-      -DZLIB_ENABLE_TESTS=OFF -DWITH_GTEST=OFF \
- && cmake --build /tmp/zng-build -j"$(nproc)" \
- && sudo install -m 0755 "$(find /tmp/zng-build -maxdepth 1 -name 'libz.so.*' -type f | head -1)" \
-      /usr/lib/libz-ng-compat.so.1 \
- && printf '%s\n' \
-      '#include <stdio.h>' \
-      '#include <string.h>' \
-      '#include <zlib.h>' \
-      'int main(void){' \
-      '  unsigned char in[4096], out[8192], back[4096];' \
-      '  uLongf olen = sizeof out, blen = sizeof back;' \
-      '  /* Positive interposition check: without the preload this is plain zlib' \
-      '     and the marker is absent, so the smoke cannot pass vacuously. */' \
-      '  if (!strstr(zlibVersion(), "zlib-ng")) return 1;' \
-      '  if (crc32(0, (const Bytef *)"123456789", 9) != 0xCBF43926UL) return 2;' \
-      '  for (int i = 0; i < 4096; i++) in[i] = (unsigned char)(i * 7);' \
-      '  if (compress(out, &olen, in, sizeof in) != Z_OK) return 3;' \
-      '  if (uncompress(back, &blen, out, olen) != Z_OK) return 4;' \
-      '  if (blen != sizeof in || memcmp(in, back, sizeof in)) return 5;' \
-      '  puts("zlib-ng smoke ok"); return 0; }' \
-    > /tmp/zng-smoke.c \
- && gcc -O2 -o /tmp/zng-smoke /tmp/zng-smoke.c -lz \
- && LD_PRELOAD=/usr/lib/libz-ng-compat.so.1 /tmp/zng-smoke
+COPY alpine-browsers/webkit/zlib-ng /work/zlib-ng
+RUN sudo sh /work/zlib-ng/build-zlib-ng.sh
 
 # Runtime libs. chromium-headless-shell has RPATH=$ORIGIN but the FROM-SOURCE
 # build (unlike the old apk one) is NOT fully self-contained — it dynamically
