@@ -27,9 +27,17 @@ DST="${1:?usage: strip-mesa-closure.sh <bundle_dir>}"
 # Exact Mesa software-GL closure as bundled by bundle-dist.sh. libLLVM.so.22.1
 # is stable across Mesa builds (LLVM major); libgallium's soname embeds the
 # FULL Mesa version (26.1.x bumps every Mesa patch) so it is matched as a glob.
-# libgallium is dlopen'd by libEGL/libGL (never DT_NEEDED), so the consumer's
-# newer apk soname is invisible to the ldd gate below. Everything else in the
-# bundle is WebKit's own set or universal-runtime libs and stays.
+#
+# On Alpine's mesa-egl, libgallium is DT_NEEDED by libEGL.so.1, not dlopen'd —
+# this comment claimed the opposite and it is worth being exact about, because
+# that edge is what dragged libgallium (44 MB) and libLLVM (191 MB) into every
+# process's startup closure and made `launch` the worst WebKit row. Ubuntu's
+# libEGL comes from libglvnd and only dlopens the driver, which is why
+# Playwright's image never paid it. See project_wk_launch_is_mesa_in_the_closure
+# and the USE_GSTREAMER_GL=OFF note in cmake-flags.overlay.
+#
+# Everything else in the bundle is WebKit's own set or universal-runtime libs
+# and stays.
 MESA_CLOSURE="
 libLLVM.so.22.1
 libgallium-*.so
