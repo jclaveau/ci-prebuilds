@@ -41,7 +41,7 @@ $CC -O2 -fPIC -shared -o "$OUT/libcounter.so" "$SRC/fmod-call-counter.c" -ldl
 # rewritten from one-bit-per-iteration cmovs to chunked divides, the previous
 # sed matched nothing and this gate refused to run — which is the behaviour to
 # keep. A negative control that corrupts nothing is worse than none.
-sed 's|mx = (mx % (my >> k)) << k;|mx = (mx % (my >> k)) << (k + 1);|' \
+sed 's|mx = (mx << ls) % my;|mx = (mx << (ls + 1)) % my;|' \
   "$SRC/fastfmod.c" > "$OUT/broken.c"
 if cmp -s "$SRC/fastfmod.c" "$OUT/broken.c"; then
   echo "FAIL: the corruption did not apply — the negative control would be vacuous" >&2
