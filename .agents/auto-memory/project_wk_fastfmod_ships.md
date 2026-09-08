@@ -83,3 +83,27 @@ preloads and I had already probed it. I read the shipped 3.07/3.12 as
 should have run, because against 0.97 the same number is a refutation.
 **When a number is supposed to prove a claim, difference it against the
 claim, not against zero.** [[feedback_verify_ab_varied_the_variable]]
+
+## The ratio per CPU model, and the transfer gap (2026-09-08)
+
+`libm_fmod`'s ratio is a MEASUREMENT, not a runner fingerprint — only its
+absolute value fingerprints the machine. n=10 per arm, both arms in the same
+job: EPYC 9V74 reads 1.12 with NON-overlapping ranges (ours 65-68, official
+58-61); EPYC 7763 reads 0.93 and 0.96, both overlapping. Our arm is flat
+(66/64/65) across both models and the OFFICIAL arm is what moves (59 against
+68-69), so the reference wanders — and on the 9V74 we are genuinely ~12%
+behind, on n=1 for that model.
+
+That deficit is a TRANSFER gap, not a missing optimisation. The image the
+1.12 was measured on, `sha-ea0b8149`, is post-#170, compiled `gcc -O2 -fPIC`
+exactly as `run-gate.sh` compiles it, with the preload wired. Isolated on a
+9V74 the shim is 58.7 ms against glibc's 64.3 (0.91x); in-browser on a 9V74
+the same shim reads 1.12. Same algorithm, same core class, opposite verdict.
+The next instrument is a `perf record` of the WebProcess during the kernel,
+not another fmod candidate.
+
+Do NOT re-derive the tzcnt strip or the chunked divide: both have been on
+main since #167/#170. A pre-Zen dev box inverts the ranking between
+candidates (the file header records 247 against 241), and jean's laptop has
+`perf_event_paranoid=4` so it cannot even count cycles — time fmod
+candidates in CI. See [[feedback_diff_against_main_before_optimising]].

@@ -39,7 +39,7 @@ on:
         default: ''
         type: string
       kernel:
-        description: 'Which kernel to profile: click_force | eval_rtt | goto_cold | launch | screenshot | locator_click | loader'
+        description: 'Which kernel to profile: click_force | eval_rtt | goto_cold | launch | screenshot | locator_click | libm_fmod | loader'
         default: 'click_force'
         type: string
       seconds:

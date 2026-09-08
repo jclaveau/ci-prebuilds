@@ -112,6 +112,18 @@ const PAGE_HTML = `<!doctype html>
       // arm runs launch/close back to back with nothing else in the window.
       const fresh = await browserType.launch();
       await fresh.close();
+    } else if (kernel === 'libm_fmod') {
+      // Duplicated from runtime-probe.cjs, divisor included: keep it off a
+      // power of two and the engines fold the modulo away, profiling nothing.
+      // One evaluate is 9M iterations, so the window fills with the kernel
+      // rather than with protocol RTT.
+      await page.evaluate(() => {
+        let x = 0;
+        for (let i = 1; i < 9000000; i++) {
+          x += (i * 2654435761) % 4294967296;
+        }
+        return x;
+      });
     } else if (kernel === 'screenshot') {
       for (let i = 0; i < 10; i++) {
         await page.screenshot({ type: 'png' });
