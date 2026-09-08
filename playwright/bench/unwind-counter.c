@@ -19,23 +19,62 @@
  * counter reports per process, because the interesting ones are the auxiliary
  * processes WebKit spawns, not the driver.
  *
+ * The counters live in an mmap'd file rather than being printed at exit. A
+ * first attempt reported from a destructor onto stderr and came back "0
+ * processes": Playwright pipes a browser subprocess's stderr into the driver
+ * and drops it, and the auxiliary processes WebKit spawns are SIGKILLed on
+ * close, so no exit-time hook of any kind is guaranteed to run. Incrementing
+ * shared memory needs neither a flush nor a clean exit.
+ *
  * Forwarding through RTLD_NEXT is safe here in a way it was not for the fmod
  * interposer: these functions are not reimplemented, only observed.
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
-static unsigned long throws;
-static unsigned long walks;
+struct counters {
+  unsigned long throws;
+  unsigned long walks;
+};
+
+static struct counters fallback;
+static struct counters *counters = &fallback;
 
 typedef void (*throw_fn)(void *, void *, void (*)(void *));
 typedef int (*trace_fn)(void *, void *);
 
+__attribute__((constructor)) static void open_counters(void) {
+  const char *dir = getenv("UNWIND_OUT");
+  char path[256];
+  void *map;
+  int fd;
+
+  if (!dir) {
+    return;
+  }
+  snprintf(path, sizeof(path), "%s/%d", dir, (int)getpid());
+  fd = open(path, O_RDWR | O_CREAT, 0644);
+  if (fd < 0) {
+    return;
+  }
+  if (ftruncate(fd, sizeof(struct counters)) == 0) {
+    map = mmap(NULL, sizeof(struct counters), PROT_READ | PROT_WRITE,
+               MAP_SHARED, fd, 0);
+    if (map != MAP_FAILED) {
+      counters = map;
+    }
+  }
+  close(fd);
+}
+
 void __cxa_throw(void *ex, void *info, void (*dest)(void *)) {
   static throw_fn real;
-  __atomic_add_fetch(&throws, 1, __ATOMIC_RELAXED);
+  __atomic_add_fetch(&counters->throws, 1, __ATOMIC_RELAXED);
   if (!real) {
     real = (throw_fn)dlsym(RTLD_NEXT, "__cxa_throw");
   }
@@ -45,16 +84,9 @@ void __cxa_throw(void *ex, void *info, void (*dest)(void *)) {
 
 int _Unwind_Backtrace(void *trace, void *arg) {
   static trace_fn real;
-  __atomic_add_fetch(&walks, 1, __ATOMIC_RELAXED);
+  __atomic_add_fetch(&counters->walks, 1, __ATOMIC_RELAXED);
   if (!real) {
     real = (trace_fn)dlsym(RTLD_NEXT, "_Unwind_Backtrace");
   }
   return real(trace, arg);
-}
-
-__attribute__((destructor)) static void report(void) {
-  /* stderr, unbuffered by definition, because a browser subprocess is not
-   * guaranteed to flush anything else on the way out. */
-  fprintf(stderr, "unwind-counter pid=%d throws=%lu walks=%lu\n",
-          (int)getpid(), throws, walks);
 }

@@ -190,10 +190,10 @@ jobs:
           done
           for target in alpine official; do
             echo "== $target"
-            grep -h "unwind-counter" "unwind-out/$target.txt" \
+            { grep -h "unwind-counter" "unwind-out/$target.txt" || true; } \
               | awk -F'[= ]' '{t+=$5; w+=$7; n++} \
                   END {printf "%d processes, throws=%d walks=%d\n", n, t, w}'
-            grep -h "unwind-counter" "unwind-out/$target.txt" | head -20
+            grep -h "unwind-counter" "unwind-out/$target.txt" | head -20 || true
           done
 
       # -------------------------------------------------------------- launch
