@@ -94,6 +94,11 @@ jobs:
           [ -n "$PERF" ] || { echo "no usable perf binary" >&2; exit 1; }
           "$PERF" --version
           echo "PERF=$PERF" >> "$GITHUB_ENV"
+          # Which silicon this landed on decides how to read the result: the
+          # same image and control read 0.93-0.96 on an EPYC 7763 and 1.12 on
+          # a 9V74, because glibc's fmod gains on Zen 4 and ours does not.
+          # Inferring the model from round counts after the fact is guesswork.
+          grep -m1 'model name' /proc/cpuinfo || true
           sudo sysctl -w kernel.perf_event_paranoid=-1
           sudo sysctl -w kernel.kptr_restrict=0
 
