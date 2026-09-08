@@ -42,6 +42,10 @@ FROM ghcr.io/jclaveau/playwright-alpine-browsers:${WK_SOURCE_TAG} AS wk-source
 # an EPYC 7763, 7.65x on a Xeon 8370C) — both engines call libc the same
 # 3,000,000 times per kernel, so it was never JSC. See issue #126.
 #
+# The win is not uniform across silicon: profiled per round, this is 0.92-0.94
+# against official on an EPYC 7763 and 1.16 on an EPYC 9V74, because glibc's
+# fmod gains more from Zen 4's divider than ours does. See the file header.
+#
 # Compiled here and gated in .github/workflows/wk-fastfmod-gate.yml, which runs
 # the same operand stream with and without it and compares raw result bits.
 # The smoke below is only a build-time sanity check that the object loads and
