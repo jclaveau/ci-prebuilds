@@ -161,6 +161,40 @@ static uint64_t divtp(uint64_t mask,uint64_t divisor,long n){
   }
   return s;
 }
+
+/* ---- microarchitecture anchors ----
+ * Without these every number above is in nanoseconds, and a slower nanosecond
+ * cannot be told from a slower cycle. The add chain is inline asm because gcc
+ * folds `a+=1` n times into one add; it is one cycle on every x86, so it reads
+ * the CLOCK. The branch pair runs the SAME code over a random bit array and
+ * over a constant one, so only predictability differs and the difference is
+ * one mispredict — the cost our normalisation loop pays and glibc's bsr does
+ * not.
+ */
+static uint64_t addchain(long n){
+  uint64_t a=1;
+  /* eight dependent adds per asm block so the loop counter cannot show up in
+   * the per-op number */
+  for(long i=0;i<n;i+=8)
+    __asm__ volatile("addq $1,%0\naddq $1,%0\naddq $1,%0\naddq $1,%0\n"
+                     "addq $1,%0\naddq $1,%0\naddq $1,%0\naddq $1,%0":"+r"(a));
+  return a;
+}
+static uint64_t mulchain(long n){
+  uint64_t a=3,t=3;
+  for(long i=0;i<n;i+=4)
+    __asm__ volatile("imulq %1,%0\nimulq %1,%0\nimulq %1,%0\nimulq %1,%0"
+                     :"+r"(a):"r"(t));
+  return a;
+}
+static uint64_t __attribute__((noinline)) branchy(const unsigned char*b,long n){
+  uint64_t s=1;
+  for(long i=0;i<n;i++){
+    if(b[i]) s=s*1103515245u+12345u; else s=s*1664525u+1013904223u;
+  }
+  return s;
+}
+
 int main(void){
   FILE*fp=fopen("/proc/cpuinfo","r"); char L[512];
   while(fp&&fgets(L,sizeof L,fp)) if(!strncmp(L,"model name",10)){fputs(L,stdout);break;}
@@ -212,6 +246,30 @@ int main(void){
       sink+=divtp(sh[k].mask,sh[k].divisor,20000000); double e=ms(t); if(e<bt)bt=e; }
     printf("  %-22s latency %7.2f ms (%5.2f ns/div)   thruput %7.2f ms (%5.2f ns/div)\n",
            sh[k].n,bl,bl*1e6/20000000,bt,bt*1e6/20000000);
+  }
+  printf("(sink %llu)\n",(unsigned long long)sink);
+
+  printf("\n== anchors ==\n");
+  { double b=1e18; for(int r=0;r<5;r++){clock_gettime(CLOCK_MONOTONIC,&t);
+      sink+=addchain(400000000); double e=ms(t); if(e<b)b=e;}
+    double ns=b*1e6/400000000.0;
+    printf("  dependent add (1 cycle)    %6.4f ns/op  => %.3f GHz\n",ns,1.0/ns);
+    double b2=1e18; for(int r=0;r<5;r++){clock_gettime(CLOCK_MONOTONIC,&t);
+      sink+=mulchain(200000000); double e=ms(t); if(e<b2)b2=e;}
+    printf("  dependent imul             %6.4f ns/op  => %.2f cycles\n",
+           b2*1e6/200000000.0,(b2*1e6/200000000.0)/ns);
+    long NB=1<<22;
+    unsigned char*rnd=malloc(NB),*one=malloc(NB); uint64_t st=88172645463325252ULL;
+    for(long i=0;i<NB;i++){st^=st<<13;st^=st>>7;st^=st<<17;rnd[i]=st&1;one[i]=1;}
+    double br=1e18,bo=1e18;
+    for(int r=0;r<5;r++){clock_gettime(CLOCK_MONOTONIC,&t);
+      for(int k=0;k<4;k++) sink+=branchy(rnd,NB); double e=ms(t); if(e<br)br=e;}
+    for(int r=0;r<5;r++){clock_gettime(CLOCK_MONOTONIC,&t);
+      for(int k=0;k<4;k++) sink+=branchy(one,NB); double e=ms(t); if(e<bo)bo=e;}
+    double per=(br-bo)*1e6/(4.0*NB);
+    printf("  branchy random %6.2f ns/iter, predictable %6.2f  => 0.5 mispredicts cost %.2f ns = %.1f cycles each\n",
+           br*1e6/(4.0*NB),bo*1e6/(4.0*NB),per,2*per/ns);
+    free(rnd);free(one);
   }
   printf("(sink %llu)\n",(unsigned long long)sink);
   return 0;
