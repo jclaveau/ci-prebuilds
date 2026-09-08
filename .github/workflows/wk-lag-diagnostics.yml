@@ -216,7 +216,7 @@ jobs:
               image="$OURS"
             fi
             docker run --rm --user 0 --security-opt seccomp=unconfined \
-              --cap-add SYS_ADMIN \
+              -v "$PWD/playwright/bench:/probe:ro" \
               "$image" sh -c '
                 cd /ms-playwright/webkit-*/minibrowser-wpe || exit 1
                 for i in 1 2 3; do ./MiniBrowser --version >/dev/null 2>&1; done
@@ -228,13 +228,29 @@ jobs:
                 done
                 e=$(date +%s%N)
                 echo "minibrowser-version-ms $(( (e - s) / 30000000 ))"
+                # The loader with no constructors and no main: --list maps and
+                # relocates the whole closure, then stops. What it leaves out
+                # of the full run is static init.
+                LD=$(ldd ./MiniBrowser 2>/dev/null \
+                  | sed -n "s|.*\(/lib.*ld-[^ ]*\.so[^ ]*\).*|\1|p" | head -1)
+                if [ -x "$LD" ]; then
+                  s=$(date +%s%N)
+                  i=0
+                  while [ $i -lt 30 ]; do
+                    "$LD" --list ./MiniBrowser >/dev/null 2>&1
+                    i=$((i + 1))
+                  done
+                  e=$(date +%s%N)
+                  echo "loader-only-ms $(( (e - s) / 30000000 ))"
+                fi
                 ./MiniBrowser --version
-                echo "bundle-bytes $(cat *.so* MiniBrowser 2>/dev/null | wc -c)"
-                echo "bundle-files $(ls *.so* 2>/dev/null | wc -l)"
-                echo "closure-dsos $(ldd ./MiniBrowser 2>/dev/null | wc -l)"
-                for f in libWPEWebKit*.so* libjavascriptcore*.so*; do
-                  [ -f "$f" ] && echo "lib-bytes $f $(wc -c < "$f")"
+                echo "bundle-bytes $(cat ./*.so* ./MiniBrowser 2>/dev/null | wc -c)"
+                echo "bundle-files $(ls ./*.so* 2>/dev/null | wc -l)"
+                for f in ./libWPEWebKit*.so*; do
+                  [ -f "$f" ] || continue
+                  echo "lib-bytes $f $(wc -c < "$f")"
                 done
+                sh /probe/closure-reloc-audit.sh
               ' 2>&1 | tee "loader-out/$target.txt"
           done
           for target in alpine official; do
