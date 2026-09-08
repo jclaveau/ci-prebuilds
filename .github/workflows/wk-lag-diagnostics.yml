@@ -219,6 +219,10 @@ jobs:
               -v "$PWD/playwright/bench:/probe:ro" \
               "$image" sh -c '
                 cd /ms-playwright/webkit-*/minibrowser-wpe || exit 1
+                # Playwright puts a shell wrapper where we put the ELF, so the
+                # loader timing has to name the binary, not the entry point.
+                BIN=./MiniBrowser
+                [ -x ./bin/MiniBrowser ] && BIN=./bin/MiniBrowser
                 for i in 1 2 3; do ./MiniBrowser --version >/dev/null 2>&1; done
                 s=$(date +%s%N)
                 i=0
@@ -231,22 +235,24 @@ jobs:
                 # The loader with no constructors and no main: --list maps and
                 # relocates the whole closure, then stops. What it leaves out
                 # of the full run is static init.
-                LD=$(ldd ./MiniBrowser 2>/dev/null \
+                LD=$(ldd "$BIN" 2>/dev/null \
                   | sed -n "s|.*\(/lib.*ld-[^ ]*\.so[^ ]*\).*|\1|p" | head -1)
                 if [ -x "$LD" ]; then
                   s=$(date +%s%N)
                   i=0
                   while [ $i -lt 30 ]; do
-                    "$LD" --list ./MiniBrowser >/dev/null 2>&1
+                    "$LD" --list "$BIN" >/dev/null 2>&1
                     i=$((i + 1))
                   done
                   e=$(date +%s%N)
                   echo "loader-only-ms $(( (e - s) / 30000000 ))"
                 fi
                 ./MiniBrowser --version
-                echo "bundle-bytes $(cat ./*.so* ./MiniBrowser 2>/dev/null | wc -c)"
-                echo "bundle-files $(ls ./*.so* 2>/dev/null | wc -l)"
-                for f in ./libWPEWebKit*.so*; do
+                LIBS=.
+                [ -d ./lib ] && LIBS=./lib
+                echo "bundle-bytes $(cat "$LIBS"/*.so* "$BIN" 2>/dev/null | wc -c)"
+                echo "bundle-files $(ls "$LIBS"/*.so* 2>/dev/null | wc -l)"
+                for f in "$LIBS"/libWPEWebKit*.so*; do
                   [ -f "$f" ] || continue
                   echo "lib-bytes $f $(wc -c < "$f")"
                 done

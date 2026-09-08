@@ -14,8 +14,18 @@
 # that separate those, so both images print them the same way.
 set -eu
 
-bin=$(ls -d /ms-playwright/webkit-*/minibrowser-wpe 2>/dev/null | head -1)/MiniBrowser
+# Two layouts. Ours is flat — MiniBrowser and every .so in one directory with
+# RPATH=$ORIGIN — while Playwright ships bin/ and lib/ and puts a shell wrapper
+# where we put the ELF, so the top-level name is not always the binary.
+dir=$(ls -d /ms-playwright/webkit-*/minibrowser-wpe 2>/dev/null | head -1)
+[ -n "$dir" ] || { echo "no minibrowser-wpe directory" >&2; exit 1; }
+if [ -x "$dir/bin/MiniBrowser" ]; then
+  bin="$dir/bin/MiniBrowser"
+else
+  bin="$dir/MiniBrowser"
+fi
 [ -f "$bin" ] || { echo "no MiniBrowser found" >&2; exit 1; }
+echo "closure-binary $bin"
 
 if command -v readelf >/dev/null 2>&1; then
   :
