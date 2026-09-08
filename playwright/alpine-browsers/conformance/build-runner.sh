@@ -46,6 +46,7 @@ cp "$(dirname "$0")/../webkit/scripts/strip-mesa-closure.sh" "$TMPDIR/"
 # The fmod interposer the webkit launcher preloads: conformance has to run
 # the same libm the image ships, or it validates a build nobody runs.
 cp -r "$(dirname "$0")/../webkit/fastfmod" "$TMPDIR/"
+cp -r "$(dirname "$0")/../webkit/zlib-ng" "$TMPDIR/"
 
 case "$BROWSER" in
   chromium)
@@ -466,12 +467,18 @@ COPY fastfmod /tmp/fastfmod
 RUN apk add --no-cache gcc musl-dev \\
  && gcc -O2 -fPIC -shared -o /usr/lib/libfastfmod.so /tmp/fastfmod/fastfmod.c \\
  && apk del gcc musl-dev
+# zlib-ng, the third preload the shipped wrapper carries. Same script the
+# consumer image runs, so conformance encodes PNGs through the encoder we
+# ship: PW's screenshot assertions decode before comparing, but the ~2% byte
+# difference is real and this is where it would surface.
+COPY zlib-ng /tmp/zlib-ng
+RUN sh /tmp/zlib-ng/build-zlib-ng.sh
 RUN WKRUN=/ms-playwright/webkit-${ARTIFACT_REV}/pw_run.sh \\
  && mv "\$WKRUN" "\$(dirname "\$WKRUN")/pw_run.real.sh" \\
  && printf '%s\\n' \\
       '#!/bin/sh' \\
       'D=\$(dirname "\$0")' \\
-      'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so' \\
+      'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so:/usr/lib/libz-ng-compat.so.1' \\
       'exec "\$D/pw_run.real.sh" "\$@"' \\
       > "\$WKRUN" \\
  && chmod +x "\$WKRUN"

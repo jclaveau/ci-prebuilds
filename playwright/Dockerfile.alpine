@@ -66,6 +66,39 @@ RUN sudo apk add --no-cache gcc musl-dev \
  && gcc -O2 -fno-builtin-fmod -o /tmp/smoke /tmp/smoke.c -lm \
  && LD_PRELOAD=/usr/lib/libfastfmod.so /tmp/smoke
 
+# libz-ng-compat.so.1 — zlib-ng built in zlib-compat mode, preloaded under
+# WebKit. `page.screenshot({type:'png'})` costs us 49.15 ms/shot against
+# official's 46.38, and a perf record of the WebProcess (run 34207799987) puts
+# 81% of the shot in libz + libpng and the whole +2.77 ms delta there too:
+# libpng16 17.374 vs 15.484 ms/shot, libz 23.826 vs 22.446. Capture and
+# readback carry no measurable time at all — no Skia, GL, EGL, gallium, cairo
+# or GStreamer DSO appears — and both sides rasterize byte-identical pixels, so
+# this is codec CPU alone.
+#
+# The cause is Alpine's `-Os`: abuild.conf exports it and libpng's APKBUILD does
+# not override it (zlib's does, to -O2). Our libpng aligns 14 of 276 functions
+# to 16 bytes, Ubuntu's aligns 246 of 246. Rebuilt -O2 from the same source, the
+# filter kernel goes 61.8 -> 50.2 ms against official's 49.7. Ubuntu is NOT
+# running zlib-ng (zero zng_/crc32_fold/chunkcopy markers) and neither libpng
+# carries SSE2 filter kernels, so this is not a SIMD-dispatch gap.
+#
+# zlib-ng is the larger and cheaper win: preloaded into an otherwise unmodified
+# image it takes full PNG encode from 1.10x official to 0.73x (crc32 11x,
+# adler32 9.6x, deflate 2.35x).
+#
+# The build, the ZLIB_COMPAT rationale and the smoke live in the script, which
+# the conformance runner runs too so that conformance exercises the browser we
+# ship (playwright/alpine-browsers/conformance/build-runner.sh).
+#
+# zlib-ng emits DIFFERENT bytes from zlib (2% smaller at L6, valid PNG). PW's
+# own suite is byte-insensitive here — `getComparator('image/png')` decodes
+# with PNG.sync.read and compares pixels (packages/utils/comparators.ts), the
+# only byteLength assertions are on jpeg/webp, and every screenshot .equals()
+# compares two shots from the same encoder in the same run.
+FROM ${BASE_IMAGE} AS zlibng-build
+COPY alpine-browsers/webkit/zlib-ng /work/zlib-ng
+RUN sudo sh /work/zlib-ng/build-zlib-ng.sh
+
 # Runtime libs. chromium-headless-shell has RPATH=$ORIGIN but the FROM-SOURCE
 # build (unlike the old apk one) is NOT fully self-contained — it dynamically
 # links Alpine's libxslt + double-conversion + minizip + crc32c (aports chromium
@@ -210,18 +243,25 @@ RUN sudo touch /ms-playwright/webkit-${WK_REV}/INSTALLATION_COMPLETE \
 # passes the same variable so the browser conformance tests is the browser we
 # ship.
 #
-# The same wrapper carries libfastfmod.so (built in the fastfmod-build stage
-# above). Both entries are plain interpositions of disjoint symbols, so the
-# order between them does not matter. If either object fails to load, ld.so
-# warns on stderr and continues: WebKit still runs and still returns correct
-# results, just at musl's allocator and musl's fmod speed. There is no
-# correctness dependency on the preload succeeding.
+# The same wrapper carries libfastfmod.so and libz-ng-compat.so.1 (built in the
+# fastfmod-build and zlibng-build stages above). All three are plain
+# interpositions of disjoint symbols, so the order between them does not
+# matter. If any object fails to load, ld.so warns on stderr and continues:
+# WebKit still runs and still returns correct results, just at musl's
+# allocator, musl's fmod and Alpine's -Os zlib speed. There is no correctness
+# dependency on any preload succeeding.
+#
+# WK_ZLIB_NG=0 drops only the zlib-ng entry. It exists so the runtime perf
+# probe can put both arms on ONE runner: the ratio is CPU-model dependent, and
+# two runs on two runners cannot be differenced.
 RUN sudo mv /ms-playwright/webkit-${WK_REV}/pw_run.sh \
             /ms-playwright/webkit-${WK_REV}/pw_run.real.sh \
  && printf '%s\n' \
         '#!/bin/sh' \
         'DIR="$(dirname "$0")"' \
-        'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so' \
+        'ZNG=""' \
+        '[ "${WK_ZLIB_NG:-1}" = 1 ] && ZNG=":/usr/lib/libz-ng-compat.so.1"' \
+        'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so$ZNG' \
         'export WEBKIT_SKIA_ENABLE_CPU_RENDERING=1' \
         'exec "$DIR/pw_run.real.sh" "$@"' \
   | sudo tee /ms-playwright/webkit-${WK_REV}/pw_run.sh >/dev/null \
@@ -329,6 +369,11 @@ ENV LD_PRELOAD=/usr/lib/libmimalloc.so.2
 # MiniBrowser and every auxiliary process, and nothing else — not the Node
 # driver, not chromium, not firefox.
 COPY --from=fastfmod-build /usr/lib/libfastfmod.so /usr/lib/libfastfmod.so
+
+# zlib-ng in zlib-compat mode, preloaded by the same webkit launcher. Reaches
+# MiniBrowser and its auxiliary processes only — chromium and firefox bundle
+# their own zlib and are untouched.
+COPY --from=zlibng-build /usr/lib/libz-ng-compat.so.1 /usr/lib/libz-ng-compat.so.1
 
 RUN pnpm install -g playwright@${PLAYWRIGHT_VERSION}
 

@@ -19,6 +19,7 @@ on:
       # reaches a published image: #167 rewrote the fmod shim, merged green,
       # and published nothing.
       - '!playwright/alpine-browsers/webkit/fastfmod/**'
+      - '!playwright/alpine-browsers/webkit/zlib-ng/**'
       - '!playwright/alpine-browsers/webkit/scripts/strip-bundled-libs.sh'
       - '.github/workflows/playwright-alpine-browsers.yml'
       # The weekly metrics snapshot commits its JSONL back to main. Publishing
@@ -30,6 +31,7 @@ on:
     paths-ignore:
       - 'playwright/alpine-browsers/**'
       - '!playwright/alpine-browsers/webkit/fastfmod/**'
+      - '!playwright/alpine-browsers/webkit/zlib-ng/**'
       - '!playwright/alpine-browsers/webkit/scripts/strip-bundled-libs.sh'
       - '.github/workflows/playwright-alpine-browsers.yml'
       - 'metrics/**'
