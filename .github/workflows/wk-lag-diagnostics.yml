@@ -162,6 +162,40 @@ jobs:
                    echo "== vs glibc"; sh /ff/candidates/run-bench.sh' \
             2>&1 | tee fmod-out/official.txt
 
+      # ------------------------------------------------------------ unwinder
+      # The launch profile spends 2.28% of ALL samples in libgcc_s on our arm
+      # and under 0.17% on Playwright's, in the static CFI machinery past
+      # `_Unwind_Backtrace`. That names the file, not the reason: exceptions
+      # actually being thrown, or stack walks with no exception at all. The
+      # counter separates them; run-unwind-probe.sh handles the preload, which
+      # has to be prepended to pw_run.sh rather than exported.
+      - name: C++ throws and stack walks at launch
+        if: '!cancelled()'
+        run: |
+          set -o pipefail
+          mkdir -p unwind-out
+          for target in alpine official; do
+            if [ "$target" = official ]; then
+              image="mcr.microsoft.com/playwright:v${PW}-noble"; home=/root
+            else
+              image="$OURS"; home=/home/runner
+            fi
+            docker run --rm --user 0 \
+              --security-opt seccomp=unconfined \
+              --env "HOME=$home" --env "PW_VERSION=$PW" --env SECS=20 \
+              -v "$PWD/playwright/bench:/probe:ro" \
+              -v "$PWD/playwright/scripts:/pwscripts:ro" \
+              "$image" sh /probe/run-unwind-probe.sh \
+              2>&1 | tee "unwind-out/$target.txt"
+          done
+          for target in alpine official; do
+            echo "== $target"
+            grep -h "unwind-counter" "unwind-out/$target.txt" \
+              | awk -F'[= ]' '{t+=$5; w+=$7; n++} \
+                  END {printf "%d processes, throws=%d walks=%d\n", n, t, w}'
+            grep -h "unwind-counter" "unwind-out/$target.txt" | head -20
+          done
+
       # -------------------------------------------------------------- launch
       # `launch()` is 1.31 while our binary carries FEWER relocations than
       # official's, so the syscall trace decides between loader work and
