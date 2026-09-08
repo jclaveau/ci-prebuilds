@@ -1044,6 +1044,79 @@ patch_persistence_encode_request_headers() {
 }
 patch_persistence_encode_request_headers
 
+# DMABuf without GStreamer GL.
+#
+# We build with USE_GSTREAMER_GL=OFF so that libWPEWebKit stops linking
+# libgstgl, which is the only edge in the whole closure that reaches libEGL —
+# and on Alpine libEGL IS mesa and DT_NEEDs libgallium (44 MB) -> libLLVM
+# (191 MB), mapped and relocated in every process before main. See
+# playwright/alpine-browsers/webkit/cmake-flags.overlay.
+#
+# Upstream does not build in that configuration: `getDMABuf()` is guarded by
+# USE(GBM) in both the header and the source, but the `MemoryType::DMABuf`
+# enumerator it compares against, and the gstdmabuf.h that declares
+# gst_dmabuf_memory_get_fd, are both guarded by USE(GSTREAMER_GL). With GL off
+# and GBM on the function survives and its two dependencies do not:
+#
+#   VideoFrameGStreamer.cpp:796: no member named 'DMABuf' in 'MemoryType'
+#   VideoFrameGStreamer.cpp:826: use of undeclared identifier
+#                                'gst_dmabuf_memory_get_fd'
+#
+# So both move to the guard the function itself uses. With GL on this is a
+# no-op — the enumerator and the include are reachable either way — and with
+# GL off `m_memoryType` is never set to DMABuf, so getDMABuf() returns null on
+# its first line, which is what the configuration means.
+patch_dmabuf_without_gstreamer_gl() {
+  local header=Source/WebCore/platform/graphics/gstreamer/VideoFrameGStreamer.h
+  local source=Source/WebCore/platform/graphics/gstreamer/VideoFrameGStreamer.cpp
+
+  python3 - "$header" "$source" <<'PY'
+import sys
+
+header_path, source_path = sys.argv[1], sys.argv[2]
+
+header_before = """#if USE(GSTREAMER_GL)
+        GL,
+#if USE(GBM)
+        DMABuf
+#endif
+#endif
+"""
+header_after = """#if USE(GSTREAMER_GL)
+        GL,
+#endif
+#if USE(GBM)
+        DMABuf
+#endif
+"""
+source_before = """#if USE(GSTREAMER_GL)
+#include <gst/allocators/gstdmabuf.h>
+#include <gst/gl/gl.h>
+#endif
+"""
+source_after = """#if USE(GBM)
+#include <gst/allocators/gstdmabuf.h>
+#endif
+
+#if USE(GSTREAMER_GL)
+#include <gst/gl/gl.h>
+#endif
+"""
+
+for path, before, after in ((header_path, header_before, header_after),
+                            (source_path, source_before, source_after)):
+    text = open(path).read()
+    if after in text:
+        print("  %s already guards DMABuf on USE(GBM) alone" % path)
+        continue
+    if text.count(before) != 1:
+        sys.exit("ERROR: expected exactly 1 DMABuf guard block in %s" % path)
+    open(path, "w").write(text.replace(before, after))
+    print("  %s: DMABuf now guarded on USE(GBM) alone" % path)
+PY
+}
+patch_dmabuf_without_gstreamer_gl
+
 # Strip .git — ~1GB saved in the source-prep image which both port chains FROM.
 rm -rf .git
 

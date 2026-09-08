@@ -54,6 +54,29 @@ CMAKE_SHARED_FLAGS=(
   # cache, and hands back an arm that changed nothing while looking green.
   -DLTO_MODE=thin
 
+  # GStreamer's GL integration is the ONLY thing in the whole closure that
+  # links libEGL, and on Alpine that is not free the way it is on Ubuntu.
+  # Playwright's image gets libEGL.so.1 from libglvnd, a dispatch stub that
+  # dlopens the Mesa driver when a GL context is first created. Alpine has no
+  # libglvnd, so `mesa-egl` IS libEGL.so.1 and it DT_NEEDs libgallium (44 MB),
+  # which DT_NEEDs libLLVM (191 MB). musl has no lazy binding, so every process
+  # maps and relocates all of that before main runs — and a launch starts
+  # three of them.
+  #
+  # Measured by stubbing libEGL/libGL in the shipped image: the closure drops
+  # from 124 objects to 107, `ld.so --list` from 70 ms to 36 and
+  # `MiniBrowser --version` from 121 ms to 64 — past Playwright's own 41 ms.
+  # That is the `launch` row, which no other candidate moved: DSO closure,
+  # BIND_NOW, DT_RELR and lazy binding all measured flat, and the unwinder
+  # counted zero throws and zero stack walks.
+  #
+  # WebKit still gets GL through libepoxy, which dlopens it, so Mesa now loads
+  # when a context is actually created rather than in every process at start.
+  # What is given up is zero-copy video-frame upload into a GL texture; the
+  # frames still decode, and on a software rasteriser that path was never the
+  # fast one anyway.
+  -DUSE_GSTREAMER_GL=OFF
+
   # Docs need gi-docgen which isn't a CI dep; we don't ship them anyway.
   -DENABLE_DOCUMENTATION=OFF
 
