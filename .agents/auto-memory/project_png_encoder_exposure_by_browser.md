@@ -84,3 +84,11 @@ clean 82% win; the repeat reversed it. Only `png_viewport` is stable enough to
 carry a chromium timing claim; the canvas control stays the right instrument for
 BYTES. [[feedback_check_reference_stability_across_runs]],
 [[feedback_match_instrument_to_effect_size]]
+
+**2026-09-08 — the webkit row is explained, for TIME.** "Same size, sha differs"
+stopped at bytes and read as nothing to chase. A perf record put 81% of a shot in
+libz+libpng and the whole +2.77 ms/shot delta there; the cause is Alpine building
+**libpng at `-Os`** (abuild.conf's CFLAGS, not overridden by libpng's APKBUILD),
+and a zlib-ng preload took the row 1.06 -> 0.69. See
+[[project_wk_screenshot_is_alpine_os_libpng]]. The equal-size/different-sha
+puzzle itself is still unexplained and still probably a chunk-level difference.

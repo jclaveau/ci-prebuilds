@@ -38,3 +38,10 @@ in `.agents/requested-memory/parked_chromium_promote_and_pgo_comment.md`.
 Also stale: the overlay's own comment justifies OFF with "same reason chromium
 skips is_official_build's PGO/LTO" — chromium built those arms and they won
 ([[project_chromium_perf_arms_1_62]]).
+
+**2026-09-08 — the promote half of this is STALE.** `promote-webkit` now carries
+`github.ref == 'refs/heads/main'`, hoisted out of the push arm so it covers the
+dispatch arm too. An experimental branch dispatch no longer promotes `wk-latest`:
+verified on run 34189647309, which went green through conformance on
+`perf/wk-drop-gstreamer-gl` and promoted nothing. The cmake-configure-is-one-shot
+half still holds.
