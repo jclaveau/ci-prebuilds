@@ -46,11 +46,15 @@ node -e 'require("playwright")' 2>/dev/null \
 node "$probe/wk-hotloop.cjs" --browser webkit --kernel launch \
   --seconds "${SECS:-20}"
 
-# Each file is two little-endian 64-bit counters written straight into shared
-# memory, so a process that was killed still reports.
-for f in "$UNWIND_OUT"/*; do
+# Each counter file is six little-endian 64-bit words written straight into
+# shared memory, so a process that was killed still reports. od wraps its
+# output, hence the newline squeeze before reading the fields.
+for f in "$UNWIND_OUT"/[0-9]*; do
   [ -f "$f" ] || continue
-  od -A n -t u8 -N 16 "$f" | tr -s ' ' | while read -r t w; do
-    echo "unwind-counter pid=$(basename "$f") throws=$t walks=$w"
-  done
+  set -- $(od -A n -t u8 -N 48 "$f" | tr -s ' \n' ' ')
+  echo "unwind-counter pid=$(basename "$f") throws=$1 walks=$2" \
+    "raises=$3 resumes=$4 forced=$5 phdr_scans=$6"
 done
+
+echo "== dl_iterate_phdr callers"
+cat "$UNWIND_OUT"/callers-*.txt 2>/dev/null | sort | uniq -c | sort -rn | head -20

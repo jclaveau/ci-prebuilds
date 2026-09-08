@@ -191,9 +191,11 @@ jobs:
           for target in alpine official; do
             echo "== $target"
             { grep -h "unwind-counter" "unwind-out/$target.txt" || true; } \
-              | awk -F'[= ]' '{t+=$5; w+=$7; n++} \
-                  END {printf "%d processes, throws=%d walks=%d\n", n, t, w}'
-            grep -h "unwind-counter" "unwind-out/$target.txt" | head -20 || true
+              | awk -F'[= ]' '{t+=$5; w+=$7; r+=$9; u+=$11; f+=$13; p+=$15; n++} \
+                  END {printf "%d processes, throws=%d walks=%d", n, t, w; \
+                       printf " raises=%d resumes=%d forced=%d", r, u, f; \
+                       printf " phdr_scans=%d\n", p}'
+            sed -n '/dl_iterate_phdr callers/,$p' "unwind-out/$target.txt" | head -20
           done
 
       # -------------------------------------------------------------- launch
