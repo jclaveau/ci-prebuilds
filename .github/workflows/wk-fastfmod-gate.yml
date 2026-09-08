@@ -64,3 +64,25 @@ jobs:
           name: fastfmod-gate
           path: ${{ runner.temp }}/fastfmod-gate/*.txt
           if-no-files-found: warn
+
+  # DIAGNOSTIC, this branch only (diag/fmod-zen-divider). `libm_fmod` reads
+  # 0.92-0.94 against official on an EPYC 7763 and 1.11-1.16 on an EPYC 9V74,
+  # same image, and the browser profile says both implementations spend exactly
+  # ONE hardware divide per call on the probe's operands. So the divergence is
+  # in what that divide costs, or in the branches around it. This times the
+  # shipped shim, two variants and glibc's own fmod on the same stream, plus a
+  # raw 64-bit DIV ladder at the widths each one feeds the divider — one
+  # process, one core, CPU model printed. Runs on the host, not in the alpine
+  # container, because glibc's fmod is the control.
+  zen-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Which silicon
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          nproc
+          gcc --version | head -1
+      - name: Probe
+        run: sh playwright/alpine-browsers/webkit/fastfmod/candidates/run-zen-probe.sh
