@@ -25,7 +25,10 @@
  * normalised significand always has 11 spare low bits — so the dividend never
  * outgrows 64 bits and the divide stays the fast `xor %edx; div` form. The
  * identity is M = 2^k * M' => (X * 2^k) mod M == 2^k * (X mod M'). Measured
- * at 58.7 ms, which is FASTER than glibc's own 64.3 on that core.
+ * at 58.7 ms against glibc's 64.3 — on an EPYC 7763. Naming the core matters:
+ * that pair was read for a while as a Zen 4 result, which made it look like it
+ * contradicted the browser numbers below. It does not. It is the Zen 3 half of
+ * a split this file has since been rewritten to remove.
  *
  * Two traps, both paid for by measurement rather than avoided by reasoning:
  *   - the 128-bit `divq` form (shifting the dividend up instead of the
@@ -33,37 +36,48 @@
  *     the bit loop it was meant to replace;
  *   - dividers differ enormously between cores. On an older dev box this
  *     algorithm read 247 ms against the bit loop's 241 — the ranking
- *     inverted. Zen 4's 64-bit DIV is ~19 cycles and is what the shipped
- *     images run on, so candidates are timed in CI, never locally.
+ *     inverted, so candidates are timed in CI, never locally. (The "Zen 4's
+ *     DIV is ~19 cycles" that used to be quoted here was wrong: measured, it
+ *     is 14 cycles latency / 7 throughput on Zen 3 AND Zen 4.)
  *
- * WHERE THIS ACTUALLY STANDS, per microarchitecture. Profiled in the browser
- * with wk-perf-record (both arms in one job, DSO sample share divided by the
- * rounds each arm completed), image sha-ea0b8149:
+ * WHY THE SHAPE CHANGED. The lift-to-bit-63 version won on Zen 3 and lost on
+ * Zen 4 — row 0.94 on an EPYC 7763, 1.11-1.14 on an EPYC 9V74, same binary,
+ * which made the verdict a function of which machine the job drew.
  *
- *   EPYC 7763 (Zen 3), n=3:  row 0.94,  fmod DSO 0.92-0.94   we win
- *   EPYC 9V74 (Zen 4), n=1:  row 1.11,  fmod DSO 1.16        we lose
+ * It was not the divider, and it was not the divide's operand width. Both are
+ * measured in candidates/zen-probe.c: `div r64` is 14 cycles latency and 7
+ * throughput on both cores, a divide ladder at the two shapes agrees within
+ * 0.2%, and the 9V74 is simply 11.5% lower-clocked (2.847 vs 3.216 GHz). Both
+ * shapes issue exactly one divide per call here, confirmed by simulating the
+ * probe's stream and independently by glibc's Barrett loop taking 0.00% of
+ * profile samples.
  *
- * The row ratio tracks the fmod ratio on both, JIT sits at or below parity on
- * both, and our side resolves to a single symbol at 19.73% — so the metric is
- * this file against glibc's fmod and nothing else. Both implementations get
- * faster on Zen 4, ours 1.30x and glibc's 1.52x, so glibc gains more from the
- * newer divider rather than us standing still.
+ * It was the normalisation branch. Subtract the divide's 7 cycles and the
+ * remaining work goes 17.4 -> 10.8 cycles for glibc across the two cores
+ * (-38%) but only 13.3 -> 10.7 for ours (-20%): a mispredict costs a fixed
+ * 4 cycles on both, so a wider core cannot recover it, while glibc's longer
+ * branchless chain is exactly what a wider core eats better. Hence the tail
+ * below is now branchless too.
  *
- * Which contradicts the 58.7-against-64.3 above, and the contradiction is not
- * resolved: those isolated figures do not unambiguously name their core, and
- * the two instruments also disagree about absolute movement — the runtime
- * probe reads our arm FLAT across the two CPUs, the hotloop reads it gaining
- * 1.30x — while agreeing exactly on every ratio. Trust ratios measured within
- * one job; do not compare a number from one instrument against another's.
+ * Ratio against glibc, same runner, shipping Alpine gcc 15.2, before -> after:
+ *
+ *   EPYC 7763  (Zen 3)   0.85 -> 0.94
+ *   EPYC 9V74  (Zen 4)   1.04 -> 0.97
+ *   Xeon 6973P-C         1.12 -> 0.99
+ *   Xeon 8573C           1.18 -> 0.96
+ *
+ * Do NOT take only the clz half: on its own it is 14% SLOWER on the 7763. The
+ * narrowed reduction and the branchless tail are one change.
  *
  * Three explanations are dead, by measurement, so do not spend a round on
  * them again: the preload failing to reach the WebProcess (libfastfmod.so is
  * 17-20% of the profile window), a transfer gap between the isolated bench and
  * the browser (the isolated result transfers exactly on Zen 3), and the JS
- * loop hiding the difference (the kernel is ~70% fmod). What is NOT known is
- * which instruction glibc stops paying for on Zen 4; answering it needs an
- * instruction-level profile against a glibc carrying symbols, since the
- * official image ships libm stripped and its samples land on bare addresses.
+ * loop hiding the difference (the kernel is ~70% fmod). What is still NOT
+ * known is why Zen 4 runs glibc's branchless tail 38% cheaper against our
+ * 20%; the mispredict accounts for about half and the rest is inferred, and
+ * settling it needs PMU counters (branch-misses, stalls) on a runner rather
+ * than another round of reasoning.
  *
  * SELF-CONTAINED ON PURPOSE. An earlier prototype deferred NaN/inf/subnormal
  * corners to `fmod()`. That is fine for a normal function and catastrophic
@@ -157,44 +171,58 @@ double fmod(double x, double y) {
   /* The hot loop, and the entire point of this file: (i << d) mod m, where d
    * is the exponent difference.
    *
-   * Both significands are lifted to bit 63 first. That is what buys the 11
-   * spare low bits in the divisor, and it is why each iteration is worth at
-   * least 11 bits of d rather than one: the probe's ~21-bit case costs two
-   * divides instead of 21 dependent cmovs. `ctz` is read per iteration
-   * because a divisor with trailing zeros of its own gives more than 11.
+   * Significands stay at 53 bits. The reduction spends the DIVISOR's own
+   * trailing zeros first — charging them against the exponent, since dropping
+   * a factor of 2^rs from the modulus scales the remainder by the same factor
+   * — and only then borrows up to 11 bits of headroom from the dividend,
+   * which is what keeps the divide in the fast `xor %edx; div` form. This is
+   * glibc's __fmod shape rather than one of ours.
    *
-   * The remainder stays a multiple of 2^11 throughout — it is a remainder
-   * modulo a value with 11 low zero bits — so shifting back down afterwards
-   * is exact rather than a truncation. */
+   * An earlier version lifted both significands to bit 63 instead. It was
+   * faster on Zen 3 and slower on Zen 4, and the reason was not the divider:
+   * `div r64` is 14 cycles latency / 7 throughput on BOTH, and a divide ladder
+   * at the two operand shapes agrees within 0.2% because Zen's divider is
+   * driven by quotient bit count, which is 21.49 bits either way. Both shapes
+   * issue exactly ONE divide per call on the probe's stream. The cost was in
+   * the tail below. */
   int d = ex - ey;
   ex = ey;
 
-  uint64_t mx = i << 11;
-  uint64_t my = m << 11;
-
-  /* One conditional subtract, not a divide. Both significands carry the
-   * implicit bit, so mx < 2*my on entry and a single subtract establishes the
-   * mx < my the loop assumes. Writing it as `mx %= my` cost a full hardware
-   * divide — a third one on the probe's operands, where the reduction itself
-   * needs only two — and divides are the expensive instruction here. */
-  uint64_t excess = mx - my;
-  mx = (excess >> 63) ? mx : excess;
+  uint64_t mx = i;
+  uint64_t my = m;
 
   while (d > 0) {
     int tz = __builtin_ctzll(my);
-    int k = d < tz ? d : tz;
-    mx = (mx % (my >> k)) << k;
-    d -= k;
+    int rs = d < tz ? d : tz;
+    my >>= rs;
+    d -= rs;
+    ex += rs;
+    if (d == 0) {
+      break;
+    }
+    int ls = d < 11 ? d : 11;
+    mx = (mx << ls) % my;
+    d -= ls;
   }
-  i = mx >> 11;
+  /* Only reachable when the loop never ran (d == 0) or exited through the
+   * `break`, so at most one divide, and usually none. */
+  if (mx >= my) {
+    mx %= my;
+  }
+  i = mx;
 
   if (i == 0) {
     return to_double(sign);
   }
-  while ((i & IMPLICIT) == 0) {
-    i <<= 1;
-    ex--;
-  }
+  /* Branchless. The bit-at-a-time version here was a genuine coin flip on the
+   * probe's stream — p=1/2, mean 1.0 iterations — and a mispredict costs a
+   * FIXED 4 cycles on Zen 3 and Zen 4 alike, so a wider core cannot recover
+   * it. Removing it is most of the Zen 4 fix: measured with the divide's
+   * 7 cycles subtracted, glibc's branchless tail gets 38% cheaper from Zen 3
+   * to Zen 4 while our branchy one got only 20%. */
+  int sh = __builtin_clzll(i) - 11;
+  i <<= sh;
+  ex -= sh;
   /* A remainder can land below the normal range even when both operands are
    * normal, so denormalise rather than emitting a bogus exponent. */
   if (ex <= 0) {
