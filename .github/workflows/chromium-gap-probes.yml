@@ -781,12 +781,20 @@ jobs:
               export NODE_PATH="$(npm root -g)"
               node /kernels/perf-kernel.cjs --kernel launch --target consumer-baseline \
                 --seconds 40 --warmup 4 --out /out
+              # `layout` shows the same split as `launch`: 1.29x here against
+              # the campaign 1.62x, both on a 7763. Two rows disagreeing the
+              # same way is not instrument noise, so measure the layout kernels
+              # in the shipped image too rather than reasoning about why.
+              node /probe/chromium-gap-probe.cjs --target consumer --out /out
             ' 2>&1 | tee gap-out/consumer-probe.log
 
       - name: Report — the shipped image against the scratch artifact
+        env:
+          LABEL_OURS: ${{ inputs.label_ours }}
         run: |
           python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
           import json
+          import os
 
 
           def load(path):
@@ -837,6 +845,31 @@ jobs:
                   if not (a and b):
                       continue
                   print(f'| `{key}` | {int(a):,} | {int(b):,} | {int(a) - int(b):+,} |')
+
+          def ms(d, key):
+              if not d:
+                  return None
+              m = (d.get('metrics') or {}).get(key)
+              return m['median_ms'] if m else None
+
+          ship = load('gap-out/consumer-gap.json')
+          scratch = load(f"gap-out/{os.environ['LABEL_OURS']}-gap.json")
+          off = load('gap-out/official-gap.json')
+          if ship and scratch and off:
+              print('\n### The same layout kernels, in both images\n')
+              print('The campaign reads `layout` at 1.62x on a 7763 and the '
+                    'scratch artifact reads 1.29x on a 7763. Only the image '
+                    'differs, so this is where that difference is priced.\n')
+              print('| kernel | shipped image | scratch artifact | official | '
+                    'shipped ×off | scratch ×off |')
+              print('|---|---|---|---|---|---|')
+              for key in ('layout_boxonly', 'layout_text', 'screenshot_png'):
+                  a, b, c = ms(ship, key), ms(scratch, key), ms(off, key)
+                  if not (a and b and c):
+                      continue
+                  print(f'| `{key}` | {a:.1f} ms | {b:.1f} ms | {c:.1f} ms | '
+                        f'**{a / c:.2f}x** | {b / c:.2f}x |')
+              print()
 
           census = load('gap-out/consumer-census.json')
           if census:
