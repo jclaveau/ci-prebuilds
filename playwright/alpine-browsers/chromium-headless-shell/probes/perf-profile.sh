@@ -113,7 +113,23 @@ head -40 "${OUT}/${TARGET}-${KERNEL}-dso.txt"
 # instructions slower" (cache, branches, memory) — but they are exactly what a
 # VM tends not to expose, so the hardware list is allowed to fail and the
 # software list, which cannot, is collected separately.
+#
+# How often they are refused: run 34342006293 got NO hardware PMU at all, not
+# even `cycles`, on both arms — every block came back `<not supported>`. That
+# is a property of the runner, not of the events, and it varies between runs on
+# the same label. So a counter-based claim has to check the block is populated
+# before it is quoted, and an unpopulated one means re-run, not "the counters
+# say nothing".
 HW='cycles,instructions,branches,branch-misses,cache-references,cache-misses'
+# The frontend/backend split, asked separately because it is the part most
+# likely to be absent on a VM and a single unsupported event makes perf reject
+# the WHOLE list rather than the one it cannot count. The first read of layout
+# put us at +16% instructions and -13% IPC, and nothing since has said why the
+# IPC is down: frontend stalls would mean code layout and instruction-fetch
+# (which an orderfile addresses), backend stalls would mean memory. They lead
+# to different fixes and no counter collected so far separates them.
+STALL='stalled-cycles-frontend,stalled-cycles-backend'
+CACHE='L1-icache-load-misses,iTLB-load-misses,L1-dcache-load-misses'
 SW='task-clock,context-switches,cpu-migrations,page-faults,minor-faults'
 {
   # -e BEFORE -G, always: perf stat rejects a cgroup it has no event to
@@ -121,6 +137,12 @@ SW='task-clock,context-switches,cpu-migrations,page-faults,minor-faults'
   # would otherwise turn that into a silently empty counter block.
   echo "### ${TARGET} / ${KERNEL} — hardware counters (a VM may refuse these)"
   "$PERF" stat -e "$HW" -a -G / -- sleep "$STAT_WINDOW" 2>&1 || true
+  echo
+  echo "### ${TARGET} / ${KERNEL} — where the stalls are"
+  "$PERF" stat -e "$STALL" -a -G / -- sleep 10 2>&1 || true
+  echo
+  echo "### ${TARGET} / ${KERNEL} — instruction and data cache"
+  "$PERF" stat -e "$CACHE" -a -G / -- sleep 10 2>&1 || true
   echo
   echo "### ${TARGET} / ${KERNEL} — software counters"
   "$PERF" stat -e "$SW" -a -G / -- sleep 5 2>&1 || true

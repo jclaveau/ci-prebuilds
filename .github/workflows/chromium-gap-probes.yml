@@ -89,6 +89,10 @@ on:
         description: 'The perf-record arm (samples the running browser)'
         default: true
         type: boolean
+      consumer_image:
+        description: 'The SHIPPED consumer image, measured against the scratch artifact above'
+        default: 'jclaveau/alpine-dood-playwright:latest'
+        type: string
       perf_image:
         description: 'perf-record arm: a CONSUMER image carrying the shipped browser (Docker Hub has :latest, GHCR has sha-<40> and edge)'
         default: 'jclaveau/alpine-dood-playwright:latest'
@@ -592,6 +596,384 @@ jobs:
                       continue
                   ratio = f'{int(a) / int(b):.2f}x' if int(b) else '—'
                   print(f'| `{key}` | {int(a):,} | {int(b):,} | {ratio} |')
+          PY
+
+      - name: Probe — what the closure trim can actually unload
+        env:
+          CHS_REV: ${{ inputs.chs_rev }}
+        run: |
+          set -o pipefail
+          # perf/chromium-unbundle-libs drops twelve gn entries from
+          # USE_SYSTEM_LIBS so chromium carries its own copy again, and the case
+          # for that rebuild is the closure the musl loader walks at every exec.
+          # The case only holds for the libraries that LEAVE the closure: one
+          # the fontconfig/freetype/harfbuzz stack also needs stays loaded
+          # whatever chromium bundles, and only the references into it go away.
+          # Separate the two here, in half a minute, rather than reading one
+          # number out of a 25-30 h build that mixed them.
+          OURS_BIN=/ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64/chrome-headless-shell
+
+          docker run --rm \
+            -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/gap-out:/out" \
+            "gap-alpine:${{ github.run_id }}" \
+            sh -c "node /probe/dso-symbol-census.cjs $OURS_BIN > /out/musl-census.json" \
+            2>&1 | tee gap-out/census-musl.log
+
+      - name: Probe — the zygote's share of launch
+        env:
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -o pipefail
+          # `launch()` execs a browser, a zygote and a renderer, and every one
+          # of them walks the closure — which is exactly why a one-exec
+          # `--version` probe undercounted the loader by 3x and produced a wrong
+          # verdict on this lever once already. `--no-zygote` removes one of the
+          # three execs, so it prices what an exec costs without building
+          # anything, and unlike `--disable-gpu` it is a flag a launch wrapper
+          # could carry.
+          #
+          # Official runs both legs too. A saving that shows up on glibc as well
+          # is process startup rather than the musl loader, and that control is
+          # what makes the alpine delta readable.
+          PROBES="$PWD/playwright/alpine-browsers/chromium-headless-shell/probes"
+
+          for leg in 'baseline:' 'nozygote:--no-zygote'; do
+            name=${leg%%:*}
+            flags=${leg#*:}
+
+            docker run --rm \
+              -v "$PROBES:/probe:ro" \
+              -v "$PWD/gap-out:/out" \
+              "gap-alpine:${{ github.run_id }}" \
+              sh -c "
+                export NODE_PATH=\"\$(npm root -g)\"
+                node /probe/perf-kernel.cjs --kernel launch --target musl-$name \
+                  --seconds 40 --warmup 4 --out /out --browser-args '$flags'
+              " 2>&1 | tee -a gap-out/launch-zygote.log
+
+            docker run --rm --env HOME=/root \
+              -v "$PROBES:/probe:ro" \
+              -v "$PWD/playwright/scripts:/pwscripts:ro" \
+              -v "$PWD/gap-out:/out" \
+              --env "PW_VERSION=${PW}" \
+              "$OFFICIAL" \
+              sh -c "
+                NODE_PATH=\"\$(sh /pwscripts/global-node-path.sh)\"
+                export NODE_PATH
+                node -e 'require(\"playwright\")' 2>/dev/null \
+                  || npm install -g --no-fund --no-audit \
+                       \"playwright@\$PW_VERSION\" >/dev/null 2>&1
+                node /probe/perf-kernel.cjs --kernel launch --target glibc-$name \
+                  --seconds 40 --warmup 4 --out /out --browser-args '$flags'
+              " 2>&1 | tee -a gap-out/launch-zygote.log
+          done
+
+      - name: Report — the two levers left on launch
+        run: |
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json
+
+
+          def load(path):
+              try:
+                  return json.load(open(path))
+              except Exception:
+                  return None
+
+
+          print('## `launch` — pricing the two levers before they cost a build\n')
+
+          legs = {name: load(f'gap-out/{name}-launch-kernel.json')
+                  for name in ('musl-baseline', 'musl-nozygote',
+                               'glibc-baseline', 'glibc-nozygote')}
+          if all(legs.values()):
+              print('### One exec fewer: `--no-zygote`\n')
+              print('`browserType.launch()` to first close, median of a 40 s '
+                    'steady-state loop. Official carries the same flag as the '
+                    'control — a saving on both arms is process startup, a '
+                    'saving on ours alone is the loader.\n')
+              print('| arm | baseline | `--no-zygote` | Δ | Δ% |')
+              print('|---|---|---|---|---|')
+              for libc in ('musl', 'glibc'):
+                  base = legs[f'{libc}-baseline']['median_ms']
+                  nozy = legs[f'{libc}-nozygote']['median_ms']
+                  label = 'ours (musl)' if libc == 'musl' else 'official (glibc)'
+                  print(f'| {label} | {base:.1f} ms | {nozy:.1f} ms | '
+                        f'{nozy - base:+.1f} ms | {(nozy - base) / base:+.1%} |')
+              ratio_base = (legs['musl-baseline']['median_ms']
+                            / legs['glibc-baseline']['median_ms'])
+              ratio_nozy = (legs['musl-nozygote']['median_ms']
+                            / legs['glibc-nozygote']['median_ms'])
+              print(f'\n`launch` ratio **{ratio_base:.2f}x** baseline, '
+                    f'**{ratio_nozy:.2f}x** with the zygote gone.\n')
+              print(f"Witness — ours `{legs['musl-baseline']['tag']}` on "
+                    f"{legs['musl-baseline']['iterations']} iterations, official "
+                    f"`{legs['glibc-baseline']['tag']}` on "
+                    f"{legs['glibc-baseline']['iterations']}; runner "
+                    f"`{legs['musl-baseline']['runner']['cpu']}`.\n")
+          else:
+              missing = [k for k, v in legs.items() if not v]
+              print(f'zygote legs incomplete: {", ".join(missing)}\n')
+
+          census = load('gap-out/musl-census.json')
+          if census:
+              print('### Twelve fewer bundled libraries: what would actually unload\n')
+              print('| library | symbol relocs | undefined | defined | verdict |')
+              print('|---|---|---|---|---|')
+              for row in census['trimmed_libraries']:
+                  verdict = ('**unloads**' if row['unloads']
+                             else 'stays — needed by ' + ', '.join(
+                                 f'`{s}`' for s in row['held_by'][:3]))
+                  print(f"| `{row['soname']}` | {row['symbol_relocs']:,} | "
+                        f"{row['undefined_syms']:,} | {row['defined_syms']:,} | "
+                        f'{verdict} |')
+              before, after = census['before'], census['after']
+              print('\n| | today | after the trim | |')
+              print('|---|---|---|---|')
+              for key, label in (('dsos', 'DSOs the loader walks'),
+                                 ('symbol_relocs', 'symbol relocations'),
+                                 ('undefined_syms', 'undefined references')):
+                  a, b = before[key], after[key]
+                  print(f'| {label} | {a:,} | {b:,} | {(b - a) / a:+.1%} |')
+              print(f"\nmusl resolves every reference against the loaded-object "
+                    f"list, so its work is bounded by references x objects: "
+                    f"**{census['work_bound_ratio']:.2f}x** of today's. That is "
+                    f"an upper bound on the saving, not a prediction.\n")
+              if census['held_in_closure']:
+                  print('Held in the closure regardless of what chromium '
+                        'bundles: '
+                        + ', '.join(f'`{s}`' for s in census['held_in_closure'])
+                        + '.\n')
+          else:
+              print('census produced no output\n')
+          PY
+
+      - name: Probe — the shipped image against the scratch artifact
+        env:
+          CONSUMER: ${{ inputs.consumer_image }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -o pipefail
+          # Everything above measures the from-source artifact wrapped in a
+          # minimal apk set. What ships is a much larger image, and WebKit has
+          # already been bitten once by exactly that difference: Alpine's libEGL
+          # has no libglvnd, so it DT_NEEDed libgallium and libLLVM — 235 MB —
+          # into every launched process, and removing that took `launch` from
+          # 1.47 to 0.88 with no other change. Nobody has asked whether chromium
+          # pays the same thing, because no probe has ever run inside the
+          # shipped image.
+          #
+          # Same three instruments, same runner, so the two are directly
+          # comparable: any difference is what the consumer image adds.
+          docker pull -q "$CONSUMER"
+
+          # Written to a file rather than passed as `sh -c '...'`. The inline
+          # form put the whole script inside ONE single-quoted shell word, so a
+          # lone apostrophe in a comment closed the quote and silently re-split
+          # everything after it — which is how run 34343768098 lost
+          # runtime-probe.cjs and reported it as a missing module. A quoted
+          # heredoc has no such trap.
+          cat > gap-out/consumer-probe.sh <<'SH'
+          set -eu
+          command -v readelf >/dev/null 2>&1 || apk add --no-cache binutils >/dev/null 2>&1
+
+          bin=$(ls -d /ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell 2>/dev/null | head -1)
+          [ -n "$bin" ] || { echo "no chrome-headless-shell in the consumer image" >&2; exit 1; }
+
+          # What sits at that path in the SHIPPED image is the launch shim: a
+          # /bin/sh script that sets LD_PRELOAD and execs the real ELF beside
+          # it. Playwright spawns the shim and the ELF instruments need the
+          # ELF, so the two take different paths on purpose. Reading the shim
+          # is what made the first attempt fail with "Not an ELF file".
+          elf="$bin"
+          [ -f "$bin.real" ] && elf="$bin.real"
+          echo "shim $bin -> elf $elf"
+
+          # Fail here rather than three minutes in, and say which files the
+          # mount actually carries.
+          for f in startup-time.cjs closure-reloc-audit.sh dso-symbol-census.cjs \
+                   runtime-probe.cjs chromium-gap-probe.cjs; do
+            [ -f "/probe/$f" ] || { echo "missing /probe/$f" >&2; ls -l /probe >&2; exit 1; }
+          done
+
+          node /probe/startup-time.cjs consumer "$elf" > /out/consumer-startup.json
+          sh /probe/closure-reloc-audit.sh "$elf" > /out/consumer-closure.txt
+          node /probe/dso-symbol-census.cjs "$elf" > /out/consumer-census.json
+
+          # The consumer image installs playwright with pnpm, so `npm root -g`
+          # names a directory that does not hold it.
+          NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+          export NODE_PATH
+
+          node /kernels/perf-kernel.cjs --kernel launch --target consumer-baseline \
+            --seconds 40 --warmup 4 --out /out
+
+          # The campaign instrument, in the shipped image. Its `layout` row is
+          # a DIFFERENT kernel from the one in chromium-gap-probe.cjs: 16,000
+          # forced synchronous reflows of ONE element, against a container
+          # change that re-lays-out 800 children. They can legitimately
+          # disagree, and until both run on one runner nobody can say whether
+          # 1.62 and 1.29 are two costs or one measurement error.
+          node /probe/runtime-probe.cjs --browser chromium --target consumer --out /out
+          node /probe/chromium-gap-probe.cjs --target consumer --out /out
+          SH
+
+          docker run --rm --user root --entrypoint sh \
+            -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/probes:/kernels:ro" \
+            -v "$PWD/playwright/scripts:/pwscripts:ro" \
+            -v "$PWD/gap-out:/out" \
+            "$CONSUMER" /out/consumer-probe.sh 2>&1 | tee gap-out/consumer-probe.log
+
+      - name: Probe — the campaign's own layout kernel, on the official arm
+        env:
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -o pipefail
+          # Without this the consumer row above has no denominator: the
+          # campaign reports ratios, and a ratio needs both arms on ONE runner.
+          docker run --rm --env HOME=/root \
+            -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/playwright/scripts:/pwscripts:ro" \
+            -v "$PWD/gap-out:/out" \
+            --env "PW_VERSION=${PW}" \
+            "$OFFICIAL" \
+            sh -c '
+              NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+              export NODE_PATH
+              node -e "require(\"playwright\")" 2>/dev/null \
+                || npm install -g --no-fund --no-audit \
+                     "playwright@$PW_VERSION" >/dev/null 2>&1
+              node /probe/runtime-probe.cjs --browser chromium \
+                --target official-runtime --out /out
+            ' 2>&1 | tee gap-out/runtime-official.log
+
+      - name: Report — the shipped image against the scratch artifact
+        env:
+          LABEL_OURS: ${{ inputs.label_ours }}
+        run: |
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json
+          import os
+
+
+          def load(path):
+              try:
+                  return json.load(open(path))
+              except Exception:
+                  return None
+
+
+          def closure(path):
+              out = {}
+              try:
+                  for line in open(path):
+                      key, _, value = line.strip().partition(' ')
+                      out[key] = value
+              except OSError:
+                  pass
+              return out
+
+
+          # The runner model decides which rows are even comparable: `layout`
+          # reads 1.62x on a 7763 and 1.24-1.28x on every other model drawn, so
+          # a table without its CPU beside it cannot be filed against either.
+          cpu = 'unknown'
+          for probe in ('gap-out/consumer-chromium.json',
+                        'gap-out/musl-baseline-launch-kernel.json'):
+              d = load(probe)
+              if d and d.get('runner', {}).get('cpu'):
+                  cpu = d['runner']['cpu']
+                  break
+          print(f'## What the SHIPPED image adds to a launch\n')
+          print(f'Runner: **{cpu}**.\n')
+          print('Same binary, same runner, same instruments — the only variable '
+                'is everything the consumer image installs around it.\n')
+
+          rows = [
+              ('`launch` median', 'consumer-baseline-launch-kernel.json', 'musl-baseline-launch-kernel.json',
+               'median_ms', 'ms'),
+              ('`--version` load', 'consumer-startup.json', 'musl-startup.json', 'load_ms', 'ms'),
+          ]
+          print('| | shipped image | scratch artifact | official (glibc) |')
+          print('|---|---|---|---|')
+          for label, a_path, b_path, key, unit in rows:
+              a, b = load(f'gap-out/{a_path}'), load(f'gap-out/{b_path}')
+              ref = load('gap-out/glibc-baseline-launch-kernel.json'
+                         if 'launch' in a_path else 'gap-out/glibc-startup.json')
+              def cell(d):
+                  return f'{d[key]:.1f} {unit}' if d else '—'
+              print(f'| {label} | {cell(a)} | {cell(b)} | {cell(ref)} |')
+
+          ship, scratch = (closure('gap-out/consumer-closure.txt'),
+                           closure('gap-out/musl-closure.txt'))
+          if ship and scratch:
+              print('\n| | shipped image | scratch artifact | Δ |')
+              print('|---|---|---|---|')
+              for key in ('closure-dsos', 'closure-symbol-relocs',
+                          'closure-undefined-syms'):
+                  a, b = ship.get(key), scratch.get(key)
+                  if not (a and b):
+                      continue
+                  print(f'| `{key}` | {int(a):,} | {int(b):,} | {int(a) - int(b):+,} |')
+
+          def ms(d, key):
+              if not d:
+                  return None
+              m = (d.get('metrics') or {}).get(key)
+              return m['median_ms'] if m else None
+
+          ship = load('gap-out/consumer-gap.json')
+          scratch = load(f"gap-out/{os.environ['LABEL_OURS']}-gap.json")
+          off = load('gap-out/official-gap.json')
+          if ship and scratch and off:
+              print('\n### The same layout kernels, in both images\n')
+              print('The campaign reads `layout` at 1.62x on a 7763 and the '
+                    'scratch artifact reads 1.29x on a 7763. Only the image '
+                    'differs, so this is where that difference is priced.\n')
+              print('| kernel | shipped image | scratch artifact | official | '
+                    'shipped ×off | scratch ×off |')
+              print('|---|---|---|---|---|---|')
+              for key in ('layout_boxonly', 'layout_text', 'screenshot_png'):
+                  a, b, c = ms(ship, key), ms(scratch, key), ms(off, key)
+                  if not (a and b and c):
+                      continue
+                  print(f'| `{key}` | {a:.1f} ms | {b:.1f} ms | {c:.1f} ms | '
+                        f'**{a / c:.2f}x** | {b / c:.2f}x |')
+              print()
+
+          ours_rt = load('gap-out/consumer-chromium.json')
+          off_rt = load('gap-out/official-runtime-chromium.json')
+          if ours_rt and off_rt:
+              print('\n### The campaign\'s instrument, on this runner\n')
+              print("runtime-probe's `layout` is 16,000 forced synchronous "
+                    "reflows of one element; chromium-gap-probe's "
+                    "`layout_boxonly` changes a container and re-lays-out 800 "
+                    "children. If the first reads ~1.6 here and the second "
+                    "~1.3, they are two different costs and the campaign row "
+                    "is the call-dense one — which is the shape the stack "
+                    "protector taxes hardest.\n")
+              print('| row | ours | official | ×off |')
+              print('|---|---|---|---|')
+              for key in sorted(ours_rt['metrics']):
+                  a = ours_rt['metrics'][key]['median_ms']
+                  b = (off_rt['metrics'].get(key) or {}).get('median_ms')
+                  if not b:
+                      continue
+                  print(f'| `{key}` | {a:.2f} ms | {b:.2f} ms | '
+                        f'{a / b:.2f}x |')
+              print()
+
+          census = load('gap-out/consumer-census.json')
+          if census:
+              held = census['held_in_closure']
+              print(f"\nIn the shipped image the trim would take the closure "
+                    f"{census['before']['dsos']} -> {census['after']['dsos']} DSOs, "
+                    f"loader work bound {census['work_bound_ratio']:.2f}x.")
+              if held:
+                  print('Held there regardless of what chromium bundles: '
+                        + ', '.join(f'`{s}`' for s in held) + '.')
           PY
 
       - name: Report — timing and fonts
