@@ -10,10 +10,22 @@ name: Runtime perf probe
 # instrument's own null arm moves several percent. This one takes `runs` and
 # medians across whole container starts, which is where that noise lives.
 #
-# One job per browser on purpose. All of a browser's arms must land on the SAME
-# runner or the ratio picks up the CPU draw instead of the build difference;
-# GHA gives no control over which machine a job gets, so the arms travel
-# together inside one job and the ratio divides the runner out.
+# One job per DRAW on purpose. All of a draw's arms must land on the SAME runner
+# or the ratio picks up the CPU draw instead of the build difference; GHA gives
+# no control over which machine a job gets, so the arms travel together inside
+# one job and the ratio divides the runner out.
+#
+# `replicates` fans a browser out over several such jobs, which is the only way
+# to cover more than one CPU model: `runs` repeats inside one machine and buys
+# precision, never coverage. The model cannot be requested, so `want_cpus` turns
+# the fan-out into rejection sampling — a job that draws an unwanted machine
+# stops before pulling a single image, at roughly 20 seconds instead of ten
+# minutes, which is what makes hunting a 10%-of-fleet model affordable.
+#
+# The filter is read PER SLOT, because GitHub cancels runs rather than jobs: a
+# draw of a model that already met its quota cannot be killed once it starts, so
+# whether a slot may accept it has to be decided at dispatch. cpu-coverage.py
+# sizes that allocation.
 
 on:
   workflow_dispatch:
@@ -37,6 +49,14 @@ on:
       browsers:
         description: 'CSV: chromium,firefox,webkit'
         default: 'chromium,firefox,webkit'
+        type: string
+      replicates:
+        description: 'Independent runner draws per browser. Each one is its own job, so this is what buys CPU-model coverage — `runs` only tightens the estimate within one machine.'
+        default: '1'
+        type: string
+      want_cpus:
+        description: 'CPU-model substrings to keep: `,` between the models one slot accepts, `;` between slots. A draw matching none ends in ~20s without probing. One slot (no `;`) applies to all `replicates`; several set the slot count themselves. Empty keeps every draw.'
+        default: ''
         type: string
       runs:
         description: 'Repetitions per arm. 1 = quick look; 5 = the point where subsampling showed the index converge (sd 1.2%); 10 = diminishing (sd 0.0%).'
@@ -62,19 +82,39 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       browsers: ${{ steps.split.outputs.browsers }}
+      slots: ${{ steps.split.outputs.slots }}
     steps:
       - id: split
         env:
           BROWSERS: ${{ inputs.browsers }}
+          REPLICATES: ${{ inputs.replicates }}
+          WANT: ${{ inputs.want_cpus }}
         run: |
           set -euo pipefail
           json=$(jq -Rc 'split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length > 0))' \
             <<< "$BROWSERS")
           echo "browsers=$json" >> "$GITHUB_OUTPUT"
           echo "browsers: $json"
+          # A slot is one job, hence one draw, hence one independent CPU model.
+          # Its `want` is what that draw will accept; slots differ so that a
+          # model already near its quota stops being accepted while a rarer one
+          # is still hunted on every slot.
+          if [ -z "$WANT" ]; then
+            slots=$(jq -nc --argjson n "$REPLICATES" \
+              '[range(1; $n + 1) | {i: ., want: ""}]')
+          elif ! grep -q ';' <<< "$WANT"; then
+            slots=$(jq -nc --argjson n "$REPLICATES" --arg w "$WANT" \
+              '[range(1; $n + 1) | {i: ., want: $w}]')
+          else
+            slots=$(jq -Rc 'split(";") | to_entries
+              | map({i: (.key + 1), want: (.value | gsub("^\\s+|\\s+$"; ""))})' \
+              <<< "$WANT")
+          fi
+          echo "slots=$slots" >> "$GITHUB_OUTPUT"
+          echo "slots: $slots"
 
   probe:
-    name: probe-${{ matrix.browser }}
+    name: probe-${{ matrix.browser }}-${{ matrix.slot.i }}
     needs: matrix
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -82,16 +122,41 @@ jobs:
       fail-fast: false
       matrix:
         browser: ${{ fromJSON(needs.matrix.outputs.browsers) }}
+        slot: ${{ fromJSON(needs.matrix.outputs.slots) }}
     steps:
-      - uses: actions/checkout@v7
+      # First step on purpose: the model is drawn when the job starts and cannot
+      # be asked for, so an unwanted draw is only cheap if it is discovered
+      # before the checkout and the two multi-gigabyte image pulls.
+      - id: cpu
+        env:
+          WANT: ${{ matrix.slot.want }}
+        run: |
+          set -euo pipefail
+          model=$(awk -F': ' '/^model name/ { print $2; exit }' /proc/cpuinfo)
+          echo "runner CPU: $model"
+          keep=true
+          if [ -n "$WANT" ]; then
+            keep=false
+            for want in $(tr ',' ' ' <<< "$WANT"); do
+              case "$model" in *"$want"*) keep=true ;; esac
+            done
+            [ "$keep" = true ] \
+              || echo "::notice::skipping this draw — $model matches none of $WANT"
+          fi
+          echo "keep=$keep" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/login-action@v4
+      - if: steps.cpu.outputs.keep == 'true'
+        uses: actions/checkout@v7
+
+      - if: steps.cpu.outputs.keep == 'true'
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Probe both arms, ${{ inputs.runs }}x each
+        if: steps.cpu.outputs.keep == 'true'
         env:
           BROWSER: ${{ matrix.browser }}
           OURS: ${{ inputs.image }}
@@ -158,10 +223,13 @@ jobs:
           done
           exit "$rc"
 
+      # One artifact per job, and the report keeps them in separate directories:
+      # two draws of the same browser write identically-named files, and merging
+      # them would silently drop every draw but one.
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && steps.cpu.outputs.keep == 'true'
         with:
-          name: perf-probe-${{ matrix.browser }}
+          name: perf-probe-${{ matrix.browser }}-${{ matrix.slot.i }}
           path: perf-out/
           if-no-files-found: warn
           retention-days: 30
@@ -177,7 +245,6 @@ jobs:
         with:
           pattern: perf-probe-*
           path: perf-current
-          merge-multiple: true
 
       # A missing arm must be LOUD. The first smoke run of this workflow pointed
       # at a tag that did not exist, every alpine probe died on `manifest
@@ -187,33 +254,57 @@ jobs:
       - name: Assert both arms reported
         env:
           BROWSERS: ${{ needs.matrix.outputs.browsers }}
+          SLOTS: ${{ needs.matrix.outputs.slots }}
           RUNS: ${{ inputs.runs }}
           HAS_B: ${{ inputs.image_b != '' }}
         run: |
           set -euo pipefail
-          missing=0
           arms="alpine official"
           if [ "$HAS_B" = true ]; then
             arms="alpine alpine-b official"
           fi
-          for browser in $(jq -r '.[]' <<< "$BROWSERS"); do
+
+          filtered=$(jq -r 'map(.want) | any(. != "")' <<< "$SLOTS")
+
+          drew=$(find perf-current -mindepth 1 -maxdepth 1 -type d | wc -l)
+          if [ "$drew" -eq 0 ]; then
+            # With a filter this is the ordinary outcome of a round that missed:
+            # nothing measured, nothing wrong. Without one it means every job
+            # died before uploading, which is the blindness this step exists for.
+            if [ "$filtered" = true ]; then
+              echo "::notice::no runner matched any slot — re-dispatch to draw again"
+              exit 0
+            fi
+            echo "::error::no probe artifact at all"
+            exit 1
+          fi
+
+          expected=$(( $(jq -r 'length' <<< "$BROWSERS") * $(jq -r 'length' <<< "$SLOTS") ))
+          if [ "$filtered" = false ] && [ "$drew" -ne "$expected" ]; then
+            echo "::error::$drew draws reported, expected $expected"
+            exit 1
+          fi
+
+          missing=0
+          for dir in perf-current/*/; do
+            draw=$(basename "$dir")
             for arm in $arms; do
-              got=$(find perf-current -name "$arm-$browser-run*.json" | wc -l)
+              got=$(find "$dir" -name "$arm-*-run*.json" | wc -l)
               if [ "$got" -ne "$RUNS" ]; then
-                echo "::error::$arm/$browser produced $got of $RUNS runs"
+                echo "::error::$draw: $arm produced $got of $RUNS runs"
                 missing=1
               else
-                echo "ok: $arm/$browser $got/$RUNS"
+                echo "ok: $draw $arm $got/$RUNS"
               fi
             done
           done
           exit "$missing"
 
       # The ratio is runner-dependent, so "same hardware" is CHECKED rather than
-      # merely arranged. Every arm of a browser runs in one job and therefore on
-      # one machine; different browsers run in different jobs and legitimately
-      # differ, so the check is per-browser.
-      - name: Assert one machine per browser
+      # merely arranged. Every arm of a draw runs in one job and therefore on one
+      # machine; separate draws land on different machines by design, so the
+      # check is per-draw.
+      - name: Assert one machine per draw
         run: python3 playwright/bench/assert-one-machine.py perf-current
 
       - name: Render
@@ -238,5 +329,5 @@ jobs:
         if: always()
         with:
           name: runtime-perf
-          path: perf-current/*.json
+          path: perf-current/**/*.json
           retention-days: 90
