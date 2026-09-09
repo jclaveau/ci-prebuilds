@@ -89,6 +89,10 @@ on:
         description: 'The perf-record arm (samples the running browser)'
         default: true
         type: boolean
+      consumer_image:
+        description: 'The SHIPPED consumer image, measured against the scratch artifact above'
+        default: 'jclaveau/alpine-dood-playwright:latest'
+        type: string
       perf_image:
         description: 'perf-record arm: a CONSUMER image carrying the shipped browser (Docker Hub has :latest, GHCR has sha-<40> and edge)'
         default: 'jclaveau/alpine-dood-playwright:latest'
@@ -743,6 +747,106 @@ jobs:
                         + '.\n')
           else:
               print('census produced no output\n')
+          PY
+
+      - name: Probe — the shipped image against the scratch artifact
+        env:
+          CONSUMER: ${{ inputs.consumer_image }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -o pipefail
+          # Everything above measures the from-source artifact wrapped in a
+          # minimal apk set. What ships is a much larger image, and WebKit has
+          # already been bitten once by exactly that difference: Alpine's libEGL
+          # has no libglvnd, so it DT_NEEDed libgallium and libLLVM — 235 MB —
+          # into every launched process, and removing that took `launch` from
+          # 1.47 to 0.88 with no other change. Nobody has asked whether chromium
+          # pays the same thing, because no probe has ever run inside the
+          # shipped image.
+          #
+          # Same three instruments, same runner, so the two are directly
+          # comparable: any difference is what the consumer image adds.
+          docker pull -q "$CONSUMER"
+          docker run --rm --user root --entrypoint sh \
+            -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/probes:/kernels:ro" \
+            -v "$PWD/gap-out:/out" \
+            "$CONSUMER" -c '
+              command -v readelf >/dev/null 2>&1 || apk add --no-cache binutils >/dev/null 2>&1
+              bin=$(ls -d /ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell 2>/dev/null | head -1)
+              [ -n "$bin" ] || { echo "no chrome-headless-shell in the consumer image" >&2; exit 1; }
+              node /probe/startup-time.cjs consumer "$bin" > /out/consumer-startup.json
+              sh /probe/closure-reloc-audit.sh "$bin" > /out/consumer-closure.txt
+              node /probe/dso-symbol-census.cjs "$bin" > /out/consumer-census.json
+              export NODE_PATH="$(npm root -g)"
+              node /kernels/perf-kernel.cjs --kernel launch --target consumer-baseline \
+                --seconds 40 --warmup 4 --out /out
+            ' 2>&1 | tee gap-out/consumer-probe.log
+
+      - name: Report — the shipped image against the scratch artifact
+        run: |
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json
+
+
+          def load(path):
+              try:
+                  return json.load(open(path))
+              except Exception:
+                  return None
+
+
+          def closure(path):
+              out = {}
+              try:
+                  for line in open(path):
+                      key, _, value = line.strip().partition(' ')
+                      out[key] = value
+              except OSError:
+                  pass
+              return out
+
+
+          print('## What the SHIPPED image adds to a launch\n')
+          print('Same binary, same runner, same instruments — the only variable '
+                'is everything the consumer image installs around it.\n')
+
+          rows = [
+              ('`launch` median', 'consumer-launch-kernel.json', 'musl-baseline-launch-kernel.json',
+               'median_ms', 'ms'),
+              ('`--version` load', 'consumer-startup.json', 'musl-startup.json', 'load_ms', 'ms'),
+          ]
+          print('| | shipped image | scratch artifact | official (glibc) |')
+          print('|---|---|---|---|')
+          for label, a_path, b_path, key, unit in rows:
+              a, b = load(f'gap-out/{a_path}'), load(f'gap-out/{b_path}')
+              ref = load('gap-out/glibc-baseline-launch-kernel.json'
+                         if 'launch' in a_path else 'gap-out/glibc-startup.json')
+              def cell(d):
+                  return f'{d[key]:.1f} {unit}' if d else '—'
+              print(f'| {label} | {cell(a)} | {cell(b)} | {cell(ref)} |')
+
+          ship, scratch = (closure('gap-out/consumer-closure.txt'),
+                           closure('gap-out/musl-closure.txt'))
+          if ship and scratch:
+              print('\n| | shipped image | scratch artifact | Δ |')
+              print('|---|---|---|---|')
+              for key in ('closure-dsos', 'closure-symbol-relocs',
+                          'closure-undefined-syms'):
+                  a, b = ship.get(key), scratch.get(key)
+                  if not (a and b):
+                      continue
+                  print(f'| `{key}` | {int(a):,} | {int(b):,} | {int(a) - int(b):+,} |')
+
+          census = load('gap-out/consumer-census.json')
+          if census:
+              held = census['held_in_closure']
+              print(f"\nIn the shipped image the trim would take the closure "
+                    f"{census['before']['dsos']} -> {census['after']['dsos']} DSOs, "
+                    f"loader work bound {census['work_bound_ratio']:.2f}x.")
+              if held:
+                  print('Held there regardless of what chromium bundles: '
+                        + ', '.join(f'`{s}`' for s in held) + '.')
           PY
 
       - name: Report — timing and fonts
