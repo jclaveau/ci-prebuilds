@@ -47,4 +47,11 @@ was the cheap half of it. It is now answered: nothing else that costs.
 side of the chromium gap is fully accounted for by the SSP-parity chain already
 running plus the clang 22-vs-23 residual, which
 [[project_chromium_cft_build_chain_diff]] parks as too expensive to test.
-Unchecked leftover: `-mframe-pointer=none` vs whatever official uses.
+The `-mframe-pointer=none` seen in the bare `-###` dump is NOT a divergence:
+`build/config/compiler/compiler.gni` resolves `enable_frame_pointers = true` for
+`is_apple || is_linux`, so official Chrome on Linux x64 builds WITH frame
+pointers, and gn hands the same `-fno-omit-frame-pointer` to our build — the
+bare-driver default is overridden on both sides. Worth one prologue census
+(`push %rbp` counts on the two artifacts) next time the gap-probe workflow runs,
+since it has both binaries in hand and this was settled by reading gn rather
+than by looking at what shipped.
