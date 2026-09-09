@@ -767,48 +767,64 @@ jobs:
           # Same three instruments, same runner, so the two are directly
           # comparable: any difference is what the consumer image adds.
           docker pull -q "$CONSUMER"
+
+          # Written to a file rather than passed as `sh -c '...'`. The inline
+          # form put the whole script inside ONE single-quoted shell word, so a
+          # lone apostrophe in a comment closed the quote and silently re-split
+          # everything after it — which is how run 34343768098 lost
+          # runtime-probe.cjs and reported it as a missing module. A quoted
+          # heredoc has no such trap.
+          cat > gap-out/consumer-probe.sh <<'SH'
+          set -eu
+          command -v readelf >/dev/null 2>&1 || apk add --no-cache binutils >/dev/null 2>&1
+
+          bin=$(ls -d /ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell 2>/dev/null | head -1)
+          [ -n "$bin" ] || { echo "no chrome-headless-shell in the consumer image" >&2; exit 1; }
+
+          # What sits at that path in the SHIPPED image is the launch shim: a
+          # /bin/sh script that sets LD_PRELOAD and execs the real ELF beside
+          # it. Playwright spawns the shim and the ELF instruments need the
+          # ELF, so the two take different paths on purpose. Reading the shim
+          # is what made the first attempt fail with "Not an ELF file".
+          elf="$bin"
+          [ -f "$bin.real" ] && elf="$bin.real"
+          echo "shim $bin -> elf $elf"
+
+          # Fail here rather than three minutes in, and say which files the
+          # mount actually carries.
+          for f in startup-time.cjs closure-reloc-audit.sh dso-symbol-census.cjs \
+                   runtime-probe.cjs chromium-gap-probe.cjs; do
+            [ -f "/probe/$f" ] || { echo "missing /probe/$f" >&2; ls -l /probe >&2; exit 1; }
+          done
+
+          node /probe/startup-time.cjs consumer "$elf" > /out/consumer-startup.json
+          sh /probe/closure-reloc-audit.sh "$elf" > /out/consumer-closure.txt
+          node /probe/dso-symbol-census.cjs "$elf" > /out/consumer-census.json
+
+          # The consumer image installs playwright with pnpm, so `npm root -g`
+          # names a directory that does not hold it.
+          NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+          export NODE_PATH
+
+          node /kernels/perf-kernel.cjs --kernel launch --target consumer-baseline \
+            --seconds 40 --warmup 4 --out /out
+
+          # The campaign instrument, in the shipped image. Its `layout` row is
+          # a DIFFERENT kernel from the one in chromium-gap-probe.cjs: 16,000
+          # forced synchronous reflows of ONE element, against a container
+          # change that re-lays-out 800 children. They can legitimately
+          # disagree, and until both run on one runner nobody can say whether
+          # 1.62 and 1.29 are two costs or one measurement error.
+          node /probe/runtime-probe.cjs --browser chromium --target consumer --out /out
+          node /probe/chromium-gap-probe.cjs --target consumer --out /out
+          SH
+
           docker run --rm --user root --entrypoint sh \
             -v "$PWD/playwright/bench:/probe:ro" \
             -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/probes:/kernels:ro" \
             -v "$PWD/playwright/scripts:/pwscripts:ro" \
             -v "$PWD/gap-out:/out" \
-            "$CONSUMER" -c '
-              command -v readelf >/dev/null 2>&1 || apk add --no-cache binutils >/dev/null 2>&1
-              bin=$(ls -d /ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell 2>/dev/null | head -1)
-              [ -n "$bin" ] || { echo "no chrome-headless-shell in the consumer image" >&2; exit 1; }
-              # What sits at that path in the SHIPPED image is the launch shim,
-              # a /bin/sh script that sets LD_PRELOAD and execs the real ELF
-              # beside it. Playwright spawns the shim and the ELF instruments
-              # need the ELF, so the two take different paths on purpose — and
-              # reading the shim is what made the first attempt fail with
-              # "Not an ELF file".
-              elf="$bin"
-              [ -f "$bin.real" ] && elf="$bin.real"
-              echo "shim $bin -> elf $elf"
-              node /probe/startup-time.cjs consumer "$elf" > /out/consumer-startup.json
-              sh /probe/closure-reloc-audit.sh "$elf" > /out/consumer-closure.txt
-              node /probe/dso-symbol-census.cjs "$elf" > /out/consumer-census.json
-              # The consumer image installs playwright with pnpm, so `npm root
-              # -g` names a directory that does not hold it.
-              NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
-              export NODE_PATH
-              node /kernels/perf-kernel.cjs --kernel launch --target consumer-baseline \
-                --seconds 40 --warmup 4 --out /out
-              # The campaign's own instrument, in the shipped image. Its
-              # `layout` row is a DIFFERENT kernel from chromium-gap-probe's:
-              # 16,000 forced synchronous reflows of ONE element, where
-              # layout_boxonly changes a container and re-lays-out 800
-              # children. They can legitimately disagree, and until both run on
-              # one runner nobody can say whether 1.62 and 1.29 are two costs
-              # or one measurement error.
-              node /probe/runtime-probe.cjs --browser chromium --target consumer \
-                --out /out
-              # `layout` shows the same split as `launch`: 1.29x here against
-              # the campaign 1.62x, both on a 7763. Two rows disagreeing the
-              # same way is not instrument noise, so measure the layout kernels
-              # in the shipped image too rather than reasoning about why.
-              node /probe/chromium-gap-probe.cjs --target consumer --out /out
-            ' 2>&1 | tee gap-out/consumer-probe.log
+            "$CONSUMER" /out/consumer-probe.sh 2>&1 | tee gap-out/consumer-probe.log
 
       - name: Probe — the campaign's own layout kernel, on the official arm
         env:
