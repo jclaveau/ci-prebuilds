@@ -132,3 +132,29 @@ codegen, time in malloc/futex/syscalls = libc.
 
 PGO is NOT a suspect — it demonstrably engaged (1.42 -> 1.28 alone), via
 `pgo_data_path` from the public profile download.
+
+**Allocator and linker: source-level confirmation (2026-09-09, ~10 min of
+`curl`, no build).** Both were already settled on the artifact by
+[[project_chromium_launch_dso_closure]]'s `nm -D` census; this adds *why*, so
+neither has to be re-measured:
+
+- **PartitionAlloc.** `build_overrides/partition_alloc.gni` at `151.0.7922.34`
+  gates `use_allocator_shim_default` on sanitizers, Fuchsia, Windows-debug,
+  component-Windows and Cronet only — there is **no musl carve-out** in it or in
+  `base/allocator/partition_allocator/partition_alloc.gni`. aports' APKBUILD
+  sets no PA gn arg, and `cr149-musl-alloc-shim-dispatch.patch` — whose name
+  reads like it disables the shim, and which `chromium-gap-probes.yml`'s header
+  cited as evidence that aports "patches PartitionAlloc-as-malloc OUT for
+  musl" — is a **three-line test disable** (`if (is_win || is_linux && false)`
+  around `base_unittests`' `SystemAllocatorTest`). PA-as-malloc is on in both
+  arms by upstream default. The header comment is still wrong on main — a
+  fix is parked at `scratchpad/gap-probes-pa-comment.patch`, held back only
+  because that path is NOT in test-and-publish.yml's paths-ignore, so pushing
+  it starts a full publish that would queue behind the running chromium
+  chains.
+- **We do not build with mold.** aports sets `use_mold=true`, which would be a
+  real code-layout divergence from official's lld — but `apply-and-build.sh`
+  does **not** source aports' `gn_config` at all. Our `args.gn` is
+  `args.gn.overlay` plus a few injected lines, and the overlay pins
+  `use_lld = true`. Any reasoning that starts "aports sets X" has to check the
+  overlay first: the APKBUILD supplies patches and `_llvmver`, not gn args.
