@@ -22,7 +22,7 @@
 #   --models CSV       CPU substrings to cover, default 7763,9V74,8573C
 #   --draws N          draws wanted per (browser, model), default 2
 #   --runs N           probe repetitions inside each draw, default 10
-#   --replicates N     draws attempted per browser per round, default 6
+#   --slots N          most jobs one round may spend per browser, default 6
 #   --max-rounds N     give up after this many dispatches, default 8
 #   --ref BRANCH       branch to dispatch on, default main
 #   --state DIR        accumulates every round, default tmp/cpu-sampling/<image>
@@ -32,7 +32,7 @@ REPO="${REPO:-jclaveau/ci-prebuilds}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 IMAGE="" BROWSERS="chromium,firefox,webkit" MODELS="7763,9V74,8573C"
-DRAWS=2 RUNS=10 REPLICATES=6 MAX_ROUNDS=8 REF="main" STATE=""
+DRAWS=2 RUNS=10 SLOTS=6 MAX_ROUNDS=8 REF="main" STATE=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -41,7 +41,7 @@ while [ $# -gt 0 ]; do
     --models) MODELS="$2"; shift 2 ;;
     --draws) DRAWS="$2"; shift 2 ;;
     --runs) RUNS="$2"; shift 2 ;;
-    --replicates) REPLICATES="$2"; shift 2 ;;
+    --slots) SLOTS="$2"; shift 2 ;;
     --max-rounds) MAX_ROUNDS="$2"; shift 2 ;;
     --ref) REF="$2"; shift 2 ;;
     --state) STATE="$2"; shift 2 ;;
@@ -54,29 +54,34 @@ mkdir -p "$STATE"
 
 coverage() {
   python3 "$HERE/../playwright/bench/cpu-coverage.py" "$STATE" \
-    --models "$MODELS" --browsers "$BROWSERS" --target "$DRAWS" "$@"
+    --models "$MODELS" --browsers "$BROWSERS" --target "$DRAWS" \
+    --slots "$SLOTS" "$@"
 }
 
 echo "state: $STATE"
 coverage
 
 for round in $(seq 1 "$MAX_ROUNDS"); do
-  want_models="$(coverage --short-models)"
-  if [ -z "$want_models" ]; then
+  # Per slot, not per round: a draw whose model already met its quota cannot be
+  # cancelled once it starts, so the refusal has to be decided here.
+  slot_filters="$(coverage --slot-filters)"
+  if [ -z "$slot_filters" ]; then
     echo "quota met: every browser has $DRAWS draws on each of $MODELS"
     exit 0
   fi
   want_browsers="$(coverage --short-browsers)"
 
   echo
-  echo "=== round $round/$MAX_ROUNDS — chasing [$want_models] for [$want_browsers]"
+  echo "=== round $round/$MAX_ROUNDS — [$want_browsers] over slots [$slot_filters]"
+  # replicates=1 because the slot list already carries the count; leaving it
+  # higher would multiply a single-slot round into that many identical jobs.
   out="$("$HERE/dispatch-once.sh" perf-probe.yml "$REF" \
     -f image="$IMAGE" \
     -f browsers="$want_browsers" \
     -f runs="$RUNS" \
-    -f replicates="$REPLICATES" \
-    -f want_cpus="$want_models" \
-    -f label="cpu sampling round $round — chasing $want_models")"
+    -f replicates=1 \
+    -f want_cpus="$slot_filters" \
+    -f label="cpu sampling round $round — slots $slot_filters")"
   echo "$out"
   id="${out##*/}"
   case "$id" in
@@ -102,7 +107,7 @@ for round in $(seq 1 "$MAX_ROUNDS"); do
   if gh run download "$id" -R "$REPO" -n runtime-perf -D "$STATE/run-$id" 2>/dev/null; then
     echo "collected run $id"
   else
-    echo "run $id produced no draw on [$want_models]"
+    echo "run $id produced no draw on [$slot_filters]"
   fi
   coverage
 done

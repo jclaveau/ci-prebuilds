@@ -21,6 +21,11 @@ name: Runtime perf probe
 # the fan-out into rejection sampling — a job that draws an unwanted machine
 # stops before pulling a single image, at roughly 20 seconds instead of ten
 # minutes, which is what makes hunting a 10%-of-fleet model affordable.
+#
+# The filter is read PER SLOT, because GitHub cancels runs rather than jobs: a
+# draw of a model that already met its quota cannot be killed once it starts, so
+# whether a slot may accept it has to be decided at dispatch. cpu-coverage.py
+# sizes that allocation.
 
 on:
   workflow_dispatch:
@@ -50,7 +55,7 @@ on:
         default: '1'
         type: string
       want_cpus:
-        description: 'CSV of CPU-model substrings to keep, e.g. `7763,9V74,8573C`. A draw matching none ends in ~20s without probing, so a campaign can rejection-sample the fleet for a model it is missing. Empty keeps every draw.'
+        description: 'CPU-model substrings to keep: `,` between the models one slot accepts, `;` between slots. A draw matching none ends in ~20s without probing. One slot (no `;`) applies to all `replicates`; several set the slot count themselves. Empty keeps every draw.'
         default: ''
         type: string
       runs:
@@ -77,24 +82,39 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       browsers: ${{ steps.split.outputs.browsers }}
-      replicates: ${{ steps.split.outputs.replicates }}
+      slots: ${{ steps.split.outputs.slots }}
     steps:
       - id: split
         env:
           BROWSERS: ${{ inputs.browsers }}
           REPLICATES: ${{ inputs.replicates }}
+          WANT: ${{ inputs.want_cpus }}
         run: |
           set -euo pipefail
           json=$(jq -Rc 'split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length > 0))' \
             <<< "$BROWSERS")
           echo "browsers=$json" >> "$GITHUB_OUTPUT"
           echo "browsers: $json"
-          reps=$(jq -nc --argjson n "$REPLICATES" '[range(1; $n + 1)]')
-          echo "replicates=$reps" >> "$GITHUB_OUTPUT"
-          echo "replicates: $reps"
+          # A slot is one job, hence one draw, hence one independent CPU model.
+          # Its `want` is what that draw will accept; slots differ so that a
+          # model already near its quota stops being accepted while a rarer one
+          # is still hunted on every slot.
+          if [ -z "$WANT" ]; then
+            slots=$(jq -nc --argjson n "$REPLICATES" \
+              '[range(1; $n + 1) | {i: ., want: ""}]')
+          elif ! grep -q ';' <<< "$WANT"; then
+            slots=$(jq -nc --argjson n "$REPLICATES" --arg w "$WANT" \
+              '[range(1; $n + 1) | {i: ., want: $w}]')
+          else
+            slots=$(jq -Rc 'split(";") | to_entries
+              | map({i: (.key + 1), want: (.value | gsub("^\\s+|\\s+$"; ""))})' \
+              <<< "$WANT")
+          fi
+          echo "slots=$slots" >> "$GITHUB_OUTPUT"
+          echo "slots: $slots"
 
   probe:
-    name: probe-${{ matrix.browser }}-${{ matrix.replicate }}
+    name: probe-${{ matrix.browser }}-${{ matrix.slot.i }}
     needs: matrix
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -102,14 +122,14 @@ jobs:
       fail-fast: false
       matrix:
         browser: ${{ fromJSON(needs.matrix.outputs.browsers) }}
-        replicate: ${{ fromJSON(needs.matrix.outputs.replicates) }}
+        slot: ${{ fromJSON(needs.matrix.outputs.slots) }}
     steps:
       # First step on purpose: the model is drawn when the job starts and cannot
       # be asked for, so an unwanted draw is only cheap if it is discovered
       # before the checkout and the two multi-gigabyte image pulls.
       - id: cpu
         env:
-          WANT: ${{ inputs.want_cpus }}
+          WANT: ${{ matrix.slot.want }}
         run: |
           set -euo pipefail
           model=$(awk -F': ' '/^model name/ { print $2; exit }' /proc/cpuinfo)
@@ -209,7 +229,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always() && steps.cpu.outputs.keep == 'true'
         with:
-          name: perf-probe-${{ matrix.browser }}-${{ matrix.replicate }}
+          name: perf-probe-${{ matrix.browser }}-${{ matrix.slot.i }}
           path: perf-out/
           if-no-files-found: warn
           retention-days: 30
@@ -234,10 +254,9 @@ jobs:
       - name: Assert both arms reported
         env:
           BROWSERS: ${{ needs.matrix.outputs.browsers }}
-          REPLICATES: ${{ inputs.replicates }}
+          SLOTS: ${{ needs.matrix.outputs.slots }}
           RUNS: ${{ inputs.runs }}
           HAS_B: ${{ inputs.image_b != '' }}
-          WANT: ${{ inputs.want_cpus }}
         run: |
           set -euo pipefail
           arms="alpine official"
@@ -245,21 +264,23 @@ jobs:
             arms="alpine alpine-b official"
           fi
 
+          filtered=$(jq -r 'map(.want) | any(. != "")' <<< "$SLOTS")
+
           drew=$(find perf-current -mindepth 1 -maxdepth 1 -type d | wc -l)
           if [ "$drew" -eq 0 ]; then
-            # With a filter this is the ordinary outcome of a draw that missed:
+            # With a filter this is the ordinary outcome of a round that missed:
             # nothing measured, nothing wrong. Without one it means every job
             # died before uploading, which is the blindness this step exists for.
-            if [ -n "$WANT" ]; then
-              echo "::notice::no runner matched $WANT — re-dispatch to draw again"
+            if [ "$filtered" = true ]; then
+              echo "::notice::no runner matched any slot — re-dispatch to draw again"
               exit 0
             fi
             echo "::error::no probe artifact at all"
             exit 1
           fi
 
-          expected=$(( $(jq -r 'length' <<< "$BROWSERS") * REPLICATES ))
-          if [ -z "$WANT" ] && [ "$drew" -ne "$expected" ]; then
+          expected=$(( $(jq -r 'length' <<< "$BROWSERS") * $(jq -r 'length' <<< "$SLOTS") ))
+          if [ "$filtered" = false ] && [ "$drew" -ne "$expected" ]; then
             echo "::error::$drew draws reported, expected $expected"
             exit 1
           fi
