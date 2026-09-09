@@ -508,6 +508,92 @@ jobs:
             ' 2>&1 | tee gap-out/probe-fast-string.log \
             || echo "::warning::the fast-string arm did not complete"
 
+      - name: Probe — startup and the DSO closure
+        env:
+          CHS_REV: ${{ inputs.chs_rev }}
+        run: |
+          set -o pipefail
+          # `launch` is chromium's second-worst row (1.40-1.45x) and, unlike
+          # `layout`, it scales identically on both arms across every CPU model
+          # drawn — a constant factor, which is the shape a closure walked at
+          # every exec has. Both halves run here: the cost, and the two counts
+          # that would explain it.
+          OURS_BIN=/ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64/chrome-headless-shell
+
+          docker run --rm \
+            -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/gap-out:/out" \
+            "gap-alpine:${{ github.run_id }}" \
+            sh -c "
+              node /probe/startup-time.cjs musl $OURS_BIN > /out/musl-startup.json
+              sh /probe/closure-reloc-audit.sh $OURS_BIN > /out/musl-closure.txt
+            " 2>&1 | tee gap-out/startup-musl.log
+
+          # The official image names its directory by ITS chromium revision, not
+          # ours, so the path is discovered rather than interpolated.
+          docker run --rm --entrypoint sh \
+            -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/gap-out:/out" \
+            "$OFFICIAL" -c '
+              bin=$(ls -d /ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell 2>/dev/null | head -1)
+              [ -n "$bin" ] || { echo "no official chrome-headless-shell found" >&2; exit 1; }
+              node /probe/startup-time.cjs glibc "$bin" > /out/glibc-startup.json
+              sh /probe/closure-reloc-audit.sh "$bin" > /out/glibc-closure.txt
+            ' 2>&1 | tee gap-out/startup-glibc.log
+
+      - name: Report — startup and the DSO closure
+        run: |
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json
+
+          def closure(path):
+              out = {}
+              try:
+                  for line in open(path):
+                      key, _, value = line.strip().partition(' ')
+                      out[key] = value
+              except OSError:
+                  pass
+              return out
+
+          try:
+              musl = json.load(open('gap-out/musl-startup.json'))
+              glibc = json.load(open('gap-out/glibc-startup.json'))
+          except Exception as e:
+              print(f'startup probe produced no comparable pair: {e}')
+              raise SystemExit(0)
+
+          print('## chromium startup — what `launch` pays before a page exists\n')
+          print(f"`chrome-headless-shell --version` loads the closure, prints a "
+                f"string and exits, {musl['runs']} runs, median. `/bin/true` in "
+                f"the same loop is the control: subtracting it leaves the "
+                f"binary's own load cost, so `load` is the number to read.\n")
+          print('| | ours (musl) | official (glibc) | ×off |')
+          print('|---|---|---|---|')
+          for label, key in (('fork+exec control', 'control_ms'),
+                             ('`--version` wall', 'version_ms'),
+                             ('**load**', 'load_ms')):
+              a, b = musl[key], glibc[key]
+              ratio = f'{a / b:.2f}x' if b else '—'
+              print(f'| {label} | {a:.1f} ms | {b:.1f} ms | {ratio} |')
+          print()
+          print(f"Witness — ours `{musl['witness']}`, official "
+                f"`{glibc['witness']}`.\n")
+
+          ours, theirs = closure('gap-out/musl-closure.txt'), closure('gap-out/glibc-closure.txt')
+          if ours and theirs:
+              print('Closure the loader walks per exec:\n')
+              print('| | ours | official | ×off |')
+              print('|---|---|---|---|')
+              for key in ('closure-dsos', 'closure-symbol-relocs',
+                          'closure-relative-relocs', 'closure-undefined-syms'):
+                  a, b = ours.get(key), theirs.get(key)
+                  if not (a and b):
+                      continue
+                  ratio = f'{int(a) / int(b):.2f}x' if int(b) else '—'
+                  print(f'| `{key}` | {int(a):,} | {int(b):,} | {ratio} |')
+          PY
+
       - name: Report — timing and fonts
         env:
           LABEL_OURS: ${{ inputs.label_ours }}

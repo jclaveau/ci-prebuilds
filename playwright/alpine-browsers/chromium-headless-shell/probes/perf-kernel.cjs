@@ -187,6 +187,25 @@ const KERNELS = {
       return { ms: r.ms, tag: `checksum=${r.checksum}` };
     },
   },
+  /*
+   * Not an in-page kernel: what `launch` measures IS the browser lifecycle, so
+   * this one owns its browser instead of borrowing the shared page.
+   *
+   * The row reads 1.40-1.45x on every CPU model drawn and both arms scale
+   * identically across them, so it is a constant per-launch cost. The startup
+   * probe has since priced the part everyone assumed was the whole answer —
+   * the DSO closure is +5.5 ms per exec, about 11 ms of a 48 ms gap — which
+   * leaves the majority unattributed and no static candidate left to try.
+   */
+  launch: {
+    standalone: true,
+    run: async (playwright, browserArgs) => {
+      const browser = await playwright.chromium.launch({ args: browserArgs });
+      const version = browser.version();
+      await browser.close();
+      return { tag: `version=${version}` };
+    },
+  },
 };
 
 function digestTag(buf) {
@@ -213,6 +232,22 @@ async function main() {
   // runtime-flag difference produce the same profile, and only one of them
   // costs a 25-30 h rebuild — so the flag has to be testable first.
   const browserArgs = arg('browser-args', '').split(' ').filter(Boolean);
+
+  // A standalone kernel launches its own browser every iteration, so it gets
+  // no shared page, no server and no warm browser to hold open. It still needs
+  // a version for the parity assert below, and one throwaway launch is the
+  // cheapest place to read it.
+  if (kernel.standalone) {
+    const probe = await playwright.chromium.launch({ args: browserArgs });
+    const version = probe.version();
+    await probe.close();
+    return loop({
+      target, kernelName, seconds, warmupSeconds, outDir, readyFile,
+      browserArgs, browserVersion: version, kernel,
+      runOnce: () => kernel.run(playwright, browserArgs),
+    });
+  }
+
   const browser = await playwright.chromium.launch({ args: browserArgs });
   const ctx = await browser.newContext({
     viewport: { width: 1280, height: 720 },
@@ -241,10 +276,26 @@ async function main() {
   // first-touch faults, and the first layout pass pays JIT and font init. A
   // profile that includes them describes startup, which is a different question
   // and already answered.
+  await loop({
+    target, kernelName, seconds, warmupSeconds, outDir, readyFile,
+    browserArgs, browserVersion: browser.version(), kernel,
+    runOnce: () => kernel.run(page),
+    teardown: async () => {
+      await ctx.close();
+      await browser.close();
+      await new Promise((resolve) => server.close(resolve));
+    },
+  });
+}
+
+async function loop({
+  target, kernelName, seconds, warmupSeconds, outDir, readyFile,
+  browserArgs, browserVersion, kernel, runOnce, teardown,
+}) {
   const warmupEnd = Date.now() + warmupSeconds * 1000;
   let tag = '';
   while (Date.now() < warmupEnd) {
-    ({ tag } = await kernel.run(page));
+    ({ tag } = await runOnce());
   }
 
   // Only now is the steady state real, so only now may sampling begin. The
@@ -262,7 +313,7 @@ async function main() {
   const end = Date.now() + seconds * 1000;
   while (Date.now() < end) {
     const t0 = process.hrtime.bigint();
-    const r = await kernel.run(page);
+    const r = await runOnce();
     const wall = Number(process.hrtime.bigint() - t0) / 1e6;
     tag = r.tag;
     // The in-page clock where the kernel has one: it excludes the protocol
@@ -270,9 +321,7 @@ async function main() {
     samples.push(r.ms === undefined ? wall : r.ms);
   }
 
-  await ctx.close();
-  await browser.close();
-  await new Promise((resolve) => server.close(resolve));
+  if (teardown) await teardown();
 
   const cpu = os.cpus()[0];
   const result = {
@@ -290,7 +339,7 @@ async function main() {
     // The parity assert: two arms on different chromium versions are not a
     // comparison, and every version tag in this repo is derived from a pin
     // rather than read from the artifact unless something like this reads it.
-    browser_version: browser.version(),
+    browser_version: browserVersion,
     libc: fs.existsSync('/lib/ld-musl-x86_64.so.1') ? 'musl' : 'glibc',
     runner: { cpu: cpu ? cpu.model : 'unknown', cores: os.cpus().length },
   };

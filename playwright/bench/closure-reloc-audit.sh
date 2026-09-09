@@ -1,6 +1,10 @@
 #!/bin/sh
-# Totals the dynamic-linking work a WebKit launch actually pays for, across
-# the WHOLE closure rather than libWPEWebKit alone.
+# Totals the dynamic-linking work a browser launch actually pays for, across
+# the WHOLE closure rather than the top-level binary alone.
+#
+# Takes the binary as an argument; with none it finds WebKit's MiniBrowser, the
+# browser it was written for. chromium's `launch` sits at 1.40-1.45x official
+# with the same closure explanation, so it asks the same two questions.
 #
 # Why: `MiniBrowser --version` loads the closure, prints a string and exits,
 # and it runs 69 ms on our image against 41 ms on Playwright's. In that
@@ -14,17 +18,21 @@
 # that separate those, so both images print them the same way.
 set -eu
 
-# Two layouts. Ours is flat — MiniBrowser and every .so in one directory with
-# RPATH=$ORIGIN — while Playwright ships bin/ and lib/ and puts a shell wrapper
-# where we put the ELF, so the top-level name is not always the binary.
-dir=$(ls -d /ms-playwright/webkit-*/minibrowser-wpe 2>/dev/null | head -1)
-[ -n "$dir" ] || { echo "no minibrowser-wpe directory" >&2; exit 1; }
-if [ -x "$dir/bin/MiniBrowser" ]; then
-  bin="$dir/bin/MiniBrowser"
-else
-  bin="$dir/MiniBrowser"
+bin="${1:-}"
+if [ -z "$bin" ]; then
+  # Two layouts. Ours is flat — MiniBrowser and every .so in one directory with
+  # RPATH=$ORIGIN — while Playwright ships bin/ and lib/ and puts a shell
+  # wrapper where we put the ELF, so the top-level name is not always the
+  # binary.
+  dir=$(ls -d /ms-playwright/webkit-*/minibrowser-wpe 2>/dev/null | head -1)
+  [ -n "$dir" ] || { echo "no minibrowser-wpe directory" >&2; exit 1; }
+  if [ -x "$dir/bin/MiniBrowser" ]; then
+    bin="$dir/bin/MiniBrowser"
+  else
+    bin="$dir/MiniBrowser"
+  fi
 fi
-[ -f "$bin" ] || { echo "no MiniBrowser found" >&2; exit 1; }
+[ -f "$bin" ] || { echo "no binary at $bin" >&2; exit 1; }
 echo "closure-binary $bin"
 
 if command -v readelf >/dev/null 2>&1; then
