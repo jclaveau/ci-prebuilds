@@ -770,15 +770,28 @@ jobs:
           docker run --rm --user root --entrypoint sh \
             -v "$PWD/playwright/bench:/probe:ro" \
             -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/probes:/kernels:ro" \
+            -v "$PWD/playwright/scripts:/pwscripts:ro" \
             -v "$PWD/gap-out:/out" \
             "$CONSUMER" -c '
               command -v readelf >/dev/null 2>&1 || apk add --no-cache binutils >/dev/null 2>&1
               bin=$(ls -d /ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell 2>/dev/null | head -1)
               [ -n "$bin" ] || { echo "no chrome-headless-shell in the consumer image" >&2; exit 1; }
-              node /probe/startup-time.cjs consumer "$bin" > /out/consumer-startup.json
-              sh /probe/closure-reloc-audit.sh "$bin" > /out/consumer-closure.txt
-              node /probe/dso-symbol-census.cjs "$bin" > /out/consumer-census.json
-              export NODE_PATH="$(npm root -g)"
+              # What sits at that path in the SHIPPED image is the launch shim,
+              # a /bin/sh script that sets LD_PRELOAD and execs the real ELF
+              # beside it. Playwright spawns the shim and the ELF instruments
+              # need the ELF, so the two take different paths on purpose — and
+              # reading the shim is what made the first attempt fail with
+              # "Not an ELF file".
+              elf="$bin"
+              [ -f "$bin.real" ] && elf="$bin.real"
+              echo "shim $bin -> elf $elf"
+              node /probe/startup-time.cjs consumer "$elf" > /out/consumer-startup.json
+              sh /probe/closure-reloc-audit.sh "$elf" > /out/consumer-closure.txt
+              node /probe/dso-symbol-census.cjs "$elf" > /out/consumer-census.json
+              # The consumer image installs playwright with pnpm, so `npm root
+              # -g` names a directory that does not hold it.
+              NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+              export NODE_PATH
               node /kernels/perf-kernel.cjs --kernel launch --target consumer-baseline \
                 --seconds 40 --warmup 4 --out /out
               # `layout` shows the same split as `launch`: 1.29x here against
