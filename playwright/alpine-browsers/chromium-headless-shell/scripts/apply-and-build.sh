@@ -335,7 +335,22 @@ fi
 # clang_base_path GN arg points at where chromium will look for system clang.
 # aports uses /usr/lib/llvm$_llvmver — read the same _llvmver from aports'
 # APKBUILD so our build matches the version of clang the patches expect.
-if [[ -f "$APORTS/APKBUILD" ]]; then
+#
+# CHS_LLVM_VER overrides both, for a compiler candidate. aports pins the clang
+# its patches were written against, which is the right default; it is NOT the
+# clang chromium itself is built with upstream, and that difference is one of
+# the two live explanations for the residual gap. The override exists so the
+# alternative can be pointed at a toolchain aports does not carry — see
+# Dockerfile.clang.
+if [[ -n "${CHS_LLVM_VER:-}" ]]; then
+  LLVMVER="$CHS_LLVM_VER"
+  CLANG_BASE="/usr/lib/llvm${LLVMVER}"
+  [[ -x "$CLANG_BASE/bin/clang" ]] || {
+    echo "ERROR: CHS_LLVM_VER=$CHS_LLVM_VER but $CLANG_BASE/bin/clang is absent" >&2
+    exit 6
+  }
+  echo "  CHS_LLVM_VER override: $("$CLANG_BASE/bin/clang" --version | head -1)"
+elif [[ -f "$APORTS/APKBUILD" ]]; then
   LLVMVER=$(awk -F= '$1=="_llvmver"{gsub(/[^0-9]/,"",$2); print $2; exit}' "$APORTS/APKBUILD")
   CLANG_BASE="/usr/lib/llvm${LLVMVER:-22}"
 else
