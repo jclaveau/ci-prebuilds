@@ -278,12 +278,33 @@ sed -i -e 's/\<xmlMalloc\>/malloc/g' -e 's/\<xmlFree\>/free/g' \
 # `build/linux/unbundle/replace_gn_files.py` is upstream Chromium's tool for
 # this. It rewrites the BUILD.gn for each named lib to source-link from
 # `build/linux/unbundle/<lib>.gn` instead of `third_party/<lib>/BUILD.gn`.
+# WHICH libs stay system is a PERFORMANCE decision, not only a packaging one.
+# The first profile of `launch` (run 34305385512, 30 s window, both arms in one
+# job) attributes the row almost entirely to the dynamic loader:
+#
+#   per launch      ours       official
+#   total CPU       161.8 ms   110.3 ms
+#   loader          49.4 ms    12.9 ms    <- 71% of the whole delta
+#   main binary     15.6 ms    16.0 ms    <- at parity
+#
+# The browser's own code costs the same on both sides; what we pay extra for is
+# musl resolving a bigger closure — 65 DSOs against 51, and 13,373 symbol
+# relocations against 6,739, while RELATIVE relocations are actually fewer on
+# our side. musl binds every symbol reference in every object at load where
+# glibc binds what is called, so each extra DSO is paid in full, and chromium
+# pays it once per process in the launch (browser, zygote, renderer) rather
+# than once per launch.
+#
+# So the pure-compute libraries go back to bundled. They exist here only
+# because a distro wants one copy of zlib on the disk, which is not a
+# constraint an ephemeral CI image has. What stays system is what CANNOT be
+# bundled or is not worth it:
+#   - fontconfig: bundled uses initstate_r/random_r, absent in musl
+#   - freetype/harfbuzz: shared with the rest of the image's text stack
+#   - libdrm: talks to the host's kernel interface
+#   - openh264: bundled needs a build path we have not exercised on musl
 echo "===== Replace bundled libs with system equivalents ====="
 USE_SYSTEM_LIBS=(
-  brotli
-  crc32c
-  dav1d
-  double-conversion
   # ffmpeg + flac REMOVED from system-libs 2026-07-13 — alpine SONAME skew:
   #   - flac: alpine:edge shipped flac 1.5.0 (libFLAC.so.14) which drops the
   #     encoder_get_* public exports. Chromium 148 links against them; ld.so
@@ -299,16 +320,8 @@ USE_SYSTEM_LIBS=(
   fontconfig
   freetype
   harfbuzz
-  highway
   libdrm
-  libjpeg
-  libwebp
-  libxml
-  libxslt
   openh264
-  opus
-  zlib
-  zstd
 )
 if [[ -x build/linux/unbundle/replace_gn_files.py ]] || [[ -f build/linux/unbundle/replace_gn_files.py ]]; then
   python3 build/linux/unbundle/replace_gn_files.py \
