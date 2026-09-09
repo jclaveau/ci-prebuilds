@@ -594,6 +594,157 @@ jobs:
                   print(f'| `{key}` | {int(a):,} | {int(b):,} | {ratio} |')
           PY
 
+      - name: Probe — what the closure trim can actually unload
+        env:
+          CHS_REV: ${{ inputs.chs_rev }}
+        run: |
+          set -o pipefail
+          # perf/chromium-unbundle-libs drops twelve gn entries from
+          # USE_SYSTEM_LIBS so chromium carries its own copy again, and the case
+          # for that rebuild is the closure the musl loader walks at every exec.
+          # The case only holds for the libraries that LEAVE the closure: one
+          # the fontconfig/freetype/harfbuzz stack also needs stays loaded
+          # whatever chromium bundles, and only the references into it go away.
+          # Separate the two here, in half a minute, rather than reading one
+          # number out of a 25-30 h build that mixed them.
+          OURS_BIN=/ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64/chrome-headless-shell
+
+          docker run --rm \
+            -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/gap-out:/out" \
+            "gap-alpine:${{ github.run_id }}" \
+            sh -c "node /probe/dso-symbol-census.cjs $OURS_BIN > /out/musl-census.json" \
+            2>&1 | tee gap-out/census-musl.log
+
+      - name: Probe — the zygote's share of launch
+        env:
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -o pipefail
+          # `launch()` execs a browser, a zygote and a renderer, and every one
+          # of them walks the closure — which is exactly why a one-exec
+          # `--version` probe undercounted the loader by 3x and produced a wrong
+          # verdict on this lever once already. `--no-zygote` removes one of the
+          # three execs, so it prices what an exec costs without building
+          # anything, and unlike `--disable-gpu` it is a flag a launch wrapper
+          # could carry.
+          #
+          # Official runs both legs too. A saving that shows up on glibc as well
+          # is process startup rather than the musl loader, and that control is
+          # what makes the alpine delta readable.
+          PROBES="$PWD/playwright/alpine-browsers/chromium-headless-shell/probes"
+
+          for leg in 'baseline:' 'nozygote:--no-zygote'; do
+            name=${leg%%:*}
+            flags=${leg#*:}
+
+            docker run --rm \
+              -v "$PROBES:/probe:ro" \
+              -v "$PWD/gap-out:/out" \
+              "gap-alpine:${{ github.run_id }}" \
+              sh -c "
+                export NODE_PATH=\"\$(npm root -g)\"
+                node /probe/perf-kernel.cjs --kernel launch --target musl-$name \
+                  --seconds 40 --warmup 4 --out /out --browser-args '$flags'
+              " 2>&1 | tee -a gap-out/launch-zygote.log
+
+            docker run --rm --env HOME=/root \
+              -v "$PROBES:/probe:ro" \
+              -v "$PWD/playwright/scripts:/pwscripts:ro" \
+              -v "$PWD/gap-out:/out" \
+              --env "PW_VERSION=${PW}" \
+              "$OFFICIAL" \
+              sh -c "
+                NODE_PATH=\"\$(sh /pwscripts/global-node-path.sh)\"
+                export NODE_PATH
+                node -e 'require(\"playwright\")' 2>/dev/null \
+                  || npm install -g --no-fund --no-audit \
+                       \"playwright@\$PW_VERSION\" >/dev/null 2>&1
+                node /probe/perf-kernel.cjs --kernel launch --target glibc-$name \
+                  --seconds 40 --warmup 4 --out /out --browser-args '$flags'
+              " 2>&1 | tee -a gap-out/launch-zygote.log
+          done
+
+      - name: Report — the two levers left on launch
+        run: |
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json
+
+
+          def load(path):
+              try:
+                  return json.load(open(path))
+              except Exception:
+                  return None
+
+
+          print('## `launch` — pricing the two levers before they cost a build\n')
+
+          legs = {name: load(f'gap-out/{name}-launch-kernel.json')
+                  for name in ('musl-baseline', 'musl-nozygote',
+                               'glibc-baseline', 'glibc-nozygote')}
+          if all(legs.values()):
+              print('### One exec fewer: `--no-zygote`\n')
+              print('`browserType.launch()` to first close, median of a 40 s '
+                    'steady-state loop. Official carries the same flag as the '
+                    'control — a saving on both arms is process startup, a '
+                    'saving on ours alone is the loader.\n')
+              print('| arm | baseline | `--no-zygote` | Δ | Δ% |')
+              print('|---|---|---|---|---|')
+              for libc in ('musl', 'glibc'):
+                  base = legs[f'{libc}-baseline']['median_ms']
+                  nozy = legs[f'{libc}-nozygote']['median_ms']
+                  label = 'ours (musl)' if libc == 'musl' else 'official (glibc)'
+                  print(f'| {label} | {base:.1f} ms | {nozy:.1f} ms | '
+                        f'{nozy - base:+.1f} ms | {(nozy - base) / base:+.1%} |')
+              ratio_base = (legs['musl-baseline']['median_ms']
+                            / legs['glibc-baseline']['median_ms'])
+              ratio_nozy = (legs['musl-nozygote']['median_ms']
+                            / legs['glibc-nozygote']['median_ms'])
+              print(f'\n`launch` ratio **{ratio_base:.2f}x** baseline, '
+                    f'**{ratio_nozy:.2f}x** with the zygote gone.\n')
+              print(f"Witness — ours `{legs['musl-baseline']['tag']}` on "
+                    f"{legs['musl-baseline']['iterations']} iterations, official "
+                    f"`{legs['glibc-baseline']['tag']}` on "
+                    f"{legs['glibc-baseline']['iterations']}; runner "
+                    f"`{legs['musl-baseline']['runner']['cpu']}`.\n")
+          else:
+              missing = [k for k, v in legs.items() if not v]
+              print(f'zygote legs incomplete: {", ".join(missing)}\n')
+
+          census = load('gap-out/musl-census.json')
+          if census:
+              print('### Twelve fewer bundled libraries: what would actually unload\n')
+              print('| library | symbol relocs | undefined | defined | verdict |')
+              print('|---|---|---|---|---|')
+              for row in census['trimmed_libraries']:
+                  verdict = ('**unloads**' if row['unloads']
+                             else 'stays — needed by ' + ', '.join(
+                                 f'`{s}`' for s in row['held_by'][:3]))
+                  print(f"| `{row['soname']}` | {row['symbol_relocs']:,} | "
+                        f"{row['undefined_syms']:,} | {row['defined_syms']:,} | "
+                        f'{verdict} |')
+              before, after = census['before'], census['after']
+              print('\n| | today | after the trim | |')
+              print('|---|---|---|---|')
+              for key, label in (('dsos', 'DSOs the loader walks'),
+                                 ('symbol_relocs', 'symbol relocations'),
+                                 ('undefined_syms', 'undefined references')):
+                  a, b = before[key], after[key]
+                  print(f'| {label} | {a:,} | {b:,} | {(b - a) / a:+.1%} |')
+              print(f"\nmusl resolves every reference against the loaded-object "
+                    f"list, so its work is bounded by references x objects: "
+                    f"**{census['work_bound_ratio']:.2f}x** of today's. That is "
+                    f"an upper bound on the saving, not a prediction.\n")
+              if census['held_in_closure']:
+                  print('Held in the closure regardless of what chromium '
+                        'bundles: '
+                        + ', '.join(f'`{s}`' for s in census['held_in_closure'])
+                        + '.\n')
+          else:
+              print('census produced no output\n')
+          PY
+
       - name: Report — timing and fonts
         env:
           LABEL_OURS: ${{ inputs.label_ours }}
