@@ -317,9 +317,19 @@ USE_SYSTEM_LIBS=(
   #     apk needs libFLAC.so.12 — see conformance/build-runner.sh comment.)
   # Use chromium's bundled third_party/{flac,ffmpeg}/ instead — matched to
   # chromium's link expectations.
+  # freetype + harfbuzz go back to bundled on top of the re-bundling above.
+  # They were kept system for packaging reasons ("shared with the rest of the
+  # image's text stack"), which is not a constraint an ephemeral CI image has,
+  # and the CfT chain diff makes them the last pure-compute libraries still
+  # outside the LTO+PGO unit. Official compiles this source inside one ThinLTO
+  # unit with the profile applied; ours links Alpine's, built at the distro's
+  # own flags (-Os is proven on libpng, see the WebKit screenshot work), with
+  # no profile and no cross-DSO inlining. `layout_text` is the row we are
+  # furthest behind on and the text stack is what it exercises.
+  #
+  # fontconfig CANNOT follow them: the bundled copy uses initstate_r/random_r,
+  # which musl does not have.
   fontconfig
-  freetype
-  harfbuzz
   libdrm
   openh264
 )
