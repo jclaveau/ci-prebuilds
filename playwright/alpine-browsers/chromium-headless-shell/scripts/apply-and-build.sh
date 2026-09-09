@@ -350,9 +350,22 @@ USE_SYSTEM_LIBS=(
   #     apk needs libFLAC.so.12 — see conformance/build-runner.sh comment.)
   # Use chromium's bundled third_party/{flac,ffmpeg}/ instead — matched to
   # chromium's link expectations.
+  # freetype + harfbuzz go back to bundled on top of the re-bundling above.
+  # They were kept system for packaging reasons ("shared with the rest of the
+  # image's text stack"), which is not a constraint an ephemeral CI image has,
+  # and they are the last pure-compute libraries still outside the LTO+PGO
+  # unit. Official compiles this source inside one ThinLTO unit with the
+  # profile applied; ours links Alpine's (gcc -O2 -flto, no profile, no
+  # cross-DSO inlining). The perf-record run 35590487107 (8573C, snapshot
+  # toolchain) puts the whole goto_warm residual on the renderer main thread
+  # and libharfbuzz.so at 1.7 ms of its 60 ms iteration; the trace names
+  # InlineNode::ShapeTextIncludingFirstLine as the only Blink phase slower in
+  # absolute ms (1.14x). The first draw of this arm read goto_cold 0.79x n=1
+  # (run 34618356217) and nobody read that row.
+  #
+  # fontconfig CANNOT follow them: the bundled copy uses initstate_r/random_r,
+  # which musl does not have.
   fontconfig
-  freetype
-  harfbuzz
   libdrm
   openh264
 )
