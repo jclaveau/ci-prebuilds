@@ -794,12 +794,44 @@ jobs:
               export NODE_PATH
               node /kernels/perf-kernel.cjs --kernel launch --target consumer-baseline \
                 --seconds 40 --warmup 4 --out /out
+              # The campaign's own instrument, in the shipped image. Its
+              # `layout` row is a DIFFERENT kernel from chromium-gap-probe's:
+              # 16,000 forced synchronous reflows of ONE element, where
+              # layout_boxonly changes a container and re-lays-out 800
+              # children. They can legitimately disagree, and until both run on
+              # one runner nobody can say whether 1.62 and 1.29 are two costs
+              # or one measurement error.
+              node /probe/runtime-probe.cjs --browser chromium --target consumer \
+                --out /out
               # `layout` shows the same split as `launch`: 1.29x here against
               # the campaign 1.62x, both on a 7763. Two rows disagreeing the
               # same way is not instrument noise, so measure the layout kernels
               # in the shipped image too rather than reasoning about why.
               node /probe/chromium-gap-probe.cjs --target consumer --out /out
             ' 2>&1 | tee gap-out/consumer-probe.log
+
+      - name: Probe — the campaign's own layout kernel, on the official arm
+        env:
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -o pipefail
+          # Without this the consumer row above has no denominator: the
+          # campaign reports ratios, and a ratio needs both arms on ONE runner.
+          docker run --rm --env HOME=/root \
+            -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/playwright/scripts:/pwscripts:ro" \
+            -v "$PWD/gap-out:/out" \
+            --env "PW_VERSION=${PW}" \
+            "$OFFICIAL" \
+            sh -c '
+              NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+              export NODE_PATH
+              node -e "require(\"playwright\")" 2>/dev/null \
+                || npm install -g --no-fund --no-audit \
+                     "playwright@$PW_VERSION" >/dev/null 2>&1
+              node /probe/runtime-probe.cjs --browser chromium \
+                --target official-runtime --out /out
+            ' 2>&1 | tee gap-out/runtime-official.log
 
       - name: Report — the shipped image against the scratch artifact
         env:
@@ -833,7 +865,7 @@ jobs:
                 'is everything the consumer image installs around it.\n')
 
           rows = [
-              ('`launch` median', 'consumer-launch-kernel.json', 'musl-baseline-launch-kernel.json',
+              ('`launch` median', 'consumer-baseline-launch-kernel.json', 'musl-baseline-launch-kernel.json',
                'median_ms', 'ms'),
               ('`--version` load', 'consumer-startup.json', 'musl-startup.json', 'load_ms', 'ms'),
           ]
@@ -882,6 +914,28 @@ jobs:
                       continue
                   print(f'| `{key}` | {a:.1f} ms | {b:.1f} ms | {c:.1f} ms | '
                         f'**{a / c:.2f}x** | {b / c:.2f}x |')
+              print()
+
+          ours_rt = load('gap-out/consumer-chromium.json')
+          off_rt = load('gap-out/official-runtime-chromium.json')
+          if ours_rt and off_rt:
+              print('\n### The campaign\'s instrument, on this runner\n')
+              print("runtime-probe's `layout` is 16,000 forced synchronous "
+                    "reflows of one element; chromium-gap-probe's "
+                    "`layout_boxonly` changes a container and re-lays-out 800 "
+                    "children. If the first reads ~1.6 here and the second "
+                    "~1.3, they are two different costs and the campaign row "
+                    "is the call-dense one — which is the shape the stack "
+                    "protector taxes hardest.\n")
+              print('| row | ours | official | ×off |')
+              print('|---|---|---|---|')
+              for key in sorted(ours_rt['metrics']):
+                  a = ours_rt['metrics'][key]['median_ms']
+                  b = (off_rt['metrics'].get(key) or {}).get('median_ms')
+                  if not b:
+                      continue
+                  print(f'| `{key}` | {a:.2f} ms | {b:.2f} ms | '
+                        f'{a / b:.2f}x |')
               print()
 
           census = load('gap-out/consumer-census.json')

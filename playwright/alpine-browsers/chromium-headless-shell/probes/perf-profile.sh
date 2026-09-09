@@ -113,6 +113,13 @@ head -40 "${OUT}/${TARGET}-${KERNEL}-dso.txt"
 # instructions slower" (cache, branches, memory) — but they are exactly what a
 # VM tends not to expose, so the hardware list is allowed to fail and the
 # software list, which cannot, is collected separately.
+#
+# How often they are refused: run 34342006293 got NO hardware PMU at all, not
+# even `cycles`, on both arms — every block came back `<not supported>`. That
+# is a property of the runner, not of the events, and it varies between runs on
+# the same label. So a counter-based claim has to check the block is populated
+# before it is quoted, and an unpopulated one means re-run, not "the counters
+# say nothing".
 HW='cycles,instructions,branches,branch-misses,cache-references,cache-misses'
 # The frontend/backend split, asked separately because it is the part most
 # likely to be absent on a VM and a single unsupported event makes perf reject
