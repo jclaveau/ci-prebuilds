@@ -23,6 +23,10 @@ RATIO_WARN = 1.30
 # Relative move of a ratio between two runs. Both runs divide out their own
 # runner, so this survives runner noise far better than a raw millisecond delta.
 DRIFT_WARN = 0.20
+# How far our arm's cross-model scaling may part from the control's before the
+# row is called CPU-sensitive. Both arms slow down on a slower machine; only one
+# of them doing so is a property of the build, not of the silicon.
+SENSITIVITY_WARN = 0.10
 
 
 def load(directory):
@@ -86,6 +90,58 @@ def ratios(browser_data):
             if control["metrics"].get(metric)
         }
     return out
+
+
+def sensitivity(current):
+    """Per arm, how each row scales from one CPU model to another.
+
+    The ×off ratio divides the runner out, which is what makes it comparable —
+    and also what hides WHICH arm moved when the ratio changes between models.
+    chromium's `layout` reads 1.61 on an EPYC 7763 and 1.27 on a 9V74, and only
+    the raw medians say that the control is flat across the two (0.97) while
+    ours is not (0.77). One is a fact about our build; the ratio alone cannot
+    tell them apart.
+
+    Both arms of a draw share a machine, so their ms are directly comparable
+    within a model; across models they are not, which is exactly the quantity
+    measured here.
+    """
+    by_browser = {}
+    for (browser, cpu), data in current.items():
+        by_browser.setdefault(browser, {})[cpu] = data
+
+    lines = []
+    for browser, models in sorted(by_browser.items()):
+        if len(models) < 2:
+            continue
+        base, *others = sorted(models)
+        lines += [f"### {browser} — CPU-model sensitivity", "",
+                  f"Each arm against its own median on `{base}`. `⚡` marks a row whose "
+                  f"scaling parts between the two arms by more than "
+                  f"{SENSITIVITY_WARN:.0%}: both slow down on a slower machine, and only "
+                  "one of them doing so is a property of the build. One draw per model "
+                  "can part on noise alone, so this is a pointer to check, not a "
+                  "verdict — read the arm's own samples before believing it.", ""]
+        targets = sorted(models[base])
+        for model in others:
+            lines += [f"**`{model}` ÷ `{base}`**", ""]
+            lines.append("| metric | " + " | ".join(targets) + " |")
+            lines.append("|" + "---|" * (len(targets) + 1))
+            for metric in sorted(models[base].get(CONTROL, {}).get("metrics", {})):
+                scaled = {}
+                for target in targets:
+                    was = models[base].get(target, {}).get("metrics", {}).get(metric)
+                    now = models[model].get(target, {}).get("metrics", {}).get(metric)
+                    scaled[target] = now / was if was and now else None
+                ours = [v for t, v in scaled.items() if t != CONTROL and v]
+                control = scaled.get(CONTROL)
+                parted = (control and ours
+                          and max(abs(v - control) for v in ours) > SENSITIVITY_WARN)
+                cells = [f"{scaled[t]:.2f}" if scaled[t] else "—" for t in targets]
+                lines.append(f"| `{metric}`{' ⚡' if parted else ''} | "
+                             + " | ".join(cells) + " |")
+            lines.append("")
+    return lines
 
 
 def render(current, previous):
@@ -168,6 +224,7 @@ def render(current, previous):
         )
         lines += ["", versions, ""]
 
+    lines += sensitivity(current)
     lines += _footer(current)
     return "\n".join(lines) + "\n"
 
@@ -186,7 +243,7 @@ def _footer(current):
         "| `eval_rtt` | 500 trivial `page.evaluate` round trips. Multiplied by every Playwright action. |",
         "| `locator_click` | 100 `locator.click()` calls with full actionability. Frame-cadence bound, so a healthy build pins to a whole number of frames (chromium 33.3ms/click = 2 frames at 60Hz) regardless of libc or CPU. It only moves when a build misses its frame budget. |",
         "| `click_force` | The same 100 clicks with `force`, which skips the visible/stable/enabled waiting. No frame quantization left: this is the injected query + hit test + event dispatch. |",
-        "| `screenshot` | 10 viewport PNGs — Playwright's default, and what `screenshot: 'only-on-failure'` captures. |",
+        "| `screenshot` | 10 viewport PNGs — Playwright's default, and what `screenshot: 'only-on-failure'` captures. On chromium and webkit the capture waits on a frame commit, so per-shot cost quantizes to whole 60Hz frames (50.0ms = 3) and the ratio steps between small integer quotients rather than moving continuously: 1.00 is both arms inside the same frame budget, 0.66 is two frames against three. Only firefox measures speed here. |",
         "| `layout` | 2000 forced synchronous reflows in-page. The DCHECK canary, and by far the most sensitive metric here: the accidental debug build measured 110x. |",
         "| `dom_churn` | 20000 create/append/remove in-page. 5.3x on the same build. |",
         "| `js_alloc` | 2M short-lived object allocations in-page. |",
