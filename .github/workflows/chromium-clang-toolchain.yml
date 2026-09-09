@@ -43,9 +43,11 @@ jobs:
       - id: pins
         run: |
           V='${{ inputs.llvm_version }}'
-          echo "llvm_version=$V"        >> "$GITHUB_OUTPUT"
-          echo "llvm_major=${V%%.*}"    >> "$GITHUB_OUTPUT"
-          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/chs-clang:${V}-alpine" >> "$GITHUB_OUTPUT"
+          {
+            echo "llvm_version=$V"
+            echo "llvm_major=${V%%.*}"
+            echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/chs-clang:${V}-alpine"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Free up runner disk (an LLVM build tree is ~20 GB)
         run: |
@@ -86,12 +88,14 @@ jobs:
 
       - name: Report
         run: |
-          echo "### clang toolchain" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- image: \`${{ steps.pins.outputs.image }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- reused existing: \`${{ steps.exists.outputs.hit }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Consume it from a setup stage with:" >> "$GITHUB_STEP_SUMMARY"
-          echo '```dockerfile' >> "$GITHUB_STEP_SUMMARY"
-          echo "COPY --from=${{ steps.pins.outputs.image }} /usr/lib/llvm${{ steps.pins.outputs.llvm_major }} /usr/lib/llvm${{ steps.pins.outputs.llvm_major }}" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### clang toolchain"
+            echo ""
+            echo "- image: \`${{ steps.pins.outputs.image }}\`"
+            echo "- reused existing: \`${{ steps.exists.outputs.hit }}\`"
+            echo ""
+            echo "Consume it from a setup stage with:"
+            echo '```dockerfile'
+            echo "COPY --from=${{ steps.pins.outputs.image }} /usr/lib/llvm${{ steps.pins.outputs.llvm_major }} /usr/lib/llvm${{ steps.pins.outputs.llvm_major }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
