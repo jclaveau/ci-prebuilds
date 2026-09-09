@@ -869,6 +869,23 @@ jobs:
             "$CONSUMER" /out/consumer-nofs.sh 2>&1 \
             | tee gap-out/consumer-nofs.log
 
+          # The two passes run back to back in one job, so a monotonic drift
+          # over the job's lifetime — a warming runner, a noisy neighbour —
+          # would land entirely on whichever ran second and read as an effect
+          # of the switch. Repeating the shim-ON pass AFTER the shim-OFF one
+          # makes the order ON, OFF, ON: any linear drift cancels when the OFF
+          # pass is compared against the mean of the two ON passes, and the two
+          # ON passes disagreeing with each other is itself the warning that
+          # the job was too noisy to read.
+          sed 's/consumer-nofaststring/consumer-repeat/g' \
+            gap-out/consumer-nofs.sh > gap-out/consumer-repeat.sh
+          docker run --rm --user root --entrypoint sh \
+            -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/playwright/scripts:/pwscripts:ro" \
+            -v "$PWD/gap-out:/out" \
+            "$CONSUMER" /out/consumer-repeat.sh 2>&1 \
+            | tee gap-out/consumer-repeat.log
+
       - name: Probe — the campaign's own layout kernel, on the official arm
         env:
           PW: ${{ inputs.pw_version }}
@@ -995,15 +1012,27 @@ jobs:
                     'back to musl. Every other measurement of this shim '
                     'preloaded it over the scratch artifact, which is a '
                     'different build.\n')
-              print('| kernel | shipped | shim off | official | \u00d7off | off \u00d7off |')
-              print('|---|---|---|---|---|---|')
+              rep = load('gap-out/consumer-repeat-gap.json')
+              print('| kernel | shim on | shim off | on again | official '
+                    '| on \u00d7off | off \u00d7off |')
+              print('|---|---|---|---|---|---|---|')
               for key in ('layout_boxonly', 'layout_text', 'typed_array_fill',
                           'typed_array_move'):
                   a, b, c = ms(ship, key), ms(nofs, key), ms(off, key)
                   if not (a and b and c):
                       continue
-                  print(f'| `{key}` | {a:.1f} ms | {b:.1f} ms | {c:.1f} ms | '
-                        f'**{a / c:.2f}x** | {b / c:.2f}x |')
+                  r = ms(rep, key)
+                  # Compare OFF against the MEAN of the two ON passes so a
+                  # drift across the job cancels instead of reading as effect.
+                  on = (a + r) / 2 if r else a
+                  again = f'{r:.1f} ms' if r else '\u2014'
+                  print(f'| `{key}` | {a:.1f} ms | {b:.1f} ms | {again} | '
+                        f'{c:.1f} ms | **{on / c:.2f}x** | {b / c:.2f}x |')
+              if rep:
+                  print('\nThe two shim-on passes bracket the shim-off one in '
+                        'time. Where they disagree with each other by more '
+                        'than the on/off difference, the job was too noisy and '
+                        'the row says nothing.\n')
               print('\nThe two `typed_array_*` rows are the control: V8 never '
                     'calls libc for them, so the shim must not move them.\n')
 
