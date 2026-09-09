@@ -200,7 +200,27 @@ chrome_pgo_phase = 2
 enable_vr = false                          # no VR/XR
 disable_fieldtrial_testing_config = true   # skip field-trial test configs
 enable_nocompile_tests = false             # no nocompile testing
-is_cfi = false                             # CFI off (no IFUNC support on alpine clang)
+# CFI PARITY CANDIDATE — not a shipping change.
+#
+# `build/config/sanitizers/sanitizers.gni` defaults
+#   is_cfi = is_official_build && is_clang && target_os == "linux" && target_cpu == "x64"
+#   use_cfi_icall = target_os == "linux" && target_cpu == "x64" && is_official_build
+# so Chrome for Testing — the binary every ratio in this campaign is measured
+# against — carries BOTH, and we carry neither. That divergence runs in our
+# favour: official pays for checks we skip. Which means our 12% geomean and 61%
+# layout residual are measured against an arm already handicapped by an unknown
+# amount, and the true codegen deficit is larger than the numbers say.
+#
+# This arm prices that handicap. If turning CFI on costs us X%, official is
+# carrying X% and the real gap is the residual plus X. It is diagnostic only —
+# nothing here is meant to ship, because shipping it would move us AWAY from
+# parity on every row.
+#
+# The comment this replaces claimed alpine clang has no IFUNC support. That was
+# never verified on an artifact, and if it is true this arm fails at link in r1
+# and costs five hours to find out.
+is_cfi = true
+use_cfi_icall = true
 use_thin_lto = true                        # see the PGO block above; measured together
 fatal_linker_warnings = false              # match aports — alpine's lld trips a few warnings
 safe_browsing_use_unrar = false            # no unrar (we don't ship)
