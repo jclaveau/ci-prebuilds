@@ -143,3 +143,17 @@ both the screenshot residual and the 12% geomean residual are waiting on, and
 could change what goes into that 25-30 h build. Blocked locally
 (`perf_event_paranoid=4`, [[reference_jean_no_passwordless_sudo]]) so it wants a
 CI dispatch. [[project_chromium_residual_gap_candidates]]
+
+**The trim's BUILD cost, priced 2026-09-09 from ninja's own counter.** Round 2
+of each chain reports its target total: main (SSP-parity) 22,275, the
+`perf/chromium-unbundle-libs` chain **23,677**. So dropping the libraries from
+`USE_SYSTEM_LIBS` adds **1,402 targets, +6.3%** — chromium compiling its own
+zlib/brotli/libxml2/etc. instead of linking Alpine's. That is far cheaper than
+feared and does not threaten the round budget.
+
+Read a chain's ETA the same way rather than guessing: `gh api
+.../actions/jobs/<id>/logs | grep -oE "\[[0-9]+/[0-9]+\]" | tail -1`. Rounds are
+boxed near 5h10m, r1 did 7,899 targets and r2 4,887 (later TUs are bigger), so
+~946/h against 17,388 remaining puts a cold chain at **five or six rounds, not
+the configured twelve** — the max exists for headroom, and quoting 12 x 5h as
+the ETA overstates it by two days.
