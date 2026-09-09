@@ -98,8 +98,8 @@ on:
         default: 'jclaveau/alpine-dood-playwright:latest'
         type: string
       perf_kernels:
-        description: 'perf-record arm, CSV: screenshot_png_text, screenshot_png, screenshot_jpeg, layout_boxonly, layout_text'
-        default: 'screenshot_png_text,screenshot_png,screenshot_jpeg,layout_boxonly'
+        description: 'perf-record arm, CSV: screenshot_png_text, screenshot_png, screenshot_jpeg, layout_boxonly, layout_text, layout_reflow'
+        default: 'screenshot_png_text,screenshot_png,screenshot_jpeg,layout_boxonly,layout_reflow'
         type: string
       perf_loop_seconds:
         description: 'perf-record arm: how long each kernel loops in steady state'

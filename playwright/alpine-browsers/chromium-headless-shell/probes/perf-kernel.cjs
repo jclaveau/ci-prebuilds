@@ -94,6 +94,23 @@ const DOM_HTML = `<!doctype html>
   body { margin: 0; font: 12px/1.2 sans-serif; }
 </style></head><body><div id="host"></div></body></html>`;
 
+const REFLOW_HTML = `<!doctype html>
+<html><head><meta charset="utf-8"><title>perf-kernel</title><style>
+  body { margin: 0; font: 12px/1.2 sans-serif; }
+  #pad div { padding: 1px 2px; border-bottom: 1px solid #eee; }
+  #layout { height: 20px; background: #ccc; }
+</style></head><body>
+<div id="layout"></div>
+<div id="pad"></div>
+<script>
+  const pad = document.getElementById('pad');
+  for (let i = 0; i < 800; i++) {
+    const d = document.createElement('div');
+    d.textContent = 'row ' + i;
+    pad.appendChild(d);
+  }
+</script></body></html>`;
+
 // Same 800 rows / 300 forced reflows as chromium-gap-probe.cjs, so a profile
 // taken here describes the kernel whose ratio is already on record rather than
 // a differently-shaped one.
@@ -172,6 +189,32 @@ const KERNELS = {
       const r = await page.evaluate(
         `(${layoutKernel("d.style.cssText = 'height:6px;margin:1px;background:#ddd';")})()`,
       );
+      return { ms: r.ms, tag: `checksum=${r.checksum}` };
+    },
+  },
+
+  // runtime-probe.cjs's `layout` row, which is NOT layout_boxonly and does not
+  // measure the same thing. On one EPYC 7763 (run 34357346361) the campaign
+  // row reads 1.52x while layout_boxonly reads 1.27x — same machine, same run,
+  // so they are two costs rather than one measurement error. The difference is
+  // shape: layout_boxonly does 300 reflows that each re-lay-out 800 children,
+  // so it is bound by layout THROUGHPUT, while this one does 16,000 reflows of
+  // a single bare div, so it is bound by the FIXED cost of entering a forced
+  // synchronous reflow. 1.52x is chromium's worst row and nothing could
+  // profile it until this kernel existed.
+  layout_reflow: {
+    page: REFLOW_HTML,
+    run: async (page) => {
+      const r = await page.evaluate(`(() => {
+        const el = document.getElementById('layout');
+        const t0 = performance.now();
+        let acc = 0;
+        for (let i = 0; i < 16000; i++) {
+          el.style.width = (100 + (i % 200)) + 'px';
+          acc += el.offsetHeight;
+        }
+        return { ms: performance.now() - t0, checksum: acc };
+      })()`);
       return { ms: r.ms, tag: `checksum=${r.checksum}` };
     },
   },
