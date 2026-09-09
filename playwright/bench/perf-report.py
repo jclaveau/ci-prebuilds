@@ -26,15 +26,23 @@ DRIFT_WARN = 0.20
 
 
 def load(directory):
-    """{browser: {target: {metric: median_ms}}} from every <target>-<browser>*.json.
+    """{(browser, cpu): {target: {metric: median_ms}}} from every probe JSON.
 
-    A (browser, target) pair may be measured more than once — `perf_runs` re-runs
-    the whole probe container, which is the only way to average out the noise
-    that lives between container starts rather than inside one browser session.
-    Each repetition lands in its own file, and this medians across them.
+    A (browser, target) pair may be measured more than once — `runs` re-runs the
+    whole probe container, which is the only way to average out the noise that
+    lives between container starts rather than inside one browser session. Each
+    repetition lands in its own file, and this medians across them.
 
     Keying straight into a dict here would have let the last file win silently,
     reporting one draw while the run had paid for several.
+
+    The runner CPU model is part of the key, not decoration. A run can now fan
+    out several independent draws per browser, and the alpine/official ratio
+    itself moves with the silicon — chromium's `layout` and `screenshot` swap
+    which one is worse between EPYC 9V74 and EPYC 7763. Medianing across models
+    would average two different populations into a number describing neither.
+    Both arms of a draw share a job, hence a machine, so this key never splits a
+    pair.
     """
     collected = {}
     metas = {}
@@ -46,16 +54,17 @@ def load(directory):
             continue
         if "metrics" not in doc or "browser" not in doc or "target" not in doc:
             continue
-        key = (doc["browser"], doc["target"])
+        cpu = doc.get("runner", {}).get("cpu") or "unknown CPU"
+        key = (doc["browser"], cpu, doc["target"])
         metas.setdefault(key, doc)
         for metric, value in doc["metrics"].items():
             collected.setdefault(key, {}).setdefault(metric, []).append(
                 value["median_ms"]
             )
     out = {}
-    for (browser, target), per_metric in collected.items():
-        out.setdefault(browser, {})[target] = {
-            "meta": metas[(browser, target)],
+    for (browser, cpu, target), per_metric in collected.items():
+        out.setdefault((browser, cpu), {})[target] = {
+            "meta": metas[(browser, cpu, target)],
             "runs": max(len(v) for v in per_metric.values()),
             "metrics": {k: statistics.median(v) for k, v in per_metric.items()},
         }
@@ -88,18 +97,25 @@ def render(current, previous):
         "up in one run), so a control on a sibling runner is not a control. That holds",
         "for a SECOND image of ours too (`alpine-b`, from perf-probe's `image_b`): an",
         "arm and the shipped build share the machine here, rather than being differenced",
-        "across two workflow runs. `assert-one-machine.py` checks it per browser instead",
+        "across two workflow runs. `assert-one-machine.py` checks it per draw instead",
         "of trusting the arrangement.",
         "**Observe-only** — nothing here gates a merge. Read the `×off` columns, not the",
         f"milliseconds. `⚠` marks a ratio above {RATIO_WARN:.2f}x;",
         f"`🔺`/`🔻` mark a ratio that moved more than {DRIFT_WARN:.0%} since the previous",
         "successful run on `main`.",
         "",
+        "One section per browser **and CPU model**. A run can fan out several",
+        "independent draws per browser, and the ratio does not carry across silicon —",
+        "chromium's two worst rows, `layout` and `screenshot`, swap which one is worse",
+        "between an EPYC 9V74 and an EPYC 7763. Averaging the models would produce a",
+        "number describing neither. For the same reason `Δ×` only fills in when the",
+        "previous run also drew that model.",
+        "",
     ]
 
-    for browser in sorted(current):
-        data = current[browser]
-        lines += [f"### {browser}", ""]
+    for browser, cpu in sorted(current):
+        data = current[(browser, cpu)]
+        lines += [f"### {browser} — `{cpu}`", ""]
 
         control = data.get(CONTROL)
         if not control:
@@ -111,7 +127,7 @@ def render(current, previous):
 
         targets = [t for t in sorted(data) if t != CONTROL]
         now = ratios(data)
-        before = ratios(previous.get(browser, {})) if previous else {}
+        before = ratios(previous.get((browser, cpu), {})) if previous else {}
 
         header = ["metric"]
         if control:
@@ -157,13 +173,7 @@ def render(current, previous):
 
 
 def _footer(current):
-    runners = sorted(
-        {
-            d["meta"]["runner"]["cpu"]
-            for data in current.values()
-            for d in data.values()
-        }
-    )
+    runners = sorted({cpu for _, cpu in current})
     return [
         "<details><summary>What each metric measures</summary>",
         "",
