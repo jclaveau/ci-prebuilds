@@ -876,7 +876,18 @@ jobs:
               return out
 
 
-          print('## What the SHIPPED image adds to a launch\n')
+          # The runner model decides which rows are even comparable: `layout`
+          # reads 1.62x on a 7763 and 1.24-1.28x on every other model drawn, so
+          # a table without its CPU beside it cannot be filed against either.
+          cpu = 'unknown'
+          for probe in ('gap-out/consumer-chromium.json',
+                        'gap-out/musl-baseline-launch-kernel.json'):
+              d = load(probe)
+              if d and d.get('runner', {}).get('cpu'):
+                  cpu = d['runner']['cpu']
+                  break
+          print(f'## What the SHIPPED image adds to a launch\n')
+          print(f'Runner: **{cpu}**.\n')
           print('Same binary, same runner, same instruments — the only variable '
                 'is everything the consumer image installs around it.\n')
 
