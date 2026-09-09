@@ -51,3 +51,21 @@ render different glyphs" is not a property a parity benchmark should have.
 the font checked first — `fc-match` plus one `getBoundingClientRect().width` on
 a fixed string costs seconds and is noise-free.
 [[project_runtime_perf_probe]], [[feedback_verify_ab_varied_the_variable]]
+
+**REFUTED for chromium `layout_text`, run 34347324868 (Xeon 6973P-C).** The
+gap probe ran four legs in one run and the font hypothesis does not survive
+either of the two tests it offers.
+
+| leg | sans-serif | serif | monospace | layout_text ×off |
+|---|---|---|---|---|
+| official | 245.534 | 224.57 | 331.203 | 1.00 |
+| consumer image | **245.534** | **224.57** | **331.203** | **1.14** |
+| from-source artifact | 252.105 | 229.617 | 331.203 | 1.14 |
+| artifact + noble fonts | 252.105 | 229.617 | 276 | **1.23** |
+
+The consumer image resolves text **byte-identically to official** and still
+reads 1.14x — two different font resolutions landing on one ratio. And the
+`-noble-fonts` leg is not a control: installing noble's fonts moved only
+monospace, never reached parity on sans/serif, and made `layout_text` 8%
+WORSE. Do not re-propose fonts for chromium layout; if the leg is kept, fix it
+to assert parity on all three families before reading its timing.

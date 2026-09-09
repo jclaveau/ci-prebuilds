@@ -35,3 +35,34 @@ about the code; check whether they failed at the same clock time first.
 on each restarts only the failed jobs in place
 ([[project_gh_run_rerun_single_job]]), and the re-run pair lands in a new shared
 window, which is what the comparison needs anyway.
+
+**Two more instances, same session (2026-09-08), same tell (the clock):**
+
+- Webkit conformance shard 4's runner-image build failed with
+  `ERROR: Dependency "nice" not found (tried pkg-config)` — gst-plugins-bad
+  rejecting libnice, it looked like. Requirement was `>=0.1.23`, the stage
+  builds exactly `0.1.23`, and the whole recipe reproduced clean locally. The
+  giveaway: the meson error fired **8.5 s** into the step, far too fast for
+  libnice to have actually compiled — so the libnice half never ran. Cause:
+  the fetch leg one step up uses `curl | tar`, which swallows a dropped/empty
+  body with busybox tar instead of failing; the sibling gst-plugins-bad fetch
+  right below it had already been hardened for exactly this in August, this
+  one never was. Fixed in #169 (file + `gzip -t` + retry +
+  `pkg-config --atleast-version` assert). This failure also blocked
+  `promote-webkit` that day — a THIRD distinct blocking mechanism alongside
+  the three fixed in [[project_wk_promote_gate_holds_the_nightly_bench]] and
+  the GTK-off non-issue — confirming again that promote's gate reads whatever
+  conformance reports, with no bias toward "it must be GTK."
+- Firefox conformance shard 14 read as a regression on main
+  (`conformance-firefox` summary + promote both red) but was
+  `npm error code ECONNRESET` inside an `npm install -g` — no test ever ran.
+  Found 4 such `npm install -g` sites in the conformance runner with **zero**
+  retry configured (npm's own default is 2 attempts / 10 s ceiling, thin
+  against a 20-shard fan-out hitting the registry at once). Fixed in #173
+  (added npm's built-in retry flag to all four).
+
+**Pattern for idle time:** when parked waiting on a long dispatch, sweeping
+main for unrelated red bars keeps finding these — three separate disguised
+network failures surfaced in a single session, none of them a real
+regression. Read the failing step's output before spending time on the
+"regression."
