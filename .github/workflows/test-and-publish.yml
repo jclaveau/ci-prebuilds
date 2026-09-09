@@ -27,6 +27,10 @@ on:
       # every image again because a measurement was recorded would make the
       # record more expensive than the thing it measures.
       - 'metrics/**'
+      # Memory files are no image input, and pushing one cancels the publish
+      # still running for the commit before it — the concurrency group is
+      # per-ref, so three memory commits in a row left one real build alive.
+      - '.agents/**'
   pull_request:
     branches: [ main ]
     paths-ignore:
@@ -37,6 +41,10 @@ on:
       - '!playwright/alpine-browsers/chromium-headless-shell/faststring/**'
       - '.github/workflows/playwright-alpine-browsers.yml'
       - 'metrics/**'
+      # Memory files are no image input, and pushing one cancels the publish
+      # still running for the commit before it — the concurrency group is
+      # per-ref, so three memory commits in a row left one real build alive.
+      - '.agents/**'
   # Reusable entry point: lets `on-demand-build.yml` (issue-triggered) call
   # this workflow with version overrides + matrix filters. Every input defaults
   # to empty / `true` so the push/PR path is byte-identical to today (verified
