@@ -39,3 +39,37 @@ block #198 — the same commit edits `playwright/Dockerfile.alpine`, which is
 outside the ignored prefix and dragged the build in — but a faststring-only
 follow-up would have been the #167 shape exactly.
 [[project_tp_paths_ignore_ships_nothing]]
+
+**RETRACTED 2026-09-09 — measured in the shipped image, the shim is a net loss
+and the layout_text win does not exist.** Everything above was measured by
+preloading the shim over the artifact at `image_ours`, which is a DIFFERENT
+build from the consumer image: on a Xeon 8573C (run 34352337495) the two read
+`layout_text` **1.40x and 1.14x** against the same official arm on the same
+runner. A delta measured on one says nothing about the other.
+
+`libfaststring.so` reads `CHS_FAST_STRING` at load, so the published binary is
+its own control. Runs 34355411280 (Xeon 8370C) and 34357346361 (EPYC 7763,
+passes ordered on/off/on):
+
+| row | shim on | shim off |
+|---|---|---|
+| `launch` 7763 | **1.43x** | 1.36x |
+| `launch` 8370C | **1.35x** | 1.28x |
+| `layout_text` 7763 | 1.30x | 1.29x |
+
+`launch` is worse with the shim on BOTH machines, and it is the row we are
+furthest behind on. Mechanism: a preload adds a DSO, and `launch` is bound by
+the closure — musl binds every symbol in every object, so a 66th object costs.
+[[project_chromium_launch_is_the_musl_loader]] Unloaded in PR #201; source and
+gate kept, because the kernels have no size threshold — under 32 bytes they run
+a byte-at-a-time tail where musl copies words.
+
+**The trap that nearly caused a wrong revert.** The FIRST self-control run was
+unbracketed — shim-on pass then shim-off pass, in sequence — and reported the
+`typed_array` controls 34-37% WORSE with the shim, which read as a serious
+regression with a tidy code-level explanation ready to hand. Bracketed, the
+same kernel is 44% FASTER with it. A pair of passes run back to back in one job
+cannot separate the variable from drift over the job; run the first arm again
+afterwards and compare against the mean, and treat the two same-arm passes
+disagreeing by more than the effect as "this job says nothing".
+[[feedback_verify_ab_varied_the_variable]]
