@@ -826,6 +826,49 @@ jobs:
             -v "$PWD/gap-out:/out" \
             "$CONSUMER" /out/consumer-probe.sh 2>&1 | tee gap-out/consumer-probe.log
 
+      - name: Probe — the shipped image with its own string shim switched off
+        env:
+          CONSUMER: ${{ inputs.consumer_image }}
+        run: |
+          set -o pipefail
+          # The only self-control this campaign has. Every other comparison of
+          # the string shim ran it as an LD_PRELOAD over the scratch artifact,
+          # which is a DIFFERENT build from the one we ship — on a Xeon 8573C
+          # the two read `layout_text` 1.40x and 1.14x, so a win measured on
+          # the artifact says little about the image. `libfaststring.so` reads
+          # CHS_FAST_STRING at load and falls back to musl when it is 0, so
+          # this leg is the shipped binary against itself with one variable.
+          cat > gap-out/consumer-nofs.sh <<'SH'
+          set -eu
+
+          # Without this the leg is vacuous in the one way that matters: if the
+          # published image predates the shim, both passes run the same code
+          # and the report prints "no effect" for a shim that was never there.
+          # Assert it is installed AND wired into the launch shim before
+          # spending twenty minutes measuring nothing.
+          [ -f /usr/lib/libfaststring.so ] \
+            || { echo "no libfaststring.so in this image" >&2; exit 1; }
+          shim=$(ls -d /ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell | head -1)
+          grep -q libfaststring "$shim" \
+            || { echo "libfaststring.so present but not preloaded by $shim" >&2
+                 cat "$shim" >&2; exit 1; }
+          echo "shim wired: $(grep -o 'LD_PRELOAD=[^ ]*' "$shim")"
+
+          NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+          export NODE_PATH
+          node /probe/runtime-probe.cjs --browser chromium \
+            --target consumer-nofaststring --out /out
+          node /probe/chromium-gap-probe.cjs --target consumer-nofaststring --out /out
+          SH
+
+          docker run --rm --user root --entrypoint sh \
+            --env CHS_FAST_STRING=0 \
+            -v "$PWD/playwright/bench:/probe:ro" \
+            -v "$PWD/playwright/scripts:/pwscripts:ro" \
+            -v "$PWD/gap-out:/out" \
+            "$CONSUMER" /out/consumer-nofs.sh 2>&1 \
+            | tee gap-out/consumer-nofs.log
+
       - name: Probe — the campaign's own layout kernel, on the official arm
         env:
           PW: ${{ inputs.pw_version }}
@@ -943,6 +986,27 @@ jobs:
                         f'**{a / c:.2f}x** | {b / c:.2f}x |')
               print()
 
+          nofs = load('gap-out/consumer-nofaststring-gap.json')
+          nofs_rt = load('gap-out/consumer-nofaststring-chromium.json')
+          if ship and nofs and off:
+              print('\n### What the string shim is worth in the image we ship\n')
+              print('Both columns are the SAME published binary on the same '
+                    'runner; the right one has `CHS_FAST_STRING=0`, so it falls '
+                    'back to musl. Every other measurement of this shim '
+                    'preloaded it over the scratch artifact, which is a '
+                    'different build.\n')
+              print('| kernel | shipped | shim off | official | \u00d7off | off \u00d7off |')
+              print('|---|---|---|---|---|---|')
+              for key in ('layout_boxonly', 'layout_text', 'typed_array_fill',
+                          'typed_array_move'):
+                  a, b, c = ms(ship, key), ms(nofs, key), ms(off, key)
+                  if not (a and b and c):
+                      continue
+                  print(f'| `{key}` | {a:.1f} ms | {b:.1f} ms | {c:.1f} ms | '
+                        f'**{a / c:.2f}x** | {b / c:.2f}x |')
+              print('\nThe two `typed_array_*` rows are the control: V8 never '
+                    'calls libc for them, so the shim must not move them.\n')
+
           ours_rt = load('gap-out/consumer-chromium.json')
           off_rt = load('gap-out/official-runtime-chromium.json')
           if ours_rt and off_rt:
@@ -954,15 +1018,18 @@ jobs:
                     "~1.3, they are two different costs and the campaign row "
                     "is the call-dense one — which is the shape the stack "
                     "protector taxes hardest.\n")
-              print('| row | ours | official | ×off |')
-              print('|---|---|---|---|')
+              print('| row | ours | official | ×off | shim off ×off |')
+              print('|---|---|---|---|---|')
               for key in sorted(ours_rt['metrics']):
                   a = ours_rt['metrics'][key]['median_ms']
                   b = (off_rt['metrics'].get(key) or {}).get('median_ms')
                   if not b:
                       continue
+                  n = ((nofs_rt or {}).get('metrics', {})
+                       .get(key, {}).get('median_ms'))
+                  extra = f' {n / b:.2f}x |' if n else ' \u2014 |'
                   print(f'| `{key}` | {a:.2f} ms | {b:.2f} ms | '
-                        f'{a / b:.2f}x |')
+                        f'{a / b:.2f}x |' + extra)
               print()
 
           census = load('gap-out/consumer-census.json')
