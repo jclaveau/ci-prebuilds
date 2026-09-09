@@ -444,19 +444,40 @@ RUN sudo touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_CO
 # chromium has no launch shim of its own — playwright execs the binary
 # directly — so the container-wide LD_PRELOAD above would reach it and silently
 # put mimalloc under PartitionAlloc. Every earlier decision in this file
-# deliberately left chromium's allocator alone, so the shim REPLACES that
-# preload rather than adding to it: libfaststring.so and nothing else.
+# deliberately left chromium's allocator alone, so the shim CLEARS that preload
+# rather than adding to it.
 #
-# The five string routines are the one thing chromium does import from musl
-# (`nm -D`: undefined 1 against official's 0), and musl links a single
-# implementation where glibc picks an AVX2 one at load. mimalloc stays out,
-# because PartitionAlloc already answers every allocation here.
+# libfaststring.so is built and shipped but deliberately NOT loaded. Measured
+# in the published image against ITSELF via `CHS_FAST_STRING=0`, twice, with
+# the passes ordered on/off/on so a drift over the job cancels:
+#
+#   run 34355411280, Xeon 8370C, unbracketed
+#   run 34357346361, EPYC 7763, bracketed
+#
+# What holds across both is `launch`: 1.43x with the shim against 1.36x
+# without on the 7763, 1.35x against 1.28x on the 8370C. Adding a library adds
+# a DSO to the closure, and the closure is precisely what `launch` is bound by
+# here — musl resolves every symbol in every object at load, so a 66th object
+# is not free. Meanwhile `layout_text`, the row it was merged for, is flat
+# once bracketed (1.30 against 1.29, inside the spread of the two on passes).
+#
+# So it costs the row we are furthest behind on and buys nothing measurable.
+#
+# The 1.14 -> 1.09 reading that justified merging it came from preloading it
+# over the artifact at `image_ours`, which is a DIFFERENT build from the one
+# we ship — on a Xeon 8573C those two read `layout_text` 1.40x and 1.14x.
+#
+# Left in the tree rather than deleted: the kernels vectorise 32 bytes at a
+# time and finish with a byte-at-a-time tail with no size threshold, so a call
+# under 32 bytes runs that byte loop where musl would copy whole words. Fixing
+# that is worth a try, and the self-control leg in chromium-gap-probes.yml is
+# the gate any re-landing has to pass first.
 RUN CHS=/ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64 \
  && sudo mv "$CHS/chrome-headless-shell" "$CHS/chrome-headless-shell.real" \
  && printf '%s\n' \
         '#!/bin/sh' \
         'DIR="$(dirname "$0")"' \
-        'export LD_PRELOAD=/usr/lib/libfaststring.so' \
+        'unset LD_PRELOAD' \
         'exec "$DIR/chrome-headless-shell.real" "$@"' \
   | sudo tee "$CHS/chrome-headless-shell" >/dev/null \
  && sudo chmod +x "$CHS/chrome-headless-shell"
