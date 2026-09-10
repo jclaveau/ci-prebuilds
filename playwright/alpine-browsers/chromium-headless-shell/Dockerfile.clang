@@ -59,6 +59,7 @@ RUN cmake -S llvm-project/llvm -B build -G Ninja \
       -DLLVM_ENABLE_RUNTIMES="compiler-rt" \
       -DLLVM_TARGETS_TO_BUILD=X86 \
       -DLLVM_DEFAULT_TARGET_TRIPLE=x86_64-alpine-linux-musl \
+      -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=OFF \
       -DLLVM_HOST_TRIPLE=x86_64-alpine-linux-musl \
       -DLLVM_ENABLE_ASSERTIONS=OFF \
       -DLLVM_ENABLE_ZLIB=ON \
@@ -91,14 +92,28 @@ RUN cmake --build build --target install -- -j "$(nproc)"
 # Prove the thing runs and targets musl BEFORE it is published — a toolchain
 # image that only fails when a 38 h chromium chain reaches r1 is the expensive
 # way to learn this.
+# Verify by LINKING, not only by compiling. The first cut of this file checked
+# `clang --version`, the target triple, a `-c` compile and `ld.lld --version`,
+# all of which passed on an image whose compiler-rt was unusable by Chromium:
+# LLVM defaults LLVM_ENABLE_PER_TARGET_RUNTIME_DIR=ON, which puts the builtins
+# at lib/clang/23/lib/x86_64-alpine-linux-musl/libclang_rt.builtins.a while
+# Chromium's build expects Alpine's layout, lib/clang/23/lib/linux/
+# libclang_rt.builtins-x86_64.a. Nothing short of a link touches that file, so
+# run 34405297193 burned twelve rounds discovering it. Assert the path AND link
+# through it.
 RUN set -eux; \
     B="/usr/lib/llvm${LLVM_MAJOR}/bin"; \
+    L="/usr/lib/llvm${LLVM_MAJOR}/lib/clang/${LLVM_MAJOR}/lib/linux"; \
     "$B/clang" --version; \
     "$B/clang" -print-target-triple | grep -q musl; \
+    test -f "$L/libclang_rt.builtins-x86_64.a"; \
     printf 'int f(int*p){return *p;}\n' > /tmp/t.c; \
     "$B/clang" -O2 -c /tmp/t.c -o /tmp/t.o; \
     "$B/llvm-nm" /tmp/t.o >/dev/null; \
-    "$B/ld.lld" --version
+    "$B/ld.lld" --version; \
+    printf 'int main(void){return 0;}\n' > /tmp/m.c; \
+    "$B/clang" -O2 -fuse-ld=lld -rtlib=compiler-rt /tmp/m.c -o /tmp/m; \
+    /tmp/m
 
 FROM alpine:edge
 ARG LLVM_VERSION
