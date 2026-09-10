@@ -265,10 +265,28 @@ fi
 # in blink + libxml chromium glue. See crbug.com/893950. Without it, builds
 # error against libxml's symbol export differences with the system libxml.
 echo "  libxml malloc/free fix"
+XML_MALLOC_FILES=(
+  third_party/blink/renderer/core/xml/*.cc
+  third_party/blink/renderer/core/xml/parser/xml_document_parser.cc
+  third_party/libxml/chromium/*.cc
+)
 sed -i -e 's/\<xmlMalloc\>/malloc/g' -e 's/\<xmlFree\>/free/g' \
-  third_party/blink/renderer/core/xml/*.cc \
-  third_party/blink/renderer/core/xml/parser/xml_document_parser.cc \
-  third_party/libxml/chromium/*.cc 2>/dev/null || true
+  "${XML_MALLOC_FILES[@]}" 2>/dev/null || true
+
+# The rewrite above hands a file a bare `free()` it never asked for, and
+# nothing guarantees that file includes <cstdlib>. clang 22 compiled it anyway
+# on a transitive include; clang 23 dropped that path and
+# third_party/libxml/chromium/xml_reader.cc failed with "use of undeclared
+# identifier 'free'" 21 objects into run 34448160334 — a 2h13 round spent on an
+# include we introduced ourselves. Add it rather than depend on someone else's
+# header graph, and only where the rewrite actually landed.
+for f in "${XML_MALLOC_FILES[@]}"; do
+  [[ -f "$f" ]] || continue
+  grep -qE '^ *# *include +<(cstdlib|stdlib\.h)>' "$f" && continue
+  grep -qE '\b(malloc|free) *\(' "$f" || continue
+  sed -i '0,/^#include .*/s//&\n#include <cstdlib>/' "$f"
+  echo "    +<cstdlib> $f"
+done
 
 # (i) Replace bundled-lib build files with system-library equivalents. Aports
 # does this so Chromium uses Alpine's system fontconfig/freetype/harfbuzz/etc.
@@ -413,6 +431,21 @@ echo "  RUSTC_BOOTSTRAP=1 (allow -Z flags on stable rust)"
 SSP_PARITY="-Xclang -stack-protector -Xclang 1"
 export CFLAGS="${CFLAGS:+$CFLAGS }$SSP_PARITY"
 export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }$SSP_PARITY"
+
+# clang 23 deprecates attributes abseil still uses, and rejects two -Wno- names
+# chromium 151 passes; each one prints a six-line caret block on nearly every
+# object. Run 34448160334 drowned in them — BuildKit clips a step's log at
+# 2 MiB and this one hit the cap at 6193s, so the four lld crashes that ended
+# the round at 7683s arrived with their diagnostics already truncated away, and
+# a 2h13 round bought a census with its most interesting entry missing.
+# Warning spelling only: nothing here reaches codegen, so the compiler
+# candidate stays a comparison of compilers.
+if [[ -n "${CHS_LLVM_VER:-}" ]]; then
+  CANDIDATE_QUIET="-Wno-deprecated-attributes -Wno-unknown-warning-option"
+  export CFLAGS="${CFLAGS:+$CFLAGS }$CANDIDATE_QUIET"
+  export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }$CANDIDATE_QUIET"
+  echo "  candidate log-noise suppression: $CANDIDATE_QUIET"
+fi
 echo "  CFLAGS=$CFLAGS"
 echo "  CXXFLAGS=$CXXFLAGS"
 
