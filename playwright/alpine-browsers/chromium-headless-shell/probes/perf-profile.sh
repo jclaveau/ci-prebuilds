@@ -26,9 +26,10 @@ PERF="${5:?perf binary}"
 # The probe loops for LOOP seconds; sampling takes the first RECORD_WINDOW of
 # that and counting the next STAT_WINDOW, both strictly inside the steady state
 # so neither window contains a launch or a warmup.
-LOOP="${PERF_LOOP_SECONDS:-80}"
+LOOP="${PERF_LOOP_SECONDS:-110}"
 RECORD_WINDOW="${PERF_RECORD_WINDOW:-30}"
 STAT_WINDOW="${PERF_STAT_WINDOW:-20}"
+CG_WINDOW="${PERF_CALLGRAPH_WINDOW:-20}"
 
 READY="/tmp/perf-ready-${TARGET}-${KERNEL}"
 rm -f "$READY"
@@ -107,6 +108,44 @@ head -40 "${OUT}/${TARGET}-${KERNEL}-dso.txt"
   > "${OUT}/${TARGET}-${KERNEL}-comm-dso.txt" 2>&1 || true
 "$PERF" report -i "$DATA" --stdio --sort dso,sym --percent-limit 0.1 -g none \
   > "${OUT}/${TARGET}-${KERNEL}-sym.txt" 2>&1 || true
+
+# A SECOND record, for callers only. The flat pass above answers "which DSO
+# burns the time"; run 34406201201 answered it — `memset` in ld-musl is 6.30% of
+# alpine samples, the hottest symbol by 5x, against 2.54% for the whole of
+# glibc. What it cannot answer is who calls it, and that decides the fix. A
+# caller in the main binary is reachable by an LD_PRELOAD, the pattern already
+# shipped for mimalloc and zlib-ng; a caller inside musl itself is not, and
+# needs the libc rebuilt.
+#
+# fp rather than dwarf, which is the counter-intuitive half. dwarf unwinds from
+# .eh_frame, and musl writes memset in hand-rolled asm with no CFI at all, so
+# the unwind dies on its first step out of the one symbol this pass exists for
+# (measured in alpine:edge: `---0xffffffffffffffff` then memset, no caller).
+# fp resolves the same chain, because memset is a leaf that never touches rbp
+# and the register still holds the caller frame. Only the FIRST hop is load
+# bearing here: chromium is compiled without frame pointers, so treat anything
+# above the immediate caller as noise.
+CG_DATA="${OUT}/${TARGET}-${KERNEL}-cg.data"
+"$PERF" record -e cpu-clock -F 999 -a -G / --call-graph fp \
+  --no-buildid-cache -o "$CG_DATA" -- sleep "$CG_WINDOW" \
+  2>&1 | sed 's/^/  perf-cg: /' || true
+
+if [ -s "$CG_DATA" ]; then
+  echo "--- ${TARGET} / ${KERNEL}: callers ---"
+  "$PERF" report -i "$CG_DATA" --stdio --no-children -g graph,0.5,caller \
+    --sort dso,sym --percent-limit 0.5 \
+    > "${OUT}/${TARGET}-${KERNEL}-callers.txt" 2>&1 || true
+  head -60 "${OUT}/${TARGET}-${KERNEL}-callers.txt"
+
+  # The one symbol this pass exists for, kept in its own file so it survives
+  # the percent-limit that keeps the general report readable.
+  "$PERF" report -i "$CG_DATA" --stdio --no-children -g graph,0,caller \
+    --sort dso,sym --symbols memset \
+    > "${OUT}/${TARGET}-${KERNEL}-memset-callers.txt" 2>&1 || true
+  cat "${OUT}/${TARGET}-${KERNEL}-memset-callers.txt"
+fi
+# Only the reports above are read afterwards, and perf.data is the big file.
+rm -f "$CG_DATA"
 
 # Counting, not sampling. The hardware pair separates "we run more
 # instructions" (codegen, extra library calls) from "we run the same
