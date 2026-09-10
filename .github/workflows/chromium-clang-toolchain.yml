@@ -43,10 +43,21 @@ jobs:
       - id: pins
         run: |
           V='${{ inputs.llvm_version }}'
+          # Content-address the tag on the recipe, not on the LLVM version
+          # alone. A version-only tag made the reuse check below a trap: the
+          # first 23.1.1 image shipped compiler-rt at a path Chromium cannot
+          # link against, and every rebuild after the fix would have found
+          # `chs-clang:23.1.1-alpine` already published and skipped silently.
+          # Same failure shape as the firefox prebuilt-base tag that was keyed
+          # on the PW revision only and served a stale, unpatched build.
+          R=$(sha256sum \
+                playwright/alpine-browsers/chromium-headless-shell/Dockerfile.clang \
+              | cut -c1-12)
           {
             echo "llvm_version=$V"
             echo "llvm_major=${V%%.*}"
-            echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/chs-clang:${V}-alpine"
+            echo "recipe=$R"
+            echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/chs-clang:${V}-alpine-${R}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Free up runner disk (an LLVM build tree is ~20 GB)
