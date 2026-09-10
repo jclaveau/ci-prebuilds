@@ -144,37 +144,41 @@ if [[ "$FINAL" == "final" ]]; then
   rc=$?
 else
   # 5h hard cap (300m × 60 = 18000s); ninja's own SIGTERM handler drains
-  # in-flight jobs, then exits 124. `|| true` lets the layer commit with
-  # whatever obj/ files were written before the cap.
-  timeout 18000 ninja -C "$OUT" -j "$(nproc)" $VARIANT_TARGET
-  nrc=$?
-  # A round is MEANT to end non-zero: `timeout` kills ninja at the 5h cap and
-  # exits 124, and the layer still has to commit so the next round can resume
-  # from whatever obj/ holds. That is why this used to be a blanket `|| true`.
+  # in-flight jobs, then `timeout` exits 124. That is the ONLY non-zero status a
+  # healthy round produces, and the layer still has to commit so the next round
+  # can resume from whatever obj/ holds.
   #
-  # But the same `|| true` also swallowed ninja REFUSING to build at all. Run
-  # 34405297193 is the worst case on record: every one of r1..r12 hit
-  #   ninja: file is missing and not created by any action: …libclang_rt…
-  # in under 40 seconds, added zero object files, and reported SUCCESS. Two
-  # hours of runner time bought nothing and only `final` — which has no `||
-  # true` — ever went red. Run 32739278406 was the same shape, stopping at
-  # 2842/38707 on a missing dawn tool.
+  # `|| nrc=$?` rather than a bare call: this script runs under `set -e`, so an
+  # unguarded non-zero here kills it before the next line and every round would
+  # die at the time box. Nor a blanket `|| true`, which is what let run
+  # 34405297193 report r1..r12 green while ninja refused to build at all —
+  # twelve rounds, two hours of runner time, zero object files, and only the
+  # `final` layer ever went red. Run 32739278406 was the same shape, stopping at
+  # 2842/38707 on a missing dawn tool, and run 34432340655 the same again with a
+  # compile error 21 objects in.
   #
-  # The discriminator is BOTH facts together, which is what makes it safe:
-  # a round that neither hit the time box NOR produced a single object file
-  # has nothing worth committing, so failing it loses no work and stops the
-  # chain at r1 instead of r12. A round that ran out of time (124), or that
-  # made progress, still commits exactly as before — including the legitimate
-  # late round that only links and adds no .o.
+  # So: 124 commits the partial obj/ exactly as before, and anything else fails
+  # the round HERE. Resuming past a real ninja error does not help — the next
+  # round re-runs the same failing edge — so the objects this round did write
+  # are not worth the eleven rounds it costs to discover that.
   # https://github.com/jclaveau/ci-prebuilds/issues/108
-  if [[ $nrc -ne 0 && $nrc -ne 124 ]]; then
+  # `-k`: report a census of failures rather than only the first one. A round
+  # is a 5h round trip, so discovering one missing include per round is the
+  # most expensive way to learn anything — the clang 23 candidate stopped at a
+  # single undeclared `free` in third_party/libxml with no way to know whether
+  # nine more sites like it were waiting. Bounded, not `-k 0`: ninja has to
+  # exit before the time box, because a round that both fails AND hits the cap
+  # exits 124, commits, and lets the next round repeat it.
+  nrc=0
+  timeout 18000 ninja -C "$OUT" -j "$(nproc)" -k "${NINJA_KEEP_GOING:-20}" \
+    $VARIANT_TARGET || nrc=$?
+  if (( nrc != 0 && nrc != 124 )); then
     NOW_OBJ_COUNT=$(find "$OUT" -name '*.o' 2>/dev/null | wc -l)
-    if (( NOW_OBJ_COUNT - PRE_OBJ_COUNT == 0 )); then
-      echo "ERROR: ninja $LABEL exited $nrc without reaching the 5h cap and" >&2
-      echo "       produced no object files — this is a refusal to build," >&2
-      echo "       not a time-box kill. Failing the round." >&2
-      exit "$nrc"
-    fi
+    echo "ERROR: ninja $LABEL exited $nrc without reaching the 5h cap" >&2
+    echo "       (+$((NOW_OBJ_COUNT - PRE_OBJ_COUNT)) object files this round)." >&2
+    echo "       That is a build failure, not a time-box kill. Failing the round" >&2
+    echo "       rather than resuming into the same error eleven more times." >&2
+    exit "$nrc"
   fi
   rc=0
 fi
