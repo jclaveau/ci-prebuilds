@@ -381,8 +381,8 @@ echo "  RUSTC_BOOTSTRAP=1 (allow -Z flags on stable rust)"
 # So the driver-level flag is inert here — `clang -###` shows Alpine handing
 # cc1 `-stack-protector 2` regardless — and `--no-default-config` does not lift
 # it either, because it is compiled into the driver rather than read from
-# /etc/clang22. Passing the level straight to cc1 does work, and 1 is exactly
-# official's posture.
+# /etc/clang22 (whose only line is -fstack-clash-protection). Passing the level
+# straight to cc1 does work, and 1 is exactly official's posture.
 #
 # Deliberately NOT -fno-stack-protector: that would leave us LESS protected than
 # the reference we are chasing, which is a security regression rather than a
@@ -391,13 +391,65 @@ echo "  RUSTC_BOOTSTRAP=1 (allow -Z flags on stable rust)"
 # and 214 protected functions per 64 KiB of our hot layout regions against
 # official's 19.
 #
-# This reaches the compiler through the ENVIRONMENT, not a gn arg: we build with
-# `custom_toolchain = //build/toolchain/linux/unbundle:default`, and that
-# toolchain reads `extra_cflags = getenv("CFLAGS")`. Same mechanism as the
-# CC/CXX/AR/NM exports above, which is why it lives beside them.
-SSP_PARITY="-Xclang -stack-protector -Xclang 1"
-export CFLAGS="${CFLAGS:+$CFLAGS }$SSP_PARITY"
-export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }$SSP_PARITY"
+# The level is baked into the compiler's own default CONFIG FILE rather than
+# added to CFLAGS, because `-Xclang` on the command line makes sccache refuse
+# the compilation outright. A full 5 h round reports:
+#
+#   Compile requests      3370      Cache hits             0
+#   Non-cacheable calls   3370      Cache misses           0
+#   Non-cacheable reasons:
+#     Can't handle UnknownFlag arguments with -Xclang    3370
+#
+# — so the parity flag was disabling the compiler cache for every compile of
+# the campaign, on every chain. Clang reads its config file itself, which keeps
+# the flag out of the argv sccache hashes, and the two spellings are equivalent
+# down to the object bytes: on alpine clang 22.1.8, default 3 protected
+# functions / either weak spelling 1, and `cmp` of the two weak objects is
+# clean. Unlike CFLAGS this also covers the host toolchain, which we do not
+# ship — harmless, and it is what makes the posture a property of the compiler
+# rather than of one gn toolchain.
+#
+# What the config file cannot do is tell sccache the posture changed, so CFLAGS
+# carries -DCHS_SSP_LEVEL instead: an unused macro with no codegen effect whose
+# only job is to move the cache key when the level moves.
+SSP_LEVEL=1
+SSP_TRIPLE=$("$CC" -print-target-triple)
+SSP_CFG_LOADED=$("$CC" -v 2>&1 | sed -n 's/^Configuration file: //p' | head -1)
+SSP_CFG_DIR=$("$CC" -v 2>&1 | sed -n 's/^System configuration file directory: //p' | head -1)
+
+# Write every file this clang could read the level from: the config file it
+# already loads, the <triple>.cfg it would load if one existed, and the driver's
+# own directory, which is where the lookup falls back when the system config dir
+# was not set at cmake time — the shape of the from-source clang a compiler
+# candidate COPYs in (see Dockerfile.clang). An unread file costs nothing; the
+# read-back below is what decides whether one of them landed.
+for SSP_CFG in ${SSP_CFG_LOADED:+"$SSP_CFG_LOADED"} \
+               ${SSP_CFG_DIR:+"$SSP_CFG_DIR/$SSP_TRIPLE.cfg"} \
+               "$CLANG_BASE/bin/$SSP_TRIPLE.cfg"; do
+  mkdir -p "$(dirname "$SSP_CFG")"
+  grep -q '^-stack-protector$' "$SSP_CFG" 2>/dev/null && continue
+  printf -- '-Xclang\n-stack-protector\n-Xclang\n%s\n' "$SSP_LEVEL" >> "$SSP_CFG"
+  echo "  stack-protector level $SSP_LEVEL written to $SSP_CFG"
+done
+
+# A config file that is written but not read is a null arm that ships looking
+# like a result, so read the level back out of the cc1 command line before
+# building anything. The driver emits its own -stack-protector first and the
+# config file's passthrough last; cc1 takes the last one.
+for SSP_DRV in "$CC" "$CXX"; do
+  SSP_GOT=$("$SSP_DRV" -### -x c -c /dev/null -o /dev/null 2>&1 \
+    | tr ' ' '\n' | grep -A1 '^"-stack-protector"$' | tail -1 | tr -d '"' || true)
+  if [[ "$SSP_GOT" != "$SSP_LEVEL" ]]; then
+    echo "ERROR: $SSP_DRV hands cc1 -stack-protector ${SSP_GOT:-<none>}," >&2
+    echo "       not the $SSP_LEVEL written to its config files. Not read:" >&2
+    "$SSP_DRV" -v 2>&1 | grep -i 'config' >&2 || true
+    exit 7
+  fi
+done
+echo "  verified: cc1 receives -stack-protector $SSP_LEVEL from both drivers"
+
+export CFLAGS="${CFLAGS:+$CFLAGS }-DCHS_SSP_LEVEL=$SSP_LEVEL"
+export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-DCHS_SSP_LEVEL=$SSP_LEVEL"
 echo "  CFLAGS=$CFLAGS"
 echo "  CXXFLAGS=$CXXFLAGS"
 
