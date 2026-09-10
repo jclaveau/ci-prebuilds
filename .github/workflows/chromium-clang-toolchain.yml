@@ -1,0 +1,112 @@
+name: Chromium — clang toolchain for musl (one-shot)
+
+# Builds the LLVM/clang that Alpine has not packaged, and publishes it so a
+# chromium chain can COPY it instead of rebuilding.
+#
+# Why it exists: chromium 151 is compiled upstream with an LLVM 23 snapshot,
+# alpine:edge tops out at clang22, and aports has no llvm23 aport, no merge
+# request and no APKBUILD anywhere. That leaves the compiler major as one of
+# only two live explanations for the residual chromium gap
+# (project_chromium_cft_build_chain_diff) with no way to test it. This is the
+# way to test it.
+#
+# Dispatch-only. The result is content-addressed by LLVM version, so a rerun
+# with the same version is a cache hit and every chromium candidate after the
+# first pays nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      llvm_version:
+        description: 'LLVM release to build (e.g. 23.1.1)'
+        required: false
+        default: '23.1.1'
+        type: string
+
+concurrency:
+  group: chromium-clang-toolchain-${{ github.ref }}-${{ inputs.llvm_version }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # LLVM + clang + lld + compiler-rt, X86 only, no tests, at -j4. Estimated
+    # 2.5-4 h; the ceiling is the GHA job cap minus room to push the image.
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: pins
+        run: |
+          V='${{ inputs.llvm_version }}'
+          # Content-address the tag on the recipe, not on the LLVM version
+          # alone. A version-only tag made the reuse check below a trap: the
+          # first 23.1.1 image shipped compiler-rt at a path Chromium cannot
+          # link against, and every rebuild after the fix would have found
+          # `chs-clang:23.1.1-alpine` already published and skipped silently.
+          # Same failure shape as the firefox prebuilt-base tag that was keyed
+          # on the PW revision only and served a stale, unpatched build.
+          R=$(sha256sum \
+                playwright/alpine-browsers/chromium-headless-shell/Dockerfile.clang \
+              | cut -c1-12)
+          {
+            echo "llvm_version=$V"
+            echo "llvm_major=${V%%.*}"
+            echo "recipe=$R"
+            echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/chs-clang:${V}-alpine-${R}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Free up runner disk (an LLVM build tree is ~20 GB)
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Reuse an already-published toolchain rather than spending three hours
+      # reproducing it. The tag carries the LLVM version, so this is only ever
+      # a hit for the exact same compiler.
+      - id: exists
+        run: |
+          if docker manifest inspect '${{ steps.pins.outputs.image }}' >/dev/null 2>&1; then
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+            echo "already published: ${{ steps.pins.outputs.image }}"
+          else
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/build-push-action@v6
+        if: steps.exists.outputs.hit != 'true'
+        with:
+          context: playwright/alpine-browsers/chromium-headless-shell
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.clang
+          push: true
+          tags: ${{ steps.pins.outputs.image }}
+          build-args: |
+            LLVM_VERSION=${{ steps.pins.outputs.llvm_version }}
+            LLVM_MAJOR=${{ steps.pins.outputs.llvm_major }}
+
+      - name: Report
+        run: |
+          {
+            echo "### clang toolchain"
+            echo ""
+            echo "- image: \`${{ steps.pins.outputs.image }}\`"
+            echo "- reused existing: \`${{ steps.exists.outputs.hit }}\`"
+            echo ""
+            echo "Consume it from a setup stage with:"
+            echo '```dockerfile'
+            echo "COPY --from=${{ steps.pins.outputs.image }} /usr/lib/llvm${{ steps.pins.outputs.llvm_major }} /usr/lib/llvm${{ steps.pins.outputs.llvm_major }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

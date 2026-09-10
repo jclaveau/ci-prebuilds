@@ -146,12 +146,36 @@ else
   # 5h hard cap (300m × 60 = 18000s); ninja's own SIGTERM handler drains
   # in-flight jobs, then exits 124. `|| true` lets the layer commit with
   # whatever obj/ files were written before the cap.
-  timeout 18000 ninja -C "$OUT" -j "$(nproc)" $VARIANT_TARGET || true
-  # This also swallows ninja REFUSING to build, which is indistinguishable here
-  # from the time-box kill: run 32739278406 reported a green r1 having stopped
-  # at 2842/38707 on a missing dawn tool. Fixing it needs a status marker read
-  # back out of the pushed image, not a different rc — the rc is what makes the
-  # layer commit. https://github.com/jclaveau/ci-prebuilds/issues/108
+  timeout 18000 ninja -C "$OUT" -j "$(nproc)" $VARIANT_TARGET
+  nrc=$?
+  # A round is MEANT to end non-zero: `timeout` kills ninja at the 5h cap and
+  # exits 124, and the layer still has to commit so the next round can resume
+  # from whatever obj/ holds. That is why this used to be a blanket `|| true`.
+  #
+  # But the same `|| true` also swallowed ninja REFUSING to build at all. Run
+  # 34405297193 is the worst case on record: every one of r1..r12 hit
+  #   ninja: file is missing and not created by any action: …libclang_rt…
+  # in under 40 seconds, added zero object files, and reported SUCCESS. Two
+  # hours of runner time bought nothing and only `final` — which has no `||
+  # true` — ever went red. Run 32739278406 was the same shape, stopping at
+  # 2842/38707 on a missing dawn tool.
+  #
+  # The discriminator is BOTH facts together, which is what makes it safe:
+  # a round that neither hit the time box NOR produced a single object file
+  # has nothing worth committing, so failing it loses no work and stops the
+  # chain at r1 instead of r12. A round that ran out of time (124), or that
+  # made progress, still commits exactly as before — including the legitimate
+  # late round that only links and adds no .o.
+  # https://github.com/jclaveau/ci-prebuilds/issues/108
+  if [[ $nrc -ne 0 && $nrc -ne 124 ]]; then
+    NOW_OBJ_COUNT=$(find "$OUT" -name '*.o' 2>/dev/null | wc -l)
+    if (( NOW_OBJ_COUNT - PRE_OBJ_COUNT == 0 )); then
+      echo "ERROR: ninja $LABEL exited $nrc without reaching the 5h cap and" >&2
+      echo "       produced no object files — this is a refusal to build," >&2
+      echo "       not a time-box kill. Failing the round." >&2
+      exit "$nrc"
+    fi
+  fi
   rc=0
 fi
 

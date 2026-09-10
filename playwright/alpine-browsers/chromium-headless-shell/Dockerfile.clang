@@ -1,0 +1,124 @@
+# syntax=docker/dockerfile:1
+#
+# LLVM/clang for musl, built from source, because Alpine has not packaged it.
+#
+# Chromium 151 pins `llvmorg-23-init-19482-g53d18800` — an LLVM 23 snapshot —
+# and Alpine's newest is clang22 (22.1.8). aports has llvm20/21/22 and no 23:
+# no package, no merge request, and no APKBUILD for it anywhere on GitHub, two
+# weeks after 23.1.0 shipped. Chromium's own prebuilt clang is not a way out
+# either: it is glibc-linked (libc.so.6, ld-linux-x86-64.so.2) and under
+# gcompat it throws std::system_error and segfaults before printing --version.
+#
+# So the only route to the compiler candidate in
+# project_chromium_cft_build_chain_diff is to build it, once, and reuse the
+# image. Published under a version tag, so a chromium chain COPYs it rather
+# than rebuilding — the cost here is paid a single time, not per candidate.
+#
+# Scope is cut to what chromium's unbundle toolchain actually invokes: clang,
+# clang++, lld, llvm-ar/nm/objcopy/strip, and compiler-rt builtins. No
+# sanitizers, no tests, no docs, X86 only.
+
+ARG LLVM_VERSION=23.1.1
+ARG LLVM_MAJOR=23
+
+FROM alpine:edge AS llvm-builder
+ARG LLVM_VERSION
+ARG LLVM_MAJOR
+
+RUN apk add --no-cache \
+        build-base cmake ninja-build samurai python3 curl tar xz \
+        clang22 clang22-dev lld22 llvm22 \
+        zlib-dev zstd-dev libxml2-dev linux-headers musl-dev
+
+WORKDIR /src
+RUN curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors \
+      "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/llvm-project-${LLVM_VERSION}.src.tar.xz" \
+      -o llvm.tar.xz \
+ && tar -xf llvm.tar.xz \
+ && mv "llvm-project-${LLVM_VERSION}.src" llvm-project \
+ && rm llvm.tar.xz
+
+# Built WITH alpine's clang22 rather than gcc so the bootstrap matches the
+# platform the result has to run on. The default triple is pinned explicitly
+# instead of relying on host detection, which is the part of aports'
+# `10-add-musl-triples.patch` our build actually depends on.
+#
+# Deliberately NOT reproducing alpine's hardening driver patches. The stack
+# protector is already forced to level 1 through CFLAGS in apply-and-build.sh,
+# so it is controlled on both sides; stack-clash-protection and the fortify
+# include path were both measured to cost nothing (zero probes on realistic
+# C++, .text byte-identical; no __*_chk emitted in C or C++). PIE and build-id
+# are kept because those ARE part of alpine's ABI posture rather than its
+# hardening policy.
+RUN cmake -S llvm-project/llvm -B build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX="/usr/lib/llvm${LLVM_MAJOR}" \
+      -DCMAKE_C_COMPILER=/usr/lib/llvm22/bin/clang \
+      -DCMAKE_CXX_COMPILER=/usr/lib/llvm22/bin/clang++ \
+      -DLLVM_ENABLE_PROJECTS="clang;lld" \
+      -DLLVM_ENABLE_RUNTIMES="compiler-rt" \
+      -DLLVM_TARGETS_TO_BUILD=X86 \
+      -DLLVM_DEFAULT_TARGET_TRIPLE=x86_64-alpine-linux-musl \
+      -DLLVM_ENABLE_PER_TARGET_RUNTIME_DIR=OFF \
+      -DLLVM_HOST_TRIPLE=x86_64-alpine-linux-musl \
+      -DLLVM_ENABLE_ASSERTIONS=OFF \
+      -DLLVM_ENABLE_ZLIB=ON \
+      -DLLVM_ENABLE_ZSTD=OFF \
+      -DLLVM_ENABLE_LIBXML2=OFF \
+      -DLLVM_ENABLE_TERMINFO=OFF \
+      -DLLVM_ENABLE_BINDINGS=OFF \
+      -DLLVM_ENABLE_PLUGINS=OFF \
+      -DLLVM_INCLUDE_TESTS=OFF \
+      -DLLVM_INCLUDE_EXAMPLES=OFF \
+      -DLLVM_INCLUDE_BENCHMARKS=OFF \
+      -DLLVM_INCLUDE_DOCS=OFF \
+      -DLLVM_BUILD_LLVM_DYLIB=OFF \
+      -DCLANG_ENABLE_STATIC_ANALYZER=OFF \
+      -DCLANG_ENABLE_ARCMT=OFF \
+      -DCLANG_DEFAULT_PIE_ON_LINUX=ON \
+      -DENABLE_LINKER_BUILD_ID=ON \
+      -DCOMPILER_RT_BUILD_SANITIZERS=OFF \
+      -DCOMPILER_RT_BUILD_XRAY=OFF \
+      -DCOMPILER_RT_BUILD_LIBFUZZER=OFF \
+      -DCOMPILER_RT_BUILD_MEMPROF=OFF \
+      -DCOMPILER_RT_BUILD_ORC=OFF \
+      -DCOMPILER_RT_BUILD_PROFILE=ON \
+      -DLLVM_PARALLEL_LINK_JOBS=1
+
+# One link job at a time: the runner has 16 GB and a parallel lld of clang's
+# own binaries is what OOMs first on a 4-vCPU box.
+RUN cmake --build build --target install -- -j "$(nproc)"
+
+# Prove the thing runs and targets musl BEFORE it is published — a toolchain
+# image that only fails when a 38 h chromium chain reaches r1 is the expensive
+# way to learn this.
+# Verify by LINKING, not only by compiling. The first cut of this file checked
+# `clang --version`, the target triple, a `-c` compile and `ld.lld --version`,
+# all of which passed on an image whose compiler-rt was unusable by Chromium:
+# LLVM defaults LLVM_ENABLE_PER_TARGET_RUNTIME_DIR=ON, which puts the builtins
+# at lib/clang/23/lib/x86_64-alpine-linux-musl/libclang_rt.builtins.a while
+# Chromium's build expects Alpine's layout, lib/clang/23/lib/linux/
+# libclang_rt.builtins-x86_64.a. Nothing short of a link touches that file, so
+# run 34405297193 burned twelve rounds discovering it. Assert the path AND link
+# through it.
+RUN set -eux; \
+    B="/usr/lib/llvm${LLVM_MAJOR}/bin"; \
+    L="/usr/lib/llvm${LLVM_MAJOR}/lib/clang/${LLVM_MAJOR}/lib/linux"; \
+    "$B/clang" --version; \
+    "$B/clang" -print-target-triple | grep -q musl; \
+    test -f "$L/libclang_rt.builtins-x86_64.a"; \
+    printf 'int f(int*p){return *p;}\n' > /tmp/t.c; \
+    "$B/clang" -O2 -c /tmp/t.c -o /tmp/t.o; \
+    "$B/llvm-nm" /tmp/t.o >/dev/null; \
+    "$B/ld.lld" --version; \
+    printf 'int main(void){return 0;}\n' > /tmp/m.c; \
+    "$B/clang" -O2 -fuse-ld=lld -rtlib=compiler-rt /tmp/m.c -o /tmp/m; \
+    /tmp/m
+
+FROM alpine:edge
+ARG LLVM_VERSION
+ARG LLVM_MAJOR
+LABEL org.opencontainers.image.title="chs-clang" \
+      org.opencontainers.image.description="LLVM/clang ${LLVM_VERSION} for x86_64-alpine-linux-musl, for the chromium-from-source compiler candidate" \
+      org.opencontainers.image.version="${LLVM_VERSION}"
+COPY --from=llvm-builder /usr/lib/llvm${LLVM_MAJOR} /usr/lib/llvm${LLVM_MAJOR}

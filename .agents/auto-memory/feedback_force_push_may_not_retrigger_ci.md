@@ -34,3 +34,14 @@ producing no run at all; this is about a FORCE-push specifically, where stale
 green runs disguise the gap. And retargeting a PR's base via REST does not
 re-fire `pull_request` either, so a rebase + retarget can miss twice.
 [[feedback_watch_ci_after_push]]
+
+**Second false-green shape, same tool.** A force-push CAN create runs at the new
+sha and still leave `gh pr checks` empty: if the superseded sha's runs still hold
+the concurrency group, the new runs sit at `status: pending` with **zero jobs
+spawned**, so there is nothing for `gh pr checks` to report and it exits 0. A
+watcher that polls for the absence of `pending|queued|in_progress` rows in
+`gh pr checks` therefore fires immediately and reports settled-and-green on a
+build that has not started. Anchor the poll to
+`gh run list --commit <new-sha>` and require every run there to be `completed`,
+never to `gh pr checks` alone; cancel the superseded sha's runs to release the
+group. See [[project_gha_concurrency_group_serializes_dispatches]].
