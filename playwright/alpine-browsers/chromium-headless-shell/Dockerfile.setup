@@ -15,7 +15,13 @@ FROM alpine:edge AS chromium-builder
 RUN apk add --no-cache \
         bash curl git patch patchutils tar xz gzip jq make perl \
         bison flex gperf findutils elfutils elfutils-dev pax-utils \
-        clang22 clang22-dev clang22-rtlib lld22 llvm22 \
+        # compiler-rt, not clang22-rtlib: edge dropped the versioned rtlib
+        # subpackage once it started shipping clang23, and now serves every
+        # installed clang from one unversioned `compiler-rt` (23.1.1 today).
+        # `clang22-rtlib (no such package)` took every chromium setup stage red
+        # on 2026-09-10 — runs 34492737706 and 34492771785 — on branches whose
+        # own diffs touched none of this.
+        clang22 clang22-dev lld22 llvm22 compiler-rt \
         rust cargo rust-bindgen rustfmt \
         gn ninja-build samurai \
         python3 py3-setuptools \

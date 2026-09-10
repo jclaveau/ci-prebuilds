@@ -7,3 +7,20 @@
 should ignore page.pause when headed$
 should capture full viewport on hidpi$
 should report google.com frame with headed$
+
+# ── headless-shell-inapplicable, added 2026-09-10 ────────────────────────────
+# Both carry a PW guard that fires on the chromium-headless-shell channel and
+# both are already skipped on Alpine for that reason (see the matching blocks in
+# skip-list/chromium.titles.txt). The Ubuntu baseline runs the FULL chromium, so
+# PW's guard does not fire there and the two pass — which is correct for that
+# browser and wrong as a comparison. Left unlisted they showed up as -2 Alpine
+# passes in conformance-runtime-parity, i.e. as a regression in a browser gap
+# that does not exist: run 34301104893 read main's own build at -3, one row of
+# which is these two minus a baseline drift.
+#
+# This is a comparability fix, not coverage loss: the tests still run on the
+# Ubuntu leg's own terms in PW upstream, and a headed/full-chromium artifact of
+# ours would still run them, because the Alpine entries are title-skips on a
+# headless-shell artifact rather than blanket deletions.
+should allow to re-connect to OOPIFs with CDP when iframes were there already
+should throw a friendly error if its headed and there is no xserver on linux running
