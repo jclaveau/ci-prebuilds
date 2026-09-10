@@ -97,8 +97,26 @@ EOF
     # dynamically linked against system libs — full runtime-dep list per
     # project_chromium_from_source_runtime_deps. Both variants safely accept
     # the wider list; extra apks don't hurt the apk path.
+    #
+    # edge, not 3.22, for the same reason the firefox runner below pins edge:
+    # the artifact is BUILT on alpine:edge (Dockerfile.setup's chromium-builder
+    # stage), so its DT_NEEDED entries are edge SONAMEs. The headed sibling
+    # above already runs its from-source chromium on edge; this stage was the
+    # odd one out.
+    #
+    # It also settles two conformance rows that no browser change could. PW
+    # gates these on the RUNNER's node, not on the browser:
+    #   tests/page/expect-misc.spec.ts   test.skip(globalThis.URLPattern === undefined)
+    #   tests/page/page-evaluate.spec.ts it.skip(nodeVersion.major < 24)
+    # 3.22 ships nodejs 22.23.2 (nodejs-current is 23.11.1, still short) and
+    # cannot take edge's: node 24 needs libsimdutf.so.35 while 3.22's chromium
+    # holds simdutf 7.2.1, so apk refuses the mix. The Ubuntu control leg's
+    # mcr.microsoft.com/playwright:v<PW>-noble image runs v24.18.1, so both
+    # tests skipped here and passed there, and conformance-runtime-parity read
+    # the pair as an Alpine regression. edge ships v24.18.1 — the control's node
+    # exactly.
     cat > "$TMPDIR/Dockerfile" <<EOF
-FROM alpine:3.22
+FROM alpine:edge
 RUN apk update && apk add --no-cache \\
     nodejs npm bash git \\
     ca-certificates font-opensans ttf-freefont \\
