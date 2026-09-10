@@ -143,39 +143,49 @@ if [[ "$FINAL" == "final" ]]; then
   ninja -C "$OUT" -j "$(nproc)" $VARIANT_TARGET
   rc=$?
 else
-  # 5h hard cap (300m × 60 = 18000s); ninja's own SIGTERM handler drains
-  # in-flight jobs, then `timeout` exits 124. That is the ONLY non-zero status a
-  # healthy round produces, and the layer still has to commit so the next round
-  # can resume from whatever obj/ holds.
+  # 5h hard cap; ninja's own SIGTERM handler drains in-flight jobs, then the
+  # layer still has to commit so the next round can resume from whatever obj/
+  # holds. A round that is cut short is the NORMAL outcome, not a failure.
+  #
+  # The discriminator is elapsed time, not the exit status. Alpine ships no
+  # coreutils, so `timeout` is BusyBox's, which kills the child and exits
+  # 128+SIGTERM = 143 — it never returns GNU's 124. A `!= 124` guard is
+  # therefore unsatisfiable on this image and fails EVERY round at the cap:
+  # run 34450225283 r1 burned 5h, wrote 9034 cacheable objects, and then
+  # reported "exited 143 without reaching the 5h cap" at 18003.9s of an 18000s
+  # cap. Wall-clock says what the exit code cannot.
   #
   # `|| nrc=$?` rather than a bare call: this script runs under `set -e`, so an
-  # unguarded non-zero here kills it before the next line and every round would
-  # die at the time box. Nor a blanket `|| true`, which is what let run
-  # 34405297193 report r1..r12 green while ninja refused to build at all —
-  # twelve rounds, two hours of runner time, zero object files, and only the
-  # `final` layer ever went red. Run 32739278406 was the same shape, stopping at
-  # 2842/38707 on a missing dawn tool, and run 34432340655 the same again with a
-  # compile error 21 objects in.
+  # unguarded non-zero here kills it before the next line. Nor a blanket
+  # `|| true`, which is what let run 34405297193 report r1..r12 green while
+  # ninja refused to build at all — twelve rounds, two hours of runner time,
+  # zero object files, and only the `final` layer ever went red. Run
+  # 32739278406 was the same shape, stopping at 2842/38707 on a missing dawn
+  # tool, and run 34432340655 the same again with a compile error 21 objects in.
   #
-  # So: 124 commits the partial obj/ exactly as before, and anything else fails
-  # the round HERE. Resuming past a real ninja error does not help — the next
-  # round re-runs the same failing edge — so the objects this round did write
-  # are not worth the eleven rounds it costs to discover that.
+  # So: cut short at the cap commits the partial obj/ exactly as before, and a
+  # non-zero that arrives EARLY fails the round here. Resuming past a real ninja
+  # error does not help — the next round re-runs the same failing edge — so the
+  # objects this round did write are not worth the eleven rounds it costs to
+  # discover that.
   # https://github.com/jclaveau/ci-prebuilds/issues/108
   # `-k`: report a census of failures rather than only the first one. A round
   # is a 5h round trip, so discovering one missing include per round is the
   # most expensive way to learn anything — the clang 23 candidate stopped at a
   # single undeclared `free` in third_party/libxml with no way to know whether
   # nine more sites like it were waiting. Bounded, not `-k 0`: ninja has to
-  # exit before the time box, because a round that both fails AND hits the cap
-  # exits 124, commits, and lets the next round repeat it.
+  # exit before the time box, because a round that both fails AND runs to the
+  # cap reads as a time-box kill, commits, and lets the next round repeat it.
+  ROUND_CAP_SECONDS=18000
+  ROUND_STARTED_AT=$(date +%s)
   nrc=0
-  timeout 18000 ninja -C "$OUT" -j "$(nproc)" -k "${NINJA_KEEP_GOING:-20}" \
-    $VARIANT_TARGET || nrc=$?
-  if (( nrc != 0 && nrc != 124 )); then
+  timeout "$ROUND_CAP_SECONDS" ninja -C "$OUT" -j "$(nproc)" \
+    -k "${NINJA_KEEP_GOING:-20}" $VARIANT_TARGET || nrc=$?
+  ROUND_ELAPSED=$(( $(date +%s) - ROUND_STARTED_AT ))
+  if (( nrc != 0 && ROUND_ELAPSED < ROUND_CAP_SECONDS )); then
     NOW_OBJ_COUNT=$(find "$OUT" -name '*.o' 2>/dev/null | wc -l)
-    echo "ERROR: ninja $LABEL exited $nrc without reaching the 5h cap" >&2
-    echo "       (+$((NOW_OBJ_COUNT - PRE_OBJ_COUNT)) object files this round)." >&2
+    echo "ERROR: ninja $LABEL exited $nrc after ${ROUND_ELAPSED}s, short of the" >&2
+    echo "       ${ROUND_CAP_SECONDS}s cap (+$((NOW_OBJ_COUNT - PRE_OBJ_COUNT)) object files this round)." >&2
     echo "       That is a build failure, not a time-box kill. Failing the round" >&2
     echo "       rather than resuming into the same error eleven more times." >&2
     exit "$nrc"
