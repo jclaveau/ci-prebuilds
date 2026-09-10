@@ -162,8 +162,16 @@ else
   # round re-runs the same failing edge — so the objects this round did write
   # are not worth the eleven rounds it costs to discover that.
   # https://github.com/jclaveau/ci-prebuilds/issues/108
+  # `-k`: report a census of failures rather than only the first one. A round
+  # is a 5h round trip, so discovering one missing include per round is the
+  # most expensive way to learn anything — the clang 23 candidate stopped at a
+  # single undeclared `free` in third_party/libxml with no way to know whether
+  # nine more sites like it were waiting. Bounded, not `-k 0`: ninja has to
+  # exit before the time box, because a round that both fails AND hits the cap
+  # exits 124, commits, and lets the next round repeat it.
   nrc=0
-  timeout 18000 ninja -C "$OUT" -j "$(nproc)" $VARIANT_TARGET || nrc=$?
+  timeout 18000 ninja -C "$OUT" -j "$(nproc)" -k "${NINJA_KEEP_GOING:-20}" \
+    $VARIANT_TARGET || nrc=$?
   if (( nrc != 0 && nrc != 124 )); then
     NOW_OBJ_COUNT=$(find "$OUT" -name '*.o' 2>/dev/null | wc -l)
     echo "ERROR: ninja $LABEL exited $nrc without reaching the 5h cap" >&2
