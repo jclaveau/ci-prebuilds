@@ -44,7 +44,7 @@ RUN apk add --no-cache \
 # through CHS_LLVM_VER, which apply-and-build.sh reads ahead of aports'
 # _llvmver. clang22 stays installed above so nothing else in the image loses a
 # tool it expects.
-COPY --from=ghcr.io/jclaveau/chs-clang:23.1.1-alpine /usr/lib/llvm23 /usr/lib/llvm23
+COPY --from=ghcr.io/jclaveau/chs-clang:23.1.1-alpine-ea70c46b825b /usr/lib/llvm23 /usr/lib/llvm23
 ENV CHS_LLVM_VER=23
 
 # Alpine edge ships sccache 0.15.0-r0 which has a broken GHA v1 cache backend
