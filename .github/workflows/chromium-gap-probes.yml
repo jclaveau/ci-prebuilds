@@ -1274,11 +1274,12 @@ jobs:
         env:
           OURS: ${{ inputs.perf_image }}
         run: |
-          echo "### perf record — \`$OURS\` vs official" >> "$GITHUB_STEP_SUMMARY"
-          python3 playwright/alpine-browsers/chromium-headless-shell/probes/perf-record-report.py \
-            perf-out >> "$GITHUB_STEP_SUMMARY"
-          python3 playwright/alpine-browsers/chromium-headless-shell/probes/memset-count-report.py \
-            perf-out >> "$GITHUB_STEP_SUMMARY"
+          REPORTS=playwright/alpine-browsers/chromium-headless-shell/probes
+          {
+            echo "### perf record — \`$OURS\` vs official"
+            python3 "$REPORTS/perf-record-report.py" perf-out
+            python3 "$REPORTS/memset-count-report.py" perf-out
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: always()
