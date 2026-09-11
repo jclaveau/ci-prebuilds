@@ -9,7 +9,7 @@ touches an area, read that file before concluding no rule exists. Then read
 ## chromium-perf (18) — the residual-gap campaign: measured, dead, and still open
 `.agents/auto-memory/index/chromium-perf.md`
 
-- [chromium residual: musl memset is the hot symbol, unwinder blind, counting preload is the instrument](project_chromium_residual_gap_candidates.md) — dead: allocator, fonts, libc++ hardening, orderfile, CFI, TLS, under-inlining; ROUND 6 profiled it (run 34406201201) and musl `memset` is the hottest symbol vs glibc IFUNC avx2+ERMS; shares are runner-CPU-dependent so only within-run facts hold; ROUND 7: fp/dwarf cannot walk out of memset, PR #211 counts calls by size instead (run 34584573960), PR #215 fixes the blind official leg
+- [chromium residual: 12% after both knobs, static inspection exhausted](project_chromium_residual_gap_candidates.md) — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (counted on BOTH sides: same calls per iteration 0.98-0.99x, same size histogram to 0.5%/bucket, all interposable); left = SSP and clang 22-vs-23, both building
 - [chromium launch = the DSO closure; the trim MEASURED at 0.79x](project_chromium_launch_dso_closure.md) — unbundle arm `2f82e9e` takes launch 0.79x on two clean A/Bs, freetype+harfbuzz add nothing (0.81x); layout unreadable at n=3 across runs; a VOID launch cell (every sample 2-5x, controls flat) is runner-side and only a full rerun fixes it; ship = rebase unbundle + 38h build
 - [chromium perf arms for 1.62 — PGO+ThinLTO together wins](project_chromium_perf_arms_1_62.md) — geomean vs official: baseline 1.42, PGO 1.28, ThinLTO 1.31, BOTH 1.12
 - [The AVX2 string shim was a net loss — RETRACTED](project_chromium_faststring_moves_layout_text.md) — the layout_text win was measured on the artifact at `image_ours`, a DIFFERENT build
@@ -52,7 +52,7 @@ touches an area, read that file before concluding no rule exists. Then read
 - [PW annotations decide a conformance red](project_pw_test_annotations_shape_conformance.md) — test.fail / host-gated isFrozenWebkit skips; PW 1.62.1 ships wk r2336 off base
 - [Headed chromium DCHECK/SYS_NICE fix](project_chromium_headed_dcheck_sys_nice.md) — chr-fs browser-deaths = DCHECK_ALWAYS_ON + setpriority-EPERM; fix `--cap-add
 
-## measurement (17) — probes, ratios, controls, and what a number does NOT mean
+## measurement (18) — probes, ratios, controls, and what a number does NOT mean
 `.agents/auto-memory/index/measurement.md`
 
 - [musl is not why alpine browsers are slower](project_alpine_browser_perf_vs_glibc.md) — FF and WK at parity or FASTER than official glibc; only chromium regressed (build
