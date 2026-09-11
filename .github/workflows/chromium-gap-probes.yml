@@ -1245,15 +1245,42 @@ jobs:
                       exit 1
                     fi
                     echo "gate caught it"
-                    set +e
+                    # Through the launch wrapper, not the environment. The
+                    # shipped chrome-headless-shell is a two-line sh wrapper
+                    # that does `unset LD_PRELOAD` before exec — it exists to
+                    # keep the container-wide mimalloc off PartitionAlloc — so
+                    # an LD_PRELOAD exported here reaches node and perf and
+                    # never the browser. Run 34584573960 read exactly that:
+                    # 85K counted calls, every one of them node or perf, no
+                    # chromium comm anywhere. Rewrite the unset into an export
+                    # inside this disposable container, and refuse to continue
+                    # if the line is not where it is expected.
+                    wrapper=$(ls /ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell | head -1)
+                    if ! grep -qx "unset LD_PRELOAD" "$wrapper"; then
+                      echo "launch wrapper $wrapper has no unset LD_PRELOAD line to replace" >&2
+                      cat "$wrapper" >&2
+                      exit 1
+                    fi
+                    sed -i "s|^unset LD_PRELOAD$|export LD_PRELOAD=/tmp/libmsc.so|" "$wrapper"
                     MEMSET_COUNT_OUT="/out/memset-count-${PROBE_KERNEL}.txt"
                     export MEMSET_COUNT_OUT
                     rm -f "$MEMSET_COUNT_OUT"
-                    LD_PRELOAD=/tmp/libmsc.so
-                    export LD_PRELOAD
+                    set +e
                   fi
                   sh /probes/perf-profile.sh "$PROBE_TARGET" "$PROBE_KERNEL" \
                      /out /probes/perf-kernel.cjs "$PERF_BIN"
+                  rc=$?
+                  if [ "$MEMSET_COUNT" = 1 ]; then
+                    # The variable must have varied before the counts are
+                    # read: at least one chromium process announced the shim.
+                    loaded=$(grep -c "^loaded .*comm=chrome" "$MEMSET_COUNT_OUT" 2>/dev/null)
+                    echo "chromium processes that loaded the counting memset: ${loaded:-0}"
+                    if [ "${loaded:-0}" -eq 0 ]; then
+                      echo "the counting memset never reached chromium — the counts are node, not the browser" >&2
+                      exit 1
+                    fi
+                  fi
+                  exit "$rc"
                 ' 2>&1 | tee "perf-out/perfrec-${target}-${kernel}.log" || rc=1
               docker rm -f "$cname" >/dev/null 2>&1 || true
               echo "::endgroup::"
