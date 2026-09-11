@@ -103,7 +103,7 @@ on:
         type: string
       perf_loop_seconds:
         description: 'perf-record arm: how long each kernel loops in steady state'
-        default: '80'
+        default: '110'
         type: string
 
 concurrency:

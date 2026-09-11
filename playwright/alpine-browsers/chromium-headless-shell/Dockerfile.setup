@@ -62,6 +62,41 @@ RUN rm -rf /usr/lib/llvm23
 COPY --from=ghcr.io/jclaveau/chs-clang:23.1.1-alpine-ea70c46b825b /usr/lib/llvm23 /usr/lib/llvm23
 ENV CHS_LLVM_VER=23
 
+# Ordering matters: the builtins block below runs AFTER llvm23 has been
+# replaced, so its `find` sees the chs-clang layout rather than the
+# `compiler-rt` package's, and the symlink it makes points at a directory
+# that still exists once this stage finishes.
+
+# Give clang22 a builtins archive. `compiler-rt` replaced clang22-rtlib in #208
+# and unpacks only under /usr/lib/llvm23, so clang22's own resource dir has no
+# libclang_rt.builtins-x86_64.a and chromium's link stops before it starts:
+#
+#   ninja: file is missing and not created by any action:
+#     '.../usr/lib/llvm22/lib/clang/22/lib/linux/libclang_rt.builtins-x86_64.a'
+#
+# (run 34498782299 r1, 19s in). Chromium links compiler-rt builtins whatever
+# is_cfi and the sanitizers say, so no gn arg avoids this. aports' own chromium
+# is broken the same way right now — its APKBUILD still lists clang$_llvmver-rtlib
+# at _llvmver=22 — so there is no upstream recipe to copy yet.
+#
+# Builtins are the libgcc-equivalent primitives (__udivti3 and friends) with a
+# stable ABI, so serving clang22 from clang23's archive is safe; verified in
+# alpine:edge by linking and running an __int128 division through
+# `-rtlib=compiler-rt -fuse-ld=lld`. The final print is an assertion: if edge
+# ships clang22-rtlib again, or moves compiler-rt, this fails the build here
+# rather than 19s into a five-hour round.
+RUN set -eux; \
+    want=/usr/lib/llvm22/lib/clang/22/lib/linux; \
+    if [ ! -e "$want/libclang_rt.builtins-x86_64.a" ]; then \
+      have="$(find /usr/lib/llvm*/lib/clang/*/lib -name 'libclang_rt.builtins-x86_64.a' \
+                -print 2>/dev/null | sort -V | tail -1)"; \
+      [ -n "$have" ]; \
+      mkdir -p "$(dirname "$want")"; \
+      ln -sfn "$(dirname "$have")" "$want"; \
+    fi; \
+    test -e "$want/libclang_rt.builtins-x86_64.a"; \
+    /usr/lib/llvm22/bin/clang -print-runtime-dir
+
 # Alpine edge ships sccache 0.15.0-r0 which has a broken GHA v1 cache backend
 # under GHA runners v18 (writes to deprecated /_apis/artifactcache path, 100%
 # 404s → opendal flips to RO, "Cannot write to read-only storage"). Override
