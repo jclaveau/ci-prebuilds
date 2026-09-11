@@ -6,11 +6,11 @@ Most memories are reachable ONLY from a category's index file, so whenever a tas
 touches an area, read that file before concluding no rule exists. Then read
 `.agents/auto-memory/<slug>.md` for the memory itself.
 
-## chromium-perf (17) — the residual-gap campaign: measured, dead, and still open
+## chromium-perf (18) — the residual-gap campaign: measured, dead, and still open
 `.agents/auto-memory/index/chromium-perf.md`
 
 - [chromium residual: musl memset is the hot symbol, unwinder blind, counting preload is the instrument](project_chromium_residual_gap_candidates.md) — dead: allocator, fonts, libc++ hardening, orderfile, CFI, TLS, under-inlining; ROUND 6 profiled it (run 34406201201) and musl `memset` is the hottest symbol vs glibc IFUNC avx2+ERMS; shares are runner-CPU-dependent so only within-run facts hold; ROUND 7: fp/dwarf cannot walk out of memset, PR #211 counts calls by size instead (run 34584573960), PR #215 fixes the blind official leg
-- [chromium launch = the DSO closure; PartitionAlloc is fine](project_chromium_launch_dso_closure.md) — 43 DT_NEEDED vs 28, 1.87x per exec paid twice per launch(); allocator lead DEAD on
+- [chromium launch = the DSO closure; the trim MEASURED at 0.79x](project_chromium_launch_dso_closure.md) — unbundle arm `2f82e9e` takes launch 0.79x on two clean A/Bs, freetype+harfbuzz add nothing (0.81x); layout unreadable at n=3 across runs; a VOID launch cell (every sample 2-5x, controls flat) is runner-side and only a full rerun fixes it; ship = rebase unbundle + 38h build
 - [chromium perf arms for 1.62 — PGO+ThinLTO together wins](project_chromium_perf_arms_1_62.md) — geomean vs official: baseline 1.42, PGO 1.28, ThinLTO 1.31, BOTH 1.12
 - [The AVX2 string shim was a net loss — RETRACTED](project_chromium_faststring_moves_layout_text.md) — the layout_text win was measured on the artifact at `image_ours`, a DIFFERENT build
 

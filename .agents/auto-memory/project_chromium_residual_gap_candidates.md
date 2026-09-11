@@ -218,3 +218,16 @@ are invisible to any shim. Also: **perf-probe shares are runner-CPU-dependent**
 runner; only relative facts within a run (musl libc share ≈2× official's,
 memset top symbol) are stable across runs, and the "20-25% of the layout gap"
 sizing above was over-confident.
+
+**Round 6-7 chains closed (2026-09-11).** Chain D `perf/chromium-cfi-parity`
+builds but SIGILLs on every launch — a CFI trap — so official's CFI handicap
+is unpriced; treat the residual as a floor
+([[project_chromium_cfi_parity_arm_sigills]]). Chain E
+`perf/chromium-textstack-bundled` read `layout` 0.99x n.s. against the
+shipped arm: bundling freetype+harfbuzz into the LTO+PGO unit does NOT move
+the row, so the "text stack outside the LTO unit" candidate is dead for
+layout. What both chains DID deliver is `launch` 0.79-0.81x, all of it from
+the 11-library re-bundling ([[project_chromium_launch_dso_closure]]). Still
+open for layout: SSP (`perf/chromium-ssp-via-clang-config`) and clang 23
+(`perf/chromium-clang23`), both building, and the memset size histogram from
+the counting preload (run 34619723608, post-PR #217).
