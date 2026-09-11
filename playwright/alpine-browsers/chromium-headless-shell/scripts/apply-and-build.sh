@@ -388,6 +388,30 @@ export CC="$CLANG_BASE/bin/clang"
 export CXX="$CLANG_BASE/bin/clang++"
 echo "  AR=$AR  CC=$CC  CXX=$CXX  NM=$NM"
 
+# Host tools get their own toolchain on the candidate, and that is what stops
+# the lld crashes. `is_a_target_toolchain` (build/toolchain/toolchain.gni) reads
+#
+#   (current_toolchain != host_toolchain || default_toolchain == host_toolchain)
+#
+# and args.gn.overlay points custom_toolchain AND host_toolchain at the same
+# unbundle:default, so the second clause is true for everything and every host
+# tool is compiled as if it were a target — ThinLTO included. lld 23 then
+# segfaults linking four of them (protoc-gen-js, ipc_plugin, protozero_plugin,
+# cppgen_plugin: run 34503059518 r1, 2h09 in, no stack dump because lld dies on
+# SIGSEGV without printing one).
+#
+# Pointing host_toolchain at unbundle:host makes host tools genuinely non-target,
+# so the LTO configs stop applying to them while the target build keeps every
+# knob. unbundle:host reads its tools from BUILD_*, so export them here beside
+# the CC/CXX pair they mirror.
+if [[ -n "${CHS_LLVM_VER:-}" ]]; then
+  export BUILD_AR="$AR"
+  export BUILD_NM="$NM"
+  export BUILD_CC="$CC"
+  export BUILD_CXX="$CXX"
+  echo "  candidate host toolchain: BUILD_CC=$BUILD_CC (no LTO on host tools)"
+fi
+
 # Chromium's build scripts pass -Z nightly-only rustc flags (codegen-units,
 # panic-abort-tests, etc.). Stable rust rejects them with "1 nightly option
 # were parsed". RUSTC_BOOTSTRAP=1 is the classic escape hatch — tells stable
@@ -494,6 +518,9 @@ fi
   echo "# Injected at build time"
   if [[ -n "$PGO_DATA_PATH" ]]; then
     echo "pgo_data_path = \"$PGO_DATA_PATH\""
+  fi
+  if [[ -n "${CHS_LLVM_VER:-}" ]]; then
+    echo "host_toolchain = \"//build/toolchain/linux/unbundle:host\""
   fi
   echo "clang_base_path = \"$CLANG_BASE\""
   echo "clang_version = \"${LLVMVER:-22}\""
