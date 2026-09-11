@@ -6,7 +6,7 @@ Most memories are reachable ONLY from a category's index file, so whenever a tas
 touches an area, read that file before concluding no rule exists. Then read
 `.agents/auto-memory/<slug>.md` for the memory itself.
 
-## chromium-perf (16) — the residual-gap campaign: measured, dead, and still open
+## chromium-perf (17) — the residual-gap campaign: measured, dead, and still open
 `.agents/auto-memory/index/chromium-perf.md`
 
 - [chromium residual: musl memset is the hot symbol, unwinder blind, counting preload is the instrument](project_chromium_residual_gap_candidates.md) — dead: allocator, fonts, libc++ hardening, orderfile, CFI, TLS, under-inlining; ROUND 6 profiled it (run 34406201201) and musl `memset` is the hottest symbol vs glibc IFUNC avx2+ERMS; shares are runner-CPU-dependent so only within-run facts hold; ROUND 7: fp/dwarf cannot walk out of memset, PR #211 counts calls by size instead (run 34584573960), PR #215 fixes the blind official leg
