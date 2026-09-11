@@ -280,11 +280,21 @@ sed -i -e 's/\<xmlMalloc\>/malloc/g' -e 's/\<xmlFree\>/free/g' \
 # identifier 'free'" 21 objects into run 34448160334 — a 2h13 round spent on an
 # include we introduced ourselves. Add it rather than depend on someone else's
 # header graph, and only where the rewrite actually landed.
+#
+# awk, not `sed '0,/re/'`: the `0,` address is a GNU extension and busybox sed
+# accepts it, exits 0 and changes nothing — run 34576352942 logged
+# "+<cstdlib>" for every file and then failed on the same line 22 twice more.
+# The grep afterwards is the assertion that the include is really in the file.
 for f in "${XML_MALLOC_FILES[@]}"; do
   [[ -f "$f" ]] || continue
   grep -qE '^ *# *include +<(cstdlib|stdlib\.h)>' "$f" && continue
   grep -qE '\b(malloc|free) *\(' "$f" || continue
-  sed -i '0,/^#include .*/s//&\n#include <cstdlib>/' "$f"
+  awk '!done && /^#include / { print; print "#include <cstdlib>"; done = 1; next } 1' \
+    "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  grep -qx '#include <cstdlib>' "$f" || {
+    echo "ERROR: <cstdlib> did not land in $f" >&2
+    exit 8
+  }
   echo "    +<cstdlib> $f"
 done
 
@@ -358,8 +368,8 @@ fi
 # its patches were written against, which is the right default; it is NOT the
 # clang chromium itself is built with upstream, and that difference is one of
 # the two live explanations for the residual gap. The override exists so the
-# alternative can be pointed at a toolchain aports does not carry — see
-# Dockerfile.clang.
+# alternative can be pointed at a newer packaged clang than the one aports
+# pins — see the candidate block in Dockerfile.setup.
 if [[ -n "${CHS_LLVM_VER:-}" ]]; then
   LLVMVER="$CHS_LLVM_VER"
   CLANG_BASE="/usr/lib/llvm${LLVMVER}"
