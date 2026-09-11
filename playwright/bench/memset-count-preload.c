@@ -33,6 +33,13 @@
  *     them the compiler recognises the fill loops below and emits a call to
  *     `memset` — which is this function, and the process dies in unbounded
  *     recursion rather than reporting anything.
+ *   - Report periodically, not only at exit. Chromium forks its renderers from
+ *     the zygote (no exec, so no constructor) and SIGKILLs them on close (no
+ *     destructor), and the renderer is where layout runs. The first run that
+ *     reached the browser at all (34619723608) reported exactly one process,
+ *     the browser, and perf put 14.5% of the samples in a renderer pid that
+ *     never wrote a line. So every TICK calls the counters are written out
+ *     cumulatively; the reader keeps the last line per pid.
  */
 #include <fcntl.h>
 #include <stddef.h>
@@ -45,6 +52,10 @@
  * AVX2 store and 64 is a cache line, so a distribution that dies before either
  * says the width of the store was never the cost. */
 #define NBUCKET 12
+/* Calls between two cumulative reports from one process. */
+#define TICK (1u << 17)
+
+static void snapshot(void);
 static const size_t BUCKET_MAX[NBUCKET] = {
   1, 8, 16, 32, 64, 128, 256, 1024, 4096, 65536, 1048576, (size_t) -1
 };
@@ -62,7 +73,7 @@ void *memset(void *dst, int c, size_t n) {
   /* Relaxed: these are counters read once at exit, never used to order
    * anything, and chromium fills memory from every thread it has. A stronger
    * order would put a fence on the hottest path in the process. */
-  __atomic_fetch_add(&total_calls, 1, __ATOMIC_RELAXED);
+  uint64_t calls = __atomic_fetch_add(&total_calls, 1, __ATOMIC_RELAXED) + 1;
   __atomic_fetch_add(&total_bytes, (uint64_t) n, __ATOMIC_RELAXED);
   __atomic_fetch_add(&bucket_calls[b], 1, __ATOMIC_RELAXED);
   __atomic_fetch_add(&bucket_bytes[b], (uint64_t) n, __ATOMIC_RELAXED);
@@ -87,6 +98,13 @@ void *memset(void *dst, int c, size_t n) {
   }
   for (; i < n; i++) {
     d[i] = v;
+  }
+  /* The one libc excursion memset makes, and only once per TICK calls: by the
+   * time any process has filled memory 2^17 times the loader is long done
+   * relocating, and open/write are async-signal-safe so the thread that lands
+   * on the boundary can be any thread. */
+  if ((calls & (TICK - 1)) == 0) {
+    snapshot();
   }
   return dst;
 }
@@ -175,7 +193,9 @@ __attribute__((constructor)) static void announce(void) {
   emit(line, (size_t) (p - line));
 }
 
-__attribute__((destructor)) static void report(void) {
+/* One cumulative line: the counters so far, same shape whether written from
+ * a tick or from the destructor, so the reader needs no second format. */
+static void snapshot(void) {
   char line[512];
   char *p = line;
 
@@ -200,4 +220,8 @@ __attribute__((destructor)) static void report(void) {
   *p = '\n';
   p++;
   emit(line, (size_t) (p - line));
+}
+
+__attribute__((destructor)) static void report(void) {
+  snapshot();
 }

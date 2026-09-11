@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Turn the counting-memset preload's per-process lines into a size histogram.
 
-The shim appends one line per process that exits under it:
+The shim appends a cumulative line per process every 2^17 calls and once
+more at exit; the last line for a pid is the one that counts:
 
     pid=42 comm=chrome calls=8040 bytes=804000 hist=40:0,280:1120,...
 
@@ -20,9 +21,10 @@ Two things this report cannot tell you, both by construction:
     itself is invisible here. That absence is the other half of the finding and
     it is read off the perf DSO report, not off this file: if `memset` in
     ld-musl stays hot while these counts are large, the two sets are disjoint.
-  - Processes killed rather than exited never run the destructor and never
-    report. Chromium's renderers usually exit cleanly on close, but a missing
-    comm is a missing process, not a process that filled no memory.
+  - A process killed before its first tick reports nothing, and one killed
+    between ticks under-reports by up to 2^17 calls. Chromium SIGKILLs its
+    renderers on close, which is why the ticks exist: the renderer is where
+    layout runs, and run 34619723608 heard from the browser process only.
 
 usage: memset-count-report.py <perf-out-dir>
 """
@@ -46,10 +48,12 @@ def bucket_labels():
 
 
 def parse(path):
-    """(exit rows, load announcements). The shim writes `loaded pid= comm=`
-    at load and the counts at exit; a process killed in between is in the first
-    list only."""
-    rows = []
+    """(latest row per pid, load announcements). The shim writes `loaded pid=
+    comm=` at exec and cumulative counts every tick and at exit, so a pid's
+    last line supersedes its earlier ones. Renderers are forked from the
+    zygote without an exec and never announce, so they can appear in the rows
+    without appearing in the announcements."""
+    rows = {}
     loaded = []
     for line in path.read_text().splitlines():
         fields = dict(f.split('=', 1) for f in line.split() if '=' in f)
@@ -59,13 +63,14 @@ def parse(path):
         if 'hist' not in fields:
             continue
         pairs = [p.split(':') for p in fields['hist'].split(',')]
-        rows.append({
+        rows[fields.get('pid', '?')] = {
+            'pid': fields.get('pid', '?'),
             'comm': fields.get('comm', '?'),
             'calls': int(fields.get('calls', 0)),
             'bytes': int(fields.get('bytes', 0)),
             'hist': [(int(c), int(b)) for c, b in pairs],
-        })
-    return rows, loaded
+        }
+    return list(rows.values()), loaded
 
 
 def render(kernel, rows, loaded):
@@ -73,7 +78,7 @@ def render(kernel, rows, loaded):
     total_bytes = sum(r['bytes'] for r in rows)
     chromium = sum(1 for c in loaded if c.startswith('chrome'))
     print(f'#### `{kernel}` — {len(loaded)} processes loaded the shim '
-          f'({chromium} chromium), {len(rows)} reported at exit\n')
+          f'({chromium} chromium), {len(rows)} reported\n')
     if not chromium:
         print('**No chromium process loaded the shim — the counts below are '
               'node and the tooling, not the browser. Void.**\n')
@@ -97,18 +102,15 @@ def render(kernel, rows, loaded):
               f'| {nbytes:,} | {100 * nbytes / max(total_bytes, 1):.1f}% |')
     print()
 
-    print('| process | calls | bytes |')
-    print('|---|---|---|')
-    by_comm = {}
-    for row in rows:
+    # Per pid, not per comm: every chromium process is `chrome-headless`, and
+    # the row that dwarfs the others is the renderer.
+    print('| pid | process | calls | bytes |')
+    print('|---|---|---|---|')
+    for row in sorted(rows, key=lambda r: -r['calls']):
         if not row['calls']:
             continue
-        got = by_comm.setdefault(row['comm'], [0, 0])
-        got[0] += row['calls']
-        got[1] += row['bytes']
-    for comm, (calls, nbytes) in sorted(
-            by_comm.items(), key=lambda kv: -kv[1][0]):
-        print(f'| `{comm}` | {calls:,} | {nbytes:,} |')
+        print(f"| {row['pid']} | `{row['comm']}` | {row['calls']:,} "
+              f"| {row['bytes']:,} |")
     print()
 
 
