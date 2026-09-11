@@ -147,14 +147,74 @@ neither has to be re-measured:
   cited as evidence that aports "patches PartitionAlloc-as-malloc OUT for
   musl" — is a **three-line test disable** (`if (is_win || is_linux && false)`
   around `base_unittests`' `SystemAllocatorTest`). PA-as-malloc is on in both
-  arms by upstream default. The header comment is still wrong on main — a
-  fix is parked at `scratchpad/gap-probes-pa-comment.patch`, held back only
-  because that path is NOT in test-and-publish.yml's paths-ignore, so pushing
-  it starts a full publish that would queue behind the running chromium
-  chains.
+  arms by upstream default. The header comment fix landed as PR #213
+  (2026-09-11).
 - **We do not build with mold.** aports sets `use_mold=true`, which would be a
   real code-layout divergence from official's lld — but `apply-and-build.sh`
   does **not** source aports' `gn_config` at all. Our `args.gn` is
   `args.gn.overlay` plus a few injected lines, and the overlay pins
   `use_lld = true`. Any reasoning that starts "aports sets X" has to check the
   overlay first: the APKBUILD supplies patches and `_llvmver`, not gn args.
+
+**Round 6 — `perf record` finally ran, and it names one symbol** (run
+**34406201201**, `chromium residual-gap probes`, artifact
+`chromium-perf-record`). This is the instrument Round 4 asked for.
+
+Controls are clean: both legs report the same `tag checksum=1679700`, both
+profiled a 30 s window inside the same 100 s loop, and total event counts match
+(3.236e10 official / 3.196e10 alpine).
+
+| leg | iterations | median | top DSO | libc share |
+|---|---|---|---|---|
+| official | 369 | 258.8 ms | `chrome-headless-shell` 95.75% | `libc.so.6` **2.54%** |
+| alpine | 282 | 340.5 ms | `chrome-headless-shell.real` 91.43% | `ld-musl-x86_64.so.1` **6.47%** |
+
+**`memset` alone is 6.30% of all alpine samples — the hottest symbol in the
+profile by 5x** (next is 1.19%). Official's entire libc is 2.54% and its top
+libc symbol is 0.79%. Per iteration that is ~7.1e6 event-units in `memset`
+against ~2.2e6 for official's whole libc, i.e. roughly **20-25% of the
+layout_boxonly gap sits in this one symbol**.
+
+Not a volume difference: neither side sets `init_stack_vars`, and both are
+`is_official_build = true`, so both zero-init stack vars identically. glibc
+IFUNCs `memset` to `__memset_avx2_unaligned_erms`; musl's is a scalar loop with
+no ERMS and no CPU dispatch.
+
+**Unresolved tension, do not skip it.** Round 3 LD_PRELOADed an AVX2 shim and
+got only **1.9%** on this same kernel. Either the hot `memset` calls are not
+reachable by preload (musl-internal callers), or
+`playwright/bench/fast-string-preload.c`'s `memset` is simply weak — it has a
+byte-at-a-time tail and no `rep stosb` path, and it moved four routines at once
+so nothing was attributable. 6.30% of samples and 1.9% end-to-end cannot both
+be the whole story.
+
+**The decisive next probe is cheap: re-dispatch the same perf-record job with a
+call graph** (`--call-graph dwarf` or `fp`); this artifact recorded flat
+`cpu-clock` samples only, so `memset`'s callers are not in it. Callers inside
+Blink mean a preload can win; callers inside musl mean it cannot.
+Do NOT re-run the 4-in-1 shim as the test — a memset-only arm with an ERMS path
+is the one that separates implementation from reachability.
+[[project_chromium_faststring_moves_layout_text]]
+
+**Round 7 (2026-09-11) — the unwinder cannot name memset's callers, so count
+instead.** The `--call-graph` pass (PR #209) is blind on exactly this symbol:
+chromium has no frame pointers and musl's memset asm carries no CFI, so neither
+`fp` nor `dwarf` walks out of it (dwarf dies at `---0xffffffffffffffff`; `fp`
+recovers ONE hop, and only because memset is a leaf). Its official leg was also
+empty for two control-side reasons fixed in PR #215: glibc IFUNCs to
+`__memset_avx2_unaligned_erms` (exact `--symbols memset` never hits) AND
+Ubuntu's libc is stripped (perf shows `libc.so.6 [.] 0x1a1bfa` without
+`libc6-dbg`). The instrument that replaces unwinding: **PR #211's counting
+memset preload** (`playwright/bench/memset-count-preload.c`, dispatch input
+`perf_memset_count`), which answers (a) are the hot calls interposable — do
+the samples move off ld-musl onto the shim's DSO — and (b) what SIZES are they.
+(b) is the one that resolves the tension above: a distribution that dies below
+32 bytes means glibc's win is dispatch, not store width, and no AVX2 memset was
+ever going to move layout. First dispatch: run 34584573960. Early hint from the
+local gate: `LD_PRELOAD=libmsc.so /bin/true` reports `calls=0`, so musl's own
+startup memsets do NOT go through the preload — musl-internal callers exist and
+are invisible to any shim. Also: **perf-probe shares are runner-CPU-dependent**
+— the second call-graph run halved memset's share (6.30% → 3.42%) on a faster
+runner; only relative facts within a run (musl libc share ≈2× official's,
+memset top symbol) are stable across runs, and the "20-25% of the layout gap"
+sizing above was over-confident.
