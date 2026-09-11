@@ -120,30 +120,69 @@ static char *put_str(char *p, const char *s) {
   return p;
 }
 
+static char *put_comm(char *p) {
+  int fd = open("/proc/self/comm", O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return put_str(p, "?");
+  }
+  char comm[32];
+  ssize_t got = read(fd, comm, sizeof(comm) - 1);
+  close(fd);
+  for (ssize_t i = 0; i < got; i++) {
+    if (comm[i] > ' ') {
+      *p = comm[i];
+      p++;
+    }
+  }
+  return p;
+}
+
+static void emit(const char *line, size_t len) {
+  /* O_APPEND, and short enough to be a single atomic write: every chromium
+   * process in the tree reports into the same file at once. */
+  const char *path = getenv("MEMSET_COUNT_OUT");
+  int out = 2;
+  if (path) {
+    out = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0666);
+    if (out < 0) {
+      out = 2;
+    }
+  }
+  ssize_t ignored = write(out, line, len);
+  (void) ignored;
+  if (out != 2) {
+    close(out);
+  }
+}
+
+/* Announce at load, separately from the counts at exit. The first dispatch of
+ * this arm (run 34584573960) counted 85K calls, all of them node's and perf's,
+ * and named no chromium process at all: the shipped launch wrapper does
+ * `unset LD_PRELOAD` before exec, so the browser never saw the shim, and the
+ * histogram read as a finding about chromium when it was a finding about
+ * node. A process that loaded the shim says so here, whether or not it lives
+ * long enough to reach the destructor, and the workflow refuses to read the
+ * counts unless a chromium comm is among the announcements. */
+__attribute__((constructor)) static void announce(void) {
+  char line[128];
+  char *p = line;
+  p = put_str(p, "loaded pid=");
+  p = put_u64(p, (uint64_t) getpid());
+  p = put_str(p, " comm=");
+  p = put_comm(p);
+  *p = '\n';
+  p++;
+  emit(line, (size_t) (p - line));
+}
+
 __attribute__((destructor)) static void report(void) {
-  /* One line, O_APPEND, and short enough to be a single atomic write: every
-   * chromium process in the tree reports into the same file at once. */
   char line[512];
   char *p = line;
 
   p = put_str(p, "pid=");
   p = put_u64(p, (uint64_t) getpid());
   p = put_str(p, " comm=");
-
-  int fd = open("/proc/self/comm", O_RDONLY | O_CLOEXEC);
-  if (fd >= 0) {
-    char comm[32];
-    ssize_t got = read(fd, comm, sizeof(comm) - 1);
-    close(fd);
-    for (ssize_t i = 0; i < got; i++) {
-      if (comm[i] > ' ') {
-        *p = comm[i];
-        p++;
-      }
-    }
-  } else {
-    p = put_str(p, "?");
-  }
+  p = put_comm(p);
 
   p = put_str(p, " calls=");
   p = put_u64(p, __atomic_load_n(&total_calls, __ATOMIC_RELAXED));
@@ -160,18 +199,5 @@ __attribute__((destructor)) static void report(void) {
   }
   *p = '\n';
   p++;
-
-  const char *path = getenv("MEMSET_COUNT_OUT");
-  int out = 2;
-  if (path) {
-    out = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0666);
-    if (out < 0) {
-      out = 2;
-    }
-  }
-  ssize_t ignored = write(out, line, (size_t) (p - line));
-  (void) ignored;
-  if (out != 2) {
-    close(out);
-  }
+  emit(line, (size_t) (p - line));
 }

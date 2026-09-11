@@ -46,9 +46,16 @@ def bucket_labels():
 
 
 def parse(path):
+    """(exit rows, load announcements). The shim writes `loaded pid= comm=`
+    at load and the counts at exit; a process killed in between is in the first
+    list only."""
     rows = []
+    loaded = []
     for line in path.read_text().splitlines():
         fields = dict(f.split('=', 1) for f in line.split() if '=' in f)
+        if line.startswith('loaded '):
+            loaded.append(fields.get('comm', '?'))
+            continue
         if 'hist' not in fields:
             continue
         pairs = [p.split(':') for p in fields['hist'].split(',')]
@@ -58,13 +65,18 @@ def parse(path):
             'bytes': int(fields.get('bytes', 0)),
             'hist': [(int(c), int(b)) for c, b in pairs],
         })
-    return rows
+    return rows, loaded
 
 
-def render(kernel, rows):
+def render(kernel, rows, loaded):
     total_calls = sum(r['calls'] for r in rows)
     total_bytes = sum(r['bytes'] for r in rows)
-    print(f'#### `{kernel}` — {len(rows)} processes reported\n')
+    chromium = sum(1 for c in loaded if c.startswith('chrome'))
+    print(f'#### `{kernel}` — {len(loaded)} processes loaded the shim '
+          f'({chromium} chromium), {len(rows)} reported at exit\n')
+    if not chromium:
+        print('**No chromium process loaded the shim — the counts below are '
+              'node and the tooling, not the browser. Void.**\n')
     if not total_calls:
         print('No interposed memset calls at all. Either the shim was not '
               'loaded, or every call musl serves is internal to musl.\n')
@@ -89,6 +101,8 @@ def render(kernel, rows):
     print('|---|---|---|')
     by_comm = {}
     for row in rows:
+        if not row['calls']:
+            continue
         got = by_comm.setdefault(row['comm'], [0, 0])
         got[0] += row['calls']
         got[1] += row['bytes']
@@ -106,7 +120,7 @@ def main():
         return
     print('### memset call sizes (alpine arm, counting preload)\n')
     for path in files:
-        render(path.stem[len('memset-count-'):], parse(path))
+        render(path.stem[len('memset-count-'):], *parse(path))
 
 
 if __name__ == '__main__':
