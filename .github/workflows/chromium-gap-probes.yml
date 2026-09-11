@@ -20,13 +20,19 @@ name: chromium residual-gap probes
 #                  the arm is void rather than negative.
 #
 #   symbols        Whether PartitionAlloc is linked in as the allocator.
-#                  aports patches PartitionAlloc-as-malloc OUT for musl
-#                  (partition_alloc.gni, allocator_shim_default_dispatch_*),
-#                  which would leave every allocation on musl's mallocng
-#                  against official's PartitionAlloc. `nm -D` settles it: if
-#                  malloc is an UNDEFINED symbol the binary imports it from
-#                  libc, if it is absent from the undefined set the binary
-#                  defines it itself.
+#                  SETTLED, and the answer is yes on both sides — keep the arm
+#                  as a regression check, not as an open question. `nm -D` says
+#                  malloc/free/realloc are all `T` (defined locally) on ours as
+#                  well as on official, so every allocation goes to PA and none
+#                  reaches musl's mallocng. That is why the mimalloc preload
+#                  that rescued firefox and webkit does nothing here.
+#
+#                  This arm was written on the premise that aports patches
+#                  PartitionAlloc-as-malloc OUT for musl. It does not:
+#                  cr149-musl-alloc-shim-dispatch.patch only disables
+#                  base_unittests' SystemAllocatorTest, the APKBUILD sets no PA
+#                  gn arg, and upstream's partition_alloc.gni has no musl
+#                  carve-out at all.
 #
 #   toolchain      Which clang produced each binary, and whether libc++
 #                  hardening assertions are compiled in. use_custom_libcxx is
