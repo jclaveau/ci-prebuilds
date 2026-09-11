@@ -60,6 +60,20 @@ name: chromium residual-gap probes
 #                  from-source scratch artifact the arms above take, and
 #                  because neither needs the other to be dispatched.
 #
+#   memset-count   The perf-record arm again, with a counting `memset`
+#                  LD_PRELOADed into the alpine side only. perf named memset
+#                  as the hottest symbol but could not name its callers, and
+#                  this arm answers the two questions that blocked instead:
+#                  whether the hot calls are interposable at all (if they are,
+#                  the samples move off ld-musl and onto the shim's DSO), and
+#                  what SIZES they are (the shim's own histogram). The second
+#                  is what decides whether a faster memset is worth building:
+#                  a distribution that dies below 32 bytes means glibc's win is
+#                  the dispatch, not the store width, and explains why the AVX2
+#                  shim moved nothing. Off by default — the counters and the
+#                  scalar fill perturb the very profile the arm runs inside, so
+#                  it is a separate dispatch, never mixed with a plain read.
+#
 # Informational, dispatch-only, gates nothing.
 
 on:
@@ -105,6 +119,10 @@ on:
         description: 'perf-record arm: how long each kernel loops in steady state'
         default: '110'
         type: string
+      perf_memset_count:
+        description: 'perf-record arm: LD_PRELOAD a counting memset on the alpine side (perturbs the profile)'
+        default: false
+        type: boolean
 
 concurrency:
   # Scoped by ref only, and the two jobs below are independent — a dispatch of
@@ -1139,6 +1157,7 @@ jobs:
           KERNELS: ${{ inputs.perf_kernels }}
           PW: ${{ inputs.pw_version }}
           LOOP: ${{ inputs.perf_loop_seconds }}
+          MEMSET_COUNT: ${{ inputs.perf_memset_count }}
         run: |
           set -o pipefail
           rc=0
@@ -1148,6 +1167,11 @@ jobs:
             # partway through would otherwise land entirely on whichever arm
             # went second.
             for target in alpine official; do
+              # The counting memset is alpine-only by construction: it exists to
+              # split musl's memset samples, and preloading it over glibc would
+              # replace an IFUNC-dispatched AVX2 routine with a scalar loop and
+              # make the control arm slower for a reason that is not the finding.
+              count_memset=0
               if [ "$target" = official ]; then
                 image="perf-official:${{ github.run_id }}"
                 home=/root
@@ -1156,6 +1180,7 @@ jobs:
                 image="perf-alpine:${{ github.run_id }}"
                 home=/root
                 perfbin=perf
+                [ "$MEMSET_COUNT" = true ] && count_memset=1
               fi
               echo "::group::${target} / ${kernel}"
               cname="perfrec-${target}-${kernel}"
@@ -1174,7 +1199,9 @@ jobs:
                 --env "PW_VERSION=$PW" \
                 --env "PERF_BIN=$perfbin" \
                 --env "PERF_LOOP_SECONDS=$LOOP" \
+                --env "MEMSET_COUNT=$count_memset" \
                 -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/probes:/probes:ro" \
+                -v "$PWD/playwright/bench:/probe:ro" \
                 -v "$PWD/playwright/scripts:/pwscripts:ro" \
                 -v "$PWD/perf-out:/out" \
                 "$image" \
@@ -1184,6 +1211,47 @@ jobs:
                   node -e "require(\"playwright\")" 2>/dev/null \
                     || npm install -g --no-fund --no-audit \
                          "playwright@$PW_VERSION" >/dev/null 2>&1
+                  if [ "$MEMSET_COUNT" = 1 ]; then
+                    set -e
+                    SHIM="-O2 -fPIC -shared -fno-builtin"
+                    SHIM="$SHIM -fno-tree-loop-distribute-patterns"
+                    # Both flags or the fill loops are recognised and turned
+                    # back into calls to the memset being defined, and every
+                    # process in the tree dies in unbounded recursion.
+                    # shellcheck disable=SC2086
+                    cc $SHIM -o /tmp/libmsc.so /probe/memset-count-preload.c
+                    # -fno-builtin on the gate too, or the compiler inlines its
+                    # own fills, the PLT is never taken, and a corrupted shim
+                    # passes. The gate is the fast-string one: it exercises
+                    # memset over every length and offset up to 200/40, and the
+                    # four routines this shim leaves to musl still have to work.
+                    cc -O2 -fno-builtin -fno-tree-loop-distribute-patterns \
+                       -o /tmp/shimtest /probe/fast-string-preload-test.c
+                    echo "--- control: no preload, must pass ---"
+                    /tmp/shimtest
+                    echo "--- counting shim: must pass ---"
+                    LD_PRELOAD=/tmp/libmsc.so /tmp/shimtest
+                    echo "--- corrupted shim: must fail, or the gate is vacuous ---"
+                    sed "s|^    d\[i\] = v;|    d[i] = (unsigned char) (v ^ (i + 1 == n));|" \
+                        /probe/memset-count-preload.c > /tmp/broken.c
+                    if diff -q /tmp/broken.c /probe/memset-count-preload.c >/dev/null; then
+                      echo "the corruption sed matched nothing" >&2
+                      exit 1
+                    fi
+                    # shellcheck disable=SC2086
+                    cc $SHIM -o /tmp/libbroken.so /tmp/broken.c
+                    if LD_PRELOAD=/tmp/libbroken.so /tmp/shimtest >/dev/null 2>&1; then
+                      echo "gate is vacuous: the corrupted shim passed" >&2
+                      exit 1
+                    fi
+                    echo "gate caught it"
+                    set +e
+                    MEMSET_COUNT_OUT="/out/memset-count-${PROBE_KERNEL}.txt"
+                    export MEMSET_COUNT_OUT
+                    rm -f "$MEMSET_COUNT_OUT"
+                    LD_PRELOAD=/tmp/libmsc.so
+                    export LD_PRELOAD
+                  fi
                   sh /probes/perf-profile.sh "$PROBE_TARGET" "$PROBE_KERNEL" \
                      /out /probes/perf-kernel.cjs "$PERF_BIN"
                 ' 2>&1 | tee "perf-out/perfrec-${target}-${kernel}.log" || rc=1
@@ -1206,9 +1274,12 @@ jobs:
         env:
           OURS: ${{ inputs.perf_image }}
         run: |
-          echo "### perf record — \`$OURS\` vs official" >> "$GITHUB_STEP_SUMMARY"
-          python3 playwright/alpine-browsers/chromium-headless-shell/probes/perf-record-report.py \
-            perf-out >> "$GITHUB_STEP_SUMMARY"
+          REPORTS=playwright/alpine-browsers/chromium-headless-shell/probes
+          {
+            echo "### perf record — \`$OURS\` vs official"
+            python3 "$REPORTS/perf-record-report.py" perf-out
+            python3 "$REPORTS/memset-count-report.py" perf-out
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: always()
