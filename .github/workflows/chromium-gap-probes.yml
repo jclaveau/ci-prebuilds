@@ -67,18 +67,24 @@ name: chromium residual-gap probes
 #                  because neither needs the other to be dispatched.
 #
 #   memset-count   The perf-record arm again, with a counting `memset`
-#                  LD_PRELOADed into the alpine side only. perf named memset
-#                  as the hottest symbol but could not name its callers, and
-#                  this arm answers the two questions that blocked instead:
-#                  whether the hot calls are interposable at all (if they are,
-#                  the samples move off ld-musl and onto the shim's DSO), and
-#                  what SIZES they are (the shim's own histogram). The second
-#                  is what decides whether a faster memset is worth building:
-#                  a distribution that dies below 32 bytes means glibc's win is
-#                  the dispatch, not the store width, and explains why the AVX2
-#                  shim moved nothing. Off by default — the counters and the
-#                  scalar fill perturb the very profile the arm runs inside, so
-#                  it is a separate dispatch, never mixed with a plain read.
+#                  LD_PRELOADed into BOTH sides. perf named memset as the
+#                  hottest symbol but could not name its callers, and this
+#                  arm answers the questions that blocked instead: whether
+#                  the hot calls are interposable at all (if they are, the
+#                  samples move off ld-musl and onto the shim's DSO — they
+#                  are, run 34619723608), what SIZES they are (the shim's
+#                  histogram: run 34622651261 read the renderer at a 64-127 B
+#                  mode with the bytes in 256-4096 B fills, not the sub-32 B
+#                  regime that would have exonerated the store width), and
+#                  whether our build makes MORE calls than official under the
+#                  same kernel — the same shim over glibc gives the same
+#                  histogram for the control, and a count that differs is a
+#                  code-path divergence, not a libc one. Off by default — the
+#                  counters and the scalar fill perturb the very profile the
+#                  arm runs inside, and on the control side replace an AVX2
+#                  routine with a word loop, so a counting run's profile is
+#                  not the perf-record finding; only its counts are. A
+#                  separate dispatch, never mixed with a plain read.
 #
 # Informational, dispatch-only, gates nothing.
 
@@ -126,7 +132,7 @@ on:
         default: '110'
         type: string
       perf_memset_count:
-        description: 'perf-record arm: LD_PRELOAD a counting memset on the alpine side (perturbs the profile)'
+        description: 'perf-record arm: LD_PRELOAD a counting memset on both sides (perturbs the profile; read the counts, not the samples)'
         default: false
         type: boolean
 
@@ -1173,11 +1179,14 @@ jobs:
             # partway through would otherwise land entirely on whichever arm
             # went second.
             for target in alpine official; do
-              # The counting memset is alpine-only by construction: it exists to
-              # split musl's memset samples, and preloading it over glibc would
-              # replace an IFUNC-dispatched AVX2 routine with a scalar loop and
-              # make the control arm slower for a reason that is not the finding.
+              # The counting memset goes on both sides: the control's histogram
+              # is what makes ours readable, and a call count that differs
+              # between the two binaries under one kernel is a code-path
+              # divergence no libc explains. It costs the control its AVX2
+              # memset for the run, which is why a counting run's profile is
+              # not the finding.
               count_memset=0
+              [ "$MEMSET_COUNT" = true ] && count_memset=1
               if [ "$target" = official ]; then
                 image="perf-official:${{ github.run_id }}"
                 home=/root
@@ -1186,7 +1195,6 @@ jobs:
                 image="perf-alpine:${{ github.run_id }}"
                 home=/root
                 perfbin=perf
-                [ "$MEMSET_COUNT" = true ] && count_memset=1
               fi
               echo "::group::${target} / ${kernel}"
               cname="perfrec-${target}-${kernel}"
@@ -1228,10 +1236,15 @@ jobs:
                     cc $SHIM -o /tmp/libmsc.so /probe/memset-count-preload.c
                     # -fno-builtin on the gate too, or the compiler inlines its
                     # own fills, the PLT is never taken, and a corrupted shim
-                    # passes. The gate is the fast-string one: it exercises
-                    # memset over every length and offset up to 200/40, and the
-                    # four routines this shim leaves to musl still have to work.
+                    # passes. Same for _FORTIFY_SOURCE, which Ubuntu turns on
+                    # by default and which routes memset through an inlined
+                    # __memset_chk (`rep stos`, zero PLT calls, gate vacuous on
+                    # the glibc side without the -U). The gate is the
+                    # fast-string one: it exercises memset over every length
+                    # and offset up to 200/40, and the four routines this shim
+                    # leaves to libc still have to work.
                     cc -O2 -fno-builtin -fno-tree-loop-distribute-patterns \
+                       -U_FORTIFY_SOURCE \
                        -o /tmp/shimtest /probe/fast-string-preload-test.c
                     echo "--- control: no preload, must pass ---"
                     /tmp/shimtest
@@ -1260,15 +1273,23 @@ jobs:
                     # 85K counted calls, every one of them node or perf, no
                     # chromium comm anywhere. Rewrite the unset into an export
                     # inside this disposable container, and refuse to continue
-                    # if the line is not where it is expected.
-                    wrapper=$(ls /ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell | head -1)
-                    if ! grep -qx "unset LD_PRELOAD" "$wrapper"; then
-                      echo "launch wrapper $wrapper has no unset LD_PRELOAD line to replace" >&2
-                      cat "$wrapper" >&2
-                      exit 1
+                    # if the line is not where it is expected. The official
+                    # image ships the ELF itself, no wrapper, so there the
+                    # environment is the only route and node gets counted
+                    # too; the report is per pid and the assertion below
+                    # wants a chromium comm, so that is noise, not a void.
+                    if [ "$PROBE_TARGET" = official ]; then
+                      export LD_PRELOAD=/tmp/libmsc.so
+                    else
+                      wrapper=$(ls /ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell | head -1)
+                      if ! grep -qx "unset LD_PRELOAD" "$wrapper"; then
+                        echo "launch wrapper $wrapper has no unset LD_PRELOAD line to replace" >&2
+                        cat "$wrapper" >&2
+                        exit 1
+                      fi
+                      sed -i "s|^unset LD_PRELOAD$|export LD_PRELOAD=/tmp/libmsc.so|" "$wrapper"
                     fi
-                    sed -i "s|^unset LD_PRELOAD$|export LD_PRELOAD=/tmp/libmsc.so|" "$wrapper"
-                    MEMSET_COUNT_OUT="/out/memset-count-${PROBE_KERNEL}.txt"
+                    MEMSET_COUNT_OUT="/out/memset-count-${PROBE_TARGET}-${PROBE_KERNEL}.txt"
                     export MEMSET_COUNT_OUT
                     rm -f "$MEMSET_COUNT_OUT"
                     set +e

@@ -26,6 +26,11 @@ Two things this report cannot tell you, both by construction:
     renderers on close, which is why the ticks exist: the renderer is where
     layout runs, and run 34619723608 heard from the browser process only.
 
+Files are `memset-count-<target>-<kernel>.txt`, one per side, and the report
+puts the two sides of a kernel beside each other: the same shim over glibc
+gives the control the same histogram, and a call count that differs between
+the two binaries under one kernel is a code-path divergence, not a libc one.
+
 usage: memset-count-report.py <perf-out-dir>
 """
 import pathlib
@@ -73,44 +78,88 @@ def parse(path):
     return list(rows.values()), loaded
 
 
-def render(kernel, rows, loaded):
-    total_calls = sum(r['calls'] for r in rows)
-    total_bytes = sum(r['bytes'] for r in rows)
-    chromium = sum(1 for c in loaded if c.startswith('chrome'))
-    print(f'#### `{kernel}` — {len(loaded)} processes loaded the shim '
-          f'({chromium} chromium), {len(rows)} reported\n')
-    if not chromium:
-        print('**No chromium process loaded the shim — the counts below are '
-              'node and the tooling, not the browser. Void.**\n')
-    if not total_calls:
-        print('No interposed memset calls at all. Either the shim was not '
-              'loaded, or every call musl serves is internal to musl.\n')
+SIDES = ('alpine', 'official')
+
+
+def histogram(rows):
+    """Per-bucket (calls, bytes) over the chromium rows only. On the official
+    side the preload rides the environment and node counts itself too; that
+    is tooling, and the comparison is browser against browser."""
+    browser = [r for r in rows if r['comm'].startswith('chrome')]
+    calls = [sum(r['hist'][i][0] for r in browser) for i in range(len(EDGES))]
+    nbytes = [sum(r['hist'][i][1] for r in browser) for i in range(len(EDGES))]
+    return calls, nbytes
+
+
+def render(kernel, sides):
+    """sides: {target: (rows, loaded)} for one kernel, either side optional."""
+    print(f'#### `{kernel}`\n')
+    hist = {}
+    for target in SIDES:
+        if target not in sides:
+            print(f'- {target}: no file — the side did not count')
+            continue
+        rows, loaded = sides[target]
+        chromium = sum(1 for c in loaded if c.startswith('chrome'))
+        print(f'- {target}: {len(loaded)} processes loaded the shim '
+              f'({chromium} chromium), {len(rows)} reported')
+        if not chromium:
+            print(f'  **no chromium process loaded the shim on the {target} '
+                  'side — its counts are node and the tooling. Void.**')
+            continue
+        hist[target] = histogram(rows)
+    print()
+    if not hist:
         return
 
-    mean = total_bytes / total_calls
-    print(f'{total_calls:,} calls, {total_bytes:,} bytes, mean {mean:.0f} B '
-          'per call.\n')
-
-    print('| size | calls | % calls | bytes | % bytes |')
-    print('|---|---|---|---|---|')
-    for i, label in enumerate(bucket_labels()):
-        calls = sum(r['hist'][i][0] for r in rows)
-        nbytes = sum(r['hist'][i][1] for r in rows)
-        if not calls:
+    for target, (calls, nbytes) in hist.items():
+        total = sum(calls)
+        if not total:
+            print(f'{target}: no interposed memset calls at all.\n')
             continue
-        print(f'| {label} | {calls:,} | {100 * calls / total_calls:.1f}% '
-              f'| {nbytes:,} | {100 * nbytes / max(total_bytes, 1):.1f}% |')
+        print(f'{target}: {total:,} calls, {sum(nbytes):,} bytes, '
+              f'mean {sum(nbytes) / total:.0f} B per call.')
+    if len(hist) == 2:
+        a, o = (sum(hist[t][0]) for t in SIDES)
+        ab, ob = (sum(hist[t][1]) for t in SIDES)
+        if a and o:
+            print(f'alpine/official: **{a / o:.2f}x calls, {ab / ob:.2f}x '
+                  'bytes** — the same kernel, so a ratio away from 1.00 is '
+                  'a code-path divergence, not a libc one.')
+    print()
+
+    # One row per bucket with both sides beside each other: the question is
+    # whether the two binaries fill the same sizes, and two separate tables
+    # would leave that to the reader.
+    head = '| size |'
+    rule = '|---|'
+    for target in hist:
+        head += f' {target} calls | % | {target} bytes | % |'
+        rule += '---|---|---|---|'
+    print(head)
+    print(rule)
+    for i, label in enumerate(bucket_labels()):
+        if not any(hist[t][0][i] for t in hist):
+            continue
+        line = f'| {label} |'
+        for target, (calls, nbytes) in hist.items():
+            tc, tb = max(sum(calls), 1), max(sum(nbytes), 1)
+            line += (f' {calls[i]:,} | {100 * calls[i] / tc:.1f}% '
+                     f'| {nbytes[i]:,} | {100 * nbytes[i] / tb:.1f}% |')
+        print(line)
     print()
 
     # Per pid, not per comm: every chromium process is `chrome-headless`, and
     # the row that dwarfs the others is the renderer.
-    print('| pid | process | calls | bytes |')
-    print('|---|---|---|---|')
-    for row in sorted(rows, key=lambda r: -r['calls']):
-        if not row['calls']:
-            continue
-        print(f"| {row['pid']} | `{row['comm']}` | {row['calls']:,} "
-              f"| {row['bytes']:,} |")
+    print('| side | pid | process | calls | bytes |')
+    print('|---|---|---|---|---|')
+    for target in hist:
+        rows = sides[target][0]
+        for row in sorted(rows, key=lambda r: -r['calls']):
+            if not row['calls']:
+                continue
+            print(f"| {target} | {row['pid']} | `{row['comm']}` "
+                  f"| {row['calls']:,} | {row['bytes']:,} |")
     print()
 
 
@@ -120,9 +169,15 @@ def main():
     if not files:
         print('_No memset-count file — the arm did not run._')
         return
-    print('### memset call sizes (alpine arm, counting preload)\n')
+    print('### memset call sizes (counting preload, both arms)\n')
+    # Files are memset-count-<target>-<kernel>.txt; group the two targets of
+    # one kernel so the report can put them side by side.
+    kernels = {}
     for path in files:
-        render(path.stem[len('memset-count-'):], *parse(path))
+        target, kernel = path.stem[len('memset-count-'):].split('-', 1)
+        kernels.setdefault(kernel, {})[target] = parse(path)
+    for kernel, sides in kernels.items():
+        render(kernel, sides)
 
 
 if __name__ == '__main__':

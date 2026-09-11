@@ -12,8 +12,12 @@ FROM ${BASE}
 # under /usr/lib/debug, no flag needed; verified in this image, where the same
 # memset loop reads `__memset_avx2_unaligned_erms` with it and an address
 # without.
+# gcc + libc6-dev: the memset-count arm compiles its shim and gate inside the
+# container, on both sides, so the control's histogram comes from the same
+# source as ours.
 RUN apt-get update -qq \
  && apt-get install -y -qq --no-install-recommends linux-tools-generic libc6-dbg \
+      gcc libc6-dev \
  && ln -sf "$(ls -d /usr/lib/linux-tools-*/perf | head -1)" \
       /usr/local/bin/perf-real \
  && rm -rf /var/lib/apt/lists/*
