@@ -1,6 +1,6 @@
 ---
 name: project_chromium_launch_dso_closure
-description: the DSO closure is the launch gap and the USE_SYSTEM_LIBS trim IS worth it — a per-object census says all sixteen shared objects unload, 65 -> 49 DSOs (official has 51) and loader work bound 0.65x; --no-zygote is NOT a lever (saves 19% on BOTH libcs); PartitionAlloc is ACTIVE on musl so there is no allocator win
+description: the DSO closure is the launch gap and the USE_SYSTEM_LIBS trim IS worth it — MEASURED 2026-09-11 launch 0.79x on the unbundle arm (2f82e9e), text stack adds nothing (0.81x), layout unreadable at this n; census said 65 -> 49 DSOs (official 51), loader work bound 0.65x; --no-zygote is NOT a lever (saves 19% on BOTH libcs); PartitionAlloc is ACTIVE on musl so there is no allocator win
 metadata:
   type: project
 ---
@@ -157,3 +157,31 @@ boxed near 5h10m, r1 did 7,899 targets and r2 4,887 (later TUs are bigger), so
 ~946/h against 17,388 remaining puts a cold chain at **five or six rounds, not
 the configured twelve** — the max exists for headroom, and quoting 12 x 5h as
 the ETA overstates it by two days.
+
+**MEASURED 2026-09-11 — the trim delivers the launch, the text stack adds
+nothing.** Three `chs-perf-ab` runs, candidate/baseline, 4 launch samples each:
+
+| pair | run | CPU | launch | samples (ms) |
+|---|---|---|---|---|
+| shipped `d4e5f6b` → unbundle `2f82e9e` | 34619831658 | Xeon | **0.79x** | 112-125 → 83-93 |
+| shipped → textstack `f967bc4` | 34618356217 | 9V74 | **0.81x** | 103-116 → 83-92 |
+| unbundle → textstack | 34619834664 | Xeon | 3.27x n.s. | 93-228 → 218-747: VOID, runner-side |
+
+The two clean runs agree to within 0.02, so the whole gain is the 11-library
+re-bundling (`perf/chromium-unbundle-libs`) and freetype+harfbuzz
+(`perf/chromium-textstack-bundled`) add no launch on top. `layout` is NOT
+readable from these: 0.93x / 0.99x / 0.94x across the three pairs is
+inconsistent (0.93 x 0.94 should give 0.87, not 0.99), i.e. inside
+run-to-run noise — bracket it before claiming a layout move
+([[project_chromium_faststring_moves_layout_text]]). Both chains passed
+conformance 20/20; their only red job is `conformance-runtime-parity` at a
+head predating PR #207's gate fix. The third run also shows what a VOID
+launch cell looks like: every sample 2-5x the other runs' on the same CPU
+model while `int_math`/`libm_fmod` sit at 1.02 — process startup drifts
+independently of the compute controls, so the invalid-cell gate in
+`assert-perf-budgets.py` cannot catch it; a full rerun is the only remedy
+(PR #217's first `Test and Publish` read `launch` 2.71x the same way).
+
+**How to apply:** the shipping candidate is unbundle (`2f82e9e`, stale vs
+main — rebase, then ~38h build + promote); textstack is not worth carrying.
+Expected consumer-image `launch` ≈ 1.33 x 0.79 ≈ **1.05x** vs official.
