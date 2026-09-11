@@ -1,6 +1,6 @@
 ---
 name: project_chromium_residual_gap_candidates
-description: our chromium sits ~1.3x official even with PGO or ThinLTO — three probes ran, candidates 1/2/4 are dead, the residual is in box layout
+description: chromium residual 12% after both knobs — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (parity arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (same calls per iteration and same sizes as official to 0.5%/bucket, all interposable); left = SSP and clang 22-vs-23, both building
 metadata:
   type: project
 ---
@@ -231,3 +231,22 @@ the 11-library re-bundling ([[project_chromium_launch_dso_closure]]). Still
 open for layout: SSP (`perf/chromium-ssp-via-clang-config`) and clang 23
 (`perf/chromium-clang23`), both building, and the memset size histogram from
 the counting preload (run 34619723608, post-PR #217).
+
+**memset CLOSED (2026-09-11, runs 34619723608 / 34622651261 / 34626393552).**
+Three facts, one per run. (1) Every memset in the tree is interposable: with
+the counting shim through the wrapper, `ld-musl` falls to 0.1-0.2% of samples
+and `libmsc.so [.] memset` takes 12-19%. (2) The renderer (read via the
+shim's periodic tick, PR #219 — zygote-forked renderers announce nothing and
+are SIGKILLed before any destructor) fills at a 64-127 B mode, 56% of
+`layout_boxonly`'s bytes in 256-1023 B and 76% of `layout_text`'s in
+256-4096 B: not the sub-32 B regime, so store width was never the exoneration.
+(3) The control counted with the same shim (PR #220) has the SAME histogram
+to half a percent per bucket and the same calls per iteration — boxonly
+1.527M vs 1.538M (0.99x), text 5.35M vs 5.46M (0.98x). No code-path
+divergence in memset usage; the retracted AVX2 shim already showed a faster
+implementation moves layout nothing; and memset's share with musl's own is
+3-6%. The word-loop shim itself costs both sides too much (official
+layout_text +25% with it) to price glibc's memset against musl's that way.
+Left for layout: SSP (`perf/chromium-ssp-via-clang-config`, +12%
+instructions measured on canary loads) and clang 23 (`perf/chromium-clang23`),
+both building.
