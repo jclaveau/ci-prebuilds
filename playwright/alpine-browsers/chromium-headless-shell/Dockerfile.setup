@@ -21,7 +21,9 @@ RUN apk add --no-cache \
         # `clang22-rtlib (no such package)` took every chromium setup stage red
         # on 2026-09-10 — runs 34492737706 and 34492771785 — on branches whose
         # own diffs touched none of this.
-        clang22 clang22-dev lld22 llvm22 compiler-rt \
+        # No lld22 here: lld22 and lld23 both provide cmd:ld.lld and apk refuses
+        # the pair (run 34651872655); the candidate block installs lld23.
+        clang22 clang22-dev llvm22 compiler-rt \
         rust cargo rust-bindgen rustfmt \
         gn ninja-build samurai \
         python3 py3-setuptools \
@@ -57,10 +59,17 @@ RUN apk add --no-cache \
 # also drops compiler-rt's sanitizer HEADERS; v8/src/sandbox/testing.cc
 # includes <sanitizer/common_interface_defs.h> unconditionally and failed on
 # every round of run 34576352942. The package's compiler-rt ships them.
+#
+# lld23 installs ld.lld under /usr/bin only, which clang23 finds through PATH;
+# the ThinLTO link below is the check that the linker really is lld 23, since
+# an lld from another major cannot read this clang's bitcode.
 RUN apk add --no-cache clang23 clang23-dev lld23 llvm23 \
  && test -f /usr/lib/llvm23/lib/clang/23/include/sanitizer/common_interface_defs.h \
  && test -f /usr/lib/llvm23/lib/clang/23/lib/linux/libclang_rt.builtins-x86_64.a \
- && /usr/lib/llvm23/bin/clang --version | head -1
+ && /usr/lib/llvm23/bin/clang --version | head -1 \
+ && printf 'int main(void){return 0;}\n' > /tmp/m.c \
+ && /usr/lib/llvm23/bin/clang -flto=thin -fuse-ld=lld -rtlib=compiler-rt /tmp/m.c -o /tmp/m \
+ && /tmp/m && rm -f /tmp/m /tmp/m.c
 ENV CHS_LLVM_VER=23
 
 # Give clang22 a builtins archive. `compiler-rt` replaced clang22-rtlib in #208
