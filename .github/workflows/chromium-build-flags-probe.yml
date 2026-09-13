@@ -46,6 +46,10 @@ on:
         description: 'TUs recompiled per directory for the PGO count'
         required: false
         default: '24'
+      script_ref:
+        description: 'Branch/sha to take probes/ from (the workflow itself always runs from main)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -56,7 +60,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
+      # GitHub indexes a dispatchable workflow from the default branch only, so
+      # the workflow lands on main once; the probe script it runs can come from
+      # any branch, sparing a PR per script fix.
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.script_ref || github.sha }}
       - name: Free up runner disk
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
