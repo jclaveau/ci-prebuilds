@@ -35,7 +35,7 @@ mkdir -p "$OUT"
 WORK=/work
 set -a; . "$WORK/versions.env"; . "$WORK/derived.env"; set +a
 CHS_VER="${CHROMIUM_HEADLESS_SHELL_VERSION:?derived.env missing CHROMIUM_HEADLESS_SHELL_VERSION}"
-cd "$WORK/chromium-src/chromium-$CHS_VER"
+cd "$WORK/chromium-src/chromium-$CHS_VER" || exit 2
 BUILD=out/headless
 [[ -f "$BUILD/build.ninja" ]] || { echo "ERROR: $BUILD/build.ninja missing" >&2; exit 2; }
 
@@ -46,6 +46,8 @@ compile_line() {
 }
 # Object names are resolved against ninja's own target list rather than
 # guessed: gn's obj/ layout nests the target name under the directory.
+echo "== chromium $CHS_VER, $BUILD" | tee "$OUT/summary.txt"
+cp "$BUILD/args.gn" "$OUT/args.gn"
 ninja -C "$BUILD" -t targets all 2>/dev/null | grep -E '\.o:' | cut -d: -f1 | sort > /tmp/all-objs.txt
 echo "  $(wc -l < /tmp/all-objs.txt) object targets" | tee -a "$OUT/summary.txt"
 if [[ ! -s /tmp/all-objs.txt ]]; then
@@ -53,32 +55,47 @@ if [[ ! -s /tmp/all-objs.txt ]]; then
   ninja -C "$BUILD" -t targets all 2>&1 >/dev/null | head -5 | tee -a "$OUT/summary.txt"
   exit 2
 fi
-find_obj() { grep -E "$1" /tmp/all-objs.txt | head -1; }
-
-echo "== chromium $CHS_VER, $BUILD" | tee "$OUT/summary.txt"
-cp "$BUILD/args.gn" "$OUT/args.gn"
+# gn names an object obj/<BUILD.gn dir>/<target>/<basename>.o, so a source in
+# a subdirectory of its target (all of blink core: core/layout/x.cc compiles to
+# obj/third_party/blink/renderer/core/core/x.o) is found by walking up from
+# its own directory. Test and fuzzer targets are skipped: ninja lists them even
+# though the round never built them.
+obj_for_src() {
+  local base dir hit
+  base=$(basename "$1" .cc); dir=$(dirname "$1")
+  while :; do
+    hit=$(grep -E "^obj/$dir/[^/]+/$base\.o$" /tmp/all-objs.txt | grep -vE '/[^/]*(test|fuzzer)[^/]*/[^/]+$' | head -1)
+    [[ -n "$hit" ]] && { echo "$hit"; return; }
+    [[ "$dir" == */* ]] || return 1
+    dir=${dir%/*}
+  done
+}
+# Non-test sources of a directory, in the order ls gives them.
+srcs_in_dir() { printf "%s\n" "$1"/*.cc | grep -vE '(_unittest|_test|_perftest|_fuzzer|test_support|_browsertest)\.cc$'; }
 
 # ---- 1. command lines -------------------------------------------------------
-for pat in \
-  '^obj/third_party/blink/renderer/core/layout/.*/layout_block_flow\.o$' \
-  '^obj/third_party/blink/renderer/core/dom/.*/element\.o$' \
-  '^obj/base/.*/values\.o$'; do
-  obj=$(find_obj "$pat")
-  [[ -n "$obj" ]] || { echo "WARN: no object matches $pat" | tee -a "$OUT/summary.txt"; continue; }
+for src in \
+  third_party/blink/renderer/core/layout/layout_block_flow.cc \
+  third_party/blink/renderer/core/dom/element.cc \
+  base/values.cc; do
+  obj=$(obj_for_src "$src")
+  [[ -n "$obj" ]] || { echo "WARN: no object for $src" | tee -a "$OUT/summary.txt"; continue; }
   name=$(basename "$obj" .o)
   line=$(compile_line "$obj")
   [[ -n "$line" ]] || { echo "WARN: no command for $obj" | tee -a "$OUT/summary.txt"; continue; }
   printf '%s\n' "$line" > "$OUT/cmd-$name.txt"
-  # -### prints the driver's resolved cc1 invocation without compiling.
-  (cd "$BUILD" && eval "$line -###" 2>&1 | grep -E '"-cc1"' | tr ' ' '\n' | tr -d '"' \
-    | grep -E '^-' | sort -u) > "$OUT/cc1-$name.txt" || true
-  echo "  $name: $(wc -w < "$OUT/cmd-$name.txt") driver args, $(wc -l < "$OUT/cc1-$name.txt") distinct cc1 flags" | tee -a "$OUT/summary.txt"
+  # -### prints the driver's resolved cc1 invocation without compiling; kept
+  # whole, quoted, so a flag's value ("-stack-protector" "1") stays with it.
+  (cd "$BUILD" && eval "$line -###" 2>&1 | grep -E '"-cc1"') > "$OUT/cc1-$name.txt" || true
+  echo "  $name ($obj): $(wc -w < "$OUT/cmd-$name.txt") driver args, $(grep -o '"-' "$OUT/cc1-$name.txt" | wc -l) cc1 flags" | tee -a "$OUT/summary.txt"
 done
 
-# Flags of interest, so the summary answers without opening the files.
+# Flags of interest with their values, so the summary answers without opening
+# the files.
 echo "== cc1 flags of interest (layout_block_flow)" | tee -a "$OUT/summary.txt"
-grep -E '^-(stack-protector|fstack-clash|fno-unwind|funwind|ffp-contract|O[0-3s]|flto|fprofile|fwhole|fsplit|mllvm|target-feature|tune-cpu|target-cpu|fno-plt|D_FORTIFY|fvisibility|mframe|fdata-sections|ffunction-sections)' \
-  "$OUT/cc1-layout_block_flow.txt" | tee -a "$OUT/summary.txt" || true
+grep -oE '"-(stack-protector|fstack-clash[^"]*|fno-unwind[^"]*|funwind[^"]*|ffp-contract[^"]*|O[0-3s]|flto[^"]*|fprofile[^"]*|fwhole[^"]*|fsplit[^"]*|mllvm|target-feature|tune-cpu|target-cpu|fno-plt|D_FORTIFY[^"]*|fvisibility[^"]*|mframe[^"]*|fdata-sections|ffunction-sections|fsanitize[^"]*|inlinehint-threshold[^"]*|mrelocation-model|pic-level|pie-level)" ?("[^-][^"]*")?' \
+  "$OUT/cc1-layout_block_flow.txt" | tr -d '"' | sort -u | tr '\n' ' ' | tee -a "$OUT/summary.txt" || true
+echo | tee -a "$OUT/summary.txt"
 
 # ---- 2. PGO hit rate --------------------------------------------------------
 # Re-run a sample of each directory's compiles with the three warnings back on
@@ -86,7 +103,7 @@ grep -E '^-(stack-protector|fstack-clash|fno-unwind|funwind|ffp-contract|O[0-3s]
 # touched; the .d file rewrite is harmless in a throwaway container.
 PGO_ON="-Wprofile-instr-unprofiled -Wprofile-instr-out-of-date -Wbackend-plugin"
 echo "== PGO warnings, $SAMPLE TUs per dir (out-of-date = hash mismatch, profile dropped; unprofiled = no data; backend = CFG mismatch)" | tee -a "$OUT/summary.txt"
-printf '%-45s %5s %12s %11s %8s\n' dir TUs out-of-date unprofiled backend | tee -a "$OUT/summary.txt"
+printf '%-45s %5s %12s %11s %8s %14s\n' dir TUs out-of-date unprofiled backend 'fn mismatch/of' | tee -a "$OUT/summary.txt"
 for dir in \
   third_party/blink/renderer/core/layout \
   third_party/blink/renderer/core/dom \
@@ -94,7 +111,8 @@ for dir in \
   third_party/blink/renderer/platform \
   base; do
   tag=$(echo "$dir" | tr / _)
-  grep -E "^obj/$dir/" /tmp/all-objs.txt | head -n "$SAMPLE" > "/tmp/objs-$tag.txt"
+  : > "/tmp/objs-$tag.txt"
+  for src in $(srcs_in_dir "$dir" | head -n "$SAMPLE"); do obj_for_src "$src" >> "/tmp/objs-$tag.txt"; done
   # One compile per TU, nproc at a time; each writes its own log, merged after.
   rm -rf "/tmp/pgo-$tag"; mkdir -p "/tmp/pgo-$tag"
   n=$(wc -l < "/tmp/objs-$tag.txt")
@@ -110,12 +128,14 @@ for dir in \
   ood=$(grep -c 'profile-instr-out-of-date' "$OUT/pgo-$tag.log" || true)
   unp=$(grep -c 'profile-instr-unprofiled' "$OUT/pgo-$tag.log" || true)
   bck=$(grep -c 'backend-plugin' "$OUT/pgo-$tag.log" || true)
-  printf '%-45s %5s %12s %11s %8s\n' "$dir" "$n" "$ood" "$unp" "$bck" | tee -a "$OUT/summary.txt"
+  # The out-of-date warning is per file but carries the function tally.
+  fns=$(grep -hoE 'of [0-9]+ functions?, [0-9]+ have mismatched' "$OUT/pgo-$tag.log" | awk '{n+=$2; m+=$4} END{printf "%d/%d", m, n}')
+  printf '%-45s %5s %12s %11s %8s %14s\n' "$dir" "$n" "$ood" "$unp" "$bck" "$fns" | tee -a "$OUT/summary.txt"
 done
 
 # Which layout functions lost their profile — the names say whether the misses
 # sit on the hot path or in patched corners.
-grep -hoE "Function control flow change detected \(hash mismatch\) [^ ]+|no profile data available for function '[^']+'|'[^']+' has a mismatched profile" \
+grep -hoiE "function control flow change detected \(hash mismatch\) [^ ]+|no profile data available for function '[^']+'|'[^']+' has a mismatched profile" \
   "$OUT/pgo-third_party_blink_renderer_core_layout.log" | sort | uniq -c | sort -rn | head -40 \
   > "$OUT/layout-mismatched-functions.txt" || true
 echo "== $(wc -l < "$OUT/layout-mismatched-functions.txt") distinct layout functions named in warnings (top in layout-mismatched-functions.txt)" | tee -a "$OUT/summary.txt"
