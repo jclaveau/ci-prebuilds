@@ -145,8 +145,14 @@ done
 # per-block counters, which is what makes a 300 MB profile listable.
 PROFDATA=$(grep -oE 'fprofile-use=[^ ]+' "$OUT/cmd-values.txt" | head -1 | cut -d= -f2-)
 LLVM_BIN=$(dirname "$(awk '{print $1}' "$OUT/cmd-values.txt")")
-(cd "$BUILD" && "$LLVM_BIN/llvm-profdata" show --all-functions --counts=false "$PROFDATA" 2>/dev/null) \
-  | awk '/^  [^ ]/ { name=$1; sub(/:$/, "", name) } /Function count:/ { print name, $3 }' \
+# Raw listing kept (head only) with its stderr: run 34786556724 printed zero
+# functions and nothing else, which is a listing that failed, not a profile
+# without functions.
+echo "  llvm-profdata: $(ls -la "$LLVM_BIN/llvm-profdata" 2>&1); profile: $PROFDATA ($(cd "$BUILD" && ls -la "$PROFDATA" 2>&1))" | tee -a "$OUT/summary.txt"
+(cd "$BUILD" && "$LLVM_BIN/llvm-profdata" show --all-functions --counts=false "$PROFDATA" 2> "$OUT/profdata.err") > /tmp/profile-raw.txt
+echo "  rc=$? raw=$(wc -l < /tmp/profile-raw.txt) lines, stderr=$(wc -c < "$OUT/profdata.err") bytes" | tee -a "$OUT/summary.txt"
+head -30 /tmp/profile-raw.txt > "$OUT/profdata-head.txt"; head -5 "$OUT/profdata.err" | tee -a "$OUT/summary.txt"
+awk '/^  [^ ]/ { name=$1; sub(/:$/, "", name) } /Function count:/ { print name, $3 }' /tmp/profile-raw.txt \
   | LC_ALL=C sort -u > /tmp/profile-fns.txt
 echo "== profile: $(wc -l < /tmp/profile-fns.txt) functions with a count" | tee -a "$OUT/summary.txt"
 echo "== PGO denominator: functions of the sampled TUs that have a profile entry, vs those whose hash mismatched" | tee -a "$OUT/summary.txt"
