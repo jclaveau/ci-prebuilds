@@ -1,0 +1,142 @@
+name: chromium build-flags probe
+
+# What our chromium compiles were actually told, and how much of the PGO
+# profile they could use — read off a finished chain, no rebuild.
+#
+#   flags      `ninja -t commands` + `clang -###` on a Blink layout object
+#              inside the chain's last round image. The binaries were compared
+#              section by section; the command lines never were. Alpine's
+#              clang driver adds what Chromium never asked for (its config
+#              file ships -fstack-clash-protection; the driver's compiled-in
+#              default is -fstack-protector-strong), and only the resolved cc1
+#              line shows which of those survived Chromium's own flags.
+#
+#   pgo        Chromium builds with -Wno-profile-instr-unprofiled,
+#              -Wno-profile-instr-out-of-date and -Wno-backend-plugin, so a
+#              function whose profile hash no longer matches — every body the
+#              aports/copium/PW patches touch, every musl-conditioned #if —
+#              is silently compiled without its profile. A sample of each
+#              directory's TUs is recompiled with the warnings back on and
+#              counted; base/ is the control for the drift the profile's own
+#              revision costs everybody.
+#
+#   stack-clash  `orq $0x0,(%rsp)` probes counted in both shipped binaries:
+#              official should carry none, and the count on ours prices the
+#              one driver flag the SSP parity block does not neutralise.
+#
+# Dispatch-only. Takes any green chain: its last round image for the compile
+# questions and its chs-fs-sha artifact for the binary count.
+
+on:
+  workflow_dispatch:
+    inputs:
+      round_image:
+        description: 'Last round image of a green chain (source + out/ + toolchain)'
+        required: true
+        default: 'ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r12-sha-80ea0bc05ba05f79b5e6767595d6403ffbe8911f'
+      artifact_image:
+        description: 'The same chain''s chs-fs-sha artifact (for the binary count)'
+        required: true
+        default: 'ghcr.io/jclaveau/playwright-alpine-browsers:chs-fs-sha-80ea0bc05ba05f79b5e6767595d6403ffbe8911f'
+      pw_version:
+        description: 'Playwright version whose official image is the reference'
+        required: true
+        default: '1.62.1'
+      sample:
+        description: 'TUs recompiled per directory for the PGO count'
+        required: false
+        default: '24'
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  flags-and-pgo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull the round image
+        run: |
+          docker pull -q "${{ inputs.round_image }}"
+          df -h /
+      - name: Compile lines + PGO hit rate
+        run: |
+          mkdir -p out
+          docker run --rm \
+            -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/probes:/probes:ro" \
+            -v "$PWD/out:/out" \
+            "${{ inputs.round_image }}" \
+            bash /probes/build-flags-probe.sh /out "${{ inputs.sample }}"
+      - name: Report
+        run: |
+          {
+            echo '## chromium build flags — ${{ inputs.round_image }}'
+            echo
+            echo '```'
+            cat out/summary.txt
+            echo '```'
+            echo
+            echo '<details><summary>layout functions named in PGO warnings</summary>'
+            echo
+            echo '```'
+            cat out/layout-mismatched-functions.txt
+            echo '```'
+            echo '</details>'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chromium-build-flags
+          path: out/
+          if-no-files-found: error
+
+  stack-clash:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract both binaries
+        run: |
+          set -euo pipefail
+          # Ours is a FROM-scratch artifact: nothing runs in it, `docker cp` does.
+          c=$(docker create "${{ inputs.artifact_image }}" /nonexistent)
+          docker cp "$c:/chrome-headless-shell-linux64/chrome-headless-shell" ./ours
+          docker rm "$c" > /dev/null
+          OFFICIAL="mcr.microsoft.com/playwright:v${{ inputs.pw_version }}-noble"
+          docker pull -q "$OFFICIAL"
+          p=$(docker run --rm --entrypoint sh "$OFFICIAL" -c \
+                'find /ms-playwright -name chrome-headless-shell -type f | head -1')
+          c=$(docker create "$OFFICIAL")
+          docker cp "$c:$p" ./official
+          docker rm "$c" > /dev/null
+          ls -la ours official
+      - name: Count stack-clash probes
+        run: |
+          set -euo pipefail
+          # clang's x86 stack-clash protection probes every page of a large
+          # frame with `orq $0x0,(%rsp)`; nothing else in Chromium emits that.
+          count() { objdump -d --no-show-raw-insn "$1" | grep -cE 'orq +\$0x0,\(%rsp\)' || true; }
+          text() { size -A "$1" | awk '$1==".text"{print $2}'; }
+          {
+            echo '## stack-clash probes (`orq $0x0,(%rsp)`)'
+            echo
+            echo '| binary | probes | .text bytes |'
+            echo '|---|---|---|'
+            echo "| ours (${{ inputs.artifact_image }}) | $(count ours) | $(text ours) |"
+            echo "| official (v${{ inputs.pw_version }}-noble) | $(count official) | $(text official) |"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
