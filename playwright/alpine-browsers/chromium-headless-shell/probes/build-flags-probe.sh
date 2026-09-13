@@ -24,7 +24,9 @@
 #      (linux.pgo.txt names a branch commit, not our exact tag) costs everyone.
 #
 # usage: build-flags-probe.sh <outdir> [sample-per-dir]
-set -euo pipefail
+# No -e: a missing target or a failed recompile is a finding to print, not a
+# reason to stop before the summary exists.
+set -uo pipefail
 
 OUT="${1:?outdir}"
 SAMPLE="${2:-24}"
@@ -42,15 +44,27 @@ BUILD=out/headless
 compile_line() {
   ninja -C "$BUILD" -t commands "$1" 2>/dev/null | tail -1 | sed 's/^sccache //'
 }
+# Object names are resolved against ninja's own target list rather than
+# guessed: gn's obj/ layout nests the target name under the directory.
+ninja -C "$BUILD" -t targets all 2>/dev/null | grep -E '\.o:' | cut -d: -f1 | sort > /tmp/all-objs.txt
+echo "  $(wc -l < /tmp/all-objs.txt) object targets" | tee -a "$OUT/summary.txt"
+if [[ ! -s /tmp/all-objs.txt ]]; then
+  echo "ERROR: ninja lists no objects:" | tee -a "$OUT/summary.txt"
+  ninja -C "$BUILD" -t targets all 2>&1 >/dev/null | head -5 | tee -a "$OUT/summary.txt"
+  exit 2
+fi
+find_obj() { grep -E "$1" /tmp/all-objs.txt | head -1; }
 
 echo "== chromium $CHS_VER, $BUILD" | tee "$OUT/summary.txt"
 cp "$BUILD/args.gn" "$OUT/args.gn"
 
 # ---- 1. command lines -------------------------------------------------------
-for obj in \
-  obj/third_party/blink/renderer/core/layout/layout/layout_block_flow.o \
-  obj/third_party/blink/renderer/core/dom/dom/element.o \
-  obj/base/base/values.o; do
+for pat in \
+  '^obj/third_party/blink/renderer/core/layout/.*/layout_block_flow\.o$' \
+  '^obj/third_party/blink/renderer/core/dom/.*/element\.o$' \
+  '^obj/base/.*/values\.o$'; do
+  obj=$(find_obj "$pat")
+  [[ -n "$obj" ]] || { echo "WARN: no object matches $pat" | tee -a "$OUT/summary.txt"; continue; }
   name=$(basename "$obj" .o)
   line=$(compile_line "$obj")
   [[ -n "$line" ]] || { echo "WARN: no command for $obj" | tee -a "$OUT/summary.txt"; continue; }
@@ -71,7 +85,6 @@ grep -E '^-(stack-protector|fstack-clash|fno-unwind|funwind|ffp-contract|O[0-3s]
 # (a later -W wins over an earlier -Wno-). Output goes to /tmp so obj/ is not
 # touched; the .d file rewrite is harmless in a throwaway container.
 PGO_ON="-Wprofile-instr-unprofiled -Wprofile-instr-out-of-date -Wbackend-plugin"
-ninja -C "$BUILD" -t targets all 2>/dev/null | grep -E '\.o:' | cut -d: -f1 | sort > /tmp/all-objs.txt
 echo "== PGO warnings, $SAMPLE TUs per dir (out-of-date = hash mismatch, profile dropped; unprofiled = no data; backend = CFG mismatch)" | tee -a "$OUT/summary.txt"
 printf '%-45s %5s %12s %11s %8s\n' dir TUs out-of-date unprofiled backend | tee -a "$OUT/summary.txt"
 for dir in \
