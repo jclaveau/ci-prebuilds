@@ -35,7 +35,12 @@ ARG BASE_IMAGE=jclaveau/alpine-dood-pnpm:latest
 # build before it. Shipping such an arm is a deliberate retag of its sha
 # artifact onto the moving tags with the same `docker buildx imagetools
 # create` promote runs, and the consumer only picks it up on the NEXT push to
-# main, since publishing here is gated on `push` too.
+# main, since publishing here is gated on `push` too. Not any push: the
+# `changes` job rebuilds this image only when `playwright/` (or a base layer)
+# is in the diff, so a memory-only merge right after a retag rebuilds nothing.
+# Chromium ships the same way through `promote-chromium-from-source.yml`,
+# which retags `chs-<rev>` from a green branch chain; this comment is the
+# `playwright/` touch that rebuilt the consumer after the unbundle retag.
 ARG CHS_SOURCE_TAG=chs-${CHS_REV}
 ARG FF_SOURCE_TAG=ff-${FF_REV}
 ARG WK_SOURCE_TAG=wk-${WK_REV}
