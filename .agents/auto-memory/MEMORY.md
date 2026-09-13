@@ -6,15 +6,16 @@ Most memories are reachable ONLY from a category's index file, so whenever a tas
 touches an area, read that file before concluding no rule exists. Then read
 `.agents/auto-memory/<slug>.md` for the memory itself.
 
-## chromium-perf (18) — the residual-gap campaign: measured, dead, and still open
+## chromium-perf (19) — the residual-gap campaign: measured, dead, and still open
 `.agents/auto-memory/index/chromium-perf.md`
 
-- [chromium residual: 12% after both knobs, static inspection exhausted](project_chromium_residual_gap_candidates.md) — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (counted on BOTH sides: same calls per iteration 0.98-0.99x, same size histogram to 0.5%/bucket, all interposable); left = SSP and clang 22-vs-23, both building
+- [clang 22→23 IS a layout lever](project_chromium_clang23_lever.md) — layout 0.87x vs shipped on slow silicon, vs official 1.40 (was 1.61), geomean 1.10; alpine:edge packages clang23 now; the new base for every further candidate
+- [chromium residual: 12% after both knobs, static inspection exhausted](project_chromium_residual_gap_candidates.md) — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI, TLS, under-inlining, text stack, memset; clang 22→23 LIVE (layout 0.87x slow silicon); left = SSP-via-cfg, to be re-run on the clang23 base
 - [chromium launch = the DSO closure; the trim MEASURED at 0.79x](project_chromium_launch_dso_closure.md) — unbundle arm `2f82e9e` takes launch 0.79x on two clean A/Bs, freetype+harfbuzz add nothing (0.81x); layout unreadable at n=3 across runs; a VOID launch cell (every sample 2-5x, controls flat) is runner-side and only a full rerun fixes it; ship = rebase unbundle + 38h build
 - [chromium perf arms for 1.62 — PGO+ThinLTO together wins](project_chromium_perf_arms_1_62.md) — geomean vs official: baseline 1.42, PGO 1.28, ThinLTO 1.31, BOTH 1.12
 - [The AVX2 string shim was a net loss — RETRACTED](project_chromium_faststring_moves_layout_text.md) — the layout_text win was measured on the artifact at `image_ours`, a DIFFERENT build
 
-## chromium-build (13) — from-source rounds, gn args, caches, base images
+## chromium-build (14) — from-source rounds, gn args, caches, base images
 `.agents/auto-memory/index/chromium-build.md`
 
 - [chromium round images are sha-keyed](project_chromium_round_images_sha_keyed.md) — any setup-layer edit = full cold r1..r12; cold chromium 151 is 25-30h (r1 boxed at
@@ -43,7 +44,7 @@ touches an area, read that file before concluding no rule exists. Then read
 - [FF's gap vs official was the ALLOCATOR — RESOLVED](project_ff_build_missing_pgo_lto_jemalloc.md) — official links mozjemalloc (`malloc` undefined 0 vs our 1); mimalloc preload in the
 - [Firefox PNG: bytes fixed, TIME did not follow](project_ff_png_encoder_gap.md) — libpng+zlib must ship as a pair (system libpng brings its own libz) and reaches
 
-## conformance (25) — the Playwright suite — skips, runner config, triage recipes
+## conformance (26) — the Playwright suite — skips, runner config, triage recipes
 `.agents/auto-memory/index/conformance.md`
 
 - [WK conformance residual, Aug 2026](project_wk_conformance_residual_aug2026.md) — per-cluster verdicts (camera/mic genuine gap, modernizr key is `fontdisplay` not

@@ -2,6 +2,7 @@
 
 Full hooks for this area. The routing keys live in `.agents/auto-memory/MEMORY.md`; the memories themselves in `.agents/auto-memory/<slug>.md`.
 
+- [compiler-rt's move to /usr/lib/llvm23 broke clang22 twice](project_chromium_compiler_rt_move_breaks_clang22.md) — #208 swapped in edge's unversioned compiler-rt; builtins archive (#210, 19s into r1) and sanitizer headers (#223, r7 30h in on v8's unconditional include) both had to be linked back; assert both at setup
 - [chromium round images are sha-keyed](project_chromium_round_images_sha_keyed.md) — any setup-layer edit = full cold r1..r12; cold chromium 151 is 25-30h (r1 boxed at 5h12m, 7578/38707), sccache hit rate ~1%
 - [Chromium build time is cold-vs-warm, not PGO/LTO](project_chromium_build_time_is_cold_vs_warm_not_pgo.md) — 22 chains since July: before the knobs 36.1-44.5h, after 36.5-40.3h, single-variable pair 36.1 vs 40.7; the 3-8h runs everyone remembers are `reuse-if-exists` cache hits occurring on BOTH sides of the change, and an experiment can never reach that path; free lever is 4-6 concurrent chains, not disabling optimisations
 - [sccache ghac: broken at 0.15, WORKS at 0.16](project_sccache_ghac_readonly_v18.md) — 0.15+opendal wrote the deprecated v1 path and flipped read-only; 0.16.0 + ACTIONS_CACHE_SERVICE_V2=1 reads and writes fine (1.33% on a cold cache, 210 write errors); don't quote the dead-backend state as current

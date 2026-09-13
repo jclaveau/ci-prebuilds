@@ -120,3 +120,14 @@ rather than the public one, full bundling).
 link of `headless_shell` that looked like a structural risk took 18 minutes,
 not a round.
 
+**2026-09-13 — clang 23 on top of PGO+ThinLTO** (run 34761950633 vs official,
+slow runner; candidate `80ea0bc`, no DSO trim):
+
+| arm | geomean | layout |
+|---|---|---|
+| PGO + ThinLTO (shipped `d4e5f6b`) | 1.12 | 1.61 |
+| **+ clang 23** | **1.10** | **1.40** |
+
+Same 13-row geomean as above; the eight rows that move average 1.17. See
+[[project_chromium_clang23_lever]] for the three brackets against the shipped
+build (layout 0.96 / 0.87 / 0.87, runner-dependent).

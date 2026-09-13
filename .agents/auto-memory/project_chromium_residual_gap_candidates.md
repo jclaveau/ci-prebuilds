@@ -1,6 +1,6 @@
 ---
 name: project_chromium_residual_gap_candidates
-description: chromium residual 12% after both knobs — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (parity arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (same calls per iteration and same sizes as official to 0.5%/bucket, all interposable); left = SSP and clang 22-vs-23, both building
+description: chromium residual 12% after both knobs — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (parity arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (same calls per iteration and same sizes as official to 0.5%/bucket, all interposable); clang 22-vs-23 is LIVE — layout 0.87x vs the shipped build on the slow runner (0.96 fast), vs official 1.40 (was 1.61), geomean 1.10; left = SSP-via-cfg (chain died at r7 on the compiler-rt header hole, #223), to be re-run on the clang23 base
 metadata:
   type: project
 ---
@@ -250,3 +250,14 @@ layout_text +25% with it) to price glibc's memset against musl's that way.
 Left for layout: SSP (`perf/chromium-ssp-via-clang-config`, +12%
 instructions measured on canary loads) and clang 23 (`perf/chromium-clang23`),
 both building.
+
+**clang 23 LIVE, SSP chain lost (2026-09-13).** `perf/chromium-clang23`
+finished green once alpine:edge's own clang23 package replaced the self-built
+toolchain, and three `chs-perf-ab` brackets against the shipped build read
+`layout` 0.96 (fast runner) / **0.87** / **0.87** (slow runner, separated),
+`goto_warm` 0.94-0.99, `dom_churn` 0.92-0.98 — the first candidate to move
+layout since ThinLTO, and largest where the gap is largest. Against official:
+layout 1.40 (from 1.61), geomean 1.10 (from 1.12). Details and the ship path
+in [[project_chromium_clang23_lever]]. The SSP-via-cfg chain (34576077869)
+died at r7 on the sanitizer-header hole #223 fixed; it has not been measured
+and should be re-dispatched on top of clang23, not clang22.
