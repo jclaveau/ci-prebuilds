@@ -14,7 +14,7 @@
 #      compiled-in stack-protector default). `-###` shows what reaches cc1
 #      after the driver, which is the only line that matters.
 #
-#   2. PGO hit rate per directory. Chromium compiles with
+#   2. PGO hit rate per directory, with its denominator. Chromium compiles with
 #      -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date
 #      -Wno-backend-plugin, so a function whose profile no longer matches
 #      (aports/copium/PW patches change bodies, musl-conditioned code changes
@@ -22,6 +22,13 @@
 #      sample of TUs counts them. `base/` is the control: it takes few patches,
 #      so its mismatch rate is the floor that the profile's own revision drift
 #      (linux.pgo.txt names a branch commit, not our exact tag) costs everyone.
+#      The warnings alone say how many functions lost their profile, not out
+#      of how many had one: the profile's own function list, intersected with
+#      each sampled object's defined symbols, is that denominator, and the
+#      per-function counts weight both sides. Near 100% of the hot functions
+#      mismatching is the compiler (Chromium's profile was collected with its
+#      pinned clang snapshot, and the IR-PGO hash follows the pipeline); a few
+#      percent is the patches.
 #
 # usage: build-flags-probe.sh <outdir> [sample-per-dir]
 # No -e: a missing target or a failed recompile is a finding to print, not a
@@ -131,6 +138,38 @@ for dir in \
   # The out-of-date warning is per file but carries the function tally.
   fns=$(grep -hoE 'of [0-9]+ functions?, [0-9]+ have mismatched' "$OUT/pgo-$tag.log" | awk '{n+=$2; m+=$4} END{printf "%d/%d", m, n}')
   printf '%-45s %5s %12s %11s %8s %14s\n' "$dir" "$n" "$ood" "$unp" "$bck" "$fns" | tee -a "$OUT/summary.txt"
+done
+
+# ---- 3. denominator ---------------------------------------------------------
+# Profile entries: name and function (entry) count; --counts=false skips the
+# per-block counters, which is what makes a 300 MB profile listable.
+PROFDATA=$(grep -oE 'fprofile-use=[^ ]+' "$OUT/cmd-values.txt" | head -1 | cut -d= -f2-)
+LLVM_BIN=$(dirname "$(awk '{print $1}' "$OUT/cmd-values.txt")")
+(cd "$BUILD" && "$LLVM_BIN/llvm-profdata" show --all-functions --counts=false "$PROFDATA" 2>/dev/null) \
+  | awk '/^  [^ ]/ { name=$1; sub(/:$/, "", name) } /Function count:/ { print name, $3 }' \
+  | LC_ALL=C sort -u > /tmp/profile-fns.txt
+echo "== profile: $(wc -l < /tmp/profile-fns.txt) functions with a count" | tee -a "$OUT/summary.txt"
+echo "== PGO denominator: functions of the sampled TUs that have a profile entry, vs those whose hash mismatched" | tee -a "$OUT/summary.txt"
+printf '%-45s %9s %9s %6s %16s %16s %6s\n' dir profiled mismatch 'fn%' 'counts profiled' 'counts dropped' 'cnt%' | tee -a "$OUT/summary.txt"
+for dir in \
+  third_party/blink/renderer/core/layout \
+  third_party/blink/renderer/core/dom \
+  third_party/blink/renderer/core/css \
+  third_party/blink/renderer/platform \
+  base; do
+  tag=$(echo "$dir" | tr / _)
+  # Defined functions across the sampled objects (bitcode under ThinLTO, so
+  # llvm-nm), joined with the profile's names.
+  while read -r obj; do "$LLVM_BIN/llvm-nm" --defined-only "$BUILD/$obj" 2>/dev/null | awk '$2 ~ /^[tTwW]$/ { print $3 }'; done \
+    < "/tmp/objs-$tag.txt" | LC_ALL=C sort -u > "/tmp/defined-$tag.txt"
+  LC_ALL=C join /tmp/profile-fns.txt "/tmp/defined-$tag.txt" > "$OUT/profiled-$tag.txt"
+  grep -oE '\(hash mismatch\) [^ ]+ Hash = [0-9]+ up to [0-9]+' "$OUT/pgo-$tag.log" \
+    | awk '{ print $3, $NF }' | sort -u > "$OUT/mismatched-$tag.txt"
+  read -r np cp < <(awk '{ n++; c+=$2 } END { printf "%d %d", n, c }' "$OUT/profiled-$tag.txt")
+  read -r nm cm < <(awk '{ n++; c+=$2 } END { printf "%d %d", n, c }' "$OUT/mismatched-$tag.txt")
+  printf '%-45s %9s %9s %5.1f%% %16s %16s %5.1f%%\n' "$dir" "$np" "$nm" \
+    "$(awk -v a="$nm" -v b="$np" 'BEGIN { print (b ? 100*a/b : 0) }')" "$cp" "$cm" \
+    "$(awk -v a="$cm" -v b="$cp" 'BEGIN { print (b ? 100*a/b : 0) }')" | tee -a "$OUT/summary.txt"
 done
 
 # Which layout functions lost their profile — the names say whether the misses
