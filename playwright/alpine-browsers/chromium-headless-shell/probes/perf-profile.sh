@@ -139,8 +139,23 @@ if [ -s "$CG_DATA" ]; then
 
   # The one symbol this pass exists for, kept in its own file so it survives
   # the percent-limit that keeps the general report readable.
+  #
+  # Two things had to change for the official leg to show anything here, and
+  # the first run of this pass (34504703616) showed neither: its memset-callers
+  # file was 317 bytes of header while alpine's was 51 KB.
+  #
+  #   - glibc IFUNCs memset at load to a CPU-specific body, and perf reports the
+  #     body it sampled — `__memset_avx2_unaligned_erms` on the runners seen so
+  #     far, evex/avx512 variants on others. So `--symbols memset`, an exact
+  #     match, can never hit on that side; a substring filter can.
+  #   - Ubuntu's libc.so.6 is stripped, so without libc6-dbg the sampled body
+  #     has no name at all and shows as `libc.so.6 [.] 0x1a1bfa`. That is what
+  #     the run above produced. Dockerfile.perf-official now installs the
+  #     debug symbols, which perf finds by build-id.
+  #
+  # A control that cannot show anything is not a control.
   "$PERF" report -i "$CG_DATA" --stdio --no-children -g graph,0,caller \
-    --sort dso,sym --symbols memset \
+    --sort dso,sym --symbol-filter=memset \
     > "${OUT}/${TARGET}-${KERNEL}-memset-callers.txt" 2>&1 || true
   cat "${OUT}/${TARGET}-${KERNEL}-memset-callers.txt"
 fi

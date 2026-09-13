@@ -1,6 +1,6 @@
 ---
 name: feedback_merge_without_review_here
-description: on ci-prebuilds jean does not review — merge my own green PRs myself instead of parking them for approval
+description: on ci-prebuilds jean does not review — merge green PRs myself, at the moment I judge best, without asking or announcing "unless you say otherwise"
 metadata:
   type: feedback
 ---
@@ -47,3 +47,11 @@ Drained 7 that evening: merged #97 #98 #105 #106 #107 #79, closed #71. Only the
 parked draft #37 was left. Parked/draft PRs stay parked
 ([[feedback_superseded_label_not_close]]).
 
+
+**Reinforced 2026-09-11:** *"you don't need my go to merge prs in this repo,
+do it whenever you deduce it's the best moment."* Said after a tally that ended
+"merging now unless you say otherwise" — that hedge is itself the thing he
+does not want. The timing is mine too, not only the act: merge when green and
+sound, in the order the dependency chain needs (a gate fix before the run that
+should read through it, a probe before the dispatch that uses it), and report
+it as done. No "shall I", no "unless you object", no waiting a turn.

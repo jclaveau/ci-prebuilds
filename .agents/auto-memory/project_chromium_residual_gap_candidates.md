@@ -1,6 +1,6 @@
 ---
 name: project_chromium_residual_gap_candidates
-description: our chromium sits ~1.3x official even with PGO or ThinLTO — three probes ran, candidates 1/2/4 are dead, the residual is in box layout
+description: chromium residual 12% after both knobs — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (parity arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (same calls per iteration and same sizes as official to 0.5%/bucket, all interposable); clang 22-vs-23 is LIVE — layout 0.87x vs the shipped build on the slow runner (0.96 fast), vs official 1.40 (was 1.61), geomean 1.10; left = SSP-via-cfg (chain died at r7 on the compiler-rt header hole, #223), to be re-run on the clang23 base
 metadata:
   type: project
 ---
@@ -147,14 +147,117 @@ neither has to be re-measured:
   cited as evidence that aports "patches PartitionAlloc-as-malloc OUT for
   musl" — is a **three-line test disable** (`if (is_win || is_linux && false)`
   around `base_unittests`' `SystemAllocatorTest`). PA-as-malloc is on in both
-  arms by upstream default. The header comment is still wrong on main — a
-  fix is parked at `scratchpad/gap-probes-pa-comment.patch`, held back only
-  because that path is NOT in test-and-publish.yml's paths-ignore, so pushing
-  it starts a full publish that would queue behind the running chromium
-  chains.
+  arms by upstream default. The header comment fix landed as PR #213
+  (2026-09-11).
 - **We do not build with mold.** aports sets `use_mold=true`, which would be a
   real code-layout divergence from official's lld — but `apply-and-build.sh`
   does **not** source aports' `gn_config` at all. Our `args.gn` is
   `args.gn.overlay` plus a few injected lines, and the overlay pins
   `use_lld = true`. Any reasoning that starts "aports sets X" has to check the
   overlay first: the APKBUILD supplies patches and `_llvmver`, not gn args.
+
+**Round 6 — `perf record` finally ran, and it names one symbol** (run
+**34406201201**, `chromium residual-gap probes`, artifact
+`chromium-perf-record`). This is the instrument Round 4 asked for.
+
+Controls are clean: both legs report the same `tag checksum=1679700`, both
+profiled a 30 s window inside the same 100 s loop, and total event counts match
+(3.236e10 official / 3.196e10 alpine).
+
+| leg | iterations | median | top DSO | libc share |
+|---|---|---|---|---|
+| official | 369 | 258.8 ms | `chrome-headless-shell` 95.75% | `libc.so.6` **2.54%** |
+| alpine | 282 | 340.5 ms | `chrome-headless-shell.real` 91.43% | `ld-musl-x86_64.so.1` **6.47%** |
+
+**`memset` alone is 6.30% of all alpine samples — the hottest symbol in the
+profile by 5x** (next is 1.19%). Official's entire libc is 2.54% and its top
+libc symbol is 0.79%. Per iteration that is ~7.1e6 event-units in `memset`
+against ~2.2e6 for official's whole libc, i.e. roughly **20-25% of the
+layout_boxonly gap sits in this one symbol**.
+
+Not a volume difference: neither side sets `init_stack_vars`, and both are
+`is_official_build = true`, so both zero-init stack vars identically. glibc
+IFUNCs `memset` to `__memset_avx2_unaligned_erms`; musl's is a scalar loop with
+no ERMS and no CPU dispatch.
+
+**Unresolved tension, do not skip it.** Round 3 LD_PRELOADed an AVX2 shim and
+got only **1.9%** on this same kernel. Either the hot `memset` calls are not
+reachable by preload (musl-internal callers), or
+`playwright/bench/fast-string-preload.c`'s `memset` is simply weak — it has a
+byte-at-a-time tail and no `rep stosb` path, and it moved four routines at once
+so nothing was attributable. 6.30% of samples and 1.9% end-to-end cannot both
+be the whole story.
+
+**The decisive next probe is cheap: re-dispatch the same perf-record job with a
+call graph** (`--call-graph dwarf` or `fp`); this artifact recorded flat
+`cpu-clock` samples only, so `memset`'s callers are not in it. Callers inside
+Blink mean a preload can win; callers inside musl mean it cannot.
+Do NOT re-run the 4-in-1 shim as the test — a memset-only arm with an ERMS path
+is the one that separates implementation from reachability.
+[[project_chromium_faststring_moves_layout_text]]
+
+**Round 7 (2026-09-11) — the unwinder cannot name memset's callers, so count
+instead.** The `--call-graph` pass (PR #209) is blind on exactly this symbol:
+chromium has no frame pointers and musl's memset asm carries no CFI, so neither
+`fp` nor `dwarf` walks out of it (dwarf dies at `---0xffffffffffffffff`; `fp`
+recovers ONE hop, and only because memset is a leaf). Its official leg was also
+empty for two control-side reasons fixed in PR #215: glibc IFUNCs to
+`__memset_avx2_unaligned_erms` (exact `--symbols memset` never hits) AND
+Ubuntu's libc is stripped (perf shows `libc.so.6 [.] 0x1a1bfa` without
+`libc6-dbg`). The instrument that replaces unwinding: **PR #211's counting
+memset preload** (`playwright/bench/memset-count-preload.c`, dispatch input
+`perf_memset_count`), which answers (a) are the hot calls interposable — do
+the samples move off ld-musl onto the shim's DSO — and (b) what SIZES are they.
+(b) is the one that resolves the tension above: a distribution that dies below
+32 bytes means glibc's win is dispatch, not store width, and no AVX2 memset was
+ever going to move layout. First dispatch: run 34584573960. Early hint from the
+local gate: `LD_PRELOAD=libmsc.so /bin/true` reports `calls=0`, so musl's own
+startup memsets do NOT go through the preload — musl-internal callers exist and
+are invisible to any shim. Also: **perf-probe shares are runner-CPU-dependent**
+— the second call-graph run halved memset's share (6.30% → 3.42%) on a faster
+runner; only relative facts within a run (musl libc share ≈2× official's,
+memset top symbol) are stable across runs, and the "20-25% of the layout gap"
+sizing above was over-confident.
+
+**Round 6-7 chains closed (2026-09-11).** Chain D `perf/chromium-cfi-parity`
+builds but SIGILLs on every launch — a CFI trap — so official's CFI handicap
+is unpriced; treat the residual as a floor
+([[project_chromium_cfi_parity_arm_sigills]]). Chain E
+`perf/chromium-textstack-bundled` read `layout` 0.99x n.s. against the
+shipped arm: bundling freetype+harfbuzz into the LTO+PGO unit does NOT move
+the row, so the "text stack outside the LTO unit" candidate is dead for
+layout. What both chains DID deliver is `launch` 0.79-0.81x, all of it from
+the 11-library re-bundling ([[project_chromium_launch_dso_closure]]). Still
+open for layout: SSP (`perf/chromium-ssp-via-clang-config`) and clang 23
+(`perf/chromium-clang23`), both building, and the memset size histogram from
+the counting preload (run 34619723608, post-PR #217).
+
+**memset CLOSED (2026-09-11, runs 34619723608 / 34622651261 / 34626393552).**
+Three facts, one per run. (1) Every memset in the tree is interposable: with
+the counting shim through the wrapper, `ld-musl` falls to 0.1-0.2% of samples
+and `libmsc.so [.] memset` takes 12-19%. (2) The renderer (read via the
+shim's periodic tick, PR #219 — zygote-forked renderers announce nothing and
+are SIGKILLed before any destructor) fills at a 64-127 B mode, 56% of
+`layout_boxonly`'s bytes in 256-1023 B and 76% of `layout_text`'s in
+256-4096 B: not the sub-32 B regime, so store width was never the exoneration.
+(3) The control counted with the same shim (PR #220) has the SAME histogram
+to half a percent per bucket and the same calls per iteration — boxonly
+1.527M vs 1.538M (0.99x), text 5.35M vs 5.46M (0.98x). No code-path
+divergence in memset usage; the retracted AVX2 shim already showed a faster
+implementation moves layout nothing; and memset's share with musl's own is
+3-6%. The word-loop shim itself costs both sides too much (official
+layout_text +25% with it) to price glibc's memset against musl's that way.
+Left for layout: SSP (`perf/chromium-ssp-via-clang-config`, +12%
+instructions measured on canary loads) and clang 23 (`perf/chromium-clang23`),
+both building.
+
+**clang 23 LIVE, SSP chain lost (2026-09-13).** `perf/chromium-clang23`
+finished green once alpine:edge's own clang23 package replaced the self-built
+toolchain, and three `chs-perf-ab` brackets against the shipped build read
+`layout` 0.96 (fast runner) / **0.87** / **0.87** (slow runner, separated),
+`goto_warm` 0.94-0.99, `dom_churn` 0.92-0.98 — the first candidate to move
+layout since ThinLTO, and largest where the gap is largest. Against official:
+layout 1.40 (from 1.61), geomean 1.10 (from 1.12). Details and the ship path
+in [[project_chromium_clang23_lever]]. The SSP-via-cfg chain (34576077869)
+died at r7 on the sanitizer-header hole #223 fixed; it has not been measured
+and should be re-dispatched on top of clang23, not clang22.

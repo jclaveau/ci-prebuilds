@@ -57,3 +57,8 @@ exports `apply-and-build.sh` already sets. `stage-cache-layout.sh` prints the
 linked binary's canary count so a build that silently ignored the flag is
 visible as a null arm instead of shipping as a result
 ([[feedback_verify_ab_varied_the_variable]]).
+
+**Side effect:** passing this as `-Xclang` on the CFLAGS command line disables
+sccache entirely (0.16.0 cannot parse `-Xclang`, marks every compile
+non-cacheable) — fixed on `perf/chromium-ssp-via-clang-config` by baking the
+level into clang's own config file instead. See [[project_sccache_disabled_by_ssp_xclang]].

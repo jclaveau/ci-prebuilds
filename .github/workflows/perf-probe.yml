@@ -288,8 +288,14 @@ jobs:
           missing=0
           for dir in perf-current/*/; do
             draw=$(basename "$dir")
+            # The draw is perf-probe-<browser>-<slot>, and the file name is
+            # <arm>-<browser>-run<N>.json. Match the browser explicitly: with
+            # only a wildcard there, `alpine-*` also catches `alpine-b-*`, and a
+            # two-arm dispatch reads "alpine produced 10 of 5 runs" while every
+            # arm in fact reported (run 34577378909).
+            browser=$(echo "$draw" | awk -F- '{ print $(NF-1) }')
             for arm in $arms; do
-              got=$(find "$dir" -name "$arm-*-run*.json" | wc -l)
+              got=$(find "$dir" -name "$arm-$browser-run*.json" | wc -l)
               if [ "$got" -ne "$RUNS" ]; then
                 echo "::error::$draw: $arm produced $got of $RUNS runs"
                 missing=1

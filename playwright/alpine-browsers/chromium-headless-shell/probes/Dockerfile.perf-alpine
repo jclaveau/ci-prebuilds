@@ -6,7 +6,12 @@
 #
 # binutils is for objdump/nm, not for perf: both artifacts ship stripped, so
 # naming a hot address means disassembling it in place.
+#
+# gcc and musl-dev are for the memset-count arm, which compiles its preload
+# inside this container so the shim is linked against the same musl the browser
+# runs on. Installed unconditionally because a conditional apk would need a
+# build arg and a cache-busting layer to save about thirty seconds.
 ARG BASE
 FROM ${BASE}
 USER root
-RUN apk add --no-cache perf binutils
+RUN apk add --no-cache perf binutils gcc musl-dev

@@ -90,6 +90,13 @@ ENV CHS_LLVM_VER=23
 # `-rtlib=compiler-rt -fuse-ld=lld`. The final print is an assertion: if edge
 # ships clang22-rtlib again, or moves compiler-rt, this fails the build here
 # rather than 19s into a five-hour round.
+#
+# The same package move took the sanitizer HEADERS with it: they live in
+# compiler-rt's resource dir (llvm23) and clang22-headers carries none, so
+# v8/src/sandbox/testing.cc's unconditional
+# `#include <sanitizer/common_interface_defs.h>` failed run 34576077869 at r7,
+# 30 hours in. The interface headers are the C API of the runtime and do not
+# change between majors; link the directory and compile one TU through it.
 RUN set -eux; \
     want=/usr/lib/llvm22/lib/clang/22/lib/linux; \
     if [ ! -e "$want/libclang_rt.builtins-x86_64.a" ]; then \
@@ -100,7 +107,16 @@ RUN set -eux; \
       ln -sfn "$(dirname "$have")" "$want"; \
     fi; \
     test -e "$want/libclang_rt.builtins-x86_64.a"; \
-    /usr/lib/llvm22/bin/clang -print-runtime-dir
+    /usr/lib/llvm22/bin/clang -print-runtime-dir; \
+    inc=/usr/lib/llvm22/lib/clang/22/include/sanitizer; \
+    if [ ! -e "$inc/common_interface_defs.h" ]; then \
+      have="$(find /usr/lib/llvm*/lib/clang/*/include/sanitizer -name common_interface_defs.h \
+                -print 2>/dev/null | sort -V | tail -1)"; \
+      [ -n "$have" ]; \
+      ln -sfn "$(dirname "$have")" "$inc"; \
+    fi; \
+    printf '#include <sanitizer/common_interface_defs.h>\nint main(void){return 0;}\n' > /tmp/s.c; \
+    /usr/lib/llvm22/bin/clang -c /tmp/s.c -o /tmp/s.o && rm -f /tmp/s.c /tmp/s.o
 
 # Alpine edge ships sccache 0.15.0-r0 which has a broken GHA v1 cache backend
 # under GHA runners v18 (writes to deprecated /_apis/artifactcache path, 100%

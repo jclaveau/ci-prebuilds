@@ -8,11 +8,14 @@
 #
 # Input: two directories of shard-report artifacts, each containing many
 #   `report-<browser>-<shard>/stats.txt` files. `stats.txt` has one line
-#   per (browser, shard, suite) with `passed=` `failed=` `skipped=` fields
-#   (written by playwright/alpine-browsers/conformance/run.sh).
+#   per (browser, shard, suite) with `passed=` `failed=` `skipped=` `flaky=`
+#   fields (written by playwright/alpine-browsers/conformance/run.sh).
 #
 # Rules:
-#   - Sum passes per browser on each side.
+#   - Sum passes per browser on each side. A flaky test is a pass: PW retried
+#     it and it went green, and PW's own exit code says so. Counting only the
+#     first-try passes turned one retry on Alpine into a -1 regression (run
+#     34652798588, shard 6: `110 passed, 1 flaky` against Ubuntu's 111).
 #   - FAIL if Alpine < Ubuntu on any browser that RAN on both sides.
 #   - A browser with no shards on a side did not run — the producer builds
 #     per-browser and the Ubuntu control leg runs on its own schedule, so a
@@ -62,15 +65,15 @@ echo "Alpine conformance pass counts must be **≥** Ubuntu baseline pass counts
 echo "per browser at each PW version. Otherwise Alpine is regressing tests PW"
 echo "itself now covers, and \"same-or-better\" is no longer true."
 echo ""
-echo "| Browser | Alpine (passed / failed / skipped) | Ubuntu (passed / failed / skipped) | Δ passed | status |"
+echo "| Browser | Alpine (passed incl. flaky / failed / skipped) | Ubuntu (passed incl. flaky / failed / skipped) | Δ passed | status |"
 echo "|---|---|---|---|---|"
 
 rc=0
 for b in "${BROWSERS[@]}"; do
-  a_pass=$(sum_field "$ALPINE_DIR" "$b" passed)
+  a_pass=$(( $(sum_field "$ALPINE_DIR" "$b" passed) + $(sum_field "$ALPINE_DIR" "$b" flaky) ))
   a_fail=$(sum_field "$ALPINE_DIR" "$b" failed)
   a_skip=$(sum_field "$ALPINE_DIR" "$b" skipped)
-  u_pass=$(sum_field "$UBUNTU_DIR" "$b" passed)
+  u_pass=$(( $(sum_field "$UBUNTU_DIR" "$b" passed) + $(sum_field "$UBUNTU_DIR" "$b" flaky) ))
   u_fail=$(sum_field "$UBUNTU_DIR" "$b" failed)
   u_skip=$(sum_field "$UBUNTU_DIR" "$b" skipped)
   delta=$((a_pass - u_pass))

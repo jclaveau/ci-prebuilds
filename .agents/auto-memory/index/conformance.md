@@ -2,6 +2,7 @@
 
 Full hooks for this area. The routing keys live in `.agents/auto-memory/MEMORY.md`; the memories themselves in `.agents/auto-memory/<slug>.md`.
 
+- [A flaky retry is a pass for the parity gate](project_conformance_parity_flaky_is_pass.md) — PW lists retried-then-green under `flaky`; the gate summed `passed` only and read -1 on an all-green build (#224 adds `flaky=` both sides); diff per-shard stats.txt then read that shard's log tail to name the test
 - [WK conformance residual, Aug 2026](project_wk_conformance_residual_aug2026.md) — per-cluster verdicts (camera/mic genuine gap, modernizr key is `fontdisplay` not `unicoderange`, Navigation API is a stale execution context not a protocol gap)
 - [WK camera/mic — PW never wires permissions to getUserMedia](project_wk_camera_mic_and_noxserver_dispositioned.md) — bootstrap.diff wires `permissionForAutomation` into clipboard/geolocation/queryPermission ONLY, so the UIProcess ignores `Browser.grantPermissions`; fix a759bb0/PR #112. The prompt-pref theory was WRONG (same failure count, swapped names). the ~30s repro is TRACKED at `webkit/probes/run-capture-probe.sh` (PR #113)
 - [The conformance runner mirrors the consumer by hand](project_conformance_runner_mirrors_consumer.md) — `build-runner.sh` rewrites its own `pw_run.sh`, so a preload added only in Dockerfile.alpine is invisible; and `conformance-webkit` does NOT run on a pull_request — gate on `gh workflow run pw-conformance.yml --ref <branch>` and grep a shard log to prove it wasn't vacuous

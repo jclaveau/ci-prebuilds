@@ -29,3 +29,18 @@ bug as [[project_finalize_overlay_baked_scripts]] (an edit under a path that
 but never publishes `latest`, no matter how green. To measure a dispatched
 build, probe the GHCR **sha-tagged** image the run itself produced instead of
 waiting for (or expecting) a publish that will not happen.
+
+**Mirror-image bug, PR #200: an ignored path is not the only way to waste a
+publish — a NON-ignored one can cancel a real one.** Before #200,
+`.agents/**` was not in `paths-ignore` at all, so three memory-only commits in
+a row each triggered its own `test-and-publish` run. The workflow's
+concurrency group is per-ref with `cancel-in-progress: true`
+([[gha-concurrency-group-serializes-dispatches]]), so each new memory push
+cancelled the PREVIOUS commit's still-running publish — two genuine publishes
+(`34349445882`, `34349591921`) died `cancelled` mid-build for no reason
+related to their own content. Fixed by adding `.agents/**` to `paths-ignore`
+on both `push` and `pull_request` blocks: memory files are provably no image
+input, so they should never occupy the ref's build slot. General rule: any
+path that changes on every session but never changes what ships belongs in
+`paths-ignore`, even if — especially if — nothing currently depends on that
+exact path being watched.
