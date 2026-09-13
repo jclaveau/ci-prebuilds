@@ -22,22 +22,22 @@ trap 'rm -rf "$workdir"' EXIT
 
 # One shard's worth of stats.txt, in the format conformance/run.sh writes.
 seed() {
-  local dir="$1" browser="$2" passed="$3"
+  local dir="$1" browser="$2" passed="$3" flaky="${4:-0}"
   mkdir -p "$dir/report-$browser-1"
-  printf 'browser=%s shard=1 suite=library passed=%s failed=0 skipped=0\n' \
-    "$browser" "$passed" > "$dir/report-$browser-1/stats.txt"
+  printf 'browser=%s shard=1 suite=library passed=%s failed=0 skipped=0 flaky=%s\n' \
+    "$browser" "$passed" "$flaky" > "$dir/report-$browser-1/stats.txt"
 }
 
 # $1 label, $2 expected rc, $3 expected status substring, rest: seed specs
-# as `side:browser:passed` where side is alp or ubu.
+# as `side:browser:passed[:flaky]` where side is alp or ubu.
 expect() {
   local label="$1" want_rc="$2" want_text="$3"; shift 3
   local case_dir="$workdir/$checks"
   mkdir -p "$case_dir/alp" "$case_dir/ubu"
-  local spec side browser passed
+  local spec side browser passed flaky
   for spec in "$@"; do
-    IFS=: read -r side browser passed <<< "$spec"
-    seed "$case_dir/$side" "$browser" "$passed"
+    IFS=: read -r side browser passed flaky <<< "$spec"
+    seed "$case_dir/$side" "$browser" "$passed" "${flaky:-0}"
   done
 
   local out got=0
@@ -79,6 +79,16 @@ expect "more Alpine passes pass" 0 "| firefox |" \
 
 expect "no Ubuntu baseline is not a verdict" 0 "no Ubuntu baseline" \
   alp:webkit:100
+
+# A retry that went green is a pass. Run 34652798588 read shard 6's
+# `110 passed, 1 flaky` as one fewer than Ubuntu's 111.
+expect "a flaky pass on Alpine is not a regression" 0 "| chromium | 111 /" \
+  alp:chromium:110:1 ubu:chromium:111
+
+# ...and symmetrically on the baseline, so a flaky Ubuntu run cannot hide a
+# genuine Alpine shortfall.
+expect "a flaky pass on Ubuntu still counts against Alpine" 1 "FAIL" \
+  alp:chromium:110 ubu:chromium:110:1
 
 echo "check-runtime-parity: $((checks - failures))/$checks checks passed"
 [ "$failures" -eq 0 ]

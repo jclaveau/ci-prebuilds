@@ -282,7 +282,10 @@ emit_stats() {
   passed=$(strip_ansi < "$LOG" | grep -oE '^\s*[0-9]+ passed' | tail -1 | grep -oE '[0-9]+' || echo 0)
   failed=$(strip_ansi < "$LOG" | grep -oE '^\s*[0-9]+ failed' | tail -1 | grep -oE '[0-9]+' || echo 0)
   skipped=$(strip_ansi < "$LOG" | grep -oE '^\s*[0-9]+ skipped' | tail -1 | grep -oE '[0-9]+' || echo 0)
-  echo "browser=${BROWSER} shard=${SHARD}/${SHARD_TOTAL} suite=${LABEL} passed=${passed} failed=${failed} skipped=${skipped}" \
+  # PW lists a test that failed and then passed on retry under `flaky`, not
+  # `passed`; the parity gate adds it back.
+  flaky=$(strip_ansi < "$LOG" | grep -oE '^\s*[0-9]+ flaky' | tail -1 | grep -oE '[0-9]+' || echo 0)
+  echo "browser=${BROWSER} shard=${SHARD}/${SHARD_TOTAL} suite=${LABEL} passed=${passed} failed=${failed} skipped=${skipped} flaky=${flaky}" \
     >> "$REPORT_DIR/stats.txt"
 
   # html reporter default output path is playwright-report/; move it.
