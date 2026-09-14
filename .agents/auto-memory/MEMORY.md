@@ -10,7 +10,7 @@ touches an area, read that file before concluding no rule exists. Then read
 `.agents/auto-memory/index/chromium-perf.md`
 
 - [clang 22→23 IS a layout lever](project_chromium_clang23_lever.md) — layout 0.87x vs shipped on slow silicon, vs official 1.40 (was 1.61), geomean 1.10; alpine:edge packages clang23 now; the new base for every further candidate
-- [chromium residual: 12% after both knobs, static inspection exhausted](project_chromium_residual_gap_candidates.md) — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI, TLS, under-inlining, text stack, memset; clang 22→23 LIVE (layout 0.87x slow silicon); left = SSP-via-cfg, to be re-run on the clang23 base
+- [chromium residual: 12% after both knobs, static inspection exhausted](project_chromium_residual_gap_candidates.md) — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI, TLS, under-inlining, text stack, memset; clang 22→23 LIVE (layout 0.87x slow silicon); PGO hash-mismatch loss measured = revision drift official pays too (snapshot clang 84 vs ours 100), cc1 flags clean; left = runtime musl/glibc + per-symbol perf record
 - [chromium launch = the DSO closure; the trim MEASURED at 0.79x](project_chromium_launch_dso_closure.md) — unbundle arm `2f82e9e` takes launch 0.79x on two clean A/Bs, freetype+harfbuzz add nothing (0.81x); layout unreadable at n=3 across runs; a VOID launch cell (every sample 2-5x, controls flat) is runner-side and only a full rerun fixes it; ship = rebase unbundle + 38h build
 - [chromium perf arms for 1.62 — PGO+ThinLTO together wins](project_chromium_perf_arms_1_62.md) — geomean vs official: baseline 1.42, PGO 1.28, ThinLTO 1.31, BOTH 1.12
 - [The AVX2 string shim was a net loss — RETRACTED](project_chromium_faststring_moves_layout_text.md) — the layout_text win was measured on the artifact at `image_ours`, a DIFFERENT build
@@ -90,3 +90,4 @@ touches an area, read that file before concluding no rule exists. Then read
 
 - [Merge my own green PRs here — jean does not review](feedback_merge_without_review_here.md) — he builds the CI that produces the numbers; closing the loop (merge → dispatch →
 - [Check a source-only patch reaches the build](project_source_patch_reaches_build_checklist.md) — before a multi-hour dispatch: image tag sha-scoped? script COPYed before the RUN
+- [PGO probe mechanics](project_chromium_pgo_probe_mechanics.md) — gn `obj/<dir>/<target>/x.o` naming, IR profiles need `--counts` + max Block counts, busybox has no `join`, empty log ≠ zero mismatches, `script_ref` dispatch

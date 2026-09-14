@@ -261,3 +261,29 @@ layout 1.40 (from 1.61), geomean 1.10 (from 1.12). Details and the ship path
 in [[project_chromium_clang23_lever]]. The SSP-via-cfg chain (34576077869)
 died at r7 on the sanitizer-header hole #223 fixed; it has not been measured
 and should be re-dispatched on top of clang23, not clang22.
+
+## 2026-09-14 — PGO hit rate and compile flags, both measured (probe `chromium-build-flags-probe.yml`)
+
+- **cc1 line is clean** (r12, clang23 branch): `-O2 -flto=thin -fwhole-program-vtables`,
+  profile-use, SSP `-stack-protector 1`, no unwind tables, `-ffp-contract=off`,
+  `-fsanitize=array-bounds,return` (trap — Chromium's own, not Alpine's),
+  `-fstack-clash-protection` present but measured dead (10 vs 0 probe).
+- **PGO profile loss**: `-Wbackend-plugin` reports "function control flow change
+  detected (hash mismatch)" on ~7 % of profiled functions, 12 % of hot ones in
+  blink layout (100 mismatches / 24 TUs; `BlockNode::Layout`,
+  `FragmentBuilder::GetBoxType`, `CreateConstraintSpaceForChild`). Same rate in
+  dom/css/platform/base → not our patches. No `unprofiled`/`out-of-date`
+  warnings at all.
+- **Verdict (run 34811938326)**: Chromium's exact pinned clang snapshot
+  (`53d18800`, image `ghcr.io/jclaveau/chs-clang:23-g53d18800eda3-alpine-d446f00e21a1`)
+  recompiling the same TUs loses 84/203/14 (layout/dom/base) against our
+  100/207/18. The loss is **revision drift the official build pays too**; the
+  compiler version buys ~15 hot layout fns (~2.6 % of hot). PGO loss is DEAD as
+  the residual's explanation; the snapshot-toolchain chain is at most a
+  compiler control, not a candidate.
+- Left: runtime musl/glibc (item 4, glibc control chain, ~multi-day, awaiting
+  go/no-go) and per-symbol `perf record` on the 4362396 image once its chain lands.
+
+**How to apply:** do not re-propose "fix PGO hash mismatches" or "match
+Chromium's clang for the profile"; both are measured. Probe mechanics live in
+[[project_chromium_pgo_probe_mechanics]].
