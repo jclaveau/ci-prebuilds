@@ -166,11 +166,10 @@ for dir in \
   # llvm-nm), joined with the profile's names.
   while read -r obj; do "$LLVM_BIN/llvm-nm" --defined-only "$BUILD/$obj" 2>> "$OUT/nm-$tag.err" | awk '$2 ~ /^[tTwW]$/ { print $3 }'; done \
     < "/tmp/objs-$tag.txt" | LC_ALL=C sort -u > "$OUT/defined-$tag.txt"
-  # Run 34794502643 joined nothing: the raw nm lines of the first object say
-  # which side's names are off.
-  obj1=$(head -1 "/tmp/objs-$tag.txt")
-  { echo "### $obj1 ($(ls -la "$BUILD/$obj1" 2>&1 | awk '{print $5}') bytes, $(file -b "$BUILD/$obj1" 2>&1 | cut -c1-60))"; "$LLVM_BIN/llvm-nm" --defined-only "$BUILD/$obj1" 2>&1 | head -5; } >> "$OUT/nm-$tag.err"
-  LC_ALL=C join /tmp/profile-fns.txt "$OUT/defined-$tag.txt" > "$OUT/profiled-$tag.txt"
+  # awk, not join: the round image is Alpine and busybox has no join applet
+  # (run 34797323579 joined 801 defined names against 1.18M profile entries
+  # into nothing, with the error in a dropped stderr).
+  awk 'NR == FNR { c[$1] = $2; next } ($1 in c) { print $1, c[$1] }' /tmp/profile-fns.txt "$OUT/defined-$tag.txt" > "$OUT/profiled-$tag.txt"
   grep -oE '\(hash mismatch\) [^ ]+ Hash = [0-9]+ up to [0-9]+' "$OUT/pgo-$tag.log" \
     | awk '{ print $3, $NF }' | sort -u > "$OUT/mismatched-$tag.txt"
   read -r np cp < <(awk '{ n++; c+=$2 } END { printf "%d %d", n, c }' "$OUT/profiled-$tag.txt")
