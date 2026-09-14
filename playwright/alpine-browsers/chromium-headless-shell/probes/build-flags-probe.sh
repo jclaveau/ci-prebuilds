@@ -109,6 +109,23 @@ echo | tee -a "$OUT/summary.txt"
 # (a later -W wins over an earlier -Wno-). Output goes to /tmp so obj/ is not
 # touched; the .d file rewrite is harmless in a throwaway container.
 PGO_ON="-Wprofile-instr-unprofiled -Wprofile-instr-out-of-date -Wbackend-plugin"
+# Recompile every object of /tmp/objs-<tag>.txt with the three warnings on,
+# one per TU, nproc at a time; the merged log is on stdout. A second argument
+# swaps the compiler binary directory (the alternate clang of part 4).
+recompile_with_warnings() {
+  local tag="$1" altbin="$2"
+  rm -rf "/tmp/pgo-$tag"; mkdir -p "/tmp/pgo-$tag"
+  xargs -P "$(nproc)" -I{} bash -c '
+    obj="$1"; tag="$2"; build="$3"; pgo_on="$4"; altbin="$5"
+    line=$(ninja -C "$build" -t commands "$obj" 2>/dev/null | tail -1 | sed "s/^sccache //")
+    [ -n "$line" ] || exit 0
+    # Same command, warnings on, object to a private path so obj/ is not touched.
+    line=$(printf "%s" "$line" | sed -E "s# -o [^ ]+# -o /tmp/pgo-$tag/$(echo "$obj" | tr / _)#")
+    [ -n "$altbin" ] && line=$(printf "%s" "$line" | sed -E "s#^[^ ]*/(clang\\+\\+|clang) #$altbin/\\1 #")
+    { echo "### $obj"; (cd "$build" && eval "$line $pgo_on" 2>&1 || true); } > "/tmp/pgo-$tag/$(echo "$obj" | tr / _).log"
+  ' _ {} "$tag" "$BUILD" "$PGO_ON" "$altbin" < "/tmp/objs-$tag.txt"
+  cat "/tmp/pgo-$tag"/*.log 2>/dev/null || true
+}
 echo "== PGO warnings, $SAMPLE TUs per dir (out-of-date = hash mismatch, profile dropped; unprofiled = no data; backend = CFG mismatch)" | tee -a "$OUT/summary.txt"
 printf '%-45s %5s %12s %11s %8s %14s\n' dir TUs out-of-date unprofiled backend 'fn mismatch/of' | tee -a "$OUT/summary.txt"
 for dir in \
@@ -120,18 +137,8 @@ for dir in \
   tag=$(echo "$dir" | tr / _)
   : > "/tmp/objs-$tag.txt"
   for src in $(srcs_in_dir "$dir" | head -n "$SAMPLE"); do obj_for_src "$src" >> "/tmp/objs-$tag.txt"; done
-  # One compile per TU, nproc at a time; each writes its own log, merged after.
-  rm -rf "/tmp/pgo-$tag"; mkdir -p "/tmp/pgo-$tag"
   n=$(wc -l < "/tmp/objs-$tag.txt")
-  xargs -P "$(nproc)" -I{} bash -c '
-    obj="$1"; tag="$2"; build="$3"; pgo_on="$4"
-    line=$(ninja -C "$build" -t commands "$obj" 2>/dev/null | tail -1 | sed "s/^sccache //")
-    [ -n "$line" ] || exit 0
-    # Same command, warnings on, object to a private path so obj/ is not touched.
-    line=$(printf "%s" "$line" | sed -E "s# -o [^ ]+# -o /tmp/pgo-$tag/$(echo "$obj" | tr / _)#")
-    { echo "### $obj"; (cd "$build" && eval "$line $pgo_on" 2>&1 || true); } > "/tmp/pgo-$tag/$(echo "$obj" | tr / _).log"
-  ' _ {} "$tag" "$BUILD" "$PGO_ON" < "/tmp/objs-$tag.txt"
-  cat "/tmp/pgo-$tag"/*.log > "$OUT/pgo-$tag.log" 2>/dev/null || : > "$OUT/pgo-$tag.log"
+  recompile_with_warnings "$tag" "" > "$OUT/pgo-$tag.log"
   ood=$(grep -c 'profile-instr-out-of-date' "$OUT/pgo-$tag.log" || true)
   unp=$(grep -c 'profile-instr-unprofiled' "$OUT/pgo-$tag.log" || true)
   bck=$(grep -c 'backend-plugin' "$OUT/pgo-$tag.log" || true)
@@ -185,3 +192,30 @@ grep -hoiE "function control flow change detected \(hash mismatch\) [^ ]+|no pro
   "$OUT/pgo-third_party_blink_renderer_core_layout.log" | sort | uniq -c | sort -rn | head -40 \
   > "$OUT/layout-mismatched-functions.txt" || true
 echo "== $(wc -l < "$OUT/layout-mismatched-functions.txt") distinct layout functions named in warnings (top in layout-mismatched-functions.txt)" | tee -a "$OUT/summary.txt"
+
+# ---- 4. the same sample under another clang --------------------------------
+# The profile's hashes come from Chromium's pinned clang snapshot. If the
+# snapshot itself (mounted by the workflow as ALT_CLANG) mismatches the same
+# functions, the loss is the profile's revision drift and official pays it
+# too; if it matches them, the loss is our compiler's and a chain on the
+# snapshot recovers it.
+if [[ -n "${ALT_CLANG:-}" ]]; then
+  echo "== alternate clang: $("$ALT_CLANG/clang++" --version 2>&1 | head -1)" | tee -a "$OUT/summary.txt"
+  printf '%-45s %5s %13s %12s %13s %12s\n' dir TUs 'mismatch ours' 'hot ours' 'mismatch alt' 'hot alt' | tee -a "$OUT/summary.txt"
+  for dir in \
+    third_party/blink/renderer/core/layout \
+    third_party/blink/renderer/core/dom \
+    base; do
+    tag=$(echo "$dir" | tr / _)
+    n=$(wc -l < "/tmp/objs-$tag.txt")
+    recompile_with_warnings "alt-$tag" "$ALT_CLANG" > "$OUT/pgo-alt-$tag.log"
+    # A different compiler may fail on a TU outright; that shows as errors, not
+    # as a clean zero.
+    err=$(grep -c ' error: ' "$OUT/pgo-alt-$tag.log" || true)
+    grep -oE '\(hash mismatch\) [^ ]+ Hash = [0-9]+ up to [0-9]+' "$OUT/pgo-alt-$tag.log" \
+      | awk '{ print $3, $NF }' | sort -u > "$OUT/mismatched-alt-$tag.txt"
+    printf '%-45s %5s %13s %12s %13s %12s  (%s errors)\n' "$dir" "$n" \
+      "$(wc -l < "$OUT/mismatched-$tag.txt")" "$(awk '$2 > 0' "$OUT/mismatched-$tag.txt" | wc -l)" \
+      "$(wc -l < "$OUT/mismatched-alt-$tag.txt")" "$(awk '$2 > 0' "$OUT/mismatched-alt-$tag.txt" | wc -l)" "$err" | tee -a "$OUT/summary.txt"
+  done
+fi

@@ -20,23 +20,38 @@
 
 ARG LLVM_VERSION=23.1.1
 ARG LLVM_MAJOR=23
+# Set to an llvm-project commit to build that snapshot instead of the release:
+# Chromium's PGO profile carries function hashes computed by its own pinned
+# clang (151 pins 53d18800), and only the same snapshot can tell a hash
+# mismatch caused by the compiler from one caused by the sources.
+ARG LLVM_GIT_SHA=
 
 FROM alpine:edge AS llvm-builder
 ARG LLVM_VERSION
 ARG LLVM_MAJOR
+ARG LLVM_GIT_SHA
 
 RUN apk add --no-cache \
-        build-base cmake ninja-build samurai python3 curl tar xz \
+        build-base cmake ninja-build samurai python3 curl tar xz git \
         clang22 clang22-dev lld22 llvm22 \
         zlib-dev zstd-dev libxml2-dev linux-headers musl-dev
 
 WORKDIR /src
-RUN curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors \
-      "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/llvm-project-${LLVM_VERSION}.src.tar.xz" \
-      -o llvm.tar.xz \
- && tar -xf llvm.tar.xz \
- && mv "llvm-project-${LLVM_VERSION}.src" llvm-project \
- && rm llvm.tar.xz
+# A shallow fetch of one commit: GitHub serves any reachable sha by want.
+RUN if [ -n "$LLVM_GIT_SHA" ]; then \
+      git init -q llvm-project \
+   && git -C llvm-project remote add origin https://github.com/llvm/llvm-project.git \
+   && git -C llvm-project fetch -q --depth 1 origin "$LLVM_GIT_SHA" \
+   && git -C llvm-project checkout -q FETCH_HEAD \
+   && rm -rf llvm-project/.git; \
+    else \
+      curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors \
+        "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/llvm-project-${LLVM_VERSION}.src.tar.xz" \
+        -o llvm.tar.xz \
+   && tar -xf llvm.tar.xz \
+   && mv "llvm-project-${LLVM_VERSION}.src" llvm-project \
+   && rm llvm.tar.xz; \
+    fi
 
 # Built WITH alpine's clang22 rather than gcc so the bootstrap matches the
 # platform the result has to run on. The default triple is pinned explicitly

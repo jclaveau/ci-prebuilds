@@ -22,9 +22,14 @@ on:
         required: false
         default: '23.1.1'
         type: string
+      llvm_git_sha:
+        description: 'Build this llvm-project commit instead of the release tarball (Chromium 151 pins 53d18800eda3b7407e53366f27ca78e922c6e0db); llvm_version then only names the major'
+        required: false
+        default: ''
+        type: string
 
 concurrency:
-  group: chromium-clang-toolchain-${{ github.ref }}-${{ inputs.llvm_version }}
+  group: chromium-clang-toolchain-${{ github.ref }}-${{ inputs.llvm_version }}-${{ inputs.llvm_git_sha }}
   cancel-in-progress: false
 
 permissions:
@@ -43,6 +48,7 @@ jobs:
       - id: pins
         run: |
           V='${{ inputs.llvm_version }}'
+          G='${{ inputs.llvm_git_sha }}'
           # Content-address the tag on the recipe, not on the LLVM version
           # alone. A version-only tag made the reuse check below a trap: the
           # first 23.1.1 image shipped compiler-rt at a path Chromium cannot
@@ -53,11 +59,15 @@ jobs:
           R=$(sha256sum \
                 playwright/alpine-browsers/chromium-headless-shell/Dockerfile.clang \
               | cut -c1-12)
+          # A snapshot build is tagged by its commit, not by the release
+          # number it only borrows the major from.
+          T="$V"; [ -n "$G" ] && T="${V%%.*}-g${G:0:12}"
           {
             echo "llvm_version=$V"
             echo "llvm_major=${V%%.*}"
+            echo "llvm_git_sha=$G"
             echo "recipe=$R"
-            echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/chs-clang:${V}-alpine-${R}"
+            echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/chs-clang:${T}-alpine-${R}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Free up runner disk (an LLVM build tree is ~20 GB)
@@ -96,6 +106,7 @@ jobs:
           build-args: |
             LLVM_VERSION=${{ steps.pins.outputs.llvm_version }}
             LLVM_MAJOR=${{ steps.pins.outputs.llvm_major }}
+            LLVM_GIT_SHA=${{ steps.pins.outputs.llvm_git_sha }}
 
       - name: Report
         run: |

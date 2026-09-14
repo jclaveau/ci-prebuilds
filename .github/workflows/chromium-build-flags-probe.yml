@@ -50,6 +50,10 @@ on:
         description: 'Branch/sha to take probes/ from (the workflow itself always runs from main)'
         required: false
         default: ''
+      alt_clang_image:
+        description: 'chs-clang image whose /usr/lib/llvm23 recompiles the PGO sample a second time (profile-hash check against another compiler)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -80,10 +84,25 @@ jobs:
         run: |
           docker pull -q "${{ inputs.round_image }}"
           df -h /
+      # A second compiler for the PGO sample: the profile's function hashes
+      # were computed by Chromium's pinned clang snapshot, and a mismatch on a
+      # function no patch touches is either that snapshot or the revision
+      # drift official pays too. Recompiling the same TUs with the snapshot
+      # separates the two.
+      - name: Unpack the alternate clang
+        if: inputs.alt_clang_image != ''
+        run: |
+          docker pull -q "${{ inputs.alt_clang_image }}"
+          id=$(docker create "${{ inputs.alt_clang_image }}")
+          docker cp "$id:/usr/lib/llvm23" ./llvm-alt
+          docker rm "$id" >/dev/null
+          ./llvm-alt/bin/clang++ --version | head -1
       - name: Compile lines + PGO hit rate
         run: |
           mkdir -p out
-          docker run --rm \
+          alt=()
+          [ -d llvm-alt ] && alt=(-v "$PWD/llvm-alt:/opt/llvm-alt:ro" -e ALT_CLANG=/opt/llvm-alt/bin)
+          docker run --rm "${alt[@]}" \
             -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/probes:/probes:ro" \
             -v "$PWD/out:/out" \
             "${{ inputs.round_image }}" \
