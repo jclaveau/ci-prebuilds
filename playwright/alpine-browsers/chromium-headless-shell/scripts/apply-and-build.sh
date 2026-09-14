@@ -151,6 +151,53 @@ if [[ -f "$APORTS/APKBUILD" ]]; then
   done
 fi
 
+# 4a'. CODEGEN CANDIDATE — what this branch adds on top of the clang23 base.
+#
+#     aports' compiler.patch does more than retarget the triples to musl: it
+#     also strips three flags upstream compiles every TU with, because the
+#     clang22 aports pins does not know them. Alpine's clang23 accepts all
+#     three (checked on 23.1.1), so on the clang23 base the strip is pure
+#     drift from official:
+#       -mllvm -split-threshold-for-reg-with-hint=0   regalloc; LLVM's split
+#                                                     heuristic regressed
+#                                                     chromium, crbug 40283598
+#       -fno-lifetime-dse                             crbug 484082200
+#       -fsanitize-ignore-for-ubsan-feature=...       without it every TU sees
+#                                                     __has_feature(undefined_
+#                                                     behavior_sanitizer)==1
+#                                                     under -fsanitize=array-
+#                                                     bounds,return
+#     Reverse-apply exactly those hunks (BUILD.gn 2+3, sanitizers.gni 1) and
+#     assert the flags are back so a hunk renumbering in a future aports ref
+#     fails the build instead of silently building the control again.
+echo "===== Restore official codegen flags stripped by aports compiler.patch ====="
+CP="$APORTS/compiler.patch"
+if [[ "$PW_CHROMIUM_SKIP_APORTS" == "1" ]]; then
+  echo "  skip (PW_CHROMIUM_SKIP_APORTS=1: compiler.patch was never applied)"
+elif [[ ! -f "$CP" ]]; then
+  echo "ERROR: $CP missing — cannot restore the codegen flags" >&2
+  exit 7
+else
+  {
+    filterdiff -i '*/build/config/compiler/BUILD.gn' --hunks=2,3 "$CP"
+    filterdiff -i '*/build/config/sanitizers/sanitizers.gni' "$CP"
+  } | patch -p1 -R --forward || {
+    echo "ERROR: reverse-apply of compiler.patch hunks failed" >&2
+    exit 7
+  }
+  for want in 'split-threshold-for-reg-with-hint=0' 'fno-lifetime-dse'; do
+    grep -q -- "$want" build/config/compiler/BUILD.gn || {
+      echo "ERROR: $want not back in build/config/compiler/BUILD.gn" >&2
+      exit 7
+    }
+  done
+  grep -q 'fsanitize-ignore-for-ubsan-feature' build/config/sanitizers/sanitizers.gni || {
+    echo "ERROR: fsanitize-ignore-for-ubsan-feature not back in sanitizers.gni" >&2
+    exit 7
+  }
+  echo "  restored: -mllvm -split-threshold-for-reg-with-hint=0, -fno-lifetime-dse, -fsanitize-ignore-for-ubsan-feature"
+fi
+
 # 4b. Musl/clang22 host-tool link fix — chromium 148 host tools (e.g.
 #     character_data_generator) reference `base::debug::StackTrace::
 #     OutputToStreamWithPrefixImpl` but our libbase.a doesn't carry the
