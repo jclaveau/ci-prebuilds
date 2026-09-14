@@ -72,6 +72,12 @@ RUN apk add --no-cache clang23 clang23-dev lld23 llvm23 \
  && /tmp/m && rm -f /tmp/m /tmp/m.c
 ENV CHS_LLVM_VER=23
 
+# LIBC CANDIDATE — the one variable this branch adds on top of the flags arm:
+# link against Chromium's Debian sysroot (glibc) instead of musl. See the
+# CHS_GLIBC block in apply-and-build.sh; the artifact is a glibc binary and
+# must be probed in a glibc runtime (chs-perf-ab `runtime=noble`).
+ENV CHS_GLIBC=1
+
 # Give clang22 a builtins archive. `compiler-rt` replaced clang22-rtlib in #208
 # and unpacks only under /usr/lib/llvm23, so clang22's own resource dir has no
 # libclang_rt.builtins-x86_64.a and chromium's link stops before it starts:

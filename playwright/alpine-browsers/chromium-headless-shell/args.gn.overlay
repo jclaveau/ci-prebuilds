@@ -50,10 +50,9 @@ dcheck_always_on = false
 # Cache backend so warm-cache rebuilds finish in ~30min instead of cold ~7h.
 cc_wrapper = "sccache"
 
-# musl libc — without this Chromium picks a glibc-only codepath and the build
-# fails at link with undefined refs against glibc-specific symbols (e.g.
-# __libc_dlopen_mode). aports' chromium APKBUILD sets the same flag.
-is_musl = true
+# LIBC CANDIDATE — this branch links against Chromium's own Debian sysroot
+# (glibc), so copium's is_musl (only sets _LIBCPP_HAS_MUSL_LIBC) stays off.
+is_musl = false
 
 # System clang via Chromium's unbundle toolchain — the bundled chromium clang
 # doesn't link against musl. clang_base_path is provided at build time by the
@@ -75,7 +74,11 @@ enable_rust = true
 # `rust` + `rust-bindgen` packages. copium's cr148-rust-toolchain-var.patch
 # replaces hardcoded //third_party/rust-toolchain refs with $rust_sysroot
 # so this var takes effect.
-rust_sysroot_absolute = "/usr"
+# The libc candidate needs a glibc-hosted rustc so its proc-macros load: a
+# rustup toolchain of the same version as Alpine's rust, installed by
+# apply-and-build.sh at /opt/rust-gnu and run through the sysroot's ld.so.
+# bindgen stays the apk (musl) binary — it is a standalone host tool.
+rust_sysroot_absolute = "/opt/rust-gnu"
 rust_bindgen_root = "/usr"
 rustc_version = "yes"
 
@@ -86,8 +89,10 @@ rustc_version = "yes"
 # the binary.
 is_component_build = false
 
-# Use system libs where Alpine has reasonable versions (matches aports' build).
-use_sysroot = false
+# LIBC CANDIDATE: link against Chromium's Debian bullseye sysroot exactly as
+# the official build does; apply-and-build.sh installs it and skips the
+# Alpine system-lib unbundling (those .so are musl builds).
+use_sysroot = true
 use_custom_libcxx = true   # aports keeps Chromium's bundled libc++ to avoid alpine's libstdc++ ABI mismatch
 use_lld = true
 

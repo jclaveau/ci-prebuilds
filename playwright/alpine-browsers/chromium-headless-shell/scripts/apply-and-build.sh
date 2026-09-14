@@ -104,6 +104,18 @@ else
     case "$name" in
       *riscv*|*ppc*|*loong*) echo "  skip $name (non-amd64)"; continue ;;
     esac
+    if [[ "${CHS_GLIBC:-0}" == "1" && "$name" == "compiler.patch" ]]; then
+      # LIBC CANDIDATE: compiler.patch retargets the clang and rust triples to
+      # musl and strips three codegen flags; against the Debian sysroot both
+      # must stay upstream. Its clang/BUILD.gn hunk (Alpine's compiler-rt
+      # archive layout) is still needed by the apk clang, so apply only that.
+      echo "  apply $name (clang/BUILD.gn hunk only: glibc keeps upstream triples)"
+      filterdiff -i '*/build/config/clang/BUILD.gn' "$p" | patch -p1 --forward || {
+        echo "ERROR: compiler.patch clang/BUILD.gn hunk did not apply" >&2
+        exit 7
+      }
+      continue
+    fi
     echo "  apply $name"
     patch -p1 --forward -i "$p" || {
       echo "  WARN: $name did not apply cleanly; continuing — chromium may still build" >&2
@@ -174,6 +186,8 @@ echo "===== Restore official codegen flags stripped by aports compiler.patch ===
 CP="$APORTS/compiler.patch"
 if [[ "$PW_CHROMIUM_SKIP_APORTS" == "1" ]]; then
   echo "  skip (PW_CHROMIUM_SKIP_APORTS=1: compiler.patch was never applied)"
+elif [[ "${CHS_GLIBC:-0}" == "1" ]]; then
+  echo "  skip (CHS_GLIBC=1: the flag hunks of compiler.patch were never applied)"
 elif [[ ! -f "$CP" ]]; then
   echo "ERROR: $CP missing — cannot restore the codegen flags" >&2
   exit 7
@@ -379,6 +393,10 @@ done
 #   - libdrm: talks to the host's kernel interface
 #   - openh264: bundled needs a build path we have not exercised on musl
 echo "===== Replace bundled libs with system equivalents ====="
+if [[ "${CHS_GLIBC:-0}" == "1" ]]; then
+  echo "  skip (CHS_GLIBC=1: Alpine's system libs are musl builds; the sysroot build bundles them like official)"
+  USE_SYSTEM_LIBS=()
+fi
 USE_SYSTEM_LIBS=(
   # ffmpeg + flac REMOVED from system-libs 2026-07-13 — alpine SONAME skew:
   #   - flac: alpine:edge shipped flac 1.5.0 (libFLAC.so.14) which drops the
@@ -445,6 +463,48 @@ else
   CLANG_BASE="/usr/lib/llvm22"  # fallback; alpine:edge currently ships llvm22
 fi
 echo "  CLANG_BASE=$CLANG_BASE  CTARGET=$CTARGET"
+
+# LIBC CANDIDATE — the one variable this branch adds on top of the flags arm.
+#
+# Official chromium is not built on Debian: it is built against a Debian
+# sysroot fetched by build/linux/sysroot_scripts/install-sysroot.py, on any
+# host. Doing the same here keeps our clang23, args and patches and swaps only
+# the libc the binary links against. Two things follow from the host staying
+# Alpine: the glibc-linked host tools (mksnapshot, torque, protoc) and the
+# glibc-hosted rustc must run on a musl box, so the sysroot's own ld.so and
+# lib dirs are linked into the paths glibc's loader is compiled to search.
+if [[ "${CHS_GLIBC:-0}" == "1" ]]; then
+  echo "===== LIBC CANDIDATE: install the Debian sysroot + glibc loader shim ====="
+  python3 build/linux/sysroot_scripts/install-sysroot.py --arch=amd64
+  SYSROOT="$PWD/build/linux/debian_bullseye_amd64-sysroot"
+  [[ -f "$SYSROOT/lib/x86_64-linux-gnu/libc.so.6" ]] || {
+    echo "ERROR: sysroot at $SYSROOT has no libc.so.6" >&2
+    exit 8
+  }
+  ln -sfn "$SYSROOT/lib/x86_64-linux-gnu" /lib/x86_64-linux-gnu
+  ln -sfn "$SYSROOT/usr/lib/x86_64-linux-gnu" /usr/lib/x86_64-linux-gnu
+  mkdir -p /lib64
+  ln -sfn "$SYSROOT/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2" /lib64/ld-linux-x86-64.so.2
+  printf 'int main(void){return 0;}\n' > /tmp/glibc-shim.c
+  "$CLANG_BASE/bin/clang" --target=x86_64-unknown-linux-gnu --sysroot="$SYSROOT" \
+    -fuse-ld=lld /tmp/glibc-shim.c -o /tmp/glibc-shim \
+    && /tmp/glibc-shim \
+    && file /tmp/glibc-shim | grep -q 'ld-linux-x86-64' \
+    || { echo "ERROR: a glibc-linked binary does not build or run on this host" >&2; exit 8; }
+  echo "  glibc shim OK: $(file /tmp/glibc-shim | sed 's/.*interpreter //')"
+  rm -f /tmp/glibc-shim /tmp/glibc-shim.c
+
+  RUST_VER=$(rustc --version | awk '{print $2}')
+  echo "  rustup: x86_64-unknown-linux-gnu host toolchain $RUST_VER (Alpine's rust is $RUST_VER)"
+  curl -fsSL --retry 3 https://sh.rustup.rs \
+    | RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo sh -s -- -y --no-modify-path \
+        --profile minimal --default-host x86_64-unknown-linux-gnu --default-toolchain "$RUST_VER"
+  ln -sfn "/opt/rustup/toolchains/${RUST_VER}-x86_64-unknown-linux-gnu" /opt/rust-gnu
+  /opt/rust-gnu/bin/rustc --version || { echo "ERROR: glibc rustc does not run" >&2; exit 8; }
+  CTARGET=x86_64-unknown-linux-gnu
+  grep -qx "$CTARGET" build/rust/known-target-triples.txt || echo "$CTARGET" >> build/rust/known-target-triples.txt
+fi
+
 
 # Chromium's unbundle toolchain at //build/toolchain/linux/unbundle:default
 # reads AR/CC/CXX/NM from env to find the real binaries. Without these the

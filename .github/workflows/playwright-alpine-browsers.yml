@@ -1780,7 +1780,9 @@ jobs:
           images: ghcr.io/jclaveau/playwright-alpine-browsers
           tags: |
             type=raw,value=chs-fs-sha-${{ github.sha }}
-            type=raw,value=chs-fs-edge,enable=${{ github.event_name != 'pull_request' }}
+            # LIBC CANDIDATE branch: the artifact is a glibc binary, keep it off
+            # the moving tag promote-chromium-from-source defaults to.
+            type=raw,value=chs-fs-edge,enable=false
 
       - name: Expose GHA cache env
         uses: actions/github-script@v9
