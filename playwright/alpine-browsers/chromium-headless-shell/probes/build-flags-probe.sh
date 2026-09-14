@@ -109,6 +109,23 @@ echo | tee -a "$OUT/summary.txt"
 # (a later -W wins over an earlier -Wno-). Output goes to /tmp so obj/ is not
 # touched; the .d file rewrite is harmless in a throwaway container.
 PGO_ON="-Wprofile-instr-unprofiled -Wprofile-instr-out-of-date -Wbackend-plugin"
+# Recompile every object of /tmp/objs-<tag>.txt with the three warnings on,
+# one per TU, nproc at a time; the merged log is on stdout. A second argument
+# swaps the compiler binary directory (the alternate clang of part 4).
+recompile_with_warnings() {
+  local tag="$1" altbin="$2"
+  rm -rf "/tmp/pgo-$tag"; mkdir -p "/tmp/pgo-$tag"
+  xargs -P "$(nproc)" -I{} bash -c '
+    obj="$1"; tag="$2"; build="$3"; pgo_on="$4"; altbin="$5"
+    line=$(ninja -C "$build" -t commands "$obj" 2>/dev/null | tail -1 | sed "s/^sccache //")
+    [ -n "$line" ] || exit 0
+    # Same command, warnings on, object to a private path so obj/ is not touched.
+    line=$(printf "%s" "$line" | sed -E "s# -o [^ ]+# -o /tmp/pgo-$tag/$(echo "$obj" | tr / _)#")
+    [ -n "$altbin" ] && line=$(printf "%s" "$line" | sed -E "s#^[^ ]*/(clang\\+\\+|clang) #$altbin/\\1 #")
+    { echo "### $obj"; (cd "$build" && eval "$line $pgo_on" 2>&1 || true); } > "/tmp/pgo-$tag/$(echo "$obj" | tr / _).log"
+  ' _ {} "$tag" "$BUILD" "$PGO_ON" "$altbin" < "/tmp/objs-$tag.txt"
+  cat "/tmp/pgo-$tag"/*.log 2>/dev/null || true
+}
 echo "== PGO warnings, $SAMPLE TUs per dir (out-of-date = hash mismatch, profile dropped; unprofiled = no data; backend = CFG mismatch)" | tee -a "$OUT/summary.txt"
 printf '%-45s %5s %12s %11s %8s %14s\n' dir TUs out-of-date unprofiled backend 'fn mismatch/of' | tee -a "$OUT/summary.txt"
 for dir in \
@@ -120,18 +137,8 @@ for dir in \
   tag=$(echo "$dir" | tr / _)
   : > "/tmp/objs-$tag.txt"
   for src in $(srcs_in_dir "$dir" | head -n "$SAMPLE"); do obj_for_src "$src" >> "/tmp/objs-$tag.txt"; done
-  # One compile per TU, nproc at a time; each writes its own log, merged after.
-  rm -rf "/tmp/pgo-$tag"; mkdir -p "/tmp/pgo-$tag"
   n=$(wc -l < "/tmp/objs-$tag.txt")
-  xargs -P "$(nproc)" -I{} bash -c '
-    obj="$1"; tag="$2"; build="$3"; pgo_on="$4"
-    line=$(ninja -C "$build" -t commands "$obj" 2>/dev/null | tail -1 | sed "s/^sccache //")
-    [ -n "$line" ] || exit 0
-    # Same command, warnings on, object to a private path so obj/ is not touched.
-    line=$(printf "%s" "$line" | sed -E "s# -o [^ ]+# -o /tmp/pgo-$tag/$(echo "$obj" | tr / _)#")
-    { echo "### $obj"; (cd "$build" && eval "$line $pgo_on" 2>&1 || true); } > "/tmp/pgo-$tag/$(echo "$obj" | tr / _).log"
-  ' _ {} "$tag" "$BUILD" "$PGO_ON" < "/tmp/objs-$tag.txt"
-  cat "/tmp/pgo-$tag"/*.log > "$OUT/pgo-$tag.log" 2>/dev/null || : > "$OUT/pgo-$tag.log"
+  recompile_with_warnings "$tag" "" > "$OUT/pgo-$tag.log"
   ood=$(grep -c 'profile-instr-out-of-date' "$OUT/pgo-$tag.log" || true)
   unp=$(grep -c 'profile-instr-unprofiled' "$OUT/pgo-$tag.log" || true)
   bck=$(grep -c 'backend-plugin' "$OUT/pgo-$tag.log" || true)
@@ -141,14 +148,18 @@ for dir in \
 done
 
 # ---- 3. denominator ---------------------------------------------------------
-# Profile entries: name and function (entry) count; --counts=false skips the
-# per-block counters, which is what makes a 300 MB profile listable.
+# Profile entries with their hottest block count: the number the mismatch
+# warning reports as "up to N count discarded". An IR-instrumented profile has
+# no "Function count" line (run 34791649697), only "Block counts: [...]"; those
+# lists are too big for a file, so the listing streams through awk.
 PROFDATA=$(grep -oE 'fprofile-use=[^ ]+' "$OUT/cmd-values.txt" | head -1 | cut -d= -f2-)
 LLVM_BIN=$(dirname "$(awk '{print $1}' "$OUT/cmd-values.txt")")
-(cd "$BUILD" && "$LLVM_BIN/llvm-profdata" show --all-functions --counts=false "$PROFDATA" 2>/dev/null) \
-  | awk '/^  [^ ]/ { name=$1; sub(/:$/, "", name) } /Function count:/ { print name, $3 }' \
+(cd "$BUILD" && "$LLVM_BIN/llvm-profdata" show --all-functions --counts "$PROFDATA" 2> "$OUT/profdata.err") \
+  | awk '/^  [^ ]/ { name=$1; sub(/:$/, "", name) }
+         /^    Block counts:/ { m=0; l=$0; sub(/.*\[/, "", l); sub(/\].*/, "", l); n=split(l, a, /, */); for (i=1; i<=n; i++) if (a[i]+0 > m) m=a[i]+0; print name, m }' \
   | LC_ALL=C sort -u > /tmp/profile-fns.txt
-echo "== profile: $(wc -l < /tmp/profile-fns.txt) functions with a count" | tee -a "$OUT/summary.txt"
+head -3 "$OUT/profdata.err" | tee -a "$OUT/summary.txt"
+echo "== profile: $(wc -l < /tmp/profile-fns.txt) functions with block counts" | tee -a "$OUT/summary.txt"
 echo "== PGO denominator: functions of the sampled TUs that have a profile entry, vs those whose hash mismatched" | tee -a "$OUT/summary.txt"
 printf '%-45s %9s %9s %6s %16s %16s %6s\n' dir profiled mismatch 'fn%' 'counts profiled' 'counts dropped' 'cnt%' | tee -a "$OUT/summary.txt"
 for dir in \
@@ -160,9 +171,12 @@ for dir in \
   tag=$(echo "$dir" | tr / _)
   # Defined functions across the sampled objects (bitcode under ThinLTO, so
   # llvm-nm), joined with the profile's names.
-  while read -r obj; do "$LLVM_BIN/llvm-nm" --defined-only "$BUILD/$obj" 2>/dev/null | awk '$2 ~ /^[tTwW]$/ { print $3 }'; done \
-    < "/tmp/objs-$tag.txt" | LC_ALL=C sort -u > "/tmp/defined-$tag.txt"
-  LC_ALL=C join /tmp/profile-fns.txt "/tmp/defined-$tag.txt" > "$OUT/profiled-$tag.txt"
+  while read -r obj; do "$LLVM_BIN/llvm-nm" --defined-only "$BUILD/$obj" 2>> "$OUT/nm-$tag.err" | awk '$2 ~ /^[tTwW]$/ { print $3 }'; done \
+    < "/tmp/objs-$tag.txt" | LC_ALL=C sort -u > "$OUT/defined-$tag.txt"
+  # awk, not join: the round image is Alpine and busybox has no join applet
+  # (run 34797323579 joined 801 defined names against 1.18M profile entries
+  # into nothing, with the error in a dropped stderr).
+  awk 'NR == FNR { c[$1] = $2; next } ($1 in c) { print $1, c[$1] }' /tmp/profile-fns.txt "$OUT/defined-$tag.txt" > "$OUT/profiled-$tag.txt"
   grep -oE '\(hash mismatch\) [^ ]+ Hash = [0-9]+ up to [0-9]+' "$OUT/pgo-$tag.log" \
     | awk '{ print $3, $NF }' | sort -u > "$OUT/mismatched-$tag.txt"
   read -r np cp < <(awk '{ n++; c+=$2 } END { printf "%d %d", n, c }' "$OUT/profiled-$tag.txt")
@@ -178,3 +192,30 @@ grep -hoiE "function control flow change detected \(hash mismatch\) [^ ]+|no pro
   "$OUT/pgo-third_party_blink_renderer_core_layout.log" | sort | uniq -c | sort -rn | head -40 \
   > "$OUT/layout-mismatched-functions.txt" || true
 echo "== $(wc -l < "$OUT/layout-mismatched-functions.txt") distinct layout functions named in warnings (top in layout-mismatched-functions.txt)" | tee -a "$OUT/summary.txt"
+
+# ---- 4. the same sample under another clang --------------------------------
+# The profile's hashes come from Chromium's pinned clang snapshot. If the
+# snapshot itself (mounted by the workflow as ALT_CLANG) mismatches the same
+# functions, the loss is the profile's revision drift and official pays it
+# too; if it matches them, the loss is our compiler's and a chain on the
+# snapshot recovers it.
+if [[ -n "${ALT_CLANG:-}" ]]; then
+  echo "== alternate clang: $("$ALT_CLANG/clang++" --version 2>&1 | head -1)" | tee -a "$OUT/summary.txt"
+  printf '%-45s %5s %13s %12s %13s %12s\n' dir TUs 'mismatch ours' 'hot ours' 'mismatch alt' 'hot alt' | tee -a "$OUT/summary.txt"
+  for dir in \
+    third_party/blink/renderer/core/layout \
+    third_party/blink/renderer/core/dom \
+    base; do
+    tag=$(echo "$dir" | tr / _)
+    n=$(wc -l < "/tmp/objs-$tag.txt")
+    recompile_with_warnings "alt-$tag" "$ALT_CLANG" > "$OUT/pgo-alt-$tag.log"
+    # A different compiler may fail on a TU outright; that shows as errors, not
+    # as a clean zero.
+    err=$(grep -c ' error: ' "$OUT/pgo-alt-$tag.log" || true)
+    grep -oE '\(hash mismatch\) [^ ]+ Hash = [0-9]+ up to [0-9]+' "$OUT/pgo-alt-$tag.log" \
+      | awk '{ print $3, $NF }' | sort -u > "$OUT/mismatched-alt-$tag.txt"
+    printf '%-45s %5s %13s %12s %13s %12s  (%s errors)\n' "$dir" "$n" \
+      "$(wc -l < "$OUT/mismatched-$tag.txt")" "$(awk '$2 > 0' "$OUT/mismatched-$tag.txt" | wc -l)" \
+      "$(wc -l < "$OUT/mismatched-alt-$tag.txt")" "$(awk '$2 > 0' "$OUT/mismatched-alt-$tag.txt" | wc -l)" "$err" | tee -a "$OUT/summary.txt"
+  done
+fi
