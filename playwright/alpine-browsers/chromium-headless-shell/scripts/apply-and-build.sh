@@ -481,10 +481,16 @@ if [[ "${CHS_GLIBC:-0}" == "1" ]]; then
     echo "ERROR: sysroot at $SYSROOT has no libc.so.6" >&2
     exit 8
   }
-  ln -sfn "$SYSROOT/lib/x86_64-linux-gnu" /lib/x86_64-linux-gnu
-  ln -sfn "$SYSROOT/usr/lib/x86_64-linux-gnu" /usr/lib/x86_64-linux-gnu
+  # Alpine's clang driver appends -lssp_nonshared for every target; glibc
+  # keeps __stack_chk_fail_local in libc_nonshared.a, so an empty archive
+  # satisfies the link without changing what gets linked.
+  "$CLANG_BASE/bin/llvm-ar" rc "$SYSROOT/usr/lib/x86_64-linux-gnu/libssp_nonshared.a"
+  # The sysroot's ld.so and libc.so are link-only stubs: run glibc binaries
+  # on the real bullseye runtime Dockerfile.setup copied to /opt/glibc-rt.
+  ln -sfn /opt/glibc-rt/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu
+  ln -sfn /opt/glibc-rt/usr/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu
   mkdir -p /lib64
-  ln -sfn "$SYSROOT/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2" /lib64/ld-linux-x86-64.so.2
+  ln -sfn /lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2
   printf 'int main(void){return 0;}\n' > /tmp/glibc-shim.c
   "$CLANG_BASE/bin/clang" --target=x86_64-unknown-linux-gnu --sysroot="$SYSROOT" \
     -fuse-ld=lld /tmp/glibc-shim.c -o /tmp/glibc-shim \
@@ -496,9 +502,12 @@ if [[ "${CHS_GLIBC:-0}" == "1" ]]; then
 
   RUST_VER=$(rustc --version | awk '{print $2}')
   echo "  rustup: x86_64-unknown-linux-gnu host toolchain $RUST_VER (Alpine's rust is $RUST_VER)"
-  curl -fsSL --retry 3 https://sh.rustup.rs \
-    | RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo sh -s -- -y --no-modify-path \
-        --profile minimal --default-host x86_64-unknown-linux-gnu --default-toolchain "$RUST_VER"
+  curl -fsSL --retry 3 -o /tmp/rustup-init \
+    https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-musl/rustup-init
+  chmod +x /tmp/rustup-init
+  RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo /tmp/rustup-init -y --no-modify-path \
+    --profile minimal --default-host x86_64-unknown-linux-gnu --default-toolchain "$RUST_VER"
+  rm -f /tmp/rustup-init
   ln -sfn "/opt/rustup/toolchains/${RUST_VER}-x86_64-unknown-linux-gnu" /opt/rust-gnu
   /opt/rust-gnu/bin/rustc --version || { echo "ERROR: glibc rustc does not run" >&2; exit 8; }
   CTARGET=x86_64-unknown-linux-gnu

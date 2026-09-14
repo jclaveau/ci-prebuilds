@@ -77,6 +77,12 @@ ENV CHS_LLVM_VER=23
 # CHS_GLIBC block in apply-and-build.sh; the artifact is a glibc binary and
 # must be probed in a glibc runtime (chs-perf-ab `runtime=noble`).
 ENV CHS_GLIBC=1
+# Chromium's sysroot is link-only (its ld.so and libc.so are 4 KB symbol
+# stubs), so the glibc-linked host tools and rustc need a real glibc 2.31 to
+# run on: bullseye's own lib dirs, which the CHS_GLIBC block links into the
+# paths glibc's loader searches.
+COPY --from=debian:bullseye-slim /lib/x86_64-linux-gnu /opt/glibc-rt/lib/x86_64-linux-gnu
+COPY --from=debian:bullseye-slim /usr/lib/x86_64-linux-gnu /opt/glibc-rt/usr/lib/x86_64-linux-gnu
 
 # Give clang22 a builtins archive. `compiler-rt` replaced clang22-rtlib in #208
 # and unpacks only under /usr/lib/llvm23, so clang22's own resource dir has no
