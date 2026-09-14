@@ -141,19 +141,16 @@ for dir in \
 done
 
 # ---- 3. denominator ---------------------------------------------------------
-# Profile entries: name and function (entry) count; --counts=false skips the
-# per-block counters, which is what makes a 300 MB profile listable.
+# Profile entries with their function (entry) count. --counts=false lists
+# names and hashes only (run 34789187155: 3.5M lines, no "Function count");
+# the count needs --counts, whose per-block lists are too big for a file, so
+# the listing streams through awk.
 PROFDATA=$(grep -oE 'fprofile-use=[^ ]+' "$OUT/cmd-values.txt" | head -1 | cut -d= -f2-)
 LLVM_BIN=$(dirname "$(awk '{print $1}' "$OUT/cmd-values.txt")")
-# Raw listing kept (head only) with its stderr: run 34786556724 printed zero
-# functions and nothing else, which is a listing that failed, not a profile
-# without functions.
-echo "  llvm-profdata: $(ls -la "$LLVM_BIN/llvm-profdata" 2>&1); profile: $PROFDATA ($(cd "$BUILD" && ls -la "$PROFDATA" 2>&1))" | tee -a "$OUT/summary.txt"
-(cd "$BUILD" && "$LLVM_BIN/llvm-profdata" show --all-functions --counts=false "$PROFDATA" 2> "$OUT/profdata.err") > /tmp/profile-raw.txt
-echo "  rc=$? raw=$(wc -l < /tmp/profile-raw.txt) lines, stderr=$(wc -c < "$OUT/profdata.err") bytes" | tee -a "$OUT/summary.txt"
-head -30 /tmp/profile-raw.txt > "$OUT/profdata-head.txt"; head -5 "$OUT/profdata.err" | tee -a "$OUT/summary.txt"
-awk '/^  [^ ]/ { name=$1; sub(/:$/, "", name) } /Function count:/ { print name, $3 }' /tmp/profile-raw.txt \
+(cd "$BUILD" && "$LLVM_BIN/llvm-profdata" show --all-functions --counts "$PROFDATA" 2> "$OUT/profdata.err") \
+  | awk '/^  [^ ]/ { name=$1; sub(/:$/, "", name) } /^    Function count:/ { print name, $3 }' \
   | LC_ALL=C sort -u > /tmp/profile-fns.txt
+head -3 "$OUT/profdata.err" | tee -a "$OUT/summary.txt"
 echo "== profile: $(wc -l < /tmp/profile-fns.txt) functions with a count" | tee -a "$OUT/summary.txt"
 echo "== PGO denominator: functions of the sampled TUs that have a profile entry, vs those whose hash mismatched" | tee -a "$OUT/summary.txt"
 printf '%-45s %9s %9s %6s %16s %16s %6s\n' dir profiled mismatch 'fn%' 'counts profiled' 'counts dropped' 'cnt%' | tee -a "$OUT/summary.txt"
