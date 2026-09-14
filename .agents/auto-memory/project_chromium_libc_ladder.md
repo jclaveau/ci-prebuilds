@@ -19,7 +19,8 @@ chain 34763050768), each moving one variable:
    `-fsanitize=array-bounds,return`. apk clang23 accepts all three (checked).
    The arm reverse-applies exactly those hunks (BUILD.gn 2+3, sanitizers.gni
    1) after aports+copium and asserts the flags are back.
-2. **libc arm** `perf/chromium-glibc-sysroot` (7cf9be3, run 34892706455),
+2. **libc arm** `perf/chromium-glibc-sysroot` (c905428, run 34905903570;
+   7cf9be3/34892706455 and 3416468/34895205665 died in setup and r1, below),
    on top of the flags arm. Official is built against a Debian sysroot on any
    host; this arm does the same on the Alpine builder: `use_sysroot=true`,
    `is_musl=false` (copium arg, only sets `_LIBCPP_HAS_MUSL_LIBC`), no
@@ -35,6 +36,24 @@ chain 34763050768), each moving one variable:
   (mksnapshot, torque) and the glibc-hosted rustc run on bullseye's real lib
   dirs (`COPY --from=debian:bullseye-slim`, glibc 2.31 = the sysroot's) linked
   into `/lib/x86_64-linux-gnu`, `/usr/lib/x86_64-linux-gnu`, `/lib64/ld-linux-x86-64.so.2`.
+- EVERY .so in the sysroot is a stub, not only libc — and glibc's loader
+  falls back to `/lib` and `/usr/lib`, Alpine's musl builds. A host tool
+  whose NEEDED is missing from `/opt/glibc-rt` (wayland_scanner → libexpat)
+  loads Alpine's libexpat, which drags `libc.musl-x86_64.so.1` into a
+  glibc process: SIGSEGV on `--version`, r1 dead at [6285/42246] (run
+  34895205665). bullseye-slim carries glibc alone; the runtime is now a
+  build stage adding what the 27 host executables link beyond it (expat,
+  glib, nss/nspr, uuid; enumerated from `libs =` in `host/obj/**/*.ninja`),
+  and the setup shim links all of them `--no-as-needed` and asserts
+  `LD_TRACE_LOADED_OBJECTS=1` names nothing outside the glibc dirs.
+  Diagnosed by pulling the setup image (9.4 GB, 30 GB unpacked) and running
+  `ninja host/wayland_scanner` + `ld.so --list` locally — 74 steps.
+- bullseye is EOL: `deb.debian.org/debian-security` 404s on every package;
+  `sed -i '/security/d' /etc/apt/sources.list`, main only.
+- A `USE_SYSTEM_LIBS=()` inside an `if` is overwritten by the unconditional
+  array assignment below it (run 34892706455: the unbundle harfbuzz BUILD.gn
+  asked pkg-config for a .pc the sysroot has none of). Guard the whole
+  assignment, not the reset.
 - Alpine's clang driver appends `-lssp_nonshared` for every target; an empty
   `libssp_nonshared.a` in the sysroot satisfies it (glibc keeps
   `__stack_chk_fail_local` in libc_nonshared.a).
