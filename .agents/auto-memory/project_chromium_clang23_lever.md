@@ -57,4 +57,13 @@ candidate (SSP-via-cfg, textstack, …) — measuring on clang22 now measures a
 compiler nobody will ship. Shipping it = rebase `perf/chromium-clang23` onto
 main (unbundle #222 + sanitizer #223 are there), ~38h build, promote via
 `promote-chromium-from-source.yml` on main. Jean's call.
+
+**SHIPPED 2026-09-14/15.** `4362396` (the branch merged with main) went
+12/12 + conformance 20/20 + parity green (run 34763050768), A/B vs official
+on EPYC 9V74 (run 34900570958, official/ours): layout 0.84, goto_warm 0.84,
+click_force 0.87, launch 1.30 n.s., every control 1.00. PR #243 merged
+(76df63f), promote 34902520647 retagged `chs-fs-sha-4362396…` → chs-1234 /
+1.62.1 / latest, consumer rebuilt by test-and-publish dispatch 34906092917.
+Residual vs official on this runner: layout/goto_warm 1.19×, click_force
+1.15×; the flags + libc candidates chase it from this base.
 [[project_chromium_residual_gap_candidates]] [[project_chromium_perf_arms_1_62]]
