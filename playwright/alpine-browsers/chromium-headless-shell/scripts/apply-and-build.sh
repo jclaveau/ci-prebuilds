@@ -396,7 +396,7 @@ echo "===== Replace bundled libs with system equivalents ====="
 if [[ "${CHS_GLIBC:-0}" == "1" ]]; then
   echo "  skip (CHS_GLIBC=1: Alpine's system libs are musl builds; the sysroot build bundles them like official)"
   USE_SYSTEM_LIBS=()
-fi
+else
 USE_SYSTEM_LIBS=(
   # ffmpeg + flac REMOVED from system-libs 2026-07-13 — alpine SONAME skew:
   #   - flac: alpine:edge shipped flac 1.5.0 (libFLAC.so.14) which drops the
@@ -416,6 +416,7 @@ USE_SYSTEM_LIBS=(
   libdrm
   openh264
 )
+fi
 if [[ -x build/linux/unbundle/replace_gn_files.py ]] || [[ -f build/linux/unbundle/replace_gn_files.py ]]; then
   python3 build/linux/unbundle/replace_gn_files.py \
     --system-libraries "${USE_SYSTEM_LIBS[@]}" \
