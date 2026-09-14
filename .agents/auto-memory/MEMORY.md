@@ -90,3 +90,4 @@ touches an area, read that file before concluding no rule exists. Then read
 
 - [Merge my own green PRs here — jean does not review](feedback_merge_without_review_here.md) — he builds the CI that produces the numbers; closing the loop (merge → dispatch →
 - [Check a source-only patch reaches the build](project_source_patch_reaches_build_checklist.md) — before a multi-hour dispatch: image tag sha-scoped? script COPYed before the RUN
+- [chromium libc ladder: flags arm + Debian-sysroot arm](project_chromium_libc_ladder.md) — aports' compiler.patch strips 3 official codegen flags (regalloc split-threshold, lifetime-dse, ubsan-feature); glibc chromium on an Alpine host needs a real bullseye runtime for the host tools (sysroot ld.so is a stub) + a glibc-hosted rustc
