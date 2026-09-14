@@ -33,6 +33,16 @@ on:
         description: 'Name for B in the report'
         default: 'candidate'
         type: string
+      runtime_a:
+        description: 'Runtime to stage A in: alpine (musl artifact) or noble (glibc artifact, PW''s own image)'
+        default: 'alpine'
+        type: choice
+        options: [alpine, noble]
+      runtime_b:
+        description: 'Runtime to stage B in: alpine (musl artifact) or noble (glibc artifact, PW''s own image)'
+        default: 'alpine'
+        type: choice
+        options: [alpine, noble]
       chs_rev:
         description: 'Chromium revision the artifacts carry (PW browsers.json)'
         required: true
@@ -70,6 +80,8 @@ jobs:
         env:
           IMAGE_A: ${{ inputs.image_a }}
           IMAGE_B: ${{ inputs.image_b }}
+          RUNTIME_A: ${{ inputs.runtime_a || 'alpine' }}
+          RUNTIME_B: ${{ inputs.runtime_b || 'alpine' }}
           LABEL_A: ${{ inputs.label_a }}
           LABEL_B: ${{ inputs.label_b }}
           CHS_REV: ${{ inputs.chs_rev }}
@@ -112,13 +124,26 @@ jobs:
           }
 
           probe_one() {
-            local image="$1" label="$2"
+            local image="$1" label="$2" runtime="$3"
             if [ "$image" = official ]; then
               probe_official "$label"
               return
             fi
-            echo "::group::stage + probe ${label} (${image})"
-            cat > /tmp/Dockerfile."${label}" <<EOF
+            echo "::group::stage + probe ${label} (${image}, runtime ${runtime})"
+            if [ "$runtime" = noble ]; then
+              # A glibc artifact (the libc arm) goes into PW's own image, over
+              # the official binary at the same path, so the probe runs the
+              # candidate in exactly official's runtime.
+              cat > /tmp/Dockerfile."${label}" <<EOF
+          FROM mcr.microsoft.com/playwright:v${PW}-noble
+          COPY --from=${image} /chrome-headless-shell-linux64 /ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64
+          RUN touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_COMPLETE
+          ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+          ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+          RUN npm install -g --no-fund --no-audit playwright@${PW}
+          EOF
+            else
+              cat > /tmp/Dockerfile."${label}" <<EOF
           FROM alpine:edge
           RUN apk update && apk add --no-cache \\
               nodejs npm bash \\
@@ -138,6 +163,7 @@ jobs:
           ENV PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
           RUN npm install -g --no-fund --no-audit playwright@${PW}
           EOF
+            fi
             docker build -t "chs-probe-${label}:${{ github.run_id }}" -f /tmp/Dockerfile."${label}" /tmp
             # The probe is CommonJS precisely so NODE_PATH resolution applies to
             # the global playwright install — ESM ignores NODE_PATH, and node
@@ -155,8 +181,8 @@ jobs:
             echo "::endgroup::"
           }
 
-          probe_one "$IMAGE_A" "$LABEL_A"
-          probe_one "$IMAGE_B" "$LABEL_B"
+          probe_one "$IMAGE_A" "$LABEL_A" "$RUNTIME_A"
+          probe_one "$IMAGE_B" "$LABEL_B" "$RUNTIME_B"
 
       - name: Report
         env:
