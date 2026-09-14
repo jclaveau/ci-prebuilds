@@ -164,9 +164,13 @@ for dir in \
   tag=$(echo "$dir" | tr / _)
   # Defined functions across the sampled objects (bitcode under ThinLTO, so
   # llvm-nm), joined with the profile's names.
-  while read -r obj; do "$LLVM_BIN/llvm-nm" --defined-only "$BUILD/$obj" 2>/dev/null | awk '$2 ~ /^[tTwW]$/ { print $3 }'; done \
-    < "/tmp/objs-$tag.txt" | LC_ALL=C sort -u > "/tmp/defined-$tag.txt"
-  LC_ALL=C join /tmp/profile-fns.txt "/tmp/defined-$tag.txt" > "$OUT/profiled-$tag.txt"
+  while read -r obj; do "$LLVM_BIN/llvm-nm" --defined-only "$BUILD/$obj" 2>> "$OUT/nm-$tag.err" | awk '$2 ~ /^[tTwW]$/ { print $3 }'; done \
+    < "/tmp/objs-$tag.txt" | LC_ALL=C sort -u > "$OUT/defined-$tag.txt"
+  # Run 34794502643 joined nothing: the raw nm lines of the first object say
+  # which side's names are off.
+  obj1=$(head -1 "/tmp/objs-$tag.txt")
+  { echo "### $obj1 ($(ls -la "$BUILD/$obj1" 2>&1 | awk '{print $5}') bytes, $(file -b "$BUILD/$obj1" 2>&1 | cut -c1-60))"; "$LLVM_BIN/llvm-nm" --defined-only "$BUILD/$obj1" 2>&1 | head -5; } >> "$OUT/nm-$tag.err"
+  LC_ALL=C join /tmp/profile-fns.txt "$OUT/defined-$tag.txt" > "$OUT/profiled-$tag.txt"
   grep -oE '\(hash mismatch\) [^ ]+ Hash = [0-9]+ up to [0-9]+' "$OUT/pgo-$tag.log" \
     | awk '{ print $3, $NF }' | sort -u > "$OUT/mismatched-$tag.txt"
   read -r np cp < <(awk '{ n++; c+=$2 } END { printf "%d %d", n, c }' "$OUT/profiled-$tag.txt")
