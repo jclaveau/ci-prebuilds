@@ -10,6 +10,21 @@
 # See project_buildkit_cacheto_commit_semantics for why we split across JOBS
 # (each pushing a tagged intermediate image) instead of resumable RUNs.
 
+# LIBC CANDIDATE — the glibc runtime the glibc-linked host tools run on. The
+# sysroot is link-only (every .so in it is an 8 KB symbol stub), so at run
+# time glibc's loader must find real Debian libraries; anything it cannot
+# find it takes from /lib and /usr/lib — Alpine's musl builds — and the
+# tool segfaults (libc candidate run 34895205665, host/wayland_scanner).
+# bullseye-slim carries glibc itself; the packages add what the host tools
+# link beyond it: expat (wayland_scanner), glib + nss/nspr + uuid (the
+# //base-linked generators). bullseye's security pool is gone, main only.
+FROM debian:bullseye-slim AS glibc-rt
+RUN sed -i '/security/d' /etc/apt/sources.list \
+    && apt-get update -qq \
+    && apt-get install -y -qq --no-install-recommends \
+         libexpat1 libglib2.0-0 libnss3 libnspr4 libuuid1 \
+    && rm -rf /var/lib/apt/lists/*
+
 FROM alpine:edge AS chromium-builder
 
 RUN apk add --no-cache \
@@ -77,12 +92,10 @@ ENV CHS_LLVM_VER=23
 # CHS_GLIBC block in apply-and-build.sh; the artifact is a glibc binary and
 # must be probed in a glibc runtime (chs-perf-ab `runtime=noble`).
 ENV CHS_GLIBC=1
-# Chromium's sysroot is link-only (its ld.so and libc.so are 4 KB symbol
-# stubs), so the glibc-linked host tools and rustc need a real glibc 2.31 to
-# run on: bullseye's own lib dirs, which the CHS_GLIBC block links into the
+# The glibc-rt stage's lib dirs; the CHS_GLIBC block links them into the
 # paths glibc's loader searches.
-COPY --from=debian:bullseye-slim /lib/x86_64-linux-gnu /opt/glibc-rt/lib/x86_64-linux-gnu
-COPY --from=debian:bullseye-slim /usr/lib/x86_64-linux-gnu /opt/glibc-rt/usr/lib/x86_64-linux-gnu
+COPY --from=glibc-rt /lib/x86_64-linux-gnu /opt/glibc-rt/lib/x86_64-linux-gnu
+COPY --from=glibc-rt /usr/lib/x86_64-linux-gnu /opt/glibc-rt/usr/lib/x86_64-linux-gnu
 
 # Give clang22 a builtins archive. `compiler-rt` replaced clang22-rtlib in #208
 # and unpacks only under /usr/lib/llvm23, so clang22's own resource dir has no

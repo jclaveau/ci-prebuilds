@@ -492,14 +492,25 @@ if [[ "${CHS_GLIBC:-0}" == "1" ]]; then
   ln -sfn /opt/glibc-rt/usr/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu
   mkdir -p /lib64
   ln -sfn /lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2
+  # Link every system library the host tools link (--no-as-needed keeps them
+  # all in NEEDED) and run it: a library missing from /opt/glibc-rt resolves
+  # from Alpine's /usr/lib instead, drags libc.musl in, and the tool
+  # segfaults — so the trace must show no object outside the glibc dirs.
   printf 'int main(void){return 0;}\n' > /tmp/glibc-shim.c
   "$CLANG_BASE/bin/clang" --target=x86_64-unknown-linux-gnu --sysroot="$SYSROOT" \
-    -fuse-ld=lld /tmp/glibc-shim.c -o /tmp/glibc-shim \
+    -fuse-ld=lld -Wl,--no-as-needed /tmp/glibc-shim.c -o /tmp/glibc-shim \
+    -lexpat -lglib-2.0 -lgmodule-2.0 -lgobject-2.0 -lgthread-2.0 -lgio-2.0 \
+    -lnss3 -lnssutil3 -lsmime3 -lnspr4 -lplc4 -lplds4 -luuid -lresolv \
     && /tmp/glibc-shim \
     && file /tmp/glibc-shim | grep -q 'ld-linux-x86-64' \
     || { echo "ERROR: a glibc-linked binary does not build or run on this host" >&2; exit 8; }
+  LD_TRACE_LOADED_OBJECTS=1 /tmp/glibc-shim | tee /tmp/glibc-shim.trace
+  if grep -E '=> /(usr/)?lib/[^/]+$|musl' /tmp/glibc-shim.trace; then
+    echo "ERROR: a host-tool library resolves outside /opt/glibc-rt (musl would be loaded into a glibc process)" >&2
+    exit 8
+  fi
   echo "  glibc shim OK: $(file /tmp/glibc-shim | sed 's/.*interpreter //')"
-  rm -f /tmp/glibc-shim /tmp/glibc-shim.c
+  rm -f /tmp/glibc-shim /tmp/glibc-shim.c /tmp/glibc-shim.trace
 
   RUST_VER=$(rustc --version | awk '{print $2}')
   echo "  rustup: x86_64-unknown-linux-gnu host toolchain $RUST_VER (Alpine's rust is $RUST_VER)"
