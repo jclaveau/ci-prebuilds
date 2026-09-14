@@ -109,11 +109,13 @@ echo | tee -a "$OUT/summary.txt"
 # (a later -W wins over an earlier -Wno-). Output goes to /tmp so obj/ is not
 # touched; the .d file rewrite is harmless in a throwaway container.
 PGO_ON="-Wprofile-instr-unprofiled -Wprofile-instr-out-of-date -Wbackend-plugin"
-# Recompile every object of /tmp/objs-<tag>.txt with the three warnings on,
-# one per TU, nproc at a time; the merged log is on stdout. A second argument
-# swaps the compiler binary directory (the alternate clang of part 4).
+# Recompile every object of /tmp/objs-<list>.txt with the three warnings on,
+# one per TU, nproc at a time, outputs under /tmp/pgo-<tag>; the merged log is
+# on stdout. A third argument swaps the compiler binary directory (the
+# alternate clang of part 4). List and output tags are separate because run
+# 34808672663 read the alternate clang's list from a file it never had.
 recompile_with_warnings() {
-  local tag="$1" altbin="$2"
+  local list="$1" tag="$2" altbin="$3"
   rm -rf "/tmp/pgo-$tag"; mkdir -p "/tmp/pgo-$tag"
   xargs -P "$(nproc)" -I{} bash -c '
     obj="$1"; tag="$2"; build="$3"; pgo_on="$4"; altbin="$5"
@@ -123,7 +125,7 @@ recompile_with_warnings() {
     line=$(printf "%s" "$line" | sed -E "s# -o [^ ]+# -o /tmp/pgo-$tag/$(echo "$obj" | tr / _)#")
     [ -n "$altbin" ] && line=$(printf "%s" "$line" | sed -E "s#^[^ ]*/(clang\\+\\+|clang) #$altbin/\\1 #")
     { echo "### $obj"; (cd "$build" && eval "$line $pgo_on" 2>&1 || true); } > "/tmp/pgo-$tag/$(echo "$obj" | tr / _).log"
-  ' _ {} "$tag" "$BUILD" "$PGO_ON" "$altbin" < "/tmp/objs-$tag.txt"
+  ' _ {} "$tag" "$BUILD" "$PGO_ON" "$altbin" < "/tmp/objs-$list.txt"
   cat "/tmp/pgo-$tag"/*.log 2>/dev/null || true
 }
 echo "== PGO warnings, $SAMPLE TUs per dir (out-of-date = hash mismatch, profile dropped; unprofiled = no data; backend = CFG mismatch)" | tee -a "$OUT/summary.txt"
@@ -138,7 +140,7 @@ for dir in \
   : > "/tmp/objs-$tag.txt"
   for src in $(srcs_in_dir "$dir" | head -n "$SAMPLE"); do obj_for_src "$src" >> "/tmp/objs-$tag.txt"; done
   n=$(wc -l < "/tmp/objs-$tag.txt")
-  recompile_with_warnings "$tag" "" > "$OUT/pgo-$tag.log"
+  recompile_with_warnings "$tag" "$tag" "" > "$OUT/pgo-$tag.log"
   ood=$(grep -c 'profile-instr-out-of-date' "$OUT/pgo-$tag.log" || true)
   unp=$(grep -c 'profile-instr-unprofiled' "$OUT/pgo-$tag.log" || true)
   bck=$(grep -c 'backend-plugin' "$OUT/pgo-$tag.log" || true)
@@ -208,7 +210,9 @@ if [[ -n "${ALT_CLANG:-}" ]]; then
     base; do
     tag=$(echo "$dir" | tr / _)
     n=$(wc -l < "/tmp/objs-$tag.txt")
-    recompile_with_warnings "alt-$tag" "$ALT_CLANG" > "$OUT/pgo-alt-$tag.log"
+    recompile_with_warnings "$tag" "alt-$tag" "$ALT_CLANG" > "$OUT/pgo-alt-$tag.log"
+    # An empty log is a probe that did not run, not a compiler that matched.
+    [[ -s "$OUT/pgo-alt-$tag.log" ]] || echo "ERROR: alternate recompile of $dir produced no log" | tee -a "$OUT/summary.txt"
     # A different compiler may fail on a TU outright; that shows as errors, not
     # as a clean zero.
     err=$(grep -c ' error: ' "$OUT/pgo-alt-$tag.log" || true)
