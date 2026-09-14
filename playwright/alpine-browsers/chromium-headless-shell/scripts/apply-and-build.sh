@@ -265,10 +265,38 @@ fi
 # in blink + libxml chromium glue. See crbug.com/893950. Without it, builds
 # error against libxml's symbol export differences with the system libxml.
 echo "  libxml malloc/free fix"
+XML_MALLOC_FILES=(
+  third_party/blink/renderer/core/xml/*.cc
+  third_party/blink/renderer/core/xml/parser/xml_document_parser.cc
+  third_party/libxml/chromium/*.cc
+)
 sed -i -e 's/\<xmlMalloc\>/malloc/g' -e 's/\<xmlFree\>/free/g' \
-  third_party/blink/renderer/core/xml/*.cc \
-  third_party/blink/renderer/core/xml/parser/xml_document_parser.cc \
-  third_party/libxml/chromium/*.cc 2>/dev/null || true
+  "${XML_MALLOC_FILES[@]}" 2>/dev/null || true
+
+# The rewrite above hands a file a bare `free()` it never asked for, and
+# nothing guarantees that file includes <cstdlib>. clang 22 compiled it anyway
+# on a transitive include; clang 23 dropped that path and
+# third_party/libxml/chromium/xml_reader.cc failed with "use of undeclared
+# identifier 'free'" 21 objects into run 34448160334 — a 2h13 round spent on an
+# include we introduced ourselves. Add it rather than depend on someone else's
+# header graph, and only where the rewrite actually landed.
+#
+# awk, not `sed '0,/re/'`: the `0,` address is a GNU extension and busybox sed
+# accepts it, exits 0 and changes nothing — run 34576352942 logged
+# "+<cstdlib>" for every file and then failed on the same line 22 twice more.
+# The grep afterwards is the assertion that the include is really in the file.
+for f in "${XML_MALLOC_FILES[@]}"; do
+  [[ -f "$f" ]] || continue
+  grep -qE '^ *# *include +<(cstdlib|stdlib\.h)>' "$f" && continue
+  grep -qE '\b(malloc|free) *\(' "$f" || continue
+  awk '!done && /^#include / { print; print "#include <cstdlib>"; done = 1; next } 1' \
+    "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  grep -qx '#include <cstdlib>' "$f" || {
+    echo "ERROR: <cstdlib> did not land in $f" >&2
+    exit 8
+  }
+  echo "    +<cstdlib> $f"
+done
 
 # (i) Replace bundled-lib build files with system-library equivalents. Aports
 # does this so Chromium uses Alpine's system fontconfig/freetype/harfbuzz/etc.
@@ -348,7 +376,22 @@ fi
 # clang_base_path GN arg points at where chromium will look for system clang.
 # aports uses /usr/lib/llvm$_llvmver — read the same _llvmver from aports'
 # APKBUILD so our build matches the version of clang the patches expect.
-if [[ -f "$APORTS/APKBUILD" ]]; then
+#
+# CHS_LLVM_VER overrides both, for a compiler candidate. aports pins the clang
+# its patches were written against, which is the right default; it is NOT the
+# clang chromium itself is built with upstream, and that difference is one of
+# the two live explanations for the residual gap. The override exists so the
+# alternative can be pointed at a newer packaged clang than the one aports
+# pins — see the candidate block in Dockerfile.setup.
+if [[ -n "${CHS_LLVM_VER:-}" ]]; then
+  LLVMVER="$CHS_LLVM_VER"
+  CLANG_BASE="/usr/lib/llvm${LLVMVER}"
+  [[ -x "$CLANG_BASE/bin/clang" ]] || {
+    echo "ERROR: CHS_LLVM_VER=$CHS_LLVM_VER but $CLANG_BASE/bin/clang is absent" >&2
+    exit 6
+  }
+  echo "  CHS_LLVM_VER override: $("$CLANG_BASE/bin/clang" --version | head -1)"
+elif [[ -f "$APORTS/APKBUILD" ]]; then
   LLVMVER=$(awk -F= '$1=="_llvmver"{gsub(/[^0-9]/,"",$2); print $2; exit}' "$APORTS/APKBUILD")
   CLANG_BASE="/usr/lib/llvm${LLVMVER:-22}"
 else
@@ -367,6 +410,30 @@ export NM="$CLANG_BASE/bin/llvm-nm"
 export CC="$CLANG_BASE/bin/clang"
 export CXX="$CLANG_BASE/bin/clang++"
 echo "  AR=$AR  CC=$CC  CXX=$CXX  NM=$NM"
+
+# Host tools get their own toolchain on the candidate, and that is what stops
+# the lld crashes. `is_a_target_toolchain` (build/toolchain/toolchain.gni) reads
+#
+#   (current_toolchain != host_toolchain || default_toolchain == host_toolchain)
+#
+# and args.gn.overlay points custom_toolchain AND host_toolchain at the same
+# unbundle:default, so the second clause is true for everything and every host
+# tool is compiled as if it were a target — ThinLTO included. lld 23 then
+# segfaults linking four of them (protoc-gen-js, ipc_plugin, protozero_plugin,
+# cppgen_plugin: run 34503059518 r1, 2h09 in, no stack dump because lld dies on
+# SIGSEGV without printing one).
+#
+# Pointing host_toolchain at unbundle:host makes host tools genuinely non-target,
+# so the LTO configs stop applying to them while the target build keeps every
+# knob. unbundle:host reads its tools from BUILD_*, so export them here beside
+# the CC/CXX pair they mirror.
+if [[ -n "${CHS_LLVM_VER:-}" ]]; then
+  export BUILD_AR="$AR"
+  export BUILD_NM="$NM"
+  export BUILD_CC="$CC"
+  export BUILD_CXX="$CXX"
+  echo "  candidate host toolchain: BUILD_CC=$BUILD_CC (no LTO on host tools)"
+fi
 
 # Chromium's build scripts pass -Z nightly-only rustc flags (codegen-units,
 # panic-abort-tests, etc.). Stable rust rejects them with "1 nightly option
@@ -411,6 +478,21 @@ echo "  RUSTC_BOOTSTRAP=1 (allow -Z flags on stable rust)"
 SSP_PARITY="-Xclang -stack-protector -Xclang 1"
 export CFLAGS="${CFLAGS:+$CFLAGS }$SSP_PARITY"
 export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }$SSP_PARITY"
+
+# clang 23 deprecates attributes abseil still uses, and rejects two -Wno- names
+# chromium 151 passes; each one prints a six-line caret block on nearly every
+# object. Run 34448160334 drowned in them — BuildKit clips a step's log at
+# 2 MiB and this one hit the cap at 6193s, so the four lld crashes that ended
+# the round at 7683s arrived with their diagnostics already truncated away, and
+# a 2h13 round bought a census with its most interesting entry missing.
+# Warning spelling only: nothing here reaches codegen, so the compiler
+# candidate stays a comparison of compilers.
+if [[ -n "${CHS_LLVM_VER:-}" ]]; then
+  CANDIDATE_QUIET="-Wno-deprecated-attributes -Wno-unknown-warning-option"
+  export CFLAGS="${CFLAGS:+$CFLAGS }$CANDIDATE_QUIET"
+  export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }$CANDIDATE_QUIET"
+  echo "  candidate log-noise suppression: $CANDIDATE_QUIET"
+fi
 echo "  CFLAGS=$CFLAGS"
 echo "  CXXFLAGS=$CXXFLAGS"
 
@@ -459,6 +541,9 @@ fi
   echo "# Injected at build time"
   if [[ -n "$PGO_DATA_PATH" ]]; then
     echo "pgo_data_path = \"$PGO_DATA_PATH\""
+  fi
+  if [[ -n "${CHS_LLVM_VER:-}" ]]; then
+    echo "host_toolchain = \"//build/toolchain/linux/unbundle:host\""
   fi
   echo "clang_base_path = \"$CLANG_BASE\""
   echo "clang_version = \"${LLVMVER:-22}\""
