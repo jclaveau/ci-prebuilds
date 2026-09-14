@@ -141,17 +141,18 @@ for dir in \
 done
 
 # ---- 3. denominator ---------------------------------------------------------
-# Profile entries with their function (entry) count. --counts=false lists
-# names and hashes only (run 34789187155: 3.5M lines, no "Function count");
-# the count needs --counts, whose per-block lists are too big for a file, so
-# the listing streams through awk.
+# Profile entries with their hottest block count: the number the mismatch
+# warning reports as "up to N count discarded". An IR-instrumented profile has
+# no "Function count" line (run 34791649697), only "Block counts: [...]"; those
+# lists are too big for a file, so the listing streams through awk.
 PROFDATA=$(grep -oE 'fprofile-use=[^ ]+' "$OUT/cmd-values.txt" | head -1 | cut -d= -f2-)
 LLVM_BIN=$(dirname "$(awk '{print $1}' "$OUT/cmd-values.txt")")
 (cd "$BUILD" && "$LLVM_BIN/llvm-profdata" show --all-functions --counts "$PROFDATA" 2> "$OUT/profdata.err") \
-  | awk '/^  [^ ]/ { name=$1; sub(/:$/, "", name) } /^    Function count:/ { print name, $3 }' \
+  | awk '/^  [^ ]/ { name=$1; sub(/:$/, "", name) }
+         /^    Block counts:/ { m=0; l=$0; sub(/.*\[/, "", l); sub(/\].*/, "", l); n=split(l, a, /, */); for (i=1; i<=n; i++) if (a[i]+0 > m) m=a[i]+0; print name, m }' \
   | LC_ALL=C sort -u > /tmp/profile-fns.txt
 head -3 "$OUT/profdata.err" | tee -a "$OUT/summary.txt"
-echo "== profile: $(wc -l < /tmp/profile-fns.txt) functions with a count" | tee -a "$OUT/summary.txt"
+echo "== profile: $(wc -l < /tmp/profile-fns.txt) functions with block counts" | tee -a "$OUT/summary.txt"
 echo "== PGO denominator: functions of the sampled TUs that have a profile entry, vs those whose hash mismatched" | tee -a "$OUT/summary.txt"
 printf '%-45s %9s %9s %6s %16s %16s %6s\n' dir profiled mismatch 'fn%' 'counts profiled' 'counts dropped' 'cnt%' | tee -a "$OUT/summary.txt"
 for dir in \
