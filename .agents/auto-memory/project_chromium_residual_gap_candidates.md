@@ -259,8 +259,9 @@ toolchain, and three `chs-perf-ab` brackets against the shipped build read
 layout since ThinLTO, and largest where the gap is largest. Against official:
 layout 1.40 (from 1.61), geomean 1.10 (from 1.12). Details and the ship path
 in [[project_chromium_clang23_lever]]. The SSP-via-cfg chain (34576077869)
-died at r7 on the sanitizer-header hole #223 fixed; it has not been measured
-and should be re-dispatched on top of clang23, not clang22.
+died at r7 on the sanitizer-header hole #223 fixed; re-run on clang23
+(34763127184) it is a null control — 1.00 n.s. vs 4362396 (34931399463) —
+and shipped as #245 for the sccache it gives back, not for perf.
 
 ## 2026-09-14 — PGO hit rate and compile flags, both measured (probe `chromium-build-flags-probe.yml`)
 
