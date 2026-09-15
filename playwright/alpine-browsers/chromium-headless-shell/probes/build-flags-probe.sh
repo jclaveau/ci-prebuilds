@@ -1,105 +1,68 @@
 #!/bin/bash
-# DIAG BRANCH ONLY — which of our build-environment flags breaks the PGO
-# function hash? Run 34811938326 showed the mismatched 7% of layout functions
-# carry 100% of the profile counts, on identical source (block_node.cc is
-# byte-equal at the profile's revision) and with Chromium's own clang too.
-# Recompiles six hot TUs under flag variants and counts the hash-mismatch
-# warnings per variant.
+# DIAG BRANCH ONLY — re-links headless_shell in a round image with a symbol
+# ordering file built from the box's perf profile (issue #249 item 1: our hot
+# Blink code sits in two bands of .text, official's in one). Dispatched via
+# chromium-build-flags-probe.yml with script_ref=diag/chromium-symtab-dump.
+# Produces /out/headless_shell_ord.gz (stripped) + lld's printed symbol orders.
 set -uo pipefail
 OUT="${1:?outdir}"
 mkdir -p "$OUT"
-
 WORK=/work
 set -a; . "$WORK/versions.env"; . "$WORK/derived.env"; set +a
-CHS_VER="${CHROMIUM_HEADLESS_SHELL_VERSION:?derived.env missing CHROMIUM_HEADLESS_SHELL_VERSION}"
-cd "$WORK/chromium-src/chromium-$CHS_VER" || exit 2
-BUILD=out/headless
-[[ -f "$BUILD/build.ninja" ]] || { echo "ERROR: $BUILD/build.ninja missing" >&2; exit 2; }
+CHS_VER="${CHROMIUM_HEADLESS_SHELL_VERSION:?}"
+cd "$WORK/chromium-src/chromium-$CHS_VER/out/headless" || exit 2
+LLVM=$(ls -d /usr/lib/llvm2*/bin | sort | tail -1)
+LINK=$(ninja -t commands headless_shell 2>/dev/null | tail -1)
+[[ "$LINK" == *gcc_link_wrapper.py* ]] || { echo "ERROR: unexpected link line: ${LINK:0:200}" >&2; exit 2; }
+echo "$LINK" > "$OUT/link-cmd.txt"
 
-# The compile command ninja would run, cwd = $BUILD. `-t commands` lists the
-# whole dependency chain; the target's own compile is the last line.
-compile_line() {
-  ninja -C "$BUILD" -t commands "$1" 2>/dev/null | tail -1 | sed 's/^sccache //'
-}
-# Object names are resolved against ninja's own target list rather than
-# guessed: gn's obj/ layout nests the target name under the directory.
-echo "== chromium $CHS_VER, $BUILD" | tee "$OUT/summary.txt"
-cp "$BUILD/args.gn" "$OUT/args.gn"
-ninja -C "$BUILD" -t targets all 2>/dev/null | grep -E '\.o:' | cut -d: -f1 | sort > /tmp/all-objs.txt
-echo "  $(wc -l < /tmp/all-objs.txt) object targets" | tee -a "$OUT/summary.txt"
-if [[ ! -s /tmp/all-objs.txt ]]; then
-  echo "ERROR: ninja lists no objects:" | tee -a "$OUT/summary.txt"
-  ninja -C "$BUILD" -t targets all 2>&1 >/dev/null | head -5 | tee -a "$OUT/summary.txt"
-  exit 2
+# ninja writes the response file only when it runs the edge; r12 never linked.
+if [[ ! -f headless_shell.rsp ]]; then
+  ninja -n -d keeprsp headless_shell >/dev/null 2>&1 || true
 fi
-# gn names an object obj/<BUILD.gn dir>/<target>/<basename>.o, so a source in
-# a subdirectory of its target (all of blink core: core/layout/x.cc compiles to
-# obj/third_party/blink/renderer/core/core/x.o) is found by walking up from
-# its own directory. Test and fuzzer targets are skipped: ninja lists them even
-# though the round never built them.
-obj_for_src() {
-  local base dir hit
-  base=$(basename "$1" .cc); dir=$(dirname "$1")
-  while :; do
-    hit=$(grep -E "^obj/$dir/[^/]+/$base\.o$" /tmp/all-objs.txt | grep -vE '/[^/]*(test|fuzzer)[^/]*/[^/]+$' | head -1)
-    [[ -n "$hit" ]] && { echo "$hit"; return; }
-    [[ "$dir" == */* ]] || return 1
-    dir=${dir%/*}
-  done
-}
-# Non-test sources of a directory, in the order ls gives them.
-srcs_in_dir() { printf "%s\n" "$1"/*.cc | grep -vE '(_unittest|_test|_perftest|_fuzzer|test_support|_browsertest)\.cc$'; }
+if [[ ! -f headless_shell.rsp ]]; then
+  grep -A6 '^rule link$' toolchain.ninja | tee "$OUT/rule-link.txt"
+  python3 - <<'PY'
+import re
+src = open('obj/headless/headless_shell.ninja').read().replace('$\n', '')
+m = re.search(r'^build (?:\./)?headless_shell: link (.*)$', src, re.M)
+assert m, 'no link edge for headless_shell'
+ins = re.split(r' \|\|? ', m.group(1))[0]
+def unesc(s): return s.replace('$ ', ' ').replace('$:', ':').replace('$$', '$')
+inputs = [unesc(t) for t in ins.split()]
+tail = src[m.end():]
+vars = dict(re.findall(r'^  (\w+) = (.*)$', tail.split('\nbuild ')[0], re.M))
+parts = '\n'.join(inputs)
+for k in ('solibs', 'libs', 'rlibs'):
+    if vars.get(k): parts += ' ' + unesc(vars[k])
+open('headless_shell.rsp', 'w').write(parts + '\n')
+print('rsp: %d inputs, vars %s' % (len(inputs), {k: len(v) for k, v in vars.items()}))
+PY
+fi
+[[ -f headless_shell.rsp ]] || { echo "ERROR: could not produce headless_shell.rsp" >&2; exit 2; }
+wc -c headless_shell.rsp; head -c 300 headless_shell.rsp; echo; tail -c 400 headless_shell.rsp; echo
+cp headless_shell.rsp "$OUT/headless_shell.rsp"
 
-PGO_ON="-Wprofile-instr-unprofiled -Wprofile-instr-out-of-date -Wbackend-plugin"
-TUS="third_party/blink/renderer/core/layout/block_node.cc
-third_party/blink/renderer/core/layout/layout_box.cc
-third_party/blink/renderer/core/layout/block_layout_algorithm.cc
-third_party/blink/renderer/core/layout/layout_block_flow.cc
-third_party/blink/renderer/core/css/resolver/style_adjuster.cc
-third_party/blink/renderer/core/dom/element.cc"
-declare -A VARIANT=(
-  [base]=""
-  [nofortify]="-U_FORTIFY_SOURCE"
-  [cfi]="-fsanitize=cfi-vcall -fsanitize=cfi-icall -fsanitize-trap=cfi -fsanitize-ignorelist=../../tools/cfi/ignores.txt"
-  [nobounds]="-fno-sanitize=array-bounds,return"
-  [nohardening]="-Wno-macro-redefined -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE"
-)
-: > /tmp/objs.txt
-for src in $TUS; do
-  obj=$(obj_for_src "$src") || { echo "WARN: no object for $src" | tee -a "$OUT/summary.txt"; continue; }
-  echo "$obj" >> /tmp/objs.txt
-done
-echo "== TUs: $(tr '\n' ' ' < /tmp/objs.txt)" | tee -a "$OUT/summary.txt"
-
-run_variant() {  # run_variant <tag> <extra flags>
-  local tag="$1" extra="$2"
-  rm -rf "/tmp/v-$tag"; mkdir -p "/tmp/v-$tag"
-  xargs -P "$(nproc)" -I{} bash -c '
-    obj="$1"; tag="$2"; build="$3"; extra="$4"
-    line=$(ninja -C "$build" -t commands "$obj" 2>/dev/null | tail -1 | sed "s/^sccache //")
-    [ -n "$line" ] || exit 0
-    line=$(printf "%s" "$line" | sed -E "s# -o [^ ]+# -o /tmp/v-$tag/$(echo "$obj" | tr / _)#")
-    { echo "### $obj"; (cd "$build" && eval "$line $extra" 2>&1 || true); } > "/tmp/v-$tag/$(echo "$obj" | tr / _).log"
-  ' _ {} "$tag" "$BUILD" "$PGO_ON $extra" < /tmp/objs.txt
-  cat /tmp/v-$tag/*.log > "$OUT/pgo-$tag.log"
-  grep -o 'hash mismatch) [^ ]* Hash = [0-9]* up to [0-9]*' "$OUT/pgo-$tag.log" | awk '{print $3, $NF}' | sort > "$OUT/mismatch-$tag.txt"
+relink() {  # relink <suffix> <extra ldflags...>
+  local sfx="$1"; shift
+  local cmd="${LINK//\"\.\/headless_shell\"/\"./headless_shell_$sfx\"}"
+  cmd="${cmd//--output=\"\.\/headless_shell_$sfx\"/--output=\"./headless_shell_$sfx\"}"
+  cmd="$cmd $*"
+  echo "### link $sfx: $(date -u +%H:%M:%S)"
+  local t0=$SECONDS
+  eval "$cmd" > "$OUT/link-$sfx.log" 2>&1; local rc=$?
+  echo "### link $sfx rc=$rc in $((SECONDS-t0))s"; tail -5 "$OUT/link-$sfx.log"
+  [[ $rc -eq 0 ]] || return $rc
+  ls -la "headless_shell_$sfx"
+  "$LLVM/llvm-nm" -n --defined-only -S "headless_shell_$sfx" | gzip -6 > "$OUT/symtab-$sfx.nm.gz"
+  "$LLVM/llvm-readelf" -SW "headless_shell_$sfx" | grep -E "\] \.text" > "$OUT/text-$sfx.txt"
+  gzip -6 -c "headless_shell_$sfx" > "$OUT/headless_shell_$sfx-unstripped.gz"
+  ls -la "$OUT/headless_shell_$sfx-unstripped.gz"
 }
-echo "== hash mismatches per variant (functions / counts dropped) across $(wc -l < /tmp/objs.txt) TUs" | tee -a "$OUT/summary.txt"
-printf '%-12s %6s %10s %10s %8s  %s\n' variant errors mismatch 'counts' unprof 'extra flags' | tee -a "$OUT/summary.txt"
-for tag in base nofortify cfi nobounds nohardening; do
-  run_variant "$tag" "${VARIANT[$tag]}"
-  err=$(grep -c ' error: ' "$OUT/pgo-$tag.log" || true)
-  n=$(wc -l < "$OUT/mismatch-$tag.txt")
-  cnt=$(awk '{s+=$2} END{print s+0}' "$OUT/mismatch-$tag.txt")
-  unp=$(grep -c 'profile-instr-unprofiled' "$OUT/pgo-$tag.log" || true)
-  printf '%-12s %6s %10s %10s %8s  %s\n' "$tag" "$err" "$n" "$cnt" "$unp" "${VARIANT[$tag]}" | tee -a "$OUT/summary.txt"
-done
-echo "== base mismatches fixed by each variant" | tee -a "$OUT/summary.txt"
-for tag in nofortify cfi nobounds nohardening; do
-  fixed=$(comm -23 <(cut -d' ' -f1 "$OUT/mismatch-base.txt") <(cut -d' ' -f1 "$OUT/mismatch-$tag.txt") | wc -l)
-  added=$(comm -13 <(cut -d' ' -f1 "$OUT/mismatch-base.txt") <(cut -d' ' -f1 "$OUT/mismatch-$tag.txt") | wc -l)
-  echo "  $tag: fixed $fixed, newly mismatched $added" | tee -a "$OUT/summary.txt"
-done
-echo "== first errors per variant" | tee -a "$OUT/summary.txt"
-for tag in base nofortify cfi nobounds nohardening; do grep -m2 ' error: ' "$OUT/pgo-$tag.log" | sed "s/^/  $tag: /" | tee -a "$OUT/summary.txt"; done
+
+relink ctl || exit 3
+cp headless_shell_ctl headless_shell
+echo "### census $(date -u +%H:%M:%S)"
+VARIANT=headless bash /probes/link-census.sh "$WORK" "$OUT/census"
+echo "### census done $(date -u +%H:%M:%S)"
 echo "### DONE"
