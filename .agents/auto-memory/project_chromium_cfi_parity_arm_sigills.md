@@ -35,3 +35,11 @@ libc++ we bundle are both plausible, and trap mode discards the type.
 - CFI stays dead as a perf candidate (it was already ruled out as a
   divergence explaining the gap, [[project_chromium_residual_gap_candidates]]);
   this closes chain D of round 6-7.
+
+**Update 2026-09-16 — the framing above is backwards.** CFI is not a
+handicap official pays: with `is_cfi=false` Google's PGO profile hash
+mismatches on exactly the hot functions, so our build runs them without
+counts (no inlining, no CG-sort edges). See
+[[project_chromium_pgo_hash_needs_cfi]]. The SIGILL is therefore a blocker to
+fix, not a curiosity: symbolised relink of this arm's r12 image + gdb on the
+box to name the trap site, then an `ignores.txt` entry.
