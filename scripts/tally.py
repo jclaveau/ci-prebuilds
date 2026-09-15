@@ -25,7 +25,6 @@ import subprocess
 import sys
 
 REPO = "jclaveau/ci-prebuilds"
-ROOT = pathlib.Path(__file__).resolve().parent.parent
 CACHE = pathlib.Path(os.environ.get("XDG_CACHE_HOME", pathlib.Path.home() / ".cache")) / "ci-prebuilds-tally"
 
 BUILD_WF = "playwright-alpine-browsers.yml"
@@ -57,7 +56,7 @@ CONFORMANCE_TAIL = 12 * 60
 
 
 def gh(*args, json_out=True):
-    out = subprocess.run(["gh", *args], capture_output=True, text=True, cwd=ROOT)
+    out = subprocess.run(["gh", *args], capture_output=True, text=True, env={**os.environ, "GH_REPO": REPO})
     if out.returncode != 0:
         sys.stderr.write(out.stderr)
         return None
