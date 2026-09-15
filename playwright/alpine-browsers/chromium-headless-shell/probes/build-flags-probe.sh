@@ -10,8 +10,8 @@ WORK=/work
 set -a; . "$WORK/versions.env"; . "$WORK/derived.env"; set +a
 CHS_VER="${CHROMIUM_HEADLESS_SHELL_VERSION:?}"
 cd "$WORK/chromium-src/chromium-$CHS_VER" || exit 2
-B=out/headless/chrome-headless-shell
-[[ -f "$B" ]] || { echo "ERROR: $B missing" >&2; ls out/headless | head >&2; exit 2; }
+B=out/headless/headless_shell
+[[ -f "$B" ]] || { echo "ERROR: $B missing" >&2; ls -la out/headless | grep -v runtime_deps | head -40 >&2; exit 2; }
 LLVM=$(ls -d /usr/lib/llvm2*/bin 2>/dev/null | sort | tail -1)
 NM="$LLVM/llvm-nm"; RE="$LLVM/llvm-readelf"
 [[ -x "$NM" ]] || NM=nm; [[ -x "$RE" ]] || RE=readelf
@@ -26,7 +26,7 @@ cat "$OUT/binary-info.txt"
 "$NM" -n --defined-only -S "$B" 2>/dev/null | gzip -6 > "$OUT/symtab.nm.gz"
 ls -la "$OUT/symtab.nm.gz"; zcat "$OUT/symtab.nm.gz" | wc -l
 # the link line, to see the ldflags actually used (call-graph sort, prefixes)
-ninja -C out/headless -t commands chrome-headless-shell 2>/dev/null | tail -1 > "$OUT/link-cmd.txt"
+ninja -C out/headless -t commands headless_shell 2>/dev/null | tail -1 > "$OUT/link-cmd.txt"
 rsp=$(grep -o '@[^ ]*\.rsp' "$OUT/link-cmd.txt" | head -1 | tr -d @)
 [[ -n "$rsp" && -f "out/headless/$rsp" ]] && { tr ' ' '\n' < "out/headless/$rsp" | grep -E "^-Wl|^-fuse-ld|lto|^-m|^-O|-z" | sort -u > "$OUT/link-flags.txt"; }
 grep -oE "\-Wl,[^ ]+|-fuse-ld=[^ ]+|-flto[^ ]*|-O[0-9s]" "$OUT/link-cmd.txt" | sort -u >> "$OUT/link-flags.txt"
