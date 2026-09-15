@@ -6,10 +6,11 @@ Most memories are reachable ONLY from a category's index file, so whenever a tas
 touches an area, read that file before concluding no rule exists. Then read
 `.agents/auto-memory/<slug>.md` for the memory itself.
 
-## chromium-perf (21) — the residual-gap campaign: measured, dead, and still open
+## chromium-perf (22) — the residual-gap campaign: measured, dead, and still open
 `.agents/auto-memory/index/chromium-perf.md`
 
 - [chromium layout gap is FRONTEND FETCH, code layout](project_chromium_layout_gap_is_frontend_fetch.md) — reflow: iTLB 2.3x, icache 1.4x, fetch-latency 2x per instruction, hot code over 1.6x more text pages; boxonly flat; tracing says every Blink phase pays the same factor (uniform), only Skia Raster stands out
+- [PGO only applies with CFI ON](project_chromium_pgo_hash_needs_cfi.md) — is_cfi=false breaks the profile hash on exactly the hot functions (100% of layout counts dropped); CFI is a PGO prerequisite, not official's handicap; blocker = CFI arm SIGILL at launch
 - [clang 22→23 IS a layout lever](project_chromium_clang23_lever.md) — layout 0.87x vs shipped on slow silicon, vs official 1.40 (was 1.61), geomean 1.10; SHIPPED 2026-09-15 (#243, promote 34902520647); residual vs official layout 1.19× on 9V74
 - [chromium residual: 12% after both knobs, static inspection exhausted](project_chromium_residual_gap_candidates.md) — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI, TLS, under-inlining, text stack, memset; clang 22→23 LIVE (layout 0.87x slow silicon); PGO hash-mismatch loss measured = revision drift official pays too (snapshot clang 84 vs ours 100), cc1 flags clean; left = runtime musl/glibc + per-symbol perf record
 - [chromium launch = the DSO closure; the trim MEASURED at 0.79x](project_chromium_launch_dso_closure.md) — unbundle arm `2f82e9e` takes launch 0.79x on two clean A/Bs, freetype+harfbuzz add nothing (0.81x); layout unreadable at n=3 across runs; a VOID launch cell (every sample 2-5x, controls flat) is runner-side and only a full rerun fixes it; ship = rebase unbundle + 38h build
