@@ -147,19 +147,27 @@ def stage_order():
     return ["setup"] + [f"r{i}" for i in range(1, 13)] + ["finalize"]
 
 
+def print_aligned(rows, indent="  "):
+    """Left-aligned columns sized to the widest cell; the first row is the header."""
+    ncol = max(len(r) for r in rows)
+    rows = [list(map(str, r)) + [""] * (ncol - len(r)) for r in rows]
+    width = [max(len(r[i]) for r in rows) for i in range(ncol)]
+    for r in rows:
+        print(indent + "  ".join(c.ljust(w) for c, w in zip(r, width)).rstrip())
+
+
 def section_builds(now):
     build_runs = runs(BUILD_WF, 60)
     live = [r for r in build_runs if r["status"] != "completed"]
     profile, profile_sha = round_profile(build_runs)
     print(f"BUILDS  ({now:%m-%d %H:%MZ}; round profile from {profile_sha})")
-    if not live:
-        print("  none in flight")
+    rows = [("workflow", "branch", "sha", "run", "stage", "in", "done", "ETA", "")]
     for run in live:
         jl = jobs(run["databaseId"], False)
         running = [j for j in jl if j["status"] == "in_progress"]
         failed = [j["name"] for j in jl if j["conclusion"] == "failure"]
         stages = {chs_stage(j["name"]): j for j in jl if chs_stage(j["name"])}
-        line = f"  {run['headBranch']} {run['headSha'][:7]} {run['databaseId']}:"
+        row = [BUILD_WF.removesuffix(".yml"), run["headBranch"], run["headSha"][:7], run["databaseId"]]
         if stages:
             done = [s for s in stage_order() if stages.get(s, {}).get("conclusion") == "success"]
             cur = [s for s in stage_order() if stages.get(s, {}).get("status") == "in_progress"]
@@ -170,25 +178,31 @@ def section_builds(now):
                 later = stage_order()[stage_order().index(stage) + 1:]
                 remaining += sum(profile.get(s, 0) for s in later) + CONFORMANCE_TAIL
                 eta = now + dt.timedelta(seconds=remaining)
-                line += f" chs {stage} ({hm((now - started).total_seconds())} in), {len(done)}/14 stages, ETA {eta:%m-%d %H:%MZ} (+{hm(remaining)})"
+                row += [f"chs {stage}", hm((now - started).total_seconds()), f"{len(done)}/14",
+                        f"{eta:%m-%d %H:%MZ} (+{hm(remaining)})"]
             elif done and "finalize" in done:
-                line += " chs built, conformance running"
+                row += ["chs conformance", "", f"{len(done)}/14"]
             else:
-                line += f" chs {len(done)}/14 stages, between jobs"
+                row += ["chs between jobs", "", f"{len(done)}/14"]
         else:
-            names = ", ".join(j["name"] for j in running[:3]) or "queued"
-            line += f" {names}"
+            row += [", ".join(j["name"] for j in running[:3]) or "queued"]
         if failed:
-            line += f"  FAILED: {', '.join(failed[:3])}"
-        print(line)
+            row += [""] * (8 - len(row)) + [f"FAILED: {', '.join(failed[:3])}"]
+        rows.append(row)
     others = [(wf, r) for wf in (AB_WF, PUBLISH_WF, "promote-chromium-from-source.yml")
               for r in runs(wf, 5) if r["status"] != "completed"]
     for wf, r in others:
-        print(f"  {wf.removesuffix('.yml')} {r['databaseId']} {r['headBranch']}: {r['status']}")
+        rows.append((wf.removesuffix(".yml"), r["headBranch"], r["headSha"][:7], r["databaseId"], r["status"]))
+    if len(rows) > 1:
+        print_aligned(rows)
+    else:
+        print("  none in flight")
     # open perf candidates only; renovate and feature PRs are not the campaign
     prs = [p for p in gh("pr", "list", "--json", "number,title,headRefName,isDraft") or [] if p["headRefName"].startswith("perf/")]
-    for pr in prs:
-        print(f"  PR #{pr['number']} {pr['headRefName']}{' (draft)' if pr['isDraft'] else ''}: {pr['title'][:70]}")
+    if prs:
+        print_aligned([("PR", "branch", "title")] + [
+            (f"#{pr['number']}", pr["headRefName"] + (" (draft)" if pr["isDraft"] else ""), pr["title"][:70])
+            for pr in prs])
     focus = live[0] if live else next((r for r in build_runs if r["status"] == "completed"), None)
     if focus:
         print(f"  Run: https://github.com/{REPO}/actions/runs/{focus['databaseId']}")
@@ -224,9 +238,9 @@ def section_conformance(build_runs, depth):
                              "branch": run["headBranch"], "sha": run["headSha"][:7]}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(seen))
-    for fam, v in sorted(seen.items()):
-        mark = "OK " if v["verdict"] == "success" else "RED"
-        print(f"  {mark} {fam:<48} {v['branch']}@{v['sha']} {v['run']} {v['created'][5:10]}")
+    print_aligned([("", "suite", "branch", "sha", "run", "date")] + [
+        ("OK" if v["verdict"] == "success" else "RED", fam, v["branch"], v["sha"], v["run"], v["created"][5:10])
+        for fam, v in sorted(seen.items())])
 
 
 # ------------------------------------------------------------------ perf
