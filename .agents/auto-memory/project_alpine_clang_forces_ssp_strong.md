@@ -60,5 +60,11 @@ visible as a null arm instead of shipping as a result
 
 **Side effect:** passing this as `-Xclang` on the CFLAGS command line disables
 sccache entirely (0.16.0 cannot parse `-Xclang`, marks every compile
-non-cacheable) — fixed on `perf/chromium-ssp-via-clang-config` by baking the
-level into clang's own config file instead. See [[project_sccache_disabled_by_ssp_xclang]].
+non-cacheable) — fixed by baking the level into clang's own config file
+instead, with an inert `-DCHS_SSP_LEVEL` in CFLAGS to move the cache key.
+SHIPPED 2026-09-15 (PR #245, chain 34763127184 on the clang23 base): sccache
+cacheable again (r1 4141 requests / 51 cold hits, r12 41/41), and the null
+control vs 4362396 reads 1.00 n.s. everywhere (run 34931399463, Xeon 8573C:
+layout 0.98, goto_warm 1.02, int_math 0.98, libm_fmod 0.97) — the two
+spellings are the same posture, as the object `cmp` said.
+[[project_sccache_ghac_readonly_v18]]
