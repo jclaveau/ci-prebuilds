@@ -1,6 +1,7 @@
 {
   "private": true,
   "scripts": {
+    "tally": "python3 scripts/tally.py",
     "ci:watch": "bash scripts/ci-watch-one.sh test-and-publish.yml TP & bash scripts/ci-watch-one.sh benchmark-playwright.yml BENCH & bash scripts/ci-watch-one.sh playwright-alpine-browsers.yml PAB & wait",
     "ci:watch:tp": "bash scripts/ci-watch-one.sh test-and-publish.yml TP",
     "ci:watch:bench": "bash scripts/ci-watch-one.sh benchmark-playwright.yml BENCH",

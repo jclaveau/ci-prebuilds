@@ -85,9 +85,10 @@ touches an area, read that file before concluding no rule exists. Then read
 - [WebKit version assertions](project_webkit_version_assertions.md) — `browser.version()` is a hardcoded playwright-core constant (vacuous); real signals
 - [The aports pkgver rule had drifted in two of three copies](project_aports_pkgver_rule_drift.md) — mirrors claiming to mirror apply-and-build.sh kept strict equality after it went
 
-## process (8) — how to work in this repo
+## process (9) — how to work in this repo
 `.agents/auto-memory/index/process.md`
 
+- ["tally" = `pnpm tally`](feedback_tally_is_the_script.md) — run scripts/tally.py and relay it; builds + ETA, conformance verdicts, perf ours/official per group and geomean, per CPU and global; never hand-assemble
 - [Merge my own green PRs here — jean does not review](feedback_merge_without_review_here.md) — he builds the CI that produces the numbers; closing the loop (merge → dispatch →
 - [Check a source-only patch reaches the build](project_source_patch_reaches_build_checklist.md) — before a multi-hour dispatch: image tag sha-scoped? script COPYed before the RUN
 - [PGO probe mechanics](project_chromium_pgo_probe_mechanics.md) — gn `obj/<dir>/<target>/x.o` naming, IR profiles need `--counts` + max Block counts, busybox has no `join`, empty log ≠ zero mismatches, `script_ref` dispatch
