@@ -47,3 +47,14 @@ prints it per dir. Correct the "at least 1.12" framing in
 [[project_chromium_cfi_parity_arm_sigills]] and the CFI-dead verdict in
 [[project_chromium_residual_gap_candidates]].
 [[project_chromium_layout_gap_is_frontend_fetch]] [[project_chromium_pgo_probe_mechanics]]
+
+**Split (run 35036941795, same six TUs):** `cfi-vcall` alone fixes 310 of
+the 312 (20 / 115 M left), `cfi-icall` alone fixes 1 (329 / 437 M), both 18,
+`-fsanitize-cfi-icall-generalize-pointers` changes nothing. The hash lives in
+the vcall type tests; icall is parity only (and the source of the sqlite
+trap). The residual 18 are all in element.cc / style_adjuster.cc /
+block_node.cc / block_layout_algorithm.cc — `Element::AttributeChanged` 62 M,
+`RecalcOwnStyle` 19 M, `PseudoStateChanged` 10 M, `AdjustComputedStyle` 5 M,
+`BlockNode::FinishLayout` 3 M — so some other official-only flag still shapes
+those CFGs; a fourth variant probe is cheap (~40 min) if the CFI chain's
+layout row stops short of 1.00.
