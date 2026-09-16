@@ -78,3 +78,10 @@ generators run with a pure-sysroot library path or host-tool copies of the
 unbundled libs. Not restarted: [[project_chromium_pgo_hash_needs_cfi]] made
 the build environment (CFI) the live lead, so the libc question is second
 order now.
+
+**Flags candidate read (2026-09-16, chain 34891562298 green 20/20, A/B
+35066041839 vs shipped 4362396 on one EPYC 7763):** every row inside its
+spread — layout 0.98, launch 0.95 (4 samples, overlapping), context_page
+1.07, goto_cold 1.05, everything else 1.00; controls 1.00. Tally geo 1.01~.
+The three codegen flags aports strips buy nothing measurable → DEAD, not
+merged; branch `perf/chromium-official-codegen-flags` left for reference.

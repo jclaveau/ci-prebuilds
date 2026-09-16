@@ -1,6 +1,6 @@
 ---
 name: project_chromium_residual_gap_candidates
-description: chromium residual 12% after both knobs — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (parity arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (same calls per iteration and same sizes as official to 0.5%/bucket, all interposable); clang 22-vs-23 is LIVE — layout 0.87x vs the shipped build on the slow runner (0.96 fast), vs official 1.40 (was 1.61), geomean 1.10; left = SSP-via-cfg (chain died at r7 on the compiler-rt header hole, #223), to be re-run on the clang23 base
+description: chromium residual 12% after both knobs — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (parity arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (same calls per iteration and same sizes as official to 0.5%/bucket, all interposable); clang 22-vs-23 is LIVE — layout 0.87x vs the shipped build on the slow runner (0.96 fast), vs official 1.40 (was 1.61), geomean 1.10; official codegen flags (aports' compiler.patch) DEAD at 1.01~; CFI LIVE as the PGO prerequisite — first candidate layout 0.886 but launch 1.24 from a pre-trim resumed tree (44 NEEDED vs 28), fresh chain 35066922165 is the readable one
 metadata:
   type: project
 ---
@@ -294,3 +294,10 @@ dead" verdict above judged CFI as a codegen divergence; what it actually
 changes is the PGO function hash — without it the profile drops 100% of
 core/layout's counts (7% of functions). Root of the residual, see
 [[project_chromium_pgo_hash_needs_cfi]].
+
+**2026-09-16 — two candidates read against the shipped 4362396.** Flags
+(`b8ae6aa`, A/B 35066041839): noise everywhere, geo 1.01~ → dead. CFI
+(`5c105b1`, A/B 35066033112): layout 0.886 / goto_warm 0.95, but launch 1.24
+because the resumed tree predates the DSO trim and clang 23 (44 NEEDED vs
+28) — confounded, not a CFI cost. Rebased and rebuilt from scratch as
+35066922165; details in [[project_chromium_pgo_hash_needs_cfi]].
