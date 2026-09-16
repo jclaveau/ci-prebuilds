@@ -65,6 +65,10 @@ SRC="$WORK/chromium-src/chromium-${CHS_VER}"
 OUT="$VARIANT_OUT_DIR"
 cd "$SRC"
 
+# Idempotent source fixes (see the script). Runs before every ninja so a chain
+# resumed from a round image baked before a fix existed still compiles it in.
+bash "$WORK/chromium-headless-shell/scripts/musl-source-fixes.sh" "$SRC"
+
 # TEMP warm-fix (headed printing). The chr-build-r14 obj/ image was gen'd with
 # printing OFF (a stale lean-cut in args.gn.headed.overlay); the chrome target
 # actually needs print-preview, so its final link fails. Rather than re-gen the
