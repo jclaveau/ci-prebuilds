@@ -133,7 +133,7 @@ if [[ -n "$PROF" && -f "$PROF" ]]; then
     cat "/tmp/pgo-$tag"/*.log > "$OUT/pgo-$tag.log" 2>/dev/null
     grep -o 'hash mismatch) [^ ]* Hash = [0-9]* up to [0-9]*' "$OUT/pgo-$tag.log" | awk '{print $3, $NF}' | sort -u > "$OUT/mismatch-$tag.txt"
     # functions of the sampled objects that the profile knows
-    for o in $(cat "/tmp/objs-$tag.txt"); do "$LLVM/llvm-nm" --defined-only "$BUILD/$o" 2>/dev/null | awk '$2 ~ /[tT]/ {print $3}'; done | sort -u > "/tmp/defined-$tag.txt"
+    for o in $(cat "/tmp/objs-$tag.txt"); do "$LLVM/llvm-nm" --defined-only "$BUILD/$o" 2>/dev/null | awk '$2 ~ /^[tTwW]$/ {print $3}'; done | sort -u > "/tmp/defined-$tag.txt"
     awk 'NR==FNR{c[$1]=$2; next} ($1 in c){print $1, c[$1]}' /tmp/profile-counts.txt "/tmp/defined-$tag.txt" > "$OUT/profiled-$tag.txt"
     tus=$(wc -l < "/tmp/objs-$tag.txt"); prof=$(wc -l < "$OUT/profiled-$tag.txt"); mis=$(wc -l < "$OUT/mismatch-$tag.txt")
     cp=$(awk '{s+=$2} END{print s+0}' "$OUT/profiled-$tag.txt"); cd_=$(awk '{s+=$2} END{print s+0}' "$OUT/mismatch-$tag.txt")
