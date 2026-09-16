@@ -131,3 +131,10 @@ slow runner; candidate `80ea0bc`, no DSO trim):
 Same 13-row geomean as above; the eight rows that move average 1.17. See
 [[project_chromium_clang23_lever]] for the three brackets against the shipped
 build (layout 0.96 / 0.87 / 0.87, runner-dependent).
+
+**2026-09-16 — CFI on top of clang 22 + PGO + ThinLTO** (A/B 35066033112 vs
+the shipped clang23 `4362396`, one 8370C): layout 0.886, goto_warm 0.95,
+launch 1.24 — the launch row is the missing DSO trim in the resumed tree,
+not CFI ([[project_chromium_pgo_hash_needs_cfi]]). Flags candidate
+(`b8ae6aa`, A/B 35066041839): 1.01~, dead. Fresh CFI chain 35066922165 on
+the clang23 + trim base is the one to quote.
