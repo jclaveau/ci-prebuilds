@@ -72,22 +72,23 @@ for src in $TUS; do
 done
 echo "== TUs: $(tr '\n' ' ' < /tmp/objs.txt)" | tee -a "$OUT/summary.txt"
 
-run_variant() {  # run_variant <tag> <extra flags>
-  local tag="$1" extra="$2"
+run_variant() {  # run_variant <tag> <extra flags> [<alt clang bin dir>]
+  local tag="$1" extra="$2" altbin="${3:-}"
   rm -rf "/tmp/v-$tag"; mkdir -p "/tmp/v-$tag"
   xargs -P "$(nproc)" -I{} bash -c '
-    obj="$1"; tag="$2"; build="$3"; extra="$4"
+    obj="$1"; tag="$2"; build="$3"; extra="$4"; altbin="$5"
     line=$(ninja -C "$build" -t commands "$obj" 2>/dev/null | tail -1 | sed "s/^sccache //")
     [ -n "$line" ] || exit 0
     line=$(printf "%s" "$line" | sed -E "s# -o [^ ]+# -o /tmp/v-$tag/$(echo "$obj" | tr / _)#")
+    [ -n "$altbin" ] && line=$(printf "%s" "$line" | sed -E "s#^[^ ]*/(clang\\+\\+|clang) #$altbin/\\1 #")
     { echo "### $obj"; (cd "$build" && eval "$line $extra" 2>&1 || true); } > "/tmp/v-$tag/$(echo "$obj" | tr / _).log"
-  ' _ {} "$tag" "$BUILD" "$PGO_ON $extra" < /tmp/objs.txt
+  ' _ {} "$tag" "$BUILD" "$PGO_ON $extra" "$altbin" < /tmp/objs.txt
   cat /tmp/v-$tag/*.log > "$OUT/pgo-$tag.log"
   grep -o 'hash mismatch) [^ ]* Hash = [0-9]* up to [0-9]*' "$OUT/pgo-$tag.log" | awk '{print $3, $NF}' | sort > "$OUT/mismatch-$tag.txt"
 }
 echo "== hash mismatches per variant (functions / counts dropped) across $(wc -l < /tmp/objs.txt) TUs" | tee -a "$OUT/summary.txt"
 printf '%-12s %6s %10s %10s %8s  %s\n' variant errors mismatch 'counts' unprof 'extra flags' | tee -a "$OUT/summary.txt"
-for tag in cfi cast nvcall nojt hardfast harddebug noinline; do
+for tag in cfi; do
   run_variant "$tag" "${VARIANT[$tag]}"
   err=$(grep -c ' error: ' "$OUT/pgo-$tag.log" || true)
   n=$(wc -l < "$OUT/mismatch-$tag.txt")
@@ -95,13 +96,21 @@ for tag in cfi cast nvcall nojt hardfast harddebug noinline; do
   unp=$(grep -c 'profile-instr-unprofiled' "$OUT/pgo-$tag.log" || true)
   printf '%-12s %6s %10s %10s %8s  %s\n' "$tag" "$err" "$n" "$cnt" "$unp" "${VARIANT[$tag]}" | tee -a "$OUT/summary.txt"
 done
+if [[ -n "${ALT_CLANG:-}" ]]; then
+  VARIANT[altcfi]="${VARIANT[cfi]}"
+  run_variant altcfi "${VARIANT[cfi]}" "$ALT_CLANG"
+  printf '%-12s %6s %10s %10s %8s  %s\n' altcfi "$(grep -c ' error: ' "$OUT/pgo-altcfi.log" || true)" \
+    "$(wc -l < "$OUT/mismatch-altcfi.txt")" "$(awk '{s+=$2} END{print s+0}' "$OUT/mismatch-altcfi.txt")" \
+    "$(grep -c 'profile-instr-unprofiled' "$OUT/pgo-altcfi.log" || true)" \
+    "cfi under $("$ALT_CLANG/clang++" --version 2>&1 | head -1)" | tee -a "$OUT/summary.txt"
+fi
 echo "== cfi mismatches fixed by each variant" | tee -a "$OUT/summary.txt"
-for tag in cast nvcall nojt hardfast harddebug noinline; do
+for tag in ${ALT_CLANG:+altcfi}; do
   fixed=$(comm -23 <(cut -d' ' -f1 "$OUT/mismatch-cfi.txt") <(cut -d' ' -f1 "$OUT/mismatch-$tag.txt") | wc -l)
   added=$(comm -13 <(cut -d' ' -f1 "$OUT/mismatch-cfi.txt") <(cut -d' ' -f1 "$OUT/mismatch-$tag.txt") | wc -l)
   echo "  $tag: fixed $fixed, newly mismatched $added" | tee -a "$OUT/summary.txt"
   comm -23 <(cut -d' ' -f1 "$OUT/mismatch-cfi.txt") <(cut -d' ' -f1 "$OUT/mismatch-$tag.txt") | sed "s/^/    fixed  /" | tee -a "$OUT/summary.txt"
 done
 echo "== first errors per variant" | tee -a "$OUT/summary.txt"
-for tag in cfi cast nvcall nojt hardfast harddebug noinline; do grep -m2 ' error: ' "$OUT/pgo-$tag.log" | sed "s/^/  $tag: /" | tee -a "$OUT/summary.txt"; done
+for tag in cfi; do grep -m2 ' error: ' "$OUT/pgo-$tag.log" | sed "s/^/  $tag: /" | tee -a "$OUT/summary.txt"; done
 echo "### DONE"
