@@ -1809,6 +1809,36 @@ jobs:
             actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
             actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
 
+      # The census ran inside the finalize build (Dockerfile.finalize, between
+      # link and strip); this rebuild only re-exports its stage from the
+      # builder's cache. Report-only: a missing summary is a warning, never a
+      # failure of the artifact that was just pushed.
+      - name: Link census → step summary + artifact
+        uses: docker/build-push-action@v7
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/chromium-headless-shell/Dockerfile.finalize
+          target: census
+          outputs: type=local,dest=/tmp/chs-census
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-chs-finalize
+          build-args: |
+            BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:chs-build-r12-sha-${{ github.sha }}
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+      - name: Publish the census
+        run: |
+          if [ -f /tmp/chs-census/summary.md ]; then
+            cat /tmp/chs-census/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::link census produced no summary.md"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chromium-link-census
+          path: /tmp/chs-census
+          if-no-files-found: warn
+
       - name: Tier-1 smoke (chrome-headless-shell --version)
         run: |
           cat > /tmp/Dockerfile.chs-t1 <<EOF

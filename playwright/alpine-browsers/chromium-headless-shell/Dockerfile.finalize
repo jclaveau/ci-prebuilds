@@ -35,6 +35,13 @@ RUN --mount=type=cache,target=/root/.cache/sccache,id=chr-sccache,sharing=locked
     --mount=type=secret,id=actions_results_url \
     bash /work/chromium-headless-shell/scripts/ninja-resume.sh /work final final
 
+# Link census, between the link and the strip: where the hot code landed,
+# whether the PGO profile reached it, how much call-graph profile lld had to
+# sort with (issue #249). Report-only — the workflow reads /work/census via
+# the `census` stage below; nothing here fails the build.
+COPY chromium-headless-shell/probes/link-census.sh chromium-headless-shell/probes/chs-hot.txt /work/chromium-headless-shell/probes/
+RUN bash /work/chromium-headless-shell/probes/link-census.sh /work /work/census || true
+
 # Same overlay rationale as ninja-resume.sh above: stage-cache-layout.sh is baked
 # into BASE_IMAGE at setup time, so a branch edit (e.g. the ELF strip pass) only
 # reaches this incremental finalize via a fresh COPY from the build context.
@@ -45,3 +52,9 @@ RUN bash /work/chromium-headless-shell/scripts/stage-cache-layout.sh /work
 FROM scratch AS artifact
 ARG ARTIFACT_LAYOUT=chrome-headless-shell-linux64
 COPY --from=chromium-builder /work/${ARTIFACT_LAYOUT} /${ARTIFACT_LAYOUT}
+
+# Census stage: the workflow builds this target to a local dir after the
+# artifact push (same builder, the RUN layers above are already cached) and
+# publishes summary.md to the step summary + the raw files as an artifact.
+FROM scratch AS census
+COPY --from=chromium-builder /work/census /
