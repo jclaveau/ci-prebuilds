@@ -31,11 +31,14 @@ band at `.text+120–131 MiB`, iTLB misses 2.3×, 243 vs 154 hot pages). The
 orderfile relink (run 35029967863) confirmed the direction cheaply: layout
 0.95, iTLB 0.61×, but L1i flat — hotness order is not call-graph order.
 
-**Blocker:** the CFI-parity arm builds but SIGILLs on launch
-([[project_chromium_cfi_parity_arm_sigills]]); `use_cfi_diag` forces `-O1
--fno-inline`, unusable for perf. Find the trap site with a symbolised relink
-of its r12 image (`chs-build-r12-sha-d9b38d0…`, run 35035503088) under gdb on
-the box, ignorelist it, then a CFI chain.
+**Blocker — cleared 2026-09-16.** The CFI arm's SIGILL was one cfi-icall
+mismatch (sqlite's ioctl cast, [[project_chromium_cfi_parity_arm_sigills]]),
+fixed on `perf/chromium-cfi-pgo` (b355c2a); chain 35039005875 resumes the
+arm's r12 image so only sqlite3.o recompiles. Read its conformance + a
+chs-perf-ab against the shipped 4362396 before believing the census: the
+CFI arm's link census (run 35035503088) still shows a `+120–130 MiB` band
+(121 hot symbols vs 213) and 90% of the hot set within 75.7 MiB (was 123.5),
+CG coverage 1441/2000 (was 1344) — better, not one band.
 
 **How to apply:** treat `is_cfi` as a PGO prerequisite, not a hardening
 option; when an arm changes anything that alters the IR CFG (sanitizers,

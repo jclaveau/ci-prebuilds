@@ -1,6 +1,6 @@
 ---
 name: project_chromium_cfi_parity_arm_sigills
-description: the CFI-parity chromium arm (is_cfi + use_cfi_icall, perf/chromium-cfi-parity d9b38d0) links and builds but every launch dies with SIGILL — a CFI trap — so official's CFI handicap cannot be priced without a use_cfi_diag rebuild; the old "no IFUNC on alpine clang" comment was wrong about WHERE it fails
+description: the CFI chromium arm's launch SIGILL is RESOLVED — one cfi-icall type mismatch, sqlite's aSyscall ioctl cast (glibc `unsigned long` vs musl `int`), folded by clang into a ud1 in setDeviceCharacteristics so the first sql::Database::Open trapped; fixed by musl-source-fixes.sh on perf/chromium-cfi-pgo (chain 35039005875 resumed from the arm's r12); also: running the .real binary inside perf-alpine inherits LD_PRELOAD=mimalloc and dies in PartitionAlloc's free — a harness artefact, not the bug
 metadata:
   type: project
 ---
@@ -43,3 +43,29 @@ counts (no inlining, no CG-sort edges). See
 [[project_chromium_pgo_hash_needs_cfi]]. The SIGILL is therefore a blocker to
 fix, not a curiosity: symbolised relink of this arm's r12 image + gdb on the
 box to name the trap site, then an `ignores.txt` entry.
+
+**Update 2026-09-16 — RESOLVED, one trap.** Reproduced on the box through a
+real Playwright launch (`--dump-dom about:blank` does NOT trip it; PW's arg
+set with `--user-data-dir` does): `Thread "ThreadPoolForeg" SIGILL` at
+`unixDeviceCharacteristics+15` = `ud1 0x2(%eax)` (ubsantrap kind 2 =
+CFICheckFail), called from `sqlite3BtreeOpen` ← `sql::Database::Open` ←
+`content::BtmDatabase::Init`. The whole `sectorSize==0` branch of sqlite's
+`setDeviceCharacteristics` is the trap: `osIoctl` casts `aSyscall[28]` to
+`int(*)(int, unsigned long, ...)` (glibc's prototype) while musl declares
+`int ioctl(int, int, ...)`, and with the callee statically known clang folds
+the cfi-icall type test to false. sqlite already carries the `int` signature
+under `__ANDROID__` (bionic); `scripts/musl-source-fixes.sh` takes that
+branch on every non-glibc libc, run at setup and before every ninja so a
+resumed chain compiles it in. The other 27 aSyscall casts match musl. No
+`ignores.txt` entry needed. Chain: `perf/chromium-cfi-pgo` b355c2a, run
+35039005875, `resume_from` the arm's r12 image (sqlite3.o + relink only).
+
+**Harness trap on the way there:** `perf-alpine:local` sets
+`LD_PRELOAD=/usr/lib/libmimalloc.so.2`; the PW wrapper script `unset`s it
+but running `chrome-headless-shell.real` (or the fs artifact's bare binary)
+directly inherits it. mimalloc then owns `strdup`/`realpath` (the shim never
+defined them) while the executable's `free` is PartitionAlloc's, so
+fontconfig's `FcStrFree` dies in `FreeInUnknownRoot` with `int3; ud2`
+(SIGTRAP, rc 133) before any CFI code runs. Not a CFI trap, not a bug —
+`unset LD_PRELOAD` first, and read `ud1` (CFI) vs `int3; ud2`
+(IMMEDIATE_CRASH) before naming the killer.
