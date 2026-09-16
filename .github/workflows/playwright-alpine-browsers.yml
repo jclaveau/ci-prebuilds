@@ -904,9 +904,14 @@ jobs:
 
   conformance-chromium-headless-shell-from-source:
     needs: [build-chromium-headless-shell-from-source]
+    # !cancelled() + an explicit result check: the implicit success() looks at
+    # the whole needs chain, and a resume_from dispatch skips setup, so every
+    # round after r1 was skipped (run 35039005875) although r1 succeeded.
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
-      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+      !cancelled()
+      && needs.build-chromium-headless-shell-from-source.result == 'success'
+      && ((github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+          || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source')))
     uses: ./.github/workflows/pw-conformance.yml
     with:
       browser: chromium
@@ -1223,9 +1228,14 @@ jobs:
 
   build-chromium-headless-shell-from-source-r2:
     needs: build-chromium-headless-shell-from-source-r1
+    # !cancelled() + an explicit result check: the implicit success() looks at
+    # the whole needs chain, and a resume_from dispatch skips setup, so every
+    # round after r1 was skipped (run 35039005875) although r1 succeeded.
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
-      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+      !cancelled()
+      && needs.build-chromium-headless-shell-from-source-r1.result == 'success'
+      && ((github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+          || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source')))
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
@@ -1268,9 +1278,14 @@ jobs:
 
   build-chromium-headless-shell-from-source-r3:
     needs: build-chromium-headless-shell-from-source-r2
+    # !cancelled() + an explicit result check: the implicit success() looks at
+    # the whole needs chain, and a resume_from dispatch skips setup, so every
+    # round after r1 was skipped (run 35039005875) although r1 succeeded.
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
-      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+      !cancelled()
+      && needs.build-chromium-headless-shell-from-source-r2.result == 'success'
+      && ((github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+          || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source')))
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
@@ -1313,9 +1328,14 @@ jobs:
 
   build-chromium-headless-shell-from-source-r4:
     needs: build-chromium-headless-shell-from-source-r3
+    # !cancelled() + an explicit result check: the implicit success() looks at
+    # the whole needs chain, and a resume_from dispatch skips setup, so every
+    # round after r1 was skipped (run 35039005875) although r1 succeeded.
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
-      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+      !cancelled()
+      && needs.build-chromium-headless-shell-from-source-r3.result == 'success'
+      && ((github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+          || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source')))
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
@@ -1358,9 +1378,14 @@ jobs:
 
   build-chromium-headless-shell-from-source-r5:
     needs: build-chromium-headless-shell-from-source-r4
+    # !cancelled() + an explicit result check: the implicit success() looks at
+    # the whole needs chain, and a resume_from dispatch skips setup, so every
+    # round after r1 was skipped (run 35039005875) although r1 succeeded.
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
-      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+      !cancelled()
+      && needs.build-chromium-headless-shell-from-source-r4.result == 'success'
+      && ((github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+          || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source')))
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
@@ -1403,9 +1428,14 @@ jobs:
 
   build-chromium-headless-shell-from-source-r6:
     needs: build-chromium-headless-shell-from-source-r5
+    # !cancelled() + an explicit result check: the implicit success() looks at
+    # the whole needs chain, and a resume_from dispatch skips setup, so every
+    # round after r1 was skipped (run 35039005875) although r1 succeeded.
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
-      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+      !cancelled()
+      && needs.build-chromium-headless-shell-from-source-r5.result == 'success'
+      && ((github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+          || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source')))
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
@@ -1448,9 +1478,14 @@ jobs:
 
   build-chromium-headless-shell-from-source-r7:
     needs: build-chromium-headless-shell-from-source-r6
+    # !cancelled() + an explicit result check: the implicit success() looks at
+    # the whole needs chain, and a resume_from dispatch skips setup, so every
+    # round after r1 was skipped (run 35039005875) although r1 succeeded.
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
-      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+      !cancelled()
+      && needs.build-chromium-headless-shell-from-source-r6.result == 'success'
+      && ((github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+          || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source')))
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
@@ -1493,9 +1528,14 @@ jobs:
 
   build-chromium-headless-shell-from-source-r8:
     needs: build-chromium-headless-shell-from-source-r7
+    # !cancelled() + an explicit result check: the implicit success() looks at
+    # the whole needs chain, and a resume_from dispatch skips setup, so every
+    # round after r1 was skipped (run 35039005875) although r1 succeeded.
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
-      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+      !cancelled()
+      && needs.build-chromium-headless-shell-from-source-r7.result == 'success'
+      && ((github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+          || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source')))
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
@@ -1538,9 +1578,14 @@ jobs:
 
   build-chromium-headless-shell-from-source-r9:
     needs: build-chromium-headless-shell-from-source-r8
+    # !cancelled() + an explicit result check: the implicit success() looks at
+    # the whole needs chain, and a resume_from dispatch skips setup, so every
+    # round after r1 was skipped (run 35039005875) although r1 succeeded.
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
-      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+      !cancelled()
+      && needs.build-chromium-headless-shell-from-source-r8.result == 'success'
+      && ((github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+          || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source')))
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
@@ -1583,9 +1628,14 @@ jobs:
 
   build-chromium-headless-shell-from-source-r10:
     needs: build-chromium-headless-shell-from-source-r9
+    # !cancelled() + an explicit result check: the implicit success() looks at
+    # the whole needs chain, and a resume_from dispatch skips setup, so every
+    # round after r1 was skipped (run 35039005875) although r1 succeeded.
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
-      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+      !cancelled()
+      && needs.build-chromium-headless-shell-from-source-r9.result == 'success'
+      && ((github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+          || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source')))
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
@@ -1628,9 +1678,14 @@ jobs:
 
   build-chromium-headless-shell-from-source-r11:
     needs: build-chromium-headless-shell-from-source-r10
+    # !cancelled() + an explicit result check: the implicit success() looks at
+    # the whole needs chain, and a resume_from dispatch skips setup, so every
+    # round after r1 was skipped (run 35039005875) although r1 succeeded.
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
-      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+      !cancelled()
+      && needs.build-chromium-headless-shell-from-source-r10.result == 'success'
+      && ((github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+          || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source')))
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
@@ -1673,9 +1728,14 @@ jobs:
 
   build-chromium-headless-shell-from-source-r12:
     needs: build-chromium-headless-shell-from-source-r11
+    # !cancelled() + an explicit result check: the implicit success() looks at
+    # the whole needs chain, and a resume_from dispatch skips setup, so every
+    # round after r1 was skipped (run 35039005875) although r1 succeeded.
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
-      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+      !cancelled()
+      && needs.build-chromium-headless-shell-from-source-r11.result == 'success'
+      && ((github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+          || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source')))
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
@@ -1732,9 +1792,14 @@ jobs:
     # at 84.7% after 5h40m. Twelve covers the LTO-enabled build with slack.
     # Surplus rounds are nearly free — ninja exits at once with nothing to do.
     needs: build-chromium-headless-shell-from-source-r12
+    # !cancelled() + an explicit result check: the implicit success() looks at
+    # the whole needs chain, and a resume_from dispatch skips setup, so every
+    # round after r1 was skipped (run 35039005875) although r1 succeeded.
     if: |
-      (github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
-      || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source'))
+      !cancelled()
+      && needs.build-chromium-headless-shell-from-source-r12.result == 'success'
+      && ((github.event_name == 'workflow_dispatch' && inputs.build_chromium_headless_shell_from_source == 'true')
+          || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-chromium-headless-shell-from-source')))
     runs-on: ubuntu-latest
     timeout-minutes: 350
     outputs:
