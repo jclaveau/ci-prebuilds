@@ -1,42 +1,11 @@
-#!/usr/bin/env bash
-# What the compiler was actually told, and how much of the PGO profile it
-# could use — read off a finished round image, no rebuild.
-#
-# Runs INSIDE the last round image of a green chain (chs-build-rN-sha-<sha>):
-# that image carries the source tree, out/headless with its build.ninja, the
-# toolchain and the PGO profile, so every compile command is reproducible.
-#
-# Two questions, one artifact:
-#
-#   1. The exact cc1 line for a Blink layout object. The binaries have been
-#      inspected section by section; the command lines never were, and Alpine's
-#      clang driver adds flags Chromium never asked for (its config file, its
-#      compiled-in stack-protector default). `-###` shows what reaches cc1
-#      after the driver, which is the only line that matters.
-#
-#   2. PGO hit rate per directory, with its denominator. Chromium compiles with
-#      -Wno-profile-instr-unprofiled -Wno-profile-instr-out-of-date
-#      -Wno-backend-plugin, so a function whose profile no longer matches
-#      (aports/copium/PW patches change bodies, musl-conditioned code changes
-#      hashes) is silently built un-optimised. Re-enabling the warnings on a
-#      sample of TUs counts them. `base/` is the control: it takes few patches,
-#      so its mismatch rate is the floor that the profile's own revision drift
-#      (linux.pgo.txt names a branch commit, not our exact tag) costs everyone.
-#      The warnings alone say how many functions lost their profile, not out
-#      of how many had one: the profile's own function list, intersected with
-#      each sampled object's defined symbols, is that denominator, and the
-#      per-function counts weight both sides. Near 100% of the hot functions
-#      mismatching is the compiler (Chromium's profile was collected with its
-#      pinned clang snapshot, and the IR-PGO hash follows the pipeline); a few
-#      percent is the patches.
-#
-# usage: build-flags-probe.sh <outdir> [sample-per-dir]
-# No -e: a missing target or a failed recompile is a finding to print, not a
-# reason to stop before the summary exists.
+#!/bin/bash
+# DIAG BRANCH ONLY — with CFI on, 18 hot functions in element.cc /
+# style_adjuster.cc / block_node.cc / block_layout_algorithm.cc still miss
+# the PGO hash (run 35036941795). Which other official-only flag shapes
+# their CFG? Recompiles the same six TUs with CFI plus one more flag each and
+# counts the hash-mismatch warnings per variant; the cfi variant is the control.
 set -uo pipefail
-
 OUT="${1:?outdir}"
-SAMPLE="${2:-24}"
 mkdir -p "$OUT"
 
 WORK=/work
@@ -80,146 +49,59 @@ obj_for_src() {
 # Non-test sources of a directory, in the order ls gives them.
 srcs_in_dir() { printf "%s\n" "$1"/*.cc | grep -vE '(_unittest|_test|_perftest|_fuzzer|test_support|_browsertest)\.cc$'; }
 
-# ---- 1. command lines -------------------------------------------------------
-for src in \
-  third_party/blink/renderer/core/layout/layout_block_flow.cc \
-  third_party/blink/renderer/core/dom/element.cc \
-  base/values.cc; do
-  obj=$(obj_for_src "$src")
-  [[ -n "$obj" ]] || { echo "WARN: no object for $src" | tee -a "$OUT/summary.txt"; continue; }
-  name=$(basename "$obj" .o)
-  line=$(compile_line "$obj")
-  [[ -n "$line" ]] || { echo "WARN: no command for $obj" | tee -a "$OUT/summary.txt"; continue; }
-  printf '%s\n' "$line" > "$OUT/cmd-$name.txt"
-  # -### prints the driver's resolved cc1 invocation without compiling; kept
-  # whole, quoted, so a flag's value ("-stack-protector" "1") stays with it.
-  (cd "$BUILD" && eval "$line -###" 2>&1 | grep -E '"-cc1"') > "$OUT/cc1-$name.txt" || true
-  echo "  $name ($obj): $(wc -w < "$OUT/cmd-$name.txt") driver args, $(grep -o '"-' "$OUT/cc1-$name.txt" | wc -l) cc1 flags" | tee -a "$OUT/summary.txt"
-done
-
-# Flags of interest with their values, so the summary answers without opening
-# the files.
-echo "== cc1 flags of interest (layout_block_flow)" | tee -a "$OUT/summary.txt"
-grep -oE '"-(stack-protector|fstack-clash[^"]*|fno-unwind[^"]*|funwind[^"]*|ffp-contract[^"]*|O[0-3s]|flto[^"]*|fprofile[^"]*|fwhole[^"]*|fsplit[^"]*|mllvm|target-feature|tune-cpu|target-cpu|fno-plt|D_FORTIFY[^"]*|fvisibility[^"]*|mframe[^"]*|fdata-sections|ffunction-sections|fsanitize[^"]*|inlinehint-threshold[^"]*|mrelocation-model|pic-level|pie-level)" ?("[^-][^"]*")?' \
-  "$OUT/cc1-layout_block_flow.txt" | tr -d '"' | sort -u | tr '\n' ' ' | tee -a "$OUT/summary.txt" || true
-echo | tee -a "$OUT/summary.txt"
-
-# ---- 2. PGO hit rate --------------------------------------------------------
-# Re-run a sample of each directory's compiles with the three warnings back on
-# (a later -W wins over an earlier -Wno-). Output goes to /tmp so obj/ is not
-# touched; the .d file rewrite is harmless in a throwaway container.
 PGO_ON="-Wprofile-instr-unprofiled -Wprofile-instr-out-of-date -Wbackend-plugin"
-# Recompile every object of /tmp/objs-<list>.txt with the three warnings on,
-# one per TU, nproc at a time, outputs under /tmp/pgo-<tag>; the merged log is
-# on stdout. A third argument swaps the compiler binary directory (the
-# alternate clang of part 4). List and output tags are separate because run
-# 34808672663 read the alternate clang's list from a file it never had.
-recompile_with_warnings() {
-  local list="$1" tag="$2" altbin="$3"
-  rm -rf "/tmp/pgo-$tag"; mkdir -p "/tmp/pgo-$tag"
+TUS="third_party/blink/renderer/core/layout/block_node.cc
+third_party/blink/renderer/core/layout/layout_box.cc
+third_party/blink/renderer/core/layout/block_layout_algorithm.cc
+third_party/blink/renderer/core/layout/layout_block_flow.cc
+third_party/blink/renderer/core/css/resolver/style_adjuster.cc
+third_party/blink/renderer/core/dom/element.cc"
+declare -A VARIANT=(
+  [cfi]="-fsanitize=cfi-vcall -fsanitize=cfi-icall -fsanitize-trap=cfi -fsanitize-ignorelist=../../tools/cfi/ignores.txt"
+  [cast]="-fsanitize=cfi-vcall -fsanitize=cfi-icall -fsanitize-trap=cfi -fsanitize-ignorelist=../../tools/cfi/ignores.txt -fsanitize=cfi-derived-cast -fsanitize=cfi-unrelated-cast"
+  [nvcall]="-fsanitize=cfi-vcall -fsanitize=cfi-icall -fsanitize-trap=cfi -fsanitize-ignorelist=../../tools/cfi/ignores.txt -fsanitize=cfi-nvcall"
+  [nojt]="-fsanitize=cfi-vcall -fsanitize=cfi-icall -fsanitize-trap=cfi -fsanitize-ignorelist=../../tools/cfi/ignores.txt -fno-sanitize-cfi-canonical-jump-tables"
+  [hardfast]="-fsanitize=cfi-vcall -fsanitize=cfi-icall -fsanitize-trap=cfi -fsanitize-ignorelist=../../tools/cfi/ignores.txt -Wno-macro-redefined -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_FAST"
+  [harddebug]="-fsanitize=cfi-vcall -fsanitize=cfi-icall -fsanitize-trap=cfi -fsanitize-ignorelist=../../tools/cfi/ignores.txt -Wno-macro-redefined -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG"
+  [noinline]="-fsanitize=cfi-vcall -fsanitize=cfi-icall -fsanitize-trap=cfi -fsanitize-ignorelist=../../tools/cfi/ignores.txt -fno-inline-functions"
+)
+: > /tmp/objs.txt
+for src in $TUS; do
+  obj=$(obj_for_src "$src") || { echo "WARN: no object for $src" | tee -a "$OUT/summary.txt"; continue; }
+  echo "$obj" >> /tmp/objs.txt
+done
+echo "== TUs: $(tr '\n' ' ' < /tmp/objs.txt)" | tee -a "$OUT/summary.txt"
+
+run_variant() {  # run_variant <tag> <extra flags>
+  local tag="$1" extra="$2"
+  rm -rf "/tmp/v-$tag"; mkdir -p "/tmp/v-$tag"
   xargs -P "$(nproc)" -I{} bash -c '
-    obj="$1"; tag="$2"; build="$3"; pgo_on="$4"; altbin="$5"
+    obj="$1"; tag="$2"; build="$3"; extra="$4"
     line=$(ninja -C "$build" -t commands "$obj" 2>/dev/null | tail -1 | sed "s/^sccache //")
     [ -n "$line" ] || exit 0
-    # Same command, warnings on, object to a private path so obj/ is not touched.
-    line=$(printf "%s" "$line" | sed -E "s# -o [^ ]+# -o /tmp/pgo-$tag/$(echo "$obj" | tr / _)#")
-    [ -n "$altbin" ] && line=$(printf "%s" "$line" | sed -E "s#^[^ ]*/(clang\\+\\+|clang) #$altbin/\\1 #")
-    { echo "### $obj"; (cd "$build" && eval "$line $pgo_on" 2>&1 || true); } > "/tmp/pgo-$tag/$(echo "$obj" | tr / _).log"
-  ' _ {} "$tag" "$BUILD" "$PGO_ON" "$altbin" < "/tmp/objs-$list.txt"
-  cat "/tmp/pgo-$tag"/*.log 2>/dev/null || true
+    line=$(printf "%s" "$line" | sed -E "s# -o [^ ]+# -o /tmp/v-$tag/$(echo "$obj" | tr / _)#")
+    { echo "### $obj"; (cd "$build" && eval "$line $extra" 2>&1 || true); } > "/tmp/v-$tag/$(echo "$obj" | tr / _).log"
+  ' _ {} "$tag" "$BUILD" "$PGO_ON $extra" < /tmp/objs.txt
+  cat /tmp/v-$tag/*.log > "$OUT/pgo-$tag.log"
+  grep -o 'hash mismatch) [^ ]* Hash = [0-9]* up to [0-9]*' "$OUT/pgo-$tag.log" | awk '{print $3, $NF}' | sort > "$OUT/mismatch-$tag.txt"
 }
-echo "== PGO warnings, $SAMPLE TUs per dir (out-of-date = hash mismatch, profile dropped; unprofiled = no data; backend = CFG mismatch)" | tee -a "$OUT/summary.txt"
-printf '%-45s %5s %12s %11s %8s %14s\n' dir TUs out-of-date unprofiled backend 'fn mismatch/of' | tee -a "$OUT/summary.txt"
-for dir in \
-  third_party/blink/renderer/core/layout \
-  third_party/blink/renderer/core/dom \
-  third_party/blink/renderer/core/css \
-  third_party/blink/renderer/platform \
-  base; do
-  tag=$(echo "$dir" | tr / _)
-  : > "/tmp/objs-$tag.txt"
-  for src in $(srcs_in_dir "$dir" | head -n "$SAMPLE"); do obj_for_src "$src" >> "/tmp/objs-$tag.txt"; done
-  n=$(wc -l < "/tmp/objs-$tag.txt")
-  recompile_with_warnings "$tag" "$tag" "" > "$OUT/pgo-$tag.log"
-  ood=$(grep -c 'profile-instr-out-of-date' "$OUT/pgo-$tag.log" || true)
+echo "== hash mismatches per variant (functions / counts dropped) across $(wc -l < /tmp/objs.txt) TUs" | tee -a "$OUT/summary.txt"
+printf '%-12s %6s %10s %10s %8s  %s\n' variant errors mismatch 'counts' unprof 'extra flags' | tee -a "$OUT/summary.txt"
+for tag in cfi cast nvcall nojt hardfast harddebug noinline; do
+  run_variant "$tag" "${VARIANT[$tag]}"
+  err=$(grep -c ' error: ' "$OUT/pgo-$tag.log" || true)
+  n=$(wc -l < "$OUT/mismatch-$tag.txt")
+  cnt=$(awk '{s+=$2} END{print s+0}' "$OUT/mismatch-$tag.txt")
   unp=$(grep -c 'profile-instr-unprofiled' "$OUT/pgo-$tag.log" || true)
-  bck=$(grep -c 'backend-plugin' "$OUT/pgo-$tag.log" || true)
-  # The out-of-date warning is per file but carries the function tally.
-  fns=$(grep -hoE 'of [0-9]+ functions?, [0-9]+ have mismatched' "$OUT/pgo-$tag.log" | awk '{n+=$2; m+=$4} END{printf "%d/%d", m, n}')
-  printf '%-45s %5s %12s %11s %8s %14s\n' "$dir" "$n" "$ood" "$unp" "$bck" "$fns" | tee -a "$OUT/summary.txt"
+  printf '%-12s %6s %10s %10s %8s  %s\n' "$tag" "$err" "$n" "$cnt" "$unp" "${VARIANT[$tag]}" | tee -a "$OUT/summary.txt"
 done
-
-# ---- 3. denominator ---------------------------------------------------------
-# Profile entries with their hottest block count: the number the mismatch
-# warning reports as "up to N count discarded". An IR-instrumented profile has
-# no "Function count" line (run 34791649697), only "Block counts: [...]"; those
-# lists are too big for a file, so the listing streams through awk.
-PROFDATA=$(grep -oE 'fprofile-use=[^ ]+' "$OUT/cmd-values.txt" | head -1 | cut -d= -f2-)
-LLVM_BIN=$(dirname "$(awk '{print $1}' "$OUT/cmd-values.txt")")
-(cd "$BUILD" && "$LLVM_BIN/llvm-profdata" show --all-functions --counts "$PROFDATA" 2> "$OUT/profdata.err") \
-  | awk '/^  [^ ]/ { name=$1; sub(/:$/, "", name) }
-         /^    Block counts:/ { m=0; l=$0; sub(/.*\[/, "", l); sub(/\].*/, "", l); n=split(l, a, /, */); for (i=1; i<=n; i++) if (a[i]+0 > m) m=a[i]+0; print name, m }' \
-  | LC_ALL=C sort -u > /tmp/profile-fns.txt
-head -3 "$OUT/profdata.err" | tee -a "$OUT/summary.txt"
-echo "== profile: $(wc -l < /tmp/profile-fns.txt) functions with block counts" | tee -a "$OUT/summary.txt"
-echo "== PGO denominator: functions of the sampled TUs that have a profile entry, vs those whose hash mismatched" | tee -a "$OUT/summary.txt"
-printf '%-45s %9s %9s %6s %16s %16s %6s\n' dir profiled mismatch 'fn%' 'counts profiled' 'counts dropped' 'cnt%' | tee -a "$OUT/summary.txt"
-for dir in \
-  third_party/blink/renderer/core/layout \
-  third_party/blink/renderer/core/dom \
-  third_party/blink/renderer/core/css \
-  third_party/blink/renderer/platform \
-  base; do
-  tag=$(echo "$dir" | tr / _)
-  # Defined functions across the sampled objects (bitcode under ThinLTO, so
-  # llvm-nm), joined with the profile's names.
-  while read -r obj; do "$LLVM_BIN/llvm-nm" --defined-only "$BUILD/$obj" 2>> "$OUT/nm-$tag.err" | awk '$2 ~ /^[tTwW]$/ { print $3 }'; done \
-    < "/tmp/objs-$tag.txt" | LC_ALL=C sort -u > "$OUT/defined-$tag.txt"
-  # awk, not join: the round image is Alpine and busybox has no join applet
-  # (run 34797323579 joined 801 defined names against 1.18M profile entries
-  # into nothing, with the error in a dropped stderr).
-  awk 'NR == FNR { c[$1] = $2; next } ($1 in c) { print $1, c[$1] }' /tmp/profile-fns.txt "$OUT/defined-$tag.txt" > "$OUT/profiled-$tag.txt"
-  grep -oE '\(hash mismatch\) [^ ]+ Hash = [0-9]+ up to [0-9]+' "$OUT/pgo-$tag.log" \
-    | awk '{ print $3, $NF }' | sort -u > "$OUT/mismatched-$tag.txt"
-  read -r np cp < <(awk '{ n++; c+=$2 } END { printf "%d %d", n, c }' "$OUT/profiled-$tag.txt")
-  read -r nm cm < <(awk '{ n++; c+=$2 } END { printf "%d %d", n, c }' "$OUT/mismatched-$tag.txt")
-  printf '%-45s %9s %9s %5.1f%% %16s %16s %5.1f%%\n' "$dir" "$np" "$nm" \
-    "$(awk -v a="$nm" -v b="$np" 'BEGIN { print (b ? 100*a/b : 0) }')" "$cp" "$cm" \
-    "$(awk -v a="$cm" -v b="$cp" 'BEGIN { print (b ? 100*a/b : 0) }')" | tee -a "$OUT/summary.txt"
+echo "== cfi mismatches fixed by each variant" | tee -a "$OUT/summary.txt"
+for tag in cast nvcall nojt hardfast harddebug noinline; do
+  fixed=$(comm -23 <(cut -d' ' -f1 "$OUT/mismatch-cfi.txt") <(cut -d' ' -f1 "$OUT/mismatch-$tag.txt") | wc -l)
+  added=$(comm -13 <(cut -d' ' -f1 "$OUT/mismatch-cfi.txt") <(cut -d' ' -f1 "$OUT/mismatch-$tag.txt") | wc -l)
+  echo "  $tag: fixed $fixed, newly mismatched $added" | tee -a "$OUT/summary.txt"
+  comm -23 <(cut -d' ' -f1 "$OUT/mismatch-cfi.txt") <(cut -d' ' -f1 "$OUT/mismatch-$tag.txt") | sed "s/^/    fixed  /" | tee -a "$OUT/summary.txt"
 done
-
-# Which layout functions lost their profile — the names say whether the misses
-# sit on the hot path or in patched corners.
-grep -hoiE "function control flow change detected \(hash mismatch\) [^ ]+|no profile data available for function '[^']+'|'[^']+' has a mismatched profile" \
-  "$OUT/pgo-third_party_blink_renderer_core_layout.log" | sort | uniq -c | sort -rn | head -40 \
-  > "$OUT/layout-mismatched-functions.txt" || true
-echo "== $(wc -l < "$OUT/layout-mismatched-functions.txt") distinct layout functions named in warnings (top in layout-mismatched-functions.txt)" | tee -a "$OUT/summary.txt"
-
-# ---- 4. the same sample under another clang --------------------------------
-# The profile's hashes come from Chromium's pinned clang snapshot. If the
-# snapshot itself (mounted by the workflow as ALT_CLANG) mismatches the same
-# functions, the loss is the profile's revision drift and official pays it
-# too; if it matches them, the loss is our compiler's and a chain on the
-# snapshot recovers it.
-if [[ -n "${ALT_CLANG:-}" ]]; then
-  echo "== alternate clang: $("$ALT_CLANG/clang++" --version 2>&1 | head -1)" | tee -a "$OUT/summary.txt"
-  printf '%-45s %5s %13s %12s %13s %12s\n' dir TUs 'mismatch ours' 'hot ours' 'mismatch alt' 'hot alt' | tee -a "$OUT/summary.txt"
-  for dir in \
-    third_party/blink/renderer/core/layout \
-    third_party/blink/renderer/core/dom \
-    base; do
-    tag=$(echo "$dir" | tr / _)
-    n=$(wc -l < "/tmp/objs-$tag.txt")
-    recompile_with_warnings "$tag" "alt-$tag" "$ALT_CLANG" > "$OUT/pgo-alt-$tag.log"
-    # An empty log is a probe that did not run, not a compiler that matched.
-    [[ -s "$OUT/pgo-alt-$tag.log" ]] || echo "ERROR: alternate recompile of $dir produced no log" | tee -a "$OUT/summary.txt"
-    # A different compiler may fail on a TU outright; that shows as errors, not
-    # as a clean zero.
-    err=$(grep -c ' error: ' "$OUT/pgo-alt-$tag.log" || true)
-    grep -oE '\(hash mismatch\) [^ ]+ Hash = [0-9]+ up to [0-9]+' "$OUT/pgo-alt-$tag.log" \
-      | awk '{ print $3, $NF }' | sort -u > "$OUT/mismatched-alt-$tag.txt"
-    printf '%-45s %5s %13s %12s %13s %12s  (%s errors)\n' "$dir" "$n" \
-      "$(wc -l < "$OUT/mismatched-$tag.txt")" "$(awk '$2 > 0' "$OUT/mismatched-$tag.txt" | wc -l)" \
-      "$(wc -l < "$OUT/mismatched-alt-$tag.txt")" "$(awk '$2 > 0' "$OUT/mismatched-alt-$tag.txt" | wc -l)" "$err" | tee -a "$OUT/summary.txt"
-  done
-fi
+echo "== first errors per variant" | tee -a "$OUT/summary.txt"
+for tag in cfi cast nvcall nojt hardfast harddebug noinline; do grep -m2 ' error: ' "$OUT/pgo-$tag.log" | sed "s/^/  $tag: /" | tee -a "$OUT/summary.txt"; done
+echo "### DONE"
