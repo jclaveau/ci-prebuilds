@@ -14,7 +14,8 @@ what the script cannot know (what a number means for the next step).
 artifact downloads several times a day, at thousands of tokens each. The
 script caches every completed run's jobs and perf artifacts under
 `~/.cache/ci-prebuilds-tally`, so a repeat call is one `gh run list` per
-workflow and ~60 lines of output. He asked for exactly this (2026-09-15).
+workflow and ~60 lines of output. He asked for exactly this (2026-09-15),
+shipped as PR #247/#248.
 
 **How to apply:**
 - Ratios in the script are OURS/OFFICIAL (the goal is every row ≤ 1.00);
@@ -24,3 +25,7 @@ workflow and ~60 lines of output. He asked for exactly this (2026-09-15).
 - `--depth 300` once per machine seeds the conformance cache (webkit's
   suite only runs when webkit is rebuilt, weeks apart).
 - A build-progress question mid-chain is `pnpm tally builds`, nothing else.
+
+Complements [[feedback_tally_include_run_url]] (the run URL the script itself
+cannot append) — this memory is about WHICH tool to run, that one is about
+what to append when relaying it.
