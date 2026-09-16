@@ -108,8 +108,8 @@ obj_for_src() {
 }
 if [[ -n "$PROF" && -f "$PROF" ]]; then
   "$LLVM/llvm-profdata" show --all-functions --counts "$PROF" 2> "$OUT/profdata.err" \
-    | awk '/^  [^ ]/{name=$1} /Block counts:/{gsub(/[\[\],]/," "); m=0; for(i=3;i<=NF;i++) if($i+0>m) m=$i+0; print name, m}' \
-    | sed 's/:$//' | sort -k1,1 > /tmp/profile-counts.txt
+    | awk '/^  [^ ]/{name=$1; sub(/:$/,"",name)} /Block counts:/{gsub(/[\[\],]/," "); m=0; for(i=3;i<=NF;i++) if($i+0>m) m=$i+0; print name, m}' \
+    | sort -k1,1 > /tmp/profile-counts.txt
   echo "profile: $(wc -l < /tmp/profile-counts.txt) functions with block counts ($PROF)" | tee -a "$OUT/profdata.err"
   {
     echo "**PGO hash mismatch** ($SAMPLE TUs per dir; counts = hottest block count of each function):"
