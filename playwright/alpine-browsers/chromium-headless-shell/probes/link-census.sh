@@ -90,7 +90,10 @@ fi
 # dropped. Counts dropped vs counts profiled says whether the hot functions
 # are the ones lost (run 34811938326: layout 7% of functions, 100% of counts).
 SAMPLE="${CENSUS_SAMPLE:-12}"
-PGO_ON="-Wprofile-instr-unprofiled -Wprofile-instr-out-of-date"
+# -Wbackend-plugin carries the "hash mismatch" line: PGOInstrumentationUse
+# reports through the backend diagnostic handler, not the frontend warnings
+# (run 35035511802: 0 mismatches everywhere without it).
+PGO_ON="-Wprofile-instr-unprofiled -Wprofile-instr-out-of-date -Wbackend-plugin"
 PROF=$(grep -o 'pgo_data_path = "[^"]*"' "$BUILD/args.gn" | cut -d'"' -f2)
 ninja -C "$BUILD" -t targets all 2>/dev/null | grep -E '\.o:' | cut -d: -f1 | sort > /tmp/all-objs.txt
 obj_for_src() {
@@ -104,9 +107,10 @@ obj_for_src() {
   done
 }
 if [[ -n "$PROF" && -f "$PROF" ]]; then
-  "$LLVM/llvm-profdata" show --all-functions --counts "$PROF" 2>/dev/null \
+  "$LLVM/llvm-profdata" show --all-functions --counts "$PROF" 2> "$OUT/profdata.err" \
     | awk '/^  [^ ]/{name=$1} /Block counts:/{gsub(/[\[\],]/," "); m=0; for(i=3;i<=NF;i++) if($i+0>m) m=$i+0; print name, m}' \
     | sed 's/:$//' | sort -k1,1 > /tmp/profile-counts.txt
+  echo "profile: $(wc -l < /tmp/profile-counts.txt) functions with block counts ($PROF)" | tee -a "$OUT/profdata.err"
   {
     echo "**PGO hash mismatch** ($SAMPLE TUs per dir; counts = hottest block count of each function):"
     echo
