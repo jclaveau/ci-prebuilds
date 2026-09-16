@@ -96,7 +96,7 @@ jobs:
             echo "hit=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         if: steps.exists.outputs.hit != 'true'
         with:
           context: playwright/alpine-browsers/chromium-headless-shell
