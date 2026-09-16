@@ -151,6 +151,11 @@ if [[ -f "$APORTS/APKBUILD" ]]; then
   done
 fi
 
+# 4a'. Source fixes neither aports nor copium carry (sqlite's ioctl cast under
+#      cfi-icall). Idempotent; ninja-resume.sh re-runs it so a resumed chain
+#      picks the fixes up too.
+bash "$WORK/chromium-headless-shell/scripts/musl-source-fixes.sh" "$SRC"
+
 # 4b. Musl/clang22 host-tool link fix — chromium 148 host tools (e.g.
 #     character_data_generator) reference `base::debug::StackTrace::
 #     OutputToStreamWithPrefixImpl` but our libbase.a doesn't carry the

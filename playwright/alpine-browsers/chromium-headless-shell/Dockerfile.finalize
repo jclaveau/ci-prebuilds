@@ -29,6 +29,7 @@ ENV PATCH_HEADED_PRINTING=${PATCH_HEADED_PRINTING}
 # (checked-out) build context so its PATCH_HEADED_PRINTING block actually runs.
 # Harmless for the unpatched paths: the fresh script == what setup baked.
 COPY chromium-headless-shell/scripts/ninja-resume.sh /work/chromium-headless-shell/scripts/ninja-resume.sh
+COPY chromium-headless-shell/scripts/musl-source-fixes.sh /work/chromium-headless-shell/scripts/musl-source-fixes.sh
 
 RUN --mount=type=cache,target=/root/.cache/sccache,id=chr-sccache,sharing=locked \
     --mount=type=secret,id=actions_runtime_token \
