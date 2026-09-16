@@ -67,3 +67,14 @@ chain 34763050768), each moving one variable:
 the compiler flags buy; libc arm vs flags arm says what musl costs. A big flags
 delta reopens `project_chromium_residual_gap_candidates` (its "flags clean"
 verdict compared our cc1 line against expectations, not official's).
+
+**Libc arm outcome (run 34905903570, r5, 2026-09-15): DEAD at build time,
+parked.** `v8_context_snapshot_generator` — a target-toolchain binary the
+build has to RUN on the Alpine builder — segfaults with "Relink
+`/usr/lib/libmd.so.0' with `/lib/x86_64-linux-gnu/libc.so.6' for IFUNC symbol
+`memcmp'": the glibc-sysroot executable loads the sysroot's libc plus an
+Alpine (musl-built, unbundled) system library. Any sysroot arm needs the
+generators run with a pure-sysroot library path or host-tool copies of the
+unbundled libs. Not restarted: [[project_chromium_pgo_hash_needs_cfi]] made
+the build environment (CFI) the live lead, so the libc question is second
+order now.

@@ -480,7 +480,11 @@ async function main() {
   console.log(`wrote ${outFile}`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+module.exports = { PAGE_HTML, KERNELS, clickAll };

@@ -288,3 +288,9 @@ and shipped as #245 for the sccache it gives back, not for perf.
 **How to apply:** do not re-propose "fix PGO hash mismatches" or "match
 Chromium's clang for the profile"; both are measured. Probe mechanics live in
 [[project_chromium_pgo_probe_mechanics]].
+
+**Update 2026-09-16 — CFI is un-dead, as the PGO prerequisite.** The "CFI
+dead" verdict above judged CFI as a codegen divergence; what it actually
+changes is the PGO function hash — without it the profile drops 100% of
+core/layout's counts (7% of functions). Root of the residual, see
+[[project_chromium_pgo_hash_needs_cfi]].
