@@ -65,7 +65,14 @@ RUN if [ -n "$LLVM_GIT_SHA" ]; then \
 # C++, .text byte-identical; no __*_chk emitted in C or C++). PIE and build-id
 # are kept because those ARE part of alpine's ABI posture rather than its
 # hardening policy.
+#
+# musl gives every pthread a 128 KiB stack unless the executable's
+# PT_GNU_STACK says otherwise, and lld runs its ThinLTO backends on a thread
+# pool: linking mksnapshot (ThinLTO + CFI) segfaulted the pool twice at the
+# same point (runs 35097888298 and 35282181912). Alpine's own lld carries
+# PT_GNU_STACK memsz 2 MiB for this reason; stamp the same into ours.
 RUN cmake -S llvm-project/llvm -B build -G Ninja \
+      -DCMAKE_EXE_LINKER_FLAGS="-Wl,-z,stack-size=2097152" \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX="/usr/lib/llvm${LLVM_MAJOR}" \
       -DCMAKE_C_COMPILER=/usr/lib/llvm22/bin/clang \

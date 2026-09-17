@@ -74,7 +74,7 @@ RUN apk add --no-cache clang23 clang23-dev lld23 llvm23 \
  && cp -a /usr/lib/llvm23/lib/clang/23/include/sanitizer /tmp/sanitizer-headers \
  && cp -a /usr/lib/llvm23/lib/clang/23/share /tmp/sanitizer-share \
  && rm -rf /usr/lib/llvm23
-COPY --from=ghcr.io/jclaveau/chs-clang:23-g53d18800eda3-alpine-d446f00e21a1 /usr/lib/llvm23 /usr/lib/llvm23
+COPY --from=ghcr.io/jclaveau/chs-clang:23-g53d18800eda3-alpine-55de724b2295 /usr/lib/llvm23 /usr/lib/llvm23
 RUN mv /tmp/sanitizer-headers /usr/lib/llvm23/lib/clang/23/include/sanitizer \
  && mv /tmp/sanitizer-share /usr/lib/llvm23/lib/clang/23/share \
  && test -f /usr/lib/llvm23/lib/clang/23/include/sanitizer/common_interface_defs.h \
