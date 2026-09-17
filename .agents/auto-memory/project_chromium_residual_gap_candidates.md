@@ -1,6 +1,6 @@
 ---
 name: project_chromium_residual_gap_candidates
-description: chromium residual 12% after both knobs — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (parity arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (same calls per iteration and same sizes as official to 0.5%/bucket, all interposable); clang 22-vs-23 is LIVE — layout 0.87x vs the shipped build on the slow runner (0.96 fast), vs official 1.40 (was 1.61), geomean 1.10; official codegen flags (aports' compiler.patch) DEAD at 1.01~; CFI LIVE as the PGO prerequisite — first candidate layout 0.886 but launch 1.24 from a pre-trim resumed tree (44 NEEDED vs 28), fresh chain 35066922165 is the readable one
+description: chromium residual 12% after both knobs — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (parity arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (same calls per iteration and same sizes as official to 0.5%/bucket, all interposable); clang 22-vs-23 is LIVE — layout 0.87x vs the shipped build on the slow runner (0.96 fast), vs official 1.40 (was 1.61), geomean 1.10; official codegen flags (aports' compiler.patch) DEAD at 1.01~; CFI LIVE as the PGO prerequisite — fresh chain eb48637 reads layout 0.74 / geo 0.94 but launch 1.10 (a real CFI cost: +5% relocs, +8% data.rel.ro, libatk-bridge back as NEEDED 29); snapshot-clang chain 35097888298 pending
 metadata:
   type: project
 ---
@@ -301,3 +301,11 @@ core/layout's counts (7% of functions). Root of the residual, see
 because the resumed tree predates the DSO trim and clang 23 (44 NEEDED vs
 28) — confounded, not a CFI cost. Rebased and rebuilt from scratch as
 35066922165; details in [[project_chromium_pgo_hash_needs_cfi]].
+
+**2026-09-17 — fresh CFI chain read (A/B 35262310068, EPYC 7763):** layout
+0.74, goto_warm 0.89, geo 0.94 — but launch 1.10 with 4/4 samples disjoint,
+and this time it is CFI itself (NEEDED 29: `libatk-bridge-2.0` survives
+dead-stripping; +5% `.rela.dyn`, +8% `.data.rel.ro`, +1.1 MB `.text`;
+reproduced locally +4%). Layout target met, launch gate (≤ 1.02) missed;
+decision waits on the snapshot-clang chain 35097888298. Details in
+[[project_chromium_pgo_hash_needs_cfi]].

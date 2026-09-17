@@ -138,3 +138,9 @@ launch 1.24 — the launch row is the missing DSO trim in the resumed tree,
 not CFI ([[project_chromium_pgo_hash_needs_cfi]]). Flags candidate
 (`b8ae6aa`, A/B 35066041839): 1.01~, dead. Fresh CFI chain 35066922165 on
 the clang23 + trim base is the one to quote.
+
+**2026-09-17 — CFI on the clang 23 + trim base** (fresh chain 35066922165
+`eb48637`, A/B 35262310068 vs shipped `4362396`, one EPYC 7763): layout 0.74,
+goto_warm 0.89, context_page 0.89, dom_churn 0.94, geo 0.94; launch 1.10
+(real: CFI relocs/data.rel.ro/text growth + libatk-bridge as NEEDED 29).
+Best layout of the campaign, first candidate to cost launch on a clean tree.
