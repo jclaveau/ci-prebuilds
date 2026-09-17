@@ -12,8 +12,9 @@ is_debug = false
 symbol_level = 0
 # aports' community/chromium builds musl chromium with is_official_build=true and
 # disables the expensive/unsupported sub-features one by one (chrome_pgo_phase=0,
-# use_thin_lto=false, is_cfi=false — all mirrored below). So "official" here buys
-# the optimization level WITHOUT the PGO/LTO build cost, on a config Alpine ships.
+# use_thin_lto=false, is_cfi=false — we since turned all three back on, see each
+# block below). So "official" here buys the optimization level first, on a
+# config Alpine ships.
 #
 # Measured A/B against the otherwise-identical false build (both with DCHECKs
 # already off), run 31793358409, both artifacts probed on one runner:
@@ -200,7 +201,19 @@ chrome_pgo_phase = 2
 enable_vr = false                          # no VR/XR
 disable_fieldtrial_testing_config = true   # skip field-trial test configs
 enable_nocompile_tests = false             # no nocompile testing
-is_cfi = false                             # CFI off (no IFUNC support on alpine clang)
+# CFI on, as official (sanitizers.gni defaults is_cfi + use_cfi_icall on for
+# linux x64 official builds). Not for the checks: Google's PGO profile was
+# collected with them, and the CFI type tests are IR branches inside the PGO
+# function hash. With is_cfi=false the hash mismatches on exactly the hot,
+# virtual-call-heavy blink functions (run 35032505434: 330 mismatches / 437M
+# counts dropped on six layout+dom TUs; CFI on takes it to 18 / 115M) so they
+# were compiled with no counts — no inlining, no call-graph edges for lld's
+# sort, a second hot band 120 MiB into .text and an iTLB miss rate 2.3x
+# official's. The old comment blamed missing IFUNC support on alpine clang; the
+# arm links and runs (run 34387189058 SIGILLed on sqlite's ioctl cast alone,
+# fixed in scripts/musl-source-fixes.sh).
+is_cfi = true
+use_cfi_icall = true
 use_thin_lto = true                        # see the PGO block above; measured together
 fatal_linker_warnings = false              # match aports — alpine's lld trips a few warnings
 safe_browsing_use_unrar = false            # no unrar (we don't ship)
