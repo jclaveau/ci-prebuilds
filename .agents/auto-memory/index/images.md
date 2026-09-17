@@ -2,6 +2,7 @@
 
 Full hooks for this area. The routing keys live in `.agents/auto-memory/MEMORY.md`; the memories themselves in `.agents/auto-memory/<slug>.md`.
 
+- [Consumer pull is bytes-bound, not layer-bound](project_image_pull_is_bandwidth_bound.md) — max-concurrent-downloads 3→8 is noise on a hosted runner; the chromium wrapper rename after the final COPY had duplicated the 195 MB binary (#255: 791→710 MiB gz, 26.9→25.0 s); bench with `image-pull-bench.yml`, never with byte counts
 - [Strip before the final COPY, not after](project_strip_must_precede_final_copy.md) — layer blobs are immutable, so post-COPY `rm` never shrinks the published image; staging stage moved alpine 897→794 MiB (7bd4ab6); measure compressed layer sums, never `du`
 - [All-3-browsers alpine image](project_all_browsers_alpine_image.md) — chs+ff+wk headless in Dockerfile.alpine; WebKit needs seccomp=unconfined + WEBKIT_DISABLE_SANDBOX; PW host-req validation false-positives on musl (libGLESv2/libx264 "missing" though ldd-clean) → PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
 - [dind sudoers named paths that don't exist](project_dind_sudoers_paths_unmatched.md) — /usr/sbin/dockerd, /usr/bin/chown on Alpine; rules never matched, only the hardened flavour would expose it; now `command -v` at build time
