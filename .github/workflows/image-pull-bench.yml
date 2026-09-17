@@ -1,0 +1,31 @@
+# Cold-pull timings for consumer images, bracketed, optionally under several
+# dockerd max-concurrent-downloads values. Dispatch-only: it answers "does a
+# layer change move time-to-tests for a consumer" — the number no build job
+# reports. Pass the image built by a PR (ghcr.io/jclaveau/<image>:sha-<sha>)
+# next to :latest to read the delta on one runner.
+name: image pull bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      images:
+        description: 'Image refs, whitespace-separated'
+        required: true
+        default: 'ghcr.io/jclaveau/alpine-dood-playwright:latest'
+      rounds:
+        description: 'Pulls per image per concurrency value'
+        default: '3'
+      concurrency:
+        description: 'dockerd max-concurrent-downloads values to sweep (empty = runner default, 3)'
+        default: '3 8'
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bench
+        run: |
+          # shellcheck disable=SC2086
+          bash scripts/image-pull-bench.sh -p -r "${{ inputs.rounds }}" -c "${{ inputs.concurrency }}" ${{ inputs.images }}
