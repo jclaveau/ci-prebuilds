@@ -51,8 +51,12 @@ ls = m["layers"]
 print(len(ls), round(sum(l["size"] for l in ls) / 2**20, 1))' "$1"
 }
 
+# every bench image goes, not just the one about to be pulled: the refs
+# share most of their layers, and a layer left behind by the previous pull
+# would make this one warm
 timed_pull() {
-  docker rmi -f "$1" >/dev/null 2>&1 || true
+  docker rmi -f "${IMAGES[@]}" >/dev/null 2>&1 || true
+  docker image prune -f >/dev/null
   local t0 t1
   t0=$(date +%s.%N)
   docker pull -q "$1" >/dev/null

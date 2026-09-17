@@ -193,9 +193,10 @@ ARG WK_REV
 
 # chromium is staged here too so the LD_PRELOAD wrapper rename below lands
 # in the same layer as the binary. Renaming in the final stage copied the
-# 195 MB binary up into a second layer (81 MiB gz on top of the 94 MiB COPY
-# layer, the original then a whiteout) — 12% of the published image was a
-# file consumers download and never see. Same rule as the strip stage:
+# 195 MB binary up into a second layer — 81 MiB gz on top of the 94 MiB COPY
+# layer, whose copy then sat under a whiteout: 10% of the published image
+# (791 -> 710 MiB gz) was a file consumers download and never see, and the
+# cold pull read 22.9 -> 18.1 s on one box. Same rule as the strip pass:
 # mutate before the final COPY, never after.
 ARG CHS_REV
 
