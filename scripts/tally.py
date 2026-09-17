@@ -196,16 +196,21 @@ def section_builds(now):
         print_aligned(rows)
     else:
         print("  none in flight")
-    # open perf candidates only; renovate and feature PRs are not the campaign
-    prs = [p for p in gh("pr", "list", "--json", "number,title,headRefName,isDraft") or [] if p["headRefName"].startswith("perf/")]
-    if prs:
-        print_aligned([("PR", "branch", "title")] + [
-            (f"#{pr['number']}", pr["headRefName"] + (" (draft)" if pr["isDraft"] else ""), pr["title"][:70])
-            for pr in prs])
     focus = live[0] if live else next((r for r in build_runs if r["status"] == "completed"), None)
     if focus:
         print(f"  Run: https://github.com/{REPO}/actions/runs/{focus['databaseId']}")
     return build_runs
+
+
+def section_prs():
+    # open perf candidates only; renovate and feature PRs are not the campaign
+    prs = [p for p in gh("pr", "list", "--json", "number,title,headRefName,isDraft") or [] if p["headRefName"].startswith("perf/")]
+    if not prs:
+        return
+    print("PRS  (open perf candidates)")
+    print_aligned([("PR", "branch", "title")] + [
+        (f"#{pr['number']}", pr["headRefName"] + (" (draft)" if pr["isDraft"] else ""), pr["title"][:70])
+        for pr in prs])
 
 
 # ------------------------------------------------------------ conformance
@@ -395,6 +400,7 @@ def main():
     build_runs = None
     if args.section in (None, "builds"):
         build_runs = section_builds(now)
+        section_prs()
     if args.section in (None, "conformance"):
         section_conformance(build_runs if build_runs is not None else runs(BUILD_WF, 60), args.depth)
     if args.section in (None, "perf"):
