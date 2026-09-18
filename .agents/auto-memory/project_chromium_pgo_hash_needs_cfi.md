@@ -1,6 +1,6 @@
 ---
 name: project_chromium_pgo_hash_needs_cfi
-description: the chromium PGO profile only applies to hot Blink functions when CFI is ON — with is_cfi=false the CFG hash mismatches on the virtual/indirect-call-heavy (= hot) functions, 7% of functions but 100% of the counts in core/layout; six hot TUs go 330 -> 18 mismatches with -fsanitize=cfi-vcall,cfi-icall; fortify/bounds/hardening/compiler/revision are NOT it; this is the root of the two-band layout, the iTLB 2.3x and the +13% instructions; SIGILL fixed; SHIPPED 2026-09-17 via PR #260 (chain 35066922165, eb48637) — fresh-chain A/B vs shipped: geo 0.94, layout 0.74, launch 1.10 (gate missed, shipped anyway); promoted run 35286678590 to chs-latest/pw 1.62.1
+description: the chromium PGO profile only applies to hot Blink functions when CFI is ON — with is_cfi=false the CFG hash mismatches on the virtual/indirect-call-heavy (= hot) functions, 7% of functions but 100% of the counts in core/layout; six hot TUs go 330 -> 18 mismatches with -fsanitize=cfi-vcall,cfi-icall; fortify/bounds/hardening/compiler/revision are NOT it; this is the root of the two-band layout, the iTLB 2.3x and the +13% instructions; SIGILL fixed; SHIPPED 2026-09-17 via PR #260 (chain 35066922165, eb48637) — fresh-chain A/B vs shipped: geo 0.94, layout 0.74, launch 1.10 (gate missed, shipped anyway); promoted run 35286678590 to chs-latest/pw 1.62.1; direct vs-official read post-promote (2026-09-18, TP 35290067414): geo 1.05, startup 1.17 (sole residual), nav/render/js/input at or inside noise of 1.0
 metadata:
   type: project
 ---
@@ -96,9 +96,11 @@ dom_churn 0.94, context_page 0.89, controls 1.00, **geo 0.94** — but
 clears it — parking behind the (ultimately failed, see below) snapshot
 chain was over-cautious. PR #260 merged (`1b41091`), promote run
 35286678590 retagged `chs-fs-sha-eb48637…` to `chs-latest` / pw 1.62.1 /
-`latest`. Next main-branch tally run reads cfi vs *official* directly
-(estimate from shipped's own official ratios: geo ~1.06, render ~1.01,
-startup/input still ~1.1-1.2 — [[project_chromium_perf_arms_1_62]]).
+`latest`. **Direct read landed 2026-09-18** (TP 35290067414, consumer
+`:latest` rebuilt on cfi, EPYC 7763): geo **1.05**, startup **1.17** (sole
+residual — nav/render/js/input all at or inside noise of 1.0), matching the
+pre-promote estimate almost exactly. Details and the noise/wrapper
+breakdown of that startup number in [[project_chromium_perf_arms_1_62]].
 
 **Why launch got worse, not just unread this time (real CFI tax, no
 confound — NEEDED==28, clang 23 confirmed).** No single culprit, three

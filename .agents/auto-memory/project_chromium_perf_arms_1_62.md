@@ -144,3 +144,19 @@ the clang23 + trim base is the one to quote.
 goto_warm 0.89, context_page 0.89, dom_churn 0.94, geo 0.94; launch 1.10
 (real: CFI relocs/data.rel.ro/text growth + libatk-bridge as NEEDED 29).
 Best layout of the campaign, first candidate to cost launch on a clean tree.
+
+**2026-09-18 — first DIRECT read vs official post-promote** (TP run
+35290067414, consumer `:latest` rebuilt on cfi `chs-latest`, EPYC 7763,
+`scripts/tally.py` groups): startup **1.17**, nav 1.02~, render 1.03, js
+1.00~, input 1.04, control 1.00, **geo 1.05**. Same CPU one day earlier
+(pre-cfi `d9343a4`): startup 1.10, nav 1.19, render 1.15, js 1.02~, input
+1.07, control 1.00~, geo 1.11. nav/render/js/input all landed at or inside
+noise of 1.0 — startup is now the sole residual, matching the estimate in
+[[project_chromium_pgo_hash_needs_cfi]] (~1.06) almost exactly. Startup's
+1.17 is not pure CFI tax: same-image launch reads drift ±0.16 run-to-run on
+this CPU alone (0.86~ to 1.18 across three main-branch runs of the identical
+shipped binary — [[project_chromium_launch_dso_closure]]), and the consumer
+image fronts chromium with a `/bin/sh` unset-LD_PRELOAD wrapper the
+production A/B never pays (+4-5 ms/launch, parked, same file). Next lever on
+startup: issue #259's `use_cfi_icall=false` candidate
+([[project_chromium_hardening_removal_candidates]]).
