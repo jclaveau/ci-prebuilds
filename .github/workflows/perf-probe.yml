@@ -70,6 +70,17 @@ on:
         description: 'Free-text note recorded in the summary (e.g. "wk mimalloc arm")'
         default: ''
         type: string
+      trace:
+        # The runtime rows say HOW MUCH slower; a CDP trace says WHERE. Per
+        # scenario, the self time of every Blink/V8/cc event is turned into a
+        # share of that scenario's wall, and the shares are what get compared:
+        # a build that lost one subsystem shows one share doubled, a uniform
+        # slowdown (code layout, instruction fetch) moves none of them. Shares
+        # survive runner noise that the wall ratio does not, which is why the
+        # arm lives here beside the rows rather than as its own dispatch.
+        description: 'chromium only: also record a CDP trace per arm and report per-event self-time shares vs official'
+        default: false
+        type: boolean
 
 concurrency:
   # Keyed on the image so independent experiments never queue behind each
@@ -163,6 +174,7 @@ jobs:
           OURS_B: ${{ inputs.image_b }}
           RUNS: ${{ inputs.runs }}
           PW: ${{ inputs.pw_version }}
+          TRACE: ${{ inputs.trace }}
         run: |
           set -o pipefail
           mkdir -p perf-out && chmod 777 perf-out   # the container writes as its own uid
@@ -221,6 +233,39 @@ jobs:
               echo "::endgroup::"
             done
           done
+          # One traced pass per arm, after the timed runs so the tracing
+          # overhead never lands inside a row. Shares, not walls, are read
+          # from it, so a single pass is enough.
+          if [ "$TRACE" = true ] && [ "$BROWSER" = chromium ]; then
+            for target in $targets; do
+              case "$target" in
+                official)  image="mcr.microsoft.com/playwright:v${PW}-noble"; home=/root ;;
+                alpine-b)  image="$OURS_B"; home=/home/runner ;;
+                *)         image="$OURS"; home=/home/runner ;;
+              esac
+              echo "::group::trace — $target/$BROWSER ($image)"
+              cname="trace-${target}"
+              docker rm -f "$cname" >/dev/null 2>&1 || true
+              docker run --rm --name "$cname" \
+                --security-opt seccomp=unconfined \
+                --env "HOME=$home" \
+                --env "PROBE_TARGET=$target" \
+                --env "PW_VERSION=$PW" \
+                -v "$PWD/playwright/bench:/probe:ro" \
+                -v "$PWD/playwright/scripts:/pwscripts:ro" \
+                -v "$PWD/perf-out:/out" \
+                "$image" \
+                sh -c '
+                  NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+                  export NODE_PATH
+                  node -e "require(\"playwright\")" 2>/dev/null \
+                    || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
+                  timeout 600 node /probe/trace-probe.cjs --target "$PROBE_TARGET" --out /out
+                ' 2>&1 | tee "perf-out/trace-${target}.log" || rc=1
+              docker rm -f "$cname" >/dev/null 2>&1 || true
+              echo "::endgroup::"
+            done
+          fi
           exit "$rc"
 
       # One artifact per job, and the report keeps them in separate directories:
@@ -257,6 +302,7 @@ jobs:
           SLOTS: ${{ needs.matrix.outputs.slots }}
           RUNS: ${{ inputs.runs }}
           HAS_B: ${{ inputs.image_b != '' }}
+          TRACE: ${{ inputs.trace }}
         run: |
           set -euo pipefail
           arms="alpine official"
@@ -302,6 +348,13 @@ jobs:
               else
                 echo "ok: $draw $arm $got/$RUNS"
               fi
+              # The trace is one file per arm, chromium only; an arm whose
+              # trace died must not read as "official's shares vs nothing".
+              if [ "$TRACE" = true ] && [ "$browser" = chromium ] \
+                 && [ ! -f "$dir/$arm-trace.json" ]; then
+                echo "::error::$draw: $arm produced no trace"
+                missing=1
+              fi
             done
           done
           exit "$missing"
@@ -322,6 +375,7 @@ jobs:
           OURS: ${{ inputs.image }}
           RUNS: ${{ inputs.runs }}
           LABEL: ${{ inputs.label }}
+          TRACE: ${{ inputs.trace }}
         run: |
           set -o pipefail
           {
@@ -330,6 +384,13 @@ jobs:
             echo
           } >> "$GITHUB_STEP_SUMMARY"
           python3 playwright/bench/perf-report.py perf-current >> "$GITHUB_STEP_SUMMARY"
+          if [ "$TRACE" = true ]; then
+            for dir in perf-current/perf-probe-chromium-*/; do
+              [ -f "$dir/official-trace.json" ] || continue
+              echo "### Trace shares — $(basename "$dir")" >> "$GITHUB_STEP_SUMMARY"
+              python3 playwright/bench/trace-compare.py "$dir" --md >> "$GITHUB_STEP_SUMMARY"
+            done
+          fi
 
       - uses: actions/upload-artifact@v4
         if: always()
