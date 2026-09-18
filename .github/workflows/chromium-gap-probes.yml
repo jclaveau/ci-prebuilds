@@ -98,7 +98,17 @@ name: chromium residual-gap probes
 #                  +4%. This arm repeats the layout kernels `base_runs` times,
 #                  interleaved across all four images, and adds the third
 #                  image so "the base's libraries" and "everything else the
-#                  consumer image installs" read as separate columns.
+#                  consumer image installs" read as separate columns. Run
+#                  35299149344 answered it: layout is 1.08x in all three of
+#                  our images, so the base is not a layout lever; launch was
+#                  1.27x shipped against 1.01x for the scratch artifact on
+#                  the same 7763, so the whole launch gap on that CPU is
+#                  what the consumer image wraps around the binary. The
+#                  consumer step runs two more launch legs to price the
+#                  candidates: the system Vulkan ICD that WebKit's Mesa
+#                  brings in (chromium's GPU process maps libvulkan_lvp +
+#                  libLLVM on every launch, read from /proc/<gpu>/maps), and
+#                  the driver's own mimalloc preload.
 #
 # Informational, dispatch-only, gates nothing.
 
@@ -869,6 +879,23 @@ jobs:
           node /kernels/perf-kernel.cjs --kernel launch --target consumer-baseline \
             --seconds 40 --warmup 4 --out /out
 
+          # What a launch pays for the image's OTHER browsers. WebKit's Mesa
+          # closure is deduped onto apk, and mesa-vulkan-swrast drops a lavapipe
+          # manifest into /usr/share/vulkan/icd.d. Chromium's bundled Vulkan
+          # loader enumerates every manifest it finds, so the GPU process maps
+          # libvulkan_lvp and libLLVM on every launch; the scratch artifact has
+          # no system manifest and maps swiftshader alone. VK_DRIVER_FILES pins
+          # the loader to the bundled manifest, which is what scratch sees.
+          VK_DRIVER_FILES="$(dirname "$elf")/vk_swiftshader_icd.json" \
+            node /kernels/perf-kernel.cjs --kernel launch --target consumer-vkonly \
+              --seconds 40 --warmup 4 --out /out
+
+          # The driver's own preload: mimalloc under node, which the shim clears
+          # before chromium execs. The other thing the scratch image lacks.
+          env -u LD_PRELOAD \
+            node /kernels/perf-kernel.cjs --kernel launch --target consumer-nopreload \
+              --seconds 40 --warmup 4 --out /out
+
           # The campaign instrument, in the shipped image. Its `layout` row is
           # a DIFFERENT kernel from the one in chromium-gap-probe.cjs: 16,000
           # forced synchronous reflows of ONE element, against a container
@@ -1046,6 +1073,28 @@ jobs:
               def cell(d):
                   return f'{d[key]:.1f} {unit}' if d else '—'
               print(f'| {label} | {cell(a)} | {cell(b)} | {cell(c)} | {cell(ref)} |')
+
+          legs = [('as shipped', 'consumer-baseline'),
+                  ('bundled Vulkan manifest only (`VK_DRIVER_FILES`)', 'consumer-vkonly'),
+                  ('driver without its mimalloc preload', 'consumer-nopreload')]
+          scratch_launch = load('gap-out/musl-baseline-launch-kernel.json')
+          glibc_launch = load('gap-out/glibc-baseline-launch-kernel.json')
+          if scratch_launch and glibc_launch:
+              print('\n### Which piece of the image a launch pays for\n')
+              print('Each leg is the shipped image with one thing the scratch '
+                    'artifact lacks taken away. A leg that lands on the scratch '
+                    'number names the cost.\n')
+              print('| leg | `launch` median | vs scratch | vs official |')
+              print('|---|---|---|---|')
+              for label, target in legs:
+                  d = load(f'gap-out/{target}-launch-kernel.json')
+                  if not d:
+                      print(f'| {label} | — | — | — |')
+                      continue
+                  m = d['median_ms']
+                  print(f"| {label} | {m:.1f} ms | "
+                        f"{m / scratch_launch['median_ms']:.2f}x | "
+                        f"{m / glibc_launch['median_ms']:.2f}x |")
 
           ship, scratch = (closure('gap-out/consumer-closure.txt'),
                            closure('gap-out/musl-closure.txt'))
