@@ -185,3 +185,17 @@ independently of the compute controls, so the invalid-cell gate in
 **How to apply:** the shipping candidate is unbundle (`2f82e9e`, stale vs
 main — rebase, then ~38h build + promote); textstack is not worth carrying.
 Expected consumer-image `launch` ≈ 1.33 x 0.79 ≈ **1.05x** vs official.
+
+**The consumer image's `sh` wrapper is NOT a launch lever — PARKED 2026-09-18
+(#249 comment).** `Dockerfile.alpine` fronts `chrome-headless-shell` with a
+4-line `/bin/sh` script (`unset LD_PRELOAD`, exec `.real`) so the
+container-wide driver preload never reaches PartitionAlloc; Playwright itself
+needs no wrapper. Measured in `alpine-dood-playwright:sha-370411d4` locally,
+interleaved: `launch()` wrapper vs `.real` direct read 0.94 then 1.05 (noise);
+exec isolated, `/bin/true` 3.2 ms vs 7.3-9.3 ms through the wrapper, so it is
+**+4-5 ms once per launch** (zygote/renderer re-exec `/proc/self/exe` =
+`.real`), ~2% of a 240 ms local launch, ~1-2% on a runner — under the row's
+run-to-run floor (0.86~ vs 1.18 for one image on 9V74). The 1.43-vs-1.36 in the
+Dockerfile comment is libfaststring's DSO, not this wrapper. Removing it means
+either dropping the driver mimalloc (eval_rtt -8-13%, net loss) or a static
+musl launcher (~1%). Revisit only if startup is the last row standing.
