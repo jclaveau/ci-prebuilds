@@ -1,6 +1,6 @@
 ---
 name: project_chromium_layout_gap_is_in_our_binary
-description: normalised perf-record DSO split says 88-92% of chromium's layout gap is inside our own chrome-headless-shell and only 6-10% is libc — musl memset is the single largest resolved leaf, both binaries are stripped so nothing finer is attributable, and the PMU was refused so the IPC question is still open
+description: normalised perf-record DSO split says 88-92% of chromium's layout gap is inside our own chrome-headless-shell and only 6-10% is libc — musl memset is the single largest resolved leaf, both binaries are stripped so nothing finer is attributable, and the PMU was refused so the IPC question is still open; CONFIRMED 2026-09-18 — alpine base library version is also not a variable (1.08x layout on 3 different base images, base arm n=5)
 metadata:
   type: project
 ---
@@ -41,3 +41,12 @@ still undecided. Software counters (`task-clock`, faults) did populate.
 match exactly — the font mismatch means the two arms lay out different text, so
 that row compares two renderings, not two speeds. Quote the box kernels.
 See [[project_probe_font_mismatch_confounds_layout]].
+
+**Confirmed 2026-09-18 — the alpine base library version is not a variable
+either.** gap-probes base arm (35299149344, n=5 interleaved) ran the SAME
+binary on three images (shipped consumer, scratch on `alpine:edge`, scratch
+on the consumer's own `alpine:3.24`): `layout_boxonly`/`layout_text` read
+**1.08× on all three**, spreads overlapping. So neither the consumer
+packaging nor the alpine base release moves layout — it really is codegen in
+the compiled artifact, full stop. (Launch is the opposite story — see the
+2026-09-18 update in [[project_chromium_launch_dso_closure]].)
