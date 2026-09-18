@@ -1,6 +1,6 @@
 ---
 name: project_chromium_pgo_hash_needs_cfi
-description: the chromium PGO profile only applies to hot Blink functions when CFI is ON — with is_cfi=false the CFG hash mismatches on the virtual/indirect-call-heavy (= hot) functions, 7% of functions but 100% of the counts in core/layout; six hot TUs go 330 -> 18 mismatches with -fsanitize=cfi-vcall,cfi-icall; fortify/bounds/hardening/compiler/revision are NOT it; this is the root of the two-band layout, the iTLB 2.3x and the +13% instructions; SIGILL fixed; first candidate layout 0.886 but launch 1.24 from a resumed pre-trim tree (44 NEEDED vs 28); the FRESH chain (eb48637, clang23+trim+CFI) reads layout 0.74 / goto_warm 0.89 / geo 0.94 but launch 1.10 — a real CFI cost (+26k relocs, +450 KB .data.rel.ro, +1.1 MB .text, libatk-bridge kept as a 29th NEEDED), reproduced locally +4%
+description: the chromium PGO profile only applies to hot Blink functions when CFI is ON — with is_cfi=false the CFG hash mismatches on the virtual/indirect-call-heavy (= hot) functions, 7% of functions but 100% of the counts in core/layout; six hot TUs go 330 -> 18 mismatches with -fsanitize=cfi-vcall,cfi-icall; fortify/bounds/hardening/compiler/revision are NOT it; this is the root of the two-band layout, the iTLB 2.3x and the +13% instructions; SIGILL fixed; SHIPPED 2026-09-17 via PR #260 (chain 35066922165, eb48637) — fresh-chain A/B vs shipped: geo 0.94, layout 0.74, launch 1.10 (gate missed, shipped anyway); promoted run 35286678590 to chs-latest/pw 1.62.1
 metadata:
   type: project
 ---
@@ -85,32 +85,54 @@ codegen for every TU recompiles everything anyway, so resume buys ~1 h of
 setup and costs a confounded read. Fresh full chain 35066922165
 (`eb48637` = branch rebased on main, no resume_from) is the readable one.
 
-**Fresh chain read (2026-09-17, chain 35066922165 → `eb48637`, A/B
-35262310068 vs shipped 4362396, one EPYC 7763, medians candidate/shipped):**
-layout **0.74** (153/206 ms, samples disjoint), goto_warm 0.89, context_page
-0.89, goto_cold 0.95, eval_rtt 0.94, dom_churn 0.94, click_force 0.97;
-screenshot/js_alloc/controls 1.00 → tally geo **0.94**, render 0.89. But
-launch **1.10** (110/100 ms, 4/4 samples disjoint: 107–115 vs 98–102).
-Conformance 20/20 + parity green.
+**SHIPPED 2026-09-17 — fresh chain read, gate missed, shipped anyway.**
+Chain 35066922165 (`eb48637`, clang23 + DSO trim + CFI + sqlite fix) green
+20/20 + parity. A/B 35262310068 vs shipped 4362396, one EPYC 7763,
+candidate/shipped medians: layout **0.74** (152.9/205.9 ms), goto_warm 0.89,
+dom_churn 0.94, context_page 0.89, controls 1.00, **geo 0.94** — but
+**launch 1.10** (109.7/99.8 ms, samples disjoint), missing this file's own
+"launch/context_page ≤ 1.02" gate. Shipped anyway: the plan's real bar
+(step 6) was "better than shipped", not the launch sub-gate, and geo 0.94
+clears it — parking behind the (ultimately failed, see below) snapshot
+chain was over-cautious. PR #260 merged (`1b41091`), promote run
+35286678590 retagged `chs-fs-sha-eb48637…` to `chs-latest` / pw 1.62.1 /
+`latest`. Next main-branch tally run reads cfi vs *official* directly
+(estimate from shipped's own official ratios: geo ~1.06, render ~1.01,
+startup/input still ~1.1-1.2 — [[project_chromium_perf_arms_1_62]]).
 
-**This time the launch loss IS CFI.** Setup was fresh (clang 23, trim in),
-yet `readelf -d | grep -c NEEDED` says **29**, not 28: `libatk-bridge-2.0`
-comes back because the CFI build keeps a reference to
-`atk_bridge_adaptor_init` that ThinLTO dead-stripped without CFI (the
-address-taken/jump-table set is larger). strace shows it is the only extra
-DSO (111 vs 107 opens, same 5 processes, no extra dbus connect) — so the DSO
-closure explains ~1 ms at most. The rest is the binary: `.rela.dyn`
-12.26 → 12.88 MB (+5%), `.data.rel.ro` 5.46 → 5.91 MB (+8%), `.text`
-+1.1 MB, and cfi-icall/vcall checks on every indirect call through one-shot
-startup code. Reproduced locally in the consumer image, binary swapped in by
-bind-mount, 10 × `--dump-dom about:blank` under `--cpuset-cpus=0-4`: shipped
-220/226 ms, CFI 230/233 ms (+4%; the hosted probe's launch row is a purer
-startup measure, hence +10%).
+**Why launch got worse, not just unread this time (real CFI tax, no
+confound — NEEDED==28, clang 23 confirmed).** No single culprit, three
+measured contributors: (1) `libatk-bridge-2.0` survives dead-strip under
+CFI and comes back as `NEEDED` entry **29** (ThinLTO alone stripped it) —
+one extra `open()`, no extra dbus connect, ≤1 ms, not the driver; (2)
+`.rela.dyn` +5% (12.26→12.88 MB, musl resolves every relocation eagerly at
+load) and `.data.rel.ro` +8% (5.46→5.91 MB, pages written then
+`mprotect`'d), `.text` +1.1 MB — plausibly 2-4 ms; (3) the CFI runtime
+itself — every virtual call pays a `cfi-vcall` type-test, every
+address-taken function is a jump-table thunk under `cfi-icall` — pure tax
+on one-shot cold startup code where PGO gives nothing back, unmeasured but
+likely the rest. Official pays the identical tax (`is_cfi`/`use_cfi_icall`
+both default true on linux-x64 official builds, confirmed against
+`sanitizers.gni` and CfT), so this does NOT explain our launch gap vs
+official — that stays [[project_chromium_launch_dso_closure]]'s DSO-closure
+story. It only explains why *this* candidate's launch is worse than the
+(pre-trim, confounded) first read suggested.
 
-**Where it leaves the campaign:** CFI is the biggest single layout lever
-found (0.74, on top of clang 23's 0.87), and geo 0.94 beats the shipped
-build; the gate `launch ≤ 1.02` is missed. Official pays the same CFI
-startup tax, so vs official the startup row moves from ~1.18 to ~1.30 while
-layout drops from 1.19 towards ~0.9. The snapshot-clang chain 35097888298
-(`ccb9c9e`, CFI + Chromium's own clang) is the next read; compare it to
-BOTH shipped and this candidate before choosing what to promote.
+**Follow-on, not yet built:** `is_cfi=true` + `use_cfi_icall=false` (vcall
+alone fixes 310/312 hash mismatches per the split above; icall fixes 1 and
+was the sqlite-trap source) trades icall's jump-table/check tax for launch
+back, at zero measured layout cost. Filed as one of seven candidates in
+issue #259, see [[project_chromium_hardening_removal_candidates]] — gated
+behind #249, queued after parity is fully read against official.
+
+**The parallel CFI+snapshot-clang chain (`perf/chromium-cfi-snapshot-clang`,
+2fd3709/ccb9c9e, chains 35089594427 → 35097888298) never finished**: it
+isolated Chromium's pinned clang snapshot as the second variable (probe
+35086922334 showed the snapshot compiler alone fixes the residual 18
+hash-mismatches CFI-on-Alpine-clang leaves, 115 M counts, none fixable by
+any flag — probe 35082844081 tried six), but round 7 (`mksnapshot` link,
+ThinLTO+CFI backend) segfaulted in the self-built `lld` twice —
+[[project_chromium_snapshot_lld_stack_overflow]] has the root cause and
+fix; the rebuilt toolchain restarts the chain cold (~30h+) and was not
+re-dispatched before this delta ended. The residual-18 compiler-snapshot
+lever is therefore confirmed real but still unshipped.

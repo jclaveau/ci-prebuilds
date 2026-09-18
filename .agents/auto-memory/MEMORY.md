@@ -6,23 +6,26 @@ Most memories are reachable ONLY from a category's index file, so whenever a tas
 touches an area, read that file before concluding no rule exists. Then read
 `.agents/auto-memory/<slug>.md` for the memory itself.
 
-## chromium-perf (22) — the residual-gap campaign: measured, dead, and still open
+## chromium-perf (25) — the residual-gap campaign: measured, dead, and still open
 `.agents/auto-memory/index/chromium-perf.md`
 
 - [chromium layout gap is FRONTEND FETCH, code layout](project_chromium_layout_gap_is_frontend_fetch.md) — reflow: iTLB 2.3x, icache 1.4x, fetch-latency 2x per instruction, hot code over 1.6x more text pages; boxonly flat; tracing says every Blink phase pays the same factor (uniform), only Skia Raster stands out
-- [PGO only applies with CFI ON](project_chromium_pgo_hash_needs_cfi.md) — is_cfi=false breaks the profile hash on exactly the hot functions (100% of layout counts dropped); CFI is a PGO prerequisite, not official's handicap; fresh chain eb48637 reads layout 0.74 / geo 0.94 but launch 1.10 — a real CFI cost (relocs +5%, data.rel.ro +8%, libatk-bridge back as NEEDED 29); resume_from inherits setup (check NEEDED==28 + clang first); snapshot chain 35097888298 next
+- [PGO only applies with CFI ON](project_chromium_pgo_hash_needs_cfi.md) — is_cfi=false breaks the profile hash on exactly the hot functions (100% of layout counts dropped); SHIPPED (PR #260, geo 0.94, layout 0.74, launch 1.10 — real CFI tax, official pays it too)
 - [clang 22→23 IS a layout lever](project_chromium_clang23_lever.md) — layout 0.87x vs shipped on slow silicon, vs official 1.40 (was 1.61), geomean 1.10; SHIPPED 2026-09-15 (#243, promote 34902520647); residual vs official layout 1.19× on 9V74
-- [chromium residual: 12% after both knobs, static inspection exhausted](project_chromium_residual_gap_candidates.md) — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI, TLS, under-inlining, text stack, memset; clang 22→23 LIVE (layout 0.87x slow silicon); PGO hash-mismatch loss measured = revision drift official pays too (snapshot clang 84 vs ours 100), cc1 flags clean; flags candidate DEAD 1.01~; CFI LIVE (layout 0.74, geo 0.94, launch 1.10), snapshot chain 35097888298 next
-- [chromium launch = the DSO closure; the trim MEASURED at 0.79x](project_chromium_launch_dso_closure.md) — unbundle arm `2f82e9e` takes launch 0.79x on two clean A/Bs, freetype+harfbuzz add nothing (0.81x); layout unreadable at n=3 across runs; a VOID launch cell (every sample 2-5x, controls flat) is runner-side and only a full rerun fixes it; ship = rebase unbundle + 38h build
-- [chromium perf arms for 1.62 — PGO+ThinLTO together wins](project_chromium_perf_arms_1_62.md) — geomean vs official: baseline 1.42, PGO 1.28, ThinLTO 1.31, BOTH 1.12; 09-17 CFI on clang23+trim: layout 0.74 / geo 0.94 / launch 1.10 vs shipped
+- [chromium residual: 12% after both knobs, static inspection exhausted](project_chromium_residual_gap_candidates.md) — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI, TLS, under-inlining, text stack, memset; clang 22→23 LIVE; CFI SHIPPED (PR #260); next: CFI+snapshot-clang chain (blocked, unshipped) and issue #259's hardening-removal ladder
+- [chromium launch = the DSO closure; the trim MEASURED at 0.79x](project_chromium_launch_dso_closure.md) — unbundle arm `2f82e9e` takes launch 0.79x on two clean A/Bs, freetype+harfbuzz add nothing (0.81x); layout unreadable at n=3 across runs; a VOID launch cell (every sample 2-5x, controls flat) is runner-side and only a full rerun fixes it; ship = rebase unbundle + 38h build; the consumer `sh` wrapper is +4-5 ms/launch (~1-2%), PARKED
+- [chromium perf arms for 1.62 — PGO+ThinLTO together wins](project_chromium_perf_arms_1_62.md) — geomean vs official: baseline 1.42, PGO 1.28, ThinLTO 1.31, BOTH 1.12
 - [The AVX2 string shim was a net loss — RETRACTED](project_chromium_faststring_moves_layout_text.md) — the layout_text win was measured on the artifact at `image_ours`, a DIFFERENT build
+- [Beyond parity: an issue for hardening a test container doesn't need](project_chromium_hardening_removal_candidates.md) — issue #259, 7 ranked candidates (cfi-icall off first), gated behind #249
+- [Thorium audit — not a drop-in, 2 codegen levers worth porting](project_chromium_thorium_audit.md) — 138 LTS vs PW's 151, no headless_shell target; libc++ hardening FAST + AVX2/FMA baseline are the reusable levers, BOLT/Polly dead on Alpine
 
-## chromium-build (14) — from-source rounds, gn args, caches, base images
+## chromium-build (15) — from-source rounds, gn args, caches, base images
 `.agents/auto-memory/index/chromium-build.md`
 
 - [chromium round images are sha-keyed](project_chromium_round_images_sha_keyed.md) — any setup-layer edit = full cold r1..r12; cold chromium 151 is 25-30h (r1 boxed at
 - [Chromium build time is cold-vs-warm, not PGO/LTO](project_chromium_build_time_is_cold_vs_warm_not_pgo.md) — 22 chains since July: before the knobs 36.1-44.5h, after 36.5-40.3h
 - [sccache ghac: broken at 0.15, WORKS at 0.16](project_sccache_ghac_readonly_v18.md) — 0.15+opendal wrote the deprecated v1 path and flipped read-only; 0.16.0 +
+- [A self-built lld's stack-size default crashed a big CFI+ThinLTO link under musl](project_chromium_snapshot_lld_stack_overflow.md) — PT_GNU_STACK memsz 0 vs Alpine lld23's 2 MiB; musl gives threads 128 KiB; `mksnapshot` overflows; fix `-Wl,-z,stack-size=2097152`
 
 ## webkit-perf (17) — the WebKit gap campaign — allocator, loader, fmod, Skia
 `.agents/auto-memory/index/webkit-perf.md`
