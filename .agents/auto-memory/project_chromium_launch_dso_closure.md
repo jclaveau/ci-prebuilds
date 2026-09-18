@@ -1,6 +1,6 @@
 ---
 name: project_chromium_launch_dso_closure
-description: the DSO closure is the launch gap and the USE_SYSTEM_LIBS trim IS worth it — MEASURED 2026-09-11 launch 0.79x on the unbundle arm (2f82e9e), text stack adds nothing (0.81x), layout unreadable at this n; census said 65 -> 49 DSOs (official 51), loader work bound 0.65x; --no-zygote is NOT a lever (saves 19% on BOTH libcs); PartitionAlloc is ACTIVE on musl so there is no allocator win
+description: the DSO closure is the launch gap and the USE_SYSTEM_LIBS trim IS worth it — MEASURED 2026-09-11 launch 0.79x on the unbundle arm (2f82e9e), text stack adds nothing (0.81x), layout unreadable at this n; census said 65 -> 49 DSOs (official 51), loader work bound 0.65x; --no-zygote is NOT a lever (saves 19% on BOTH libcs); PartitionAlloc is ACTIVE on musl so there is no allocator win; REVERSED 2026-09-18 — base arm (n=5) shows the shipped consumer image alone pays launch 1.27x on 7763 / 1.17x Xeon while the scratch artifact hits glibc parity on any alpine base; the Vulkan ICD candidate priced at ~4 ms of ~27 (35303365205); the rest is ICU's uprv_tzname() walking 600 tzdata files against a missing /etc/localtime — 9,300 extra file syscalls per launch, found by strace, fixed by one symlink (PR #266)
 metadata:
   type: project
 ---
@@ -199,3 +199,79 @@ run-to-run floor (0.86~ vs 1.18 for one image on 9V74). The 1.43-vs-1.36 in the
 Dockerfile comment is libfaststring's DSO, not this wrapper. Removing it means
 either dropping the driver mimalloc (eval_rtt -8-13%, net loss) or a static
 musl launcher (~1%). Revisit only if startup is the last row standing.
+
+**REVERSED 2026-09-18 — the shipped image IS the explanation after all,
+localized by the gap-probes base arm.** The 2026-09-09 verdict above ("the
+SHIPPED image is not the explanation either") compared shipped vs scratch
+artifact at n=1 and found them close (66 vs 65 DSOs). A proper n=5
+interleaved base-arm run (35299149344, EPYC 7763, same binary in all three
+images) reverses it:
+
+| kernel | shipped image | scratch (alpine:edge) | scratch (alpine:3.24) | official |
+|---|---|---|---|---|
+| `launch` (40s kernel) | 132.3 **1.27×** | 105.5 **1.01×** | 106.3 **1.02×** | 104.4 |
+| `layout_boxonly`/`layout_text` ×off | 1.08 (both) | 1.08 | 1.08 | — |
+
+Layout stays flat across all three of our images (alpine base version is not
+a variable — see [[project_chromium_layout_gap_is_in_our_binary]]), so it is
+genuinely binary/codegen. Launch does not: the scratch artifact hits glibc
+parity on **both** alpine bases, only the *consumer* image pays +25-27%. On
+the prior day's Xeon 8573C read the same comparison was +17% (shipped 114.9
+ms vs scratch 98.3 ms vs official 93.9 ms) — same direction, different CPU.
+Binary load is equal, so the cost sits above the ELF: driver/env/shim layer,
+not codegen.
+
+**Candidate found by direct read: `mesa-vulkan-swrast`, installed only for
+WebKit's Mesa dedup, taxes every chromium launch.** It is a top-level apk
+install nothing else depends on. It leaves a system Vulkan ICD manifest on
+disk; chromium's bundled Vulkan loader (used by the GPU process even
+headless) enumerates *all* ICD manifests it finds, so every launch maps
+lavapipe + libLLVM (100+ MB of relocations) despite chromium defaulting to
+its own bundled SwiftShader. The scratch artifact has no `mesa-vulkan-swrast`
+package, no manifest, no enumeration cost — consistent with the base-arm
+numbers above. Local A/B (dev box, noisy: load 7-8, swap full, scratch swings
+170-192 ms, consumer 199-236 ms) confirmed via `apk info` / loader maps that
+both `VK_DRIVER_FILES` pinning and dropping the driver's mimalloc preload
+remove lavapipe+LLVM from the process maps, but was too noisy locally to size
+the win — **sizing moved to CI, not local**, since local timing under
+load 7-8 / full swap is not trustworthy for anything sub-30%.
+
+**PRICED 2026-09-18 (35303365205, 7763, n≈300/leg) — the ICD is the small
+one.** `consumer-baseline` 131.4 / `consumer-vkonly` 127.6 / `consumer-nopreload`
+135.5 / scratch 104.8 / official 103.5 ms. Pinning `VK_DRIVER_FILES` buys ~4 ms
+of a ~27 ms gap; the driver preload buys nothing (the legs are sequential, so
+±4 ms is drift). Fontconfig was checked too: caches valid in both images,
+consumer just has +20 opensans fonts — dead.
+
+**FOUND by direct read — `strace -f` of one `chromium.launch()` in each
+image.** Syscall COUNTS do not care about box load, so this works on a
+thrashing dev box where timing does not. The consumer launch makes 11,286 file
+syscalls to scratch's 1,934: 6,225 opens under `/usr/share/zoneinfo` + 3,020
+on `/etc/localtime`, 1,245 per process in FIVE processes (node, the sh shim,
+browser, zygote, network utility). `gtk4.0` (WebKit) pulls `tzdata` in (600
+files) but nothing creates `/etc/localtime`. ICU's `uprv_tzname()` reads `$TZ`,
+readlinks `/etc/localtime`, and with both missing walks the whole zoneinfo tree
+comparing each file's bytes against `/etc/localtime` — every compare fails on
+the absent file, so the walk always runs to the end. Scratch has no tzdata and
+never walks; the official image symlinks `/etc/localtime` → `Etc/UTC` and
+readlink answers in one syscall.
+
+**Fix = one symlink, PR #266**: `ln -sf /usr/share/zoneinfo/UTC /etc/localtime`
+in `runtime-libs` (`playwright/Dockerfile.alpine`). Re-traced with the symlink:
+2,072 file syscalls (scratch 1,934), zoneinfo opens 6,225 → 15. Respects a
+user-set `$TZ`, fixes node and WebKit/Firefox launches too, not only chromium.
+The `VK_DRIVER_FILES` export in the shim is a separate ~4 ms follow-up, not
+folded in. Read the perf-probe startup row after the TP rebuild before calling
+the row closed. Lesson: when timing is unreadable, count syscalls — a
+structural diff is load-independent ([[feedback_read_the_stored_value]]).
+
+**Fix candidate open, UNCONFIRMED — PR #265**: two extra launch legs
+(`VK_DRIVER_FILES` pinned to the bundled swiftshader ICD manifest;
+driver-preload-off) added to the consumer-vs-scratch step of
+`chromium-gap-probes.yml`, chromium-scoped only (`playwright/Dockerfile.alpine:255`),
+WebKit's Mesa install untouched. Merge → dispatch on the cfi artifact → read
+the leg table before believing this closes it. If confirmed, the fix is a
+one-line `export VK_DRIVER_FILES=...` in the chromium shim, then a TP
+rebuild + perf-probe read; startup (currently 1.17 on 7763) would plausibly
+close since this is the only candidate that has ever isolated launch from
+codegen.
