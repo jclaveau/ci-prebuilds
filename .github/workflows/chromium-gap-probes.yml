@@ -86,6 +86,20 @@ name: chromium residual-gap probes
 #                  not the perf-record finding; only its counts are. A
 #                  separate dispatch, never mixed with a plain read.
 #
+#   base           The shipped image against the scratch artifact, and the
+#                  scratch artifact on the consumer's OWN alpine release. The
+#                  static arms above wrap the artifact in `alpine:edge`; what
+#                  ships sits on the pinned release in alpine-gha-tools/
+#                  Dockerfile, and the five USE_SYSTEM_LIBS (fontconfig,
+#                  freetype, harfbuzz, libdrm, openh264) come from whichever
+#                  base is underneath. Run 35296552307 read the shipped image
+#                  +14% on `layout_boxonly` and +17% on launch over the
+#                  scratch artifact at n=1, where run 34342006293 had read
+#                  +4%. This arm repeats the layout kernels `base_runs` times,
+#                  interleaved across all four images, and adds the third
+#                  image so "the base's libraries" and "everything else the
+#                  consumer image installs" read as separate columns.
+#
 # Informational, dispatch-only, gates nothing.
 
 on:
@@ -135,6 +149,10 @@ on:
         description: 'perf-record arm: LD_PRELOAD a counting memset on both sides (perturbs the profile; read the counts, not the samples)'
         default: false
         type: boolean
+      base_runs:
+        description: 'base arm: interleaved passes of the layout kernels over shipped / scratch-on-edge / scratch-on-consumer-base / official (0 skips the arm)'
+        default: '5'
+        type: string
 
 concurrency:
   # Scoped by ref only, and the two jobs below are independent — a dispatch of
@@ -210,6 +228,18 @@ jobs:
           EOF
           docker build -t gap-alpine-fonts:${{ github.run_id }} \
             -f /tmp/Dockerfile.fonts /tmp
+
+          # The base arm: the same apk set and artifact on the alpine release
+          # the consumer image is built from, read from the file that pins it
+          # so the two cannot drift apart silently.
+          consumer_alpine=$(sed -n 's/^ARG OS_VERSION=//p' alpine-gha-tools/Dockerfile | head -1)
+          [ -n "$consumer_alpine" ] || { echo "no OS_VERSION in alpine-gha-tools/Dockerfile" >&2; exit 1; }
+          echo "consumer_alpine=$consumer_alpine" >> "$GITHUB_ENV"
+          sed "s/^FROM alpine:edge$/FROM alpine:${consumer_alpine}/" /tmp/Dockerfile.alpine \
+            > /tmp/Dockerfile.alpine-base
+          grep -q "^FROM alpine:${consumer_alpine}$" /tmp/Dockerfile.alpine-base
+          docker build -t gap-alpine-base:${{ github.run_id }} \
+            -f /tmp/Dockerfile.alpine-base /tmp
 
       - name: Probe — timing and text metrics
         env:
@@ -879,9 +909,88 @@ jobs:
                 --target official-runtime --out /out
             ' 2>&1 | tee gap-out/runtime-official.log
 
+      - name: Probe — the base beneath the artifact, interleaved
+        if: inputs.base_runs != '0'
+        env:
+          CONSUMER: ${{ inputs.consumer_image }}
+          LABEL_OURS: ${{ inputs.label_ours }}
+          RUNS: ${{ inputs.base_runs }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -o pipefail
+          # One pass is one container start, and the n=1 read above moved
+          # from +4% to +14% between two runs. Every pass runs all four
+          # images back to back so a runner that slows down partway lands on
+          # every arm alike, and the report medians across passes.
+          run_pass() {
+            local image="$1" target="$2" run="$3"
+            case "$target" in
+              consumer)
+                docker run --rm --user root --entrypoint sh \
+                  -v "$PWD/playwright/bench:/probe:ro" \
+                  -v "$PWD/playwright/scripts:/pwscripts:ro" \
+                  -v "$PWD/gap-out:/out" \
+                  "$image" -c '
+                    NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+                    export NODE_PATH
+                    node /probe/chromium-gap-probe.cjs --target consumer-base --out /out
+                  ' ;;
+              official)
+                docker run --rm --env HOME=/root \
+                  -v "$PWD/playwright/bench:/probe:ro" \
+                  -v "$PWD/playwright/scripts:/pwscripts:ro" \
+                  -v "$PWD/gap-out:/out" \
+                  --env "PW_VERSION=${PW}" \
+                  "$image" \
+                  sh -c '
+                    NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+                    export NODE_PATH
+                    node -e "require(\"playwright\")" 2>/dev/null \
+                      || npm install -g --no-fund --no-audit \
+                           "playwright@$PW_VERSION" >/dev/null 2>&1
+                    node /probe/chromium-gap-probe.cjs --target official-base --out /out
+                  ' ;;
+              *)
+                docker run --rm \
+                  --env "PROBE_TARGET=${target}-base" \
+                  -v "$PWD/playwright/bench:/probe:ro" \
+                  -v "$PWD/gap-out:/out" \
+                  "$image" \
+                  sh -c '
+                    export NODE_PATH="$(npm root -g)"
+                    node /probe/chromium-gap-probe.cjs --target "$PROBE_TARGET" --out /out
+                  ' ;;
+            esac
+            mv "gap-out/${target}-base-gap.json" "gap-out/${target}-base-run${run}-gap.json"
+          }
+
+          rc=0
+          for i in $(seq 1 "$RUNS"); do
+            echo "::group::base pass $i/$RUNS"
+            run_pass "$CONSUMER" consumer "$i" || rc=1
+            run_pass "gap-alpine:${{ github.run_id }}" "${LABEL_OURS}-edge" "$i" || rc=1
+            run_pass "gap-alpine-base:${{ github.run_id }}" "${LABEL_OURS}-${consumer_alpine}" "$i" || rc=1
+            run_pass "$OFFICIAL" official "$i" || rc=1
+            echo "::endgroup::"
+          done
+
+          # Launch on the third image, once: the launch kernel already medians
+          # ~400 launches inside its 40 s, and the two other legs sit above.
+          docker run --rm \
+            -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/probes:/probe:ro" \
+            -v "$PWD/gap-out:/out" \
+            "gap-alpine-base:${{ github.run_id }}" \
+            sh -c '
+              export NODE_PATH="$(npm root -g)"
+              node /probe/perf-kernel.cjs --kernel launch --target musl-base-baseline \
+                --seconds 40 --warmup 4 --out /out
+            ' 2>&1 | tee -a gap-out/launch-zygote.log || rc=1
+          exit "$rc"
+
       - name: Report — the shipped image against the scratch artifact
         env:
           LABEL_OURS: ${{ inputs.label_ours }}
+          RUNS: ${{ inputs.base_runs }}
         run: |
           python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
           import json
@@ -926,15 +1035,17 @@ jobs:
                'median_ms', 'ms'),
               ('`--version` load', 'consumer-startup.json', 'musl-startup.json', 'load_ms', 'ms'),
           ]
-          print('| | shipped image | scratch artifact | official (glibc) |')
-          print('|---|---|---|---|')
+          base_alpine = os.environ.get('consumer_alpine', 'base')
+          print(f'| | shipped image | scratch artifact (edge) | scratch artifact ({base_alpine}) | official (glibc) |')
+          print('|---|---|---|---|---|')
           for label, a_path, b_path, key, unit in rows:
               a, b = load(f'gap-out/{a_path}'), load(f'gap-out/{b_path}')
+              c = load('gap-out/musl-base-baseline-launch-kernel.json') if 'launch' in a_path else None
               ref = load('gap-out/glibc-baseline-launch-kernel.json'
                          if 'launch' in a_path else 'gap-out/glibc-startup.json')
               def cell(d):
                   return f'{d[key]:.1f} {unit}' if d else '—'
-              print(f'| {label} | {cell(a)} | {cell(b)} | {cell(ref)} |')
+              print(f'| {label} | {cell(a)} | {cell(b)} | {cell(c)} | {cell(ref)} |')
 
           ship, scratch = (closure('gap-out/consumer-closure.txt'),
                            closure('gap-out/musl-closure.txt'))
@@ -971,6 +1082,48 @@ jobs:
                       continue
                   print(f'| `{key}` | {a:.1f} ms | {b:.1f} ms | {c:.1f} ms | '
                         f'**{a / c:.2f}x** | {b / c:.2f}x |')
+              print()
+
+          import glob
+          import statistics
+
+          def passes(target):
+              docs = [load(f) for f in sorted(glob.glob(f'gap-out/{target}-run*-gap.json'))]
+              return [d for d in docs if d]
+
+          label = os.environ['LABEL_OURS']
+          arms = [('shipped', 'consumer-base'),
+                  ('scratch (edge)', f'{label}-edge-base'),
+                  (f'scratch ({base_alpine})', f'{label}-{base_alpine}-base'),
+                  ('official', 'official-base')]
+          runs = {name: passes(t) for name, t in arms}
+          if all(runs.values()):
+              n = min(len(v) for v in runs.values())
+              print(f'\n### The base beneath the artifact, n={n} interleaved passes\n')
+              print('Median across passes of each pass\'s median, spread = min-max '
+                    'across passes. The `edge` and `{}` columns carry the SAME '
+                    'artifact and apk set on two alpine releases: their gap is '
+                    'the base\'s libraries, and shipped minus the {} column is '
+                    'everything else the consumer image adds.\n'.format(base_alpine, base_alpine))
+              print('| kernel | ' + ' | '.join(name for name, _ in arms)
+                    + ' | shipped ×off | edge ×off | ' + f'{base_alpine} ×off |')
+              print('|---|' + '---|' * (len(arms) + 3))
+              for key in ('layout_boxonly', 'layout_text', 'typed_array_move', 'typed_array_fill'):
+                  meds = {}
+                  cells = []
+                  for name, _ in arms:
+                      vals = [ms(d, key) for d in runs[name]]
+                      vals = [v for v in vals if v]
+                      if not vals:
+                          cells.append('—')
+                          continue
+                      meds[name] = statistics.median(vals)
+                      cells.append(f'{meds[name]:.1f} ({min(vals):.0f}-{max(vals):.0f})')
+                  off = meds.get('official')
+                  ratio = lambda name: f'{meds[name] / off:.2f}x' if off and name in meds else '—'
+                  print(f'| `{key}` | ' + ' | '.join(cells) + ' | '
+                        + ' | '.join(ratio(n_) for n_ in ('shipped', 'scratch (edge)', f'scratch ({base_alpine})'))
+                        + ' |')
               print()
 
           ours_rt = load('gap-out/consumer-chromium.json')
