@@ -173,6 +173,14 @@ RUN sudo apk add --no-cache \
         opus libsecret \
         libxslt double-conversion minizip crc32c
 
+# gtk4.0 pulls tzdata in, and 600 zone files with no /etc/localtime cost every
+# process that initialises ICU (node, the shim, browser, zygote, utility):
+# - ICU's uprv_tzname() reads $TZ, then readlinks /etc/localtime
+# - both missing, it walks /usr/share/zoneinfo comparing each file's bytes to
+#   /etc/localtime — 1,245 failed opens per process, 9,300 per chromium launch
+# - the official image symlinks /etc/localtime at UTC, so readlink answers
+RUN sudo ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+
 # Firefox + WebKit staging: the bundles are COPY'd in, shimmed and stripped
 # HERE, and the final image COPYs the finished trees out.
 #
