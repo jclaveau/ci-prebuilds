@@ -231,6 +231,42 @@ const KERNELS = {
     },
   },
   /*
+   * runtime-probe.cjs's `nav` rows: the residual that survived the tz fix.
+   * 18 draws over four CPU models (2026-09-20, `main-6be10b3`) read goto_warm
+   * 1.08-1.10 and goto_cold 1.08-1.13 on every one, while startup, dom_churn
+   * and js_alloc sat at parity — so the gap is the document lifecycle
+   * (parse, style, layout, paint, load), not V8 and not the process tree.
+   * Same document and the same `waitUntil` as the probe row. The tag counts
+   * the rows the inline script built, which is what proves both arms loaded
+   * the same document rather than an error page.
+   */
+  goto_warm: {
+    page: TEXT_HTML,
+    run: async (page, { url }) => {
+      await page.goto(url, { waitUntil: 'load' });
+      const rows = await page.evaluate(
+        'document.querySelectorAll("#pad div").length',
+      );
+      return { tag: `rows=${rows}` };
+    },
+  },
+
+  // Fresh context per navigation: no HTTP cache, no compilation cache, plus
+  // the context and page lifecycle the probe's goto_cold row also pays.
+  goto_cold: {
+    page: TEXT_HTML,
+    run: async (_page, { url, browser }) => {
+      const ctx = await browser.newContext();
+      const page = await ctx.newPage();
+      await page.goto(url, { waitUntil: 'load' });
+      const rows = await page.evaluate(
+        'document.querySelectorAll("#pad div").length',
+      );
+      await ctx.close();
+      return { tag: `rows=${rows}` };
+    },
+  },
+  /*
    * Not an in-page kernel: what `launch` measures IS the browser lifecycle, so
    * this one owns its browser instead of borrowing the shared page.
    *
@@ -302,9 +338,8 @@ async function main() {
     res.end(kernel.page);
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  await page.goto(`http://127.0.0.1:${server.address().port}/`, {
-    waitUntil: 'load',
-  });
+  const url = `http://127.0.0.1:${server.address().port}/`;
+  await page.goto(url, { waitUntil: 'load' });
   if (kernel.page === CANVAS_HTML) {
     await page.waitForFunction('window.__ready === true');
   }
@@ -322,7 +357,7 @@ async function main() {
   await loop({
     target, kernelName, seconds, warmupSeconds, outDir, readyFile,
     browserArgs, browserVersion: browser.version(), kernel,
-    runOnce: () => kernel.run(page),
+    runOnce: () => kernel.run(page, { url, browser }),
     teardown: async () => {
       await ctx.close();
       await browser.close();
