@@ -59,6 +59,106 @@ def read_dso(path):
     return out
 
 
+STAT_ROW = re.compile(
+    r'^\s*(<not supported>|<not counted>|[\d,]+(?:\.\d+)?)\s+(?:msec\s+)?'
+    r'([A-Za-z][\w.:-]*)')
+ELAPSED = re.compile(r'^\s*([\d.]+) seconds time elapsed')
+
+
+def counter_rates(root, arm, kernel):
+    """{event: count per second} from every `perf stat` block the arm wrote.
+
+    The profile step counts in several blocks of different length (the
+    hardware list is what a VM refuses, so it is asked for on its own), and
+    the dev-box topdown script writes yet another layout. Every block ends
+    with its own `seconds time elapsed`, so dividing each event by its block's
+    window puts them all on one axis. A `<not supported>` event is dropped
+    rather than zeroed: zero would read as "no misses".
+    """
+    rates, block = {}, {}
+    files = [root / f'{arm}-{kernel}-stat.txt',
+             root / f'{arm}-{kernel}-topdown.txt']
+    if not any(f.exists() for f in files):
+        return None
+    for f in files:
+        if not f.exists():
+            continue
+        for line in f.read_text(errors='replace').splitlines():
+            m = ELAPSED.match(line)
+            if m:
+                window = float(m.group(1))
+                if window > 0:
+                    rates.update({e: c / window for e, c in block.items()})
+                block = {}
+                continue
+            m = STAT_ROW.match(line)
+            if m and not m.group(1).startswith('<'):
+                block[m.group(2)] = float(m.group(1).replace(',', ''))
+    meta = root / f'{arm}-{kernel}-kernel.json'
+    if meta.exists():
+        doc = json.loads(meta.read_text())
+        if doc.get('seconds'):
+            rates['iter'] = doc['iterations'] / doc['seconds']
+    return rates
+
+
+# (label, numerator event, denominator event, scale) — per-iteration where
+# the denominator is `iter`, otherwise per denominator event. The frontend
+# split is the one that matters for the campaign: fetch-side misses per
+# instruction separate "our code is laid out worse" (orderfile, hugepages)
+# from "our code is more instructions" (codegen).
+COUNTER_ROWS = (
+    ('instructions / iter', 'instructions', 'iter', 1e-6),
+    ('cycles / iter', 'cycles', 'iter', 1e-6),
+    ('IPC', 'instructions', 'cycles', 1),
+    ('L1i miss / kI', 'L1-icache-load-misses', 'instructions', 1e3),
+    ('iTLB miss / MI', 'iTLB-load-misses', 'instructions', 1e6),
+    ('branch miss %', 'branch-misses', 'branches', 100),
+    ('frontend stall / cycle', 'stalled-cycles-frontend', 'cycles', 1),
+    ('backend stall / cycle', 'stalled-cycles-backend', 'cycles', 1),
+    ('L1d miss / kI', 'L1-dcache-load-misses', 'instructions', 1e3),
+    ('LLC miss / MI', 'cache-misses', 'instructions', 1e6),
+    ('page faults / iter', 'page-faults', 'iter', 1),
+    ('task-clock ms / iter', 'task-clock', 'iter', 1),
+)
+
+
+def print_counter_table(kernel, rates):
+    """The two arms' counters per iteration and per instruction, with the ratio.
+
+    Per iteration rather than per window: the arms get through different
+    numbers of iterations in the same seconds, and the kernel JSON carries
+    each arm's own rate. Per instruction for the miss rows, which is the
+    normalisation the frontend-fetch finding was read in.
+    """
+    if any(r is None for r in rates.values()):
+        return
+    rows = []
+    for label, num, den, scale in COUNTER_ROWS:
+        vals = {}
+        for arm, r in rates.items():
+            d = r.get('iter') if den == 'iter' else r.get(den)
+            if num not in r or not d:
+                vals[arm] = None
+            else:
+                vals[arm] = r[num] / d * scale
+        if all(v is None for v in vals.values()):
+            continue
+        rows.append((label, vals))
+    if not rows:
+        return
+    print(f'`{kernel}` per iteration / per instruction '
+          '(M = millions, kI/MI = per thousand/million instructions):\n')
+    print('| counter | alpine | official | ratio |')
+    print('|---|---|---|---|')
+    for label, vals in rows:
+        a, o = vals.get('alpine'), vals.get('official')
+        cells = ['—' if v is None else f'{v:.3g}' for v in (a, o)]
+        ratio = '—' if not (a and o) else f'**{a / o:.2f}x**'
+        print(f'| {label} | {cells[0]} | {cells[1]} | {ratio} |')
+    print()
+
+
 def main(root):
     root = pathlib.Path(root)
     kernels = sorted({
@@ -166,14 +266,15 @@ def main(root):
           'samples `cpu-clock` rather than `cycles`. Full `perf stat` output '
           'is in the artifact.\n')
     for kernel in kernels:
+        rates = {arm: counter_rates(root, arm, kernel) for arm in ARMS}
         for arm in ARMS:
-            f = root / f'{arm}-{kernel}-stat.txt'
-            if not f.exists():
+            if rates[arm] is None:
                 continue
-            text = f.read_text(errors='replace')
-            supported = 'not supported' not in text
+            hw = 'instructions' in rates[arm]
             print(f'- `{arm}` / `{kernel}`: hardware counters '
-                  f'{"available" if supported else "**unavailable**"}')
+                  f'{"available" if hw else "**unavailable**"}')
+        print()
+        print_counter_table(kernel, rates)
     return 0
 
 
