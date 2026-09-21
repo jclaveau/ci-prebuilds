@@ -96,3 +96,6 @@ RUN --mount=type=cache,target=/work/firefox-src/obj,id=ffx-obj,sharing=locked \
 # COPYs from there.
 FROM scratch AS artifact
 COPY --from=firefox-builder /work/firefox-dist /firefox
+# The unstripped libxul.so bundle-dist.sh set aside; consumers COPY /firefox
+# only, so this never reaches a shipped image (browser-perf-record.yml reads it).
+COPY --from=firefox-builder /work/firefox-symbols /symbols
