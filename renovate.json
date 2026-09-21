@@ -43,6 +43,11 @@
     {
       "matchPackageNames": ["ghcr.io/jclaveau/playwright-alpine-browsers"],
       "groupName": "Chromium headless shell (alpine consumer fallback)"
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "description": "Majors open a PR and wait for a human: node 24 and ubuntu 26.04 change the runtime the images ship, not just a pin.",
+      "automerge": false
     }
   ],
   "customManagers": [
@@ -171,10 +176,11 @@
     }
   ],
   "schedule": [
-    "before 6am on Monday"
+    "before 6am every weekday"
   ],
+  "timezone": "Europe/Paris",
   "automerge": true,
   "automergeStrategy": "squash",
-  "prHourlyLimit": 2,
+  "prHourlyLimit": 0,
   "prConcurrentLimit": 5
 }
