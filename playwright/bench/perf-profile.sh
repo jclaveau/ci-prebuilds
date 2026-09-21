@@ -286,13 +286,16 @@ window_close
 window_open topdown "$TOPDOWN_WINDOW"
 {
   echo "### ${TARGET} / ${KERNEL} — topdown level 1"
+  found=0
   for M in TopdownL1 PipelineL1; do
     if "$PERF" list metricgroups 2>/dev/null | grep -q "^${M} "; then
+      found=1
       echo "metric group: ${M}"
       "$PERF" stat -M "$M" -a --for-each-cgroup / -- sleep "$TOPDOWN_WINDOW" 2>&1 || true
       break
     fi
   done
+  [ "$found" = 1 ] || echo "no TopdownL1/PipelineL1 metric group on this runner (no hardware PMU)"
 } > "${OUT}/${TARGET}-${KERNEL}-topdown.txt"
 window_close
 
@@ -321,15 +324,32 @@ window_close
 # Anchored on the exec path: under --pid=host (see the workflow) a bare
 # substring would also match the shell whose -c script mentions the wrapper
 # path, and strace would attach to itself.
+# A launch kernel relaunches the browser every iteration (official webkit:
+# one every 70 ms), so a single pgrep can land between two processes; retry,
+# then fall back to following the probe's children, which catches every
+# launch from exec onwards.
 if command -v strace >/dev/null 2>&1; then
-  pids=$(pgrep -f "$PROC_PATTERN" | sed 's/^/-p /' | tr '\n' ' ')
-  if [ -n "$pids" ]; then
-    window_open strace "$STRACE_WINDOW"
-    # shellcheck disable=SC2086
-    timeout -s INT "$STRACE_WINDOW" strace -f -c -w $pids \
-      > "${OUT}/${TARGET}-${KERNEL}-strace.txt" 2>&1 || true
-    window_close
+  pids=""
+  for _try in 1 2 3; do
+    pids=$(pgrep -f "$PROC_PATTERN" | sed 's/^/-p /' | tr '\n' ' ')
+    [ -n "$pids" ] && break
+    sleep 1
+  done
+  attached="browser"
+  if [ -z "$pids" ]; then
+    pids="-p $PROBE_PID"
+    attached="probe (browser pid not caught by pgrep; children followed)"
   fi
+  window_open strace "$STRACE_WINDOW"
+  {
+    echo "# strace attached to: ${attached}"
+    # shellcheck disable=SC2086
+    timeout -s INT "$STRACE_WINDOW" strace -f -c -w $pids 2>&1 || true
+  } > "${OUT}/${TARGET}-${KERNEL}-strace.txt"
+  window_close
+else
+  echo "strace not installed in the perf image" \
+    > "${OUT}/${TARGET}-${KERNEL}-strace-unavailable"
 fi
 
 wait "$PROBE_PID" || {
