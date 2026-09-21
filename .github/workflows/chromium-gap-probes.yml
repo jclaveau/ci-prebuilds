@@ -726,7 +726,7 @@ jobs:
           # Official runs both legs too. A saving that shows up on glibc as well
           # is process startup rather than the musl loader, and that control is
           # what makes the alpine delta readable.
-          PROBES="$PWD/playwright/alpine-browsers/chromium-headless-shell/probes"
+          PROBES="$PWD/playwright/bench"
 
           for leg in 'baseline:' 'nozygote:--no-zygote'; do
             name=${leg%%:*}
@@ -896,7 +896,7 @@ jobs:
           NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
           export NODE_PATH
 
-          node /kernels/perf-kernel.cjs --kernel launch --target consumer-baseline \
+          node /probe/perf-kernel.cjs --kernel launch --target consumer-baseline \
             --seconds 40 --warmup 4 --out /out
 
           # What a launch pays for the image's OTHER browsers. WebKit's Mesa
@@ -907,13 +907,13 @@ jobs:
           # no system manifest and maps swiftshader alone. VK_DRIVER_FILES pins
           # the loader to the bundled manifest, which is what scratch sees.
           VK_DRIVER_FILES="$(dirname "$elf")/vk_swiftshader_icd.json" \
-            node /kernels/perf-kernel.cjs --kernel launch --target consumer-vkonly \
+            node /probe/perf-kernel.cjs --kernel launch --target consumer-vkonly \
               --seconds 40 --warmup 4 --out /out
 
           # The driver's own preload: mimalloc under node, which the shim clears
           # before chromium execs. The other thing the scratch image lacks.
           env -u LD_PRELOAD \
-            node /kernels/perf-kernel.cjs --kernel launch --target consumer-nopreload \
+            node /probe/perf-kernel.cjs --kernel launch --target consumer-nopreload \
               --seconds 40 --warmup 4 --out /out
 
           # The campaign instrument, in the shipped image. Its `layout` row is
@@ -928,7 +928,6 @@ jobs:
 
           docker run --rm --user root --entrypoint sh \
             -v "$PWD/playwright/bench:/probe:ro" \
-            -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/probes:/kernels:ro" \
             -v "$PWD/playwright/scripts:/pwscripts:ro" \
             -v "$PWD/gap-out:/out" \
             "$CONSUMER" /out/consumer-probe.sh 2>&1 | tee gap-out/consumer-probe.log
@@ -1024,7 +1023,7 @@ jobs:
           # Launch on the third image, once: the launch kernel already medians
           # ~400 launches inside its 40 s, and the two other legs sit above.
           docker run --rm \
-            -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/probes:/probe:ro" \
+            -v "$PWD/playwright/bench:/probe:ro" \
             -v "$PWD/gap-out:/out" \
             "gap-alpine-base:${{ github.run_id }}" \
             sh -c '
@@ -1375,7 +1374,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p perf-out && chmod 777 perf-out
-          PROBES=playwright/alpine-browsers/chromium-headless-shell/probes
+          PROBES=playwright/bench
 
           docker build --build-arg "BASE=$OURS" \
             -t perf-alpine:${{ github.run_id }} \
@@ -1469,7 +1468,6 @@ jobs:
                 --env "MEMSET_COUNT=$count_memset" \
                 -v /sys/kernel/tracing:/sys/kernel/tracing:ro \
                 -v /sys/kernel/debug:/sys/kernel/debug:ro \
-                -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/probes:/probes:ro" \
                 -v "$PWD/playwright/bench:/probe:ro" \
                 -v "$PWD/playwright/scripts:/pwscripts:ro" \
                 -v "$PWD/perf-out:/out" \
@@ -1549,8 +1547,8 @@ jobs:
                     rm -f "$MEMSET_COUNT_OUT"
                     set +e
                   fi
-                  sh /probes/perf-profile.sh "$PROBE_TARGET" "$PROBE_KERNEL" \
-                     /out /probes/perf-kernel.cjs "$PERF_BIN"
+                  sh /probe/perf-profile.sh "$PROBE_TARGET" "$PROBE_KERNEL" \
+                     /out /probe/perf-kernel.cjs "$PERF_BIN"
                   rc=$?
                   if [ "$MEMSET_COUNT" = 1 ]; then
                     # The variable must have varied before the counts are
@@ -1626,11 +1624,10 @@ jobs:
         env:
           OURS: ${{ inputs.perf_image }}
         run: |
-          REPORTS=playwright/alpine-browsers/chromium-headless-shell/probes
           {
             echo "### perf record — \`$OURS\` vs official"
-            python3 "$REPORTS/perf-record-report.py" perf-out
-            python3 "$REPORTS/memset-count-report.py" perf-out
+            python3 playwright/bench/perf-record-report.py perf-out
+            python3 playwright/alpine-browsers/chromium-headless-shell/probes/memset-count-report.py perf-out
             if [ -s perf-out/official-trace.json ]; then
               echo "### trace — self time per subsystem, compositor pipeline per thread"
               python3 playwright/bench/trace-compare.py perf-out --md

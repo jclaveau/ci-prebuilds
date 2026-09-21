@@ -24,6 +24,9 @@ import re
 import sys
 
 ARMS = ('alpine', 'official')
+# Which engine the profile is of, read from the kernels' own metadata (they
+# carry `browser` since the webkit/firefox arm); names the headings only.
+BROWSER = 'chromium'
 ROW = re.compile(r'^\s*(\d+\.\d+)%\s+(\S.*?)\s*$')
 EVENT_COUNT = re.compile(r'Event count \(approx\.\): (\d+)')
 
@@ -271,7 +274,7 @@ def print_strace_table(kernel, st, iters):
     names = set().union(*(set(v) for v in st.values()))
     rows = sorted(names, key=lambda n: -max(
         st[a].get(n, (0, 0))[1] / iters[a] for a in ARMS))[:14]
-    print(f'`{kernel}` syscalls per iteration, every chromium process, wall '
+    print(f'`{kernel}` syscalls per iteration, every {BROWSER} process, wall '
           'time (a futex second is a second a thread WAITED; ptrace slows '
           'the loop, so read the counts and the shares, not the absolute '
           'ms):\n')
@@ -348,8 +351,8 @@ def print_symbols(kernel, root):
         # for the artifact, the step summary stops accepting at 1 MiB.
         body = f.read_text(errors='replace').split('<details>', 1)[0]
         print(f'<details><summary>`alpine` / `{kernel}` named hot symbols, '
-              f'{what} (from the link census; annotated listings in the '
-              f'artifact)</summary>\n')
+              f'{what} (from the link census or the unstripped twin; '
+              f'annotated listings in the artifact)</summary>\n')
         print(body)
         print('</details>\n')
 
@@ -401,7 +404,11 @@ def main(root):
         print('No kernel completed — read the per-arm logs in the artifact.')
         return 0
 
-    print('## chromium perf record — where the CPU time went\n')
+    global BROWSER
+    for p in root.glob('*-kernel.json'):
+        BROWSER = json.loads(p.read_text()).get('browser', BROWSER)
+        break
+    print(f'## {BROWSER} perf record — where the CPU time went\n')
 
     versions = {}
     for kernel in kernels:
@@ -410,8 +417,13 @@ def main(root):
             f = root / f'{arm}-{kernel}-kernel.json'
             if f.exists():
                 meta[arm] = json.loads(f.read_text())
-                versions.setdefault(arm, set()).add(
-                    meta[arm].get('browser_version', '?'))
+                # The shipped artifact's own answer beside Playwright's: for
+                # webkit browser_version is a playwright-core constant and
+                # only the so-name can tell two builds apart.
+                v = meta[arm].get('browser_version', '?')
+                if meta[arm].get('binary_version'):
+                    v = f"{v} / {meta[arm]['binary_version']}"
+                versions.setdefault(arm, set()).add(v)
 
         print(f'### `{kernel}`\n')
         cpu = {arm: None for arm in ARMS}
@@ -488,7 +500,7 @@ def main(root):
     alpine_v = versions.get('alpine', set())
     official_v = versions.get('official', set())
     if alpine_v and official_v and alpine_v != official_v:
-        print('\n> The arms are on DIFFERENT chromium versions. Everything '
+        print(f'\n> The arms are on DIFFERENT {BROWSER} versions. Everything '
               'above is a comparison of two browsers, not of two builds.')
     print()
 
