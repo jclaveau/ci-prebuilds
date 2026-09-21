@@ -21,7 +21,11 @@ shipped as PR #247/#248.
 - Ratios in the script are OURS/OFFICIAL (the goal is every row ≤ 1.00);
   chs-perf-ab and the perf-report print the inverse — say which when quoting.
 - ETA = the round profile of the newest completed chain applied to the stages
-  left; ±1 h. `~` on a group = every row inside its own sample spread.
+  left; ±1 h. `~` on a group = the shot medians of the two sides overlap
+  (n≥2; U=0 at 3 vs 3 is only p=1/20, so a single row's `~` is weak either
+  way). The `k/n` on aggregate rows is the sign test across draws — the
+  significance carrier: 6/6 or 0/6 is p=1/32. Never pool raw iterations
+  across shots for a spread: it only widens with n (the pre-2026-09-22 bug).
 - `--depth 300` once per machine seeds the conformance cache (webkit's
   suite only runs when webkit is rebuilt, weeks apart).
 - A build-progress question mid-chain is `pnpm tally builds`, nothing else.

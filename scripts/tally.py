@@ -289,7 +289,8 @@ def load_cells(directory):
         for metric, value in doc["metrics"].items():
             collected.setdefault(key, {}).setdefault(metric, []).append(value["median_ms"])
             meta[key].setdefault("samples", {}).setdefault(metric, []).extend(value.get("samples", []))
-    return {k: {**meta[k], "metrics": {m: statistics.median(v) for m, v in per.items()}} for k, per in collected.items()}
+    return {k: {**meta[k], "shot_medians": per, "metrics": {m: statistics.median(v) for m, v in per.items()}}
+            for k, per in collected.items()}
 
 
 def ab_labels(run_id):
@@ -324,7 +325,15 @@ def gate_tags(run_id):
 
 
 def significant(ours, base, metric):
-    """chs-perf-ab's rule: a delta inside either side's own sample spread measures nothing."""
+    """Shots are the independent unit (iterations inside one share process state):
+    with >= 2 shots a side, the delta counts only when the two sets of shot medians
+    do not overlap (Mann-Whitney U=0; p=1/20 one-sided at 3 vs 3). A single shot
+    falls back to chs-perf-ab's rule: a delta inside either side's own raw sample
+    spread measures nothing. Pooling raw samples across shots would only widen
+    that spread, so more shots would flag MORE noise."""
+    ma, mb = ours.get("shot_medians", {}).get(metric, []), base.get("shot_medians", {}).get(metric, [])
+    if len(ma) >= 2 and len(mb) >= 2:
+        return min(ma) > max(mb) or max(ma) < min(mb)
     sa, sb = ours.get("samples", {}).get(metric, []), base.get("samples", {}).get(metric, [])
     if not sa or not sb:
         return True
@@ -362,12 +371,16 @@ def print_table(title, head, rows):
 
     head names the label column. shots is the probe invocations behind the row
     (blank on aggregate rows). groups is {'values': {group: geo}, 'ns': {group:
-    bool}}; '~' marks a group whose every row sat inside its own sample spread."""
+    bool}, 'above': {group: (k, n)}}; '~' marks a group whose every row sat
+    inside its own shot spread, 'k/n' the draws of an aggregate reading > 1.00."""
     print(f"  {title}")
-    print(f"    {head[:40]:<40} {'cpu':<10} {'n':>2} " + " ".join(f"{g:>7}" for g in GROUPS) + "   geo")
+    print(f"    {head[:40]:<40} {'cpu':<10} {'n':>2} " + " ".join(f"{g:>11}" for g in GROUPS) + "     geo")
     for label, cpu, shots, groups, overall in rows:
-        cells = [fmt(groups["values"].get(g)) + ("~" if groups["ns"].get(g) else " ") for g in GROUPS]
-        print(f"    {label[:40]:<40} {cpu[:10]:<10} {str(shots or ''):>2} " + " ".join(c.rjust(7) for c in cells) + f" {fmt(overall)}")
+        cells = []
+        for g in GROUPS:
+            k, n = groups.get("above", {}).get(g, (0, 0))
+            cells.append(fmt(groups["values"].get(g)) + ("~" if groups["ns"].get(g) else " ") + (f" {k}/{n}" if n else "    "))
+        print(f"    {label[:40]:<40} {cpu[:10]:<10} {str(shots or ''):>2} " + " ".join(c.rjust(11) for c in cells) + f"   {fmt(overall)}")
 
 
 def aggregate(rows, weights=None):
@@ -382,7 +395,15 @@ def aggregate(rows, weights=None):
         total = sum(w for _, w in pairs)
         values[g] = math.exp(sum(w * math.log(v) for v, w in pairs) / total) if total else None
     ns = {g: all(r["ns"].get(g) for r in rows) for g in GROUPS}
-    return {"values": values, "ns": ns}
+    # draws are independent, so k of N reading > 1.00 is the sign test the
+    # single rows cannot run: 6/6 or 0/6 is p = 1/32 two-sided
+    above = {}
+    for g in GROUPS:
+        if any("above" in r for r in rows):  # aggregating aggregates: carry the draw counts through
+            above[g] = (sum(r["above"][g][0] for r in rows if "above" in r), sum(r["above"][g][1] for r in rows if "above" in r))
+        else:
+            above[g] = (sum(1 for r in rows if (r["values"].get(g) or 0) > 1), sum(1 for r in rows if r["values"].get(g)))
+    return {"values": values, "ns": ns, "above": above}
 
 
 def weighted_geomean(values, weights):
@@ -477,7 +498,7 @@ def ab_rows(ab_limit):
 
 
 def section_perf(ab_limit, gate_limit):
-    print("PERF  ours/official. '~' = every row of the group inside its sample spread (noise); n = probe shots behind the row; geo = non-control rows, raw")
+    print("PERF  ours/official. '~' = every row of the group inside its shot spread (noise); k/n = draws of an aggregate reading > 1.00; n = probe shots behind the row; geo = non-control rows, raw")
     shipped = shipped_rows()
     gates = gate_rows(runs(BUILD_WF, 60), gate_limit)
     ab = ab_rows(ab_limit)
