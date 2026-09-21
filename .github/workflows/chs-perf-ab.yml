@@ -51,6 +51,10 @@ on:
         description: 'Playwright version to drive the probe'
         default: '1.62.0'
         type: string
+      runs:
+        description: 'Shots per arm, interleaved (A1 B1 A2 B2 …); one shot leaves most rows inside their own sample spread'
+        default: '3'
+        type: string
 
 concurrency:
   # Suffixed by the pair under test: two comparisons off the same ref are
@@ -86,6 +90,7 @@ jobs:
           LABEL_B: ${{ inputs.label_b }}
           CHS_REV: ${{ inputs.chs_rev }}
           PW: ${{ inputs.pw_version }}
+          RUNS: ${{ inputs.runs || '3' }}
         run: |
           set -o pipefail
           mkdir -p perf-out && chmod 777 perf-out
@@ -99,10 +104,11 @@ jobs:
           # build are we", which is a different question from arm-vs-arm and the
           # reason the probe reports ratios at all.
           probe_official() {
-            local label="$1" image="mcr.microsoft.com/playwright:v${PW}-noble"
-            echo "::group::probe ${label} (${image})"
+            local label="$1" shot="$2" image="mcr.microsoft.com/playwright:v${PW}-noble"
+            echo "::group::shot ${shot}/${RUNS} — ${label} (${image})"
             docker run --rm \
               --env "PROBE_TARGET=${label}" \
+              --env "PROBE_RUN=${shot}" \
               --env HOME=/root \
               -v "$PWD/playwright/bench:/probe:ro" \
               -v "$PWD/playwright/scripts:/pwscripts:ro" \
@@ -119,17 +125,18 @@ jobs:
                   || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
                 node /probe/runtime-probe.cjs \
                   --browser chromium --target "$PROBE_TARGET" --out /out
-              ' 2>&1 | tee "perf-out/probe-${label}.log"
+                mv "/out/$PROBE_TARGET-chromium.json" \
+                   "/out/$PROBE_TARGET-chromium-run$PROBE_RUN.json"
+              ' 2>&1 | tee "perf-out/probe-${label}-${shot}.log"
             echo "::endgroup::"
           }
 
-          probe_one() {
+          stage_one() {
             local image="$1" label="$2" runtime="$3"
             if [ "$image" = official ]; then
-              probe_official "$label"
               return
             fi
-            echo "::group::stage + probe ${label} (${image}, runtime ${runtime})"
+            echo "::group::stage ${label} (${image}, runtime ${runtime})"
             if [ "$runtime" = noble ]; then
               # A glibc artifact (the libc arm) goes into PW's own image, over
               # the official binary at the same path, so the probe runs the
@@ -165,11 +172,22 @@ jobs:
           EOF
             fi
             docker build -t "chs-probe-${label}:${{ github.run_id }}" -f /tmp/Dockerfile."${label}" /tmp
+            echo "::endgroup::"
+          }
+
+          probe_one() {
+            local image="$1" label="$2" shot="$3"
+            if [ "$image" = official ]; then
+              probe_official "$label" "$shot"
+              return
+            fi
+            echo "::group::shot ${shot}/${RUNS} — ${label} (${image})"
             # The probe is CommonJS precisely so NODE_PATH resolution applies to
             # the global playwright install — ESM ignores NODE_PATH, and node
             # will not find a -g module from /probe without it.
             docker run --rm \
               --env "PROBE_TARGET=${label}" \
+              --env "PROBE_RUN=${shot}" \
               -v "$PWD/playwright/bench:/probe:ro" \
               -v "$PWD/perf-out:/out" \
               "chs-probe-${label}:${{ github.run_id }}" \
@@ -177,12 +195,20 @@ jobs:
                 export NODE_PATH="$(npm root -g)"
                 node /probe/runtime-probe.cjs \
                   --browser chromium --target "$PROBE_TARGET" --out /out
-              ' 2>&1 | tee "perf-out/probe-${label}.log"
+                mv "/out/$PROBE_TARGET-chromium.json" \
+                   "/out/$PROBE_TARGET-chromium-run$PROBE_RUN.json"
+              ' 2>&1 | tee "perf-out/probe-${label}-${shot}.log"
             echo "::endgroup::"
           }
 
-          probe_one "$IMAGE_A" "$LABEL_A" "$RUNTIME_A"
-          probe_one "$IMAGE_B" "$LABEL_B" "$RUNTIME_B"
+          stage_one "$IMAGE_A" "$LABEL_A" "$RUNTIME_A"
+          stage_one "$IMAGE_B" "$LABEL_B" "$RUNTIME_B"
+          # Interleaved so a runner slowing down partway through hurts both
+          # arms alike, not whichever went last.
+          for i in $(seq 1 "$RUNS"); do
+            probe_one "$IMAGE_A" "$LABEL_A" "$i"
+            probe_one "$IMAGE_B" "$LABEL_B" "$i"
+          done
 
       - name: Report
         env:
@@ -190,13 +216,23 @@ jobs:
           LABEL_B: ${{ inputs.label_b }}
         run: |
           python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
-          import json, os
+          import glob, json, os, statistics
+
+          def load(label):
+              """One doc per arm: metrics medianed across the shots, samples pooled."""
+              docs = [json.load(open(p)) for p in sorted(glob.glob(f'perf-out/{label}-chromium-run*.json'))]
+              doc = dict(docs[0])
+              doc['shots'] = len(docs)
+              doc['metrics'] = {
+                  k: {'median_ms': statistics.median(d['metrics'][k]['median_ms'] for d in docs),
+                      'samples': [s for d in docs for s in d['metrics'][k]['samples']]}
+                  for k in docs[0]['metrics']}
+              return doc
 
           a_name, b_name = os.environ['LABEL_A'], os.environ['LABEL_B']
-          a = json.load(open(f'perf-out/{a_name}-chromium.json'))
-          b = json.load(open(f'perf-out/{b_name}-chromium.json'))
+          a, b = load(a_name), load(b_name)
 
-          print(f"## chromium runtime probe — {b_name} vs {a_name}\n")
+          print(f"## chromium runtime probe — {b_name} vs {a_name} ({a['shots']} + {b['shots']} shots, interleaved)\n")
           # The binary's own --version, not the tag and not Playwright's claim,
           # so an A/B that accidentally probed one artifact twice is visible here.
           print(f"- {a_name}: `{a['binary_version']}` ({a['libc']})")

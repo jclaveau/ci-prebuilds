@@ -12,6 +12,15 @@ changes), so a repeat call costs one `gh run list` per workflow.
 
 Ratios are OURS / OFFICIAL everywhere (1.19 = we take 19 % longer); the probe
 report and chs-perf-ab print the inverse, official/ours.
+
+PERF has three sources. "shipped" rows are main's test-and-publish runs: the
+`main sha` is the commit that run built the consumer image from, the browsers
+inside are whatever Dockerfile.alpine pins (chs-1234/ff-1538/wk-2336), so
+consecutive rows are re-draws of the SAME image on whichever runner GitHub
+handed out. "candidates" rows are perf-gate jobs (candidate, promoted and
+official probed on one runner, `runs` shots each): the candidate is shown
+against official, with the promoted build's own ratio on that same runner
+underneath as the reference. chs-perf-ab rows are the older two-cell A/B.
 """
 import argparse
 import datetime as dt
@@ -30,6 +39,8 @@ CACHE = pathlib.Path(os.environ.get("XDG_CACHE_HOME", pathlib.Path.home() / ".ca
 BUILD_WF = "playwright-alpine-browsers.yml"
 PUBLISH_WF = "test-and-publish.yml"
 AB_WF = "chs-perf-ab.yml"
+GATE_WF = "perf-gate.yml"
+BROWSERS = ("chromium", "firefox", "webkit")
 CONFORMANCE_WF = "tests-conformance.yml"
 
 # The probe's rows, by what they exercise. Controls are pure compute that a
@@ -92,6 +103,19 @@ def artifact(run_id, name):
     if gh("run", "download", str(run_id), "-n", name, "-D", str(path), json_out=False) is None:
         return None
     return path if any(path.rglob("*.json")) else None
+
+
+def artifact_names(run_id):
+    """Names of the run's artifacts, cached (only asked for completed runs)."""
+    path = CACHE / "artifact-names" / f"{run_id}.json"
+    if path.exists():
+        return json.loads(path.read_text())
+    data = gh("api", "--paginate", f"repos/{REPO}/actions/runs/{run_id}/artifacts", "-q", ".artifacts[].name", json_out=False)
+    names = data.split() if data else []
+    if data is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(names))
+    return names
 
 
 def ts(s):
@@ -250,7 +274,7 @@ def section_conformance(build_runs, depth):
 # ------------------------------------------------------------------ perf
 
 def load_cells(directory):
-    """{(browser, target): {'cpu', 'libc', 'metrics': {metric: median_ms}}} medianed across repeats."""
+    """{(browser, target): {'cpu', 'libc', 'shots', 'metrics': {metric: median_ms}}} medianed across repeats."""
     collected, meta = {}, {}
     for path in sorted(pathlib.Path(directory).rglob("*.json")):
         try:
@@ -260,7 +284,8 @@ def load_cells(directory):
         if not {"metrics", "browser", "target"} <= set(doc):
             continue
         key = (doc["browser"], doc["target"])
-        meta.setdefault(key, {"cpu": doc.get("runner", {}).get("cpu", "?"), "libc": doc.get("libc", "?")})
+        meta.setdefault(key, {"cpu": doc.get("runner", {}).get("cpu", "?"), "libc": doc.get("libc", "?"), "shots": 0})
+        meta[key]["shots"] += 1
         for metric, value in doc["metrics"].items():
             collected.setdefault(key, {}).setdefault(metric, []).append(value["median_ms"])
             meta[key].setdefault("samples", {}).setdefault(metric, []).extend(value.get("samples", []))
@@ -280,6 +305,22 @@ def ab_labels(run_id):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(labels))
     return labels
+
+
+def gate_tags(run_id):
+    """(candidate_tag, promoted_tag) of a perf-gate job, read once from its log."""
+    path = CACHE / "gate-tags" / f"{run_id}.json"
+    if path.exists():
+        return tuple(json.loads(path.read_text()))
+    found = {}
+    for jid in (gh("api", f"repos/{REPO}/actions/runs/{run_id}/jobs", "-q", ".jobs[]|select(.name|test(\"perf-gate\"))|.id", json_out=False) or "").split():
+        log = gh("api", f"repos/{REPO}/actions/jobs/{jid}/logs", json_out=False) or ""
+        found.update(re.findall(r"stage (candidate|promoted) \(ghcr\.io/[^:]+:(\S+)\)", log))
+    tags = (found.get("candidate"), found.get("promoted"))
+    if tags[0]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(tags))
+    return tags
 
 
 def significant(ours, base, metric):
@@ -316,31 +357,66 @@ def cpu_short(cpu):
     return (m.group(0) if m else cpu)[:14]
 
 
-def print_table(title, rows):
-    """rows: [(label, cpu, groups, overall)]; one line each, group geomeans in GROUPS order.
+def print_table(title, head, rows):
+    """rows: [(label, cpu, shots, groups, overall)]; one line each, group geomeans in GROUPS order.
 
-    groups is {'values': {group: geo}, 'ns': {group: bool}}; '~' marks a group
-    whose every row sat inside its own sample spread."""
+    head names the label column. shots is the probe invocations behind the row
+    (blank on aggregate rows). groups is {'values': {group: geo}, 'ns': {group:
+    bool}}; '~' marks a group whose every row sat inside its own sample spread."""
     print(f"  {title}")
-    print(f"    {'':<38} {'cpu':<10} " + " ".join(f"{g:>7}" for g in GROUPS) + "   geo")
-    for label, cpu, groups, overall in rows:
+    print(f"    {head[:40]:<40} {'cpu':<10} {'n':>2} " + " ".join(f"{g:>7}" for g in GROUPS) + "   geo")
+    for label, cpu, shots, groups, overall in rows:
         cells = [fmt(groups["values"].get(g)) + ("~" if groups["ns"].get(g) else " ") for g in GROUPS]
-        print(f"    {label[:38]:<38} {cpu[:10]:<10} " + " ".join(c.rjust(7) for c in cells) + f" {fmt(overall)}")
+        print(f"    {label[:40]:<40} {cpu[:10]:<10} {str(shots or ''):>2} " + " ".join(c.rjust(7) for c in cells) + f" {fmt(overall)}")
 
 
-def aggregate(rows):
-    """Geomean of several rows' group values; a group is '~' when every row was."""
-    values = {g: geomean([r["values"].get(g) for r in rows]) for g in GROUPS}
+def aggregate(rows, weights=None):
+    """Geomean of several rows' group values; a group is '~' when every row was.
+
+    weights, when given, weight each row's log (a fleet-share weighting); they
+    are renormalised over the rows that carry the group."""
+    weights = weights or [1.0] * len(rows)
+    values = {}
+    for g in GROUPS:
+        pairs = [(r["values"].get(g), w) for r, w in zip(rows, weights) if r["values"].get(g)]
+        total = sum(w for _, w in pairs)
+        values[g] = math.exp(sum(w * math.log(v) for v, w in pairs) / total) if total else None
     ns = {g: all(r["ns"].get(g) for r in rows) for g in GROUPS}
     return {"values": values, "ns": ns}
 
 
-def section_perf(ab_limit):
-    print("PERF  ours/official. '~' = every row of the group inside its sample spread (noise); geo = non-control rows, raw")
-    # shipped: main test-and-publish runs, alpine cell vs official cell, per browser
-    shipped = [r for r in runs(PUBLISH_WF, 30) if r["status"] == "completed" and r["headBranch"] == "main"]
+def weighted_geomean(values, weights):
+    pairs = [(v, w) for v, w in zip(values, weights) if v and v > 0]
+    total = sum(w for _, w in pairs)
+    return math.exp(sum(w * math.log(v) for v, w in pairs) / total) if total else None
+
+
+def fleet_mix():
+    """{cpu_short: share} of runner models over every probe job in the cache.
+
+    One job = one draw from the fleet: a test-and-publish perf-<browser> job, a
+    perf-gate job, a chs-perf-ab job. Every JSON in a job's artifact sat on the
+    same runner, so the first doc per (run, artifact, browser) is the draw."""
+    seen = {}
+    for path in (CACHE / "artifacts").rglob("*.json"):
+        key = path.relative_to(CACHE / "artifacts").parts[:2]
+        try:
+            doc = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            continue
+        if "browser" in doc and "runner" in doc:
+            seen.setdefault((*key, doc["browser"]), cpu_short(doc["runner"].get("cpu", "?")))
+    counts = {}
+    for cpu in seen.values():
+        counts[cpu] = counts.get(cpu, 0) + 1
+    total = sum(counts.values())
+    return {cpu: n / total for cpu, n in sorted(counts.items(), key=lambda kv: -kv[1])}, total
+
+
+def shipped_rows():
+    """{browser: [(run, cell, groups, overall)]} from main's test-and-publish runs, newest first."""
     per_browser = {}
-    for run in shipped:
+    for run in [r for r in runs(PUBLISH_WF, 30) if r["status"] == "completed" and r["headBranch"] == "main"]:
         d = artifact(run["databaseId"], "runtime-perf")
         if not d:
             continue
@@ -349,24 +425,35 @@ def section_perf(ab_limit):
             if target != "alpine" or (browser, "official") not in cells:
                 continue
             _, groups, overall = ratio_row(cell, cells[(browser, "official")])
-            per_browser.setdefault(browser, []).append((run, cell["cpu"], groups, overall))
+            per_browser.setdefault(browser, []).append((run, cell, groups, overall))
         if all(len(v) >= 6 for v in per_browser.values()) and len(per_browser) >= 3:
             break
-    for browser in ("chromium", "firefox", "webkit"):
-        rows = per_browser.get(browser, [])
-        if not rows:
-            continue
-        table = []
-        for run, cpu, groups, overall in rows[:4]:
-            table.append((f"{run['headSha'][:7]} {run['createdAt'][5:10]} {run['databaseId']}", cpu_short(cpu), groups, overall))
-        by_cpu = {}
-        for run, cpu, groups, overall in rows:
-            by_cpu.setdefault(cpu_short(cpu), []).append((groups, overall))
-        for cpu, lst in sorted(by_cpu.items()):
-            table.append((f"  per-cpu geo (n={len(lst)})", cpu, aggregate([x[0] for x in lst]), geomean([x[1] for x in lst])))
-        table.append((f"  global geo (n={len(rows)})", "all", aggregate([x[2] for x in rows]), geomean([x[3] for x in rows])))
-        print_table(f"shipped {browser} (main test-and-publish, alpine vs official in the same run)", table)
-    # candidates: chs-perf-ab runs, B vs A; when one side is official, ours/official
+    return per_browser
+
+
+def gate_rows(build_runs, gate_limit):
+    """{browser: [(run, tags, cells)]} from every completed perf-gate job: dispatches of
+    perf-gate.yml and the perf-gate-<browser> jobs the build workflow calls."""
+    out = {}
+    pool = [(r, True) for r in runs(GATE_WF, gate_limit) if r["status"] == "completed"]
+    pool += [(r, False) for r in build_runs if r["status"] == "completed"
+             and any(j["name"].startswith("perf-gate-") and j["conclusion"] == "success" for j in jobs(r["databaseId"], True))]
+    for run, dispatched in sorted(pool, key=lambda p: p[0]["createdAt"], reverse=True):
+        for name in [n for n in artifact_names(run["databaseId"]) if n.startswith("perf-gate-")]:
+            d = artifact(run["databaseId"], name)
+            if not d:
+                continue
+            cells = {t: c for (b, t), c in load_cells(d).items() if b == name.removeprefix("perf-gate-")}
+            if "candidate" not in cells or "official" not in cells:
+                continue
+            # a dispatched gate names its images only in the log; a build-workflow
+            # gate's candidate is the build itself (branch@sha)
+            tags = gate_tags(run["databaseId"]) if dispatched else (None, None)
+            out.setdefault(name.removeprefix("perf-gate-"), []).append((run, tags, cells))
+    return out
+
+
+def ab_rows(ab_limit):
     table = []
     for run in [r for r in runs(AB_WF, ab_limit) if r["status"] == "completed" and r["conclusion"] == "success"]:
         d = artifact(run["databaseId"], "chs-perf-ab")
@@ -385,15 +472,62 @@ def section_perf(ab_limit):
         else:
             ours, base, label = cells[lb], cells[la], f"{lb} / {la}"
         _, groups, overall = ratio_row(ours, base)
-        table.append((f"{run['createdAt'][5:10]} {label}", cpu_short(ours["cpu"]), groups, overall))
-    if table:
-        print_table("chromium candidates (chs-perf-ab; 'B / A' = candidate over its baseline, both ours)", table)
+        table.append((f"{run['createdAt'][5:10]} {label}", cpu_short(ours["cpu"]), min(ours["shots"], base["shots"]), groups, overall))
+    return table
 
+
+def section_perf(ab_limit, gate_limit):
+    print("PERF  ours/official. '~' = every row of the group inside its sample spread (noise); n = probe shots behind the row; geo = non-control rows, raw")
+    shipped = shipped_rows()
+    gates = gate_rows(runs(BUILD_WF, 60), gate_limit)
+    ab = ab_rows(ab_limit)
+    mix, jobs_seen = fleet_mix()
+    for browser in BROWSERS:
+        rows = shipped.get(browser, [])
+        if not rows:
+            continue
+        table = []
+        for run, cell, groups, overall in rows[:4]:
+            table.append((f"{run['headSha'][:7]} {run['createdAt'][5:10]} {run['databaseId']}", cpu_short(cell["cpu"]), cell["shots"], groups, overall))
+        by_cpu = {}
+        for run, cell, groups, overall in rows:
+            by_cpu.setdefault(cpu_short(cell["cpu"]), []).append((groups, overall))
+        for cpu, lst in sorted(by_cpu.items()):
+            table.append((f"  per-cpu geo (n={len(lst)})", cpu, "", aggregate([x[0] for x in lst]), geomean([x[1] for x in lst])))
+        table.append((f"  global geo (n={len(rows)} draws, as drawn)", "all", "", aggregate([x[2] for x in rows]), geomean([x[3] for x in rows])))
+        # the same per-cpu geos, weighted by how often the fleet hands out each
+        # model rather than by how many of these few draws happened to land on it
+        cpus = sorted(by_cpu)
+        weights = [mix.get(c, 0.0) for c in cpus]
+        if sum(weights):
+            table.append(("  fleet geo (per-cpu geo x fleet share)", "all", "",
+                          aggregate([aggregate([x[0] for x in by_cpu[c]]) for c in cpus], weights),
+                          weighted_geomean([geomean([x[1] for x in by_cpu[c]]) for c in cpus], weights)))
+        print_table(f"shipped {browser} (main test-and-publish; same pinned browsers re-drawn per run, alpine vs official in one job)",
+                    "main sha date  run", table)
+    # candidates: perf-gate jobs, candidate vs official with the promoted build's
+    # ratio on the same runner as the reference line
+    for browser in BROWSERS:
+        table = []
+        for run, (cand_tag, prom_tag), cells in gates.get(browser, []):
+            cand = cand_tag or f"{run['headBranch']}@{run['headSha'][:7]}"
+            _, groups, overall = ratio_row(cells["candidate"], cells["official"])
+            table.append((f"{run['createdAt'][5:10]} {cand} vs official", cpu_short(cells["candidate"]["cpu"]), cells["candidate"]["shots"], groups, overall))
+            if "promoted" in cells:
+                _, groups, overall = ratio_row(cells["promoted"], cells["official"])
+                table.append((f"      {prom_tag or f'{browser[:2]}-latest'} vs official (same job)", "", cells["promoted"]["shots"], groups, overall))
+        if table:
+            print_table(f"{browser} candidates (perf-gate; candidate vs official, then what the promoted build does on that runner)", "date  candidate", table)
+    if ab:
+        print_table("chromium A/B (chs-perf-ab; 'B / A' = candidate over its baseline, both ours; prefer perf-gate for vs-official)", "date  pair", ab)
+    if mix:
+        print(f"  GHA runner mix over {jobs_seen} cached probe jobs: " + ", ".join(f"{cpu} {share:.0%}" for cpu, share in mix.items()))
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("section", nargs="?", choices=["builds", "conformance", "perf"])
     ap.add_argument("--ab", type=int, default=12, help="chs-perf-ab runs to read")
+    ap.add_argument("--gate", type=int, default=12, help="perf-gate dispatch runs to read (build-workflow gates are found via their jobs)")
     ap.add_argument("--depth", type=int, default=60, help="build runs to scan for conformance verdicts (300 once to seed the cache)")
     args = ap.parse_args()
     now = dt.datetime.now(dt.timezone.utc)
@@ -404,7 +538,7 @@ def main():
     if args.section in (None, "conformance"):
         section_conformance(build_runs if build_runs is not None else runs(BUILD_WF, 60), args.depth)
     if args.section in (None, "perf"):
-        section_perf(args.ab)
+        section_perf(args.ab, args.gate)
 
 
 if __name__ == "__main__":
