@@ -36,3 +36,14 @@ ac_add_options --enable-lto=cross
 # (run 32800234529). aports' `--disable-jemalloc` is a musl requirement, not
 # performance it declined. The allocator win ships at RUNTIME instead, as the
 # mimalloc preload in playwright/Dockerfile.alpine's firefox shim.
+
+# PGO. Official Playwright firefox ships without it (omni.ja unordered, see
+# project_ff_build_missing_pgo_lto_jemalloc), so this is beyond parity, not a
+# gap. mach runs the three stages itself under MOZ_PGO=1: an instrumented
+# build in obj/instrumented, build/pgo/profileserver.py driving that firefox
+# through the PGO corpus, then the -fprofile-use build in obj. Bare MOZ_PGO=1
+# keeps Rust out of it (MOZ_PGO_RUST wants --enable-profile-generate=cross):
+# Alpine's rustc and clang carry different LLVMs and llvm-profdata refuses to
+# merge across them. apply-and-build.sh provides the X display the profile run
+# needs and points LLVM_PROFDATA at the versioned llvm tree.
+ac_add_options MOZ_PGO=1

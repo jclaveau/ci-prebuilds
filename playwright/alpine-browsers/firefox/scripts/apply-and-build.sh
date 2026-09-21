@@ -631,6 +631,22 @@ if ! grep -q '^#include <ios>' "$CSUTIL_HXX"; then
   echo "  hunspell csutil.hxx: added #include <ios> (libc++ 23 transitive-include drop)"
 fi
 
+# PGO (mozconfig.overlay's MOZ_PGO=1). mach's profile run launches the
+# instrumented firefox, which needs an X display even though nothing looks at
+# it, and configure only finds llvm-profdata beside `clang`, where Alpine does
+# not put it. The sandbox switches keep the profile run off seccomp/userns
+# paths a buildkit RUN step does not offer; they touch no hot code.
+PGO=0
+if grep -q '^ac_add_options MOZ_PGO=1' .mozconfig; then
+  PGO=1
+  [[ -n "${LLVMVER:-}" ]] && export LLVM_PROFDATA="/usr/lib/llvm${LLVMVER}/bin/llvm-profdata"
+  Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &
+  export DISPLAY=:99
+  export MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_DISABLE_GMP_SANDBOX=1 \
+    MOZ_DISABLE_RDD_SANDBOX=1 MOZ_DISABLE_SOCKET_PROCESS_SANDBOX=1
+  echo "  PGO=1 LLVM_PROFDATA=${LLVM_PROFDATA:-unset} DISPLAY=$DISPLAY"
+fi
+
 # 8. Build. `./mach build` produces obj/dist/firefox/ (unpacked tree) AND
 # obj/dist/firefox-*.tar.xz (the same thing tarballed) — we use the unpacked
 # tree directly, so no `./mach package` step needed (it would re-run packaging
@@ -698,8 +714,17 @@ fi
 # actually wrote) and independent of the Rust source's `const COUNT` form,
 # which varies across revisions. If the initializer can't be found, FAIL LOUD
 # instead of guessing.
-FFI_HDR="/work/firefox-src/obj/dist/include/mozilla/webrender/webrender_ffi_generated.h"
-if [[ "$mach_rc" != "0" && -f "$FFI_HDR" ]] && grep -q '\[COUNT\]' "$FFI_HDR"; then
+#
+# Under PGO the header is generated twice — once in obj/instrumented, once in
+# obj — so each stage trips the bug and needs its own patch + retry.
+FFI_HDR_REL="dist/include/mozilla/webrender/webrender_ffi_generated.h"
+for _pass in 1 2; do
+  [[ "$mach_rc" != "0" ]] || break
+  FFI_HDR=
+  for candidate in /work/firefox-src/obj/instrumented/$FFI_HDR_REL /work/firefox-src/obj/$FFI_HDR_REL; do
+    [[ -f "$candidate" ]] && grep -q '\[COUNT\]' "$candidate" && FFI_HDR="$candidate" && break
+  done
+  [[ -n "$FFI_HDR" ]] || break
   BUDGET_COUNT=$(awk '/BudgetType_VALUES\[COUNT\] = \{/ { print gsub(/BudgetType::/, "&"); exit }' "$FFI_HDR")
   if [[ -z "$BUDGET_COUNT" || "$BUDGET_COUNT" -lt 1 ]]; then
     echo "ERROR: cbindgen [COUNT] patch: could not derive BudgetType::COUNT from" >&2
@@ -707,12 +732,22 @@ if [[ "$mach_rc" != "0" && -f "$FFI_HDR" ]] && grep -q '\[COUNT\]' "$FFI_HDR"; t
     echo "       Refusing to guess an array size — inspect the generated header." >&2
     exit 1
   fi
-  echo "===== Patching webrender_ffi_generated.h — cbindgen bare-COUNT bug (COUNT=$BUDGET_COUNT) ====="
+  echo "===== Patching $FFI_HDR — cbindgen bare-COUNT bug (COUNT=$BUDGET_COUNT) ====="
   sed -i "s/\[COUNT\]/[$BUDGET_COUNT]/g" "$FFI_HDR"
-  echo "===== Retry ./mach build after webrender FFI patch ====="
+  echo "===== Retry ./mach build after webrender FFI patch (pass $_pass) ====="
   mach_rc=0
   ./mach build || mach_rc=$?
   echo "===== END ./mach build retry (rc=$mach_rc) ====="
+done
+
+# PGO proof: the profile the -fprofile-use stage consumed. An empty or missing
+# merged.profdata means the arm built without a profile and its numbers are
+# a plain build's.
+if [[ "$PGO" == "1" ]]; then
+  echo "===== PGO profile ====="
+  ls -l obj/instrumented/merged.profdata 2>&1 | sed 's/^/  /'
+  echo "  profraw files: $(find obj/instrumented -maxdepth 1 -name '*.profraw' | wc -l)"
+  echo "===== end PGO profile ====="
 fi
 
 # `./mach build` populates obj/dist/bin/ but NOT obj/dist/firefox/ — the
@@ -729,6 +764,12 @@ fi
 pkg_rc=0
 if [[ "$PW_SKIP_APORTS" == "1" ]]; then
   echo "===== SKIP ./mach build package (PW_SKIP_APORTS=1; use obj/dist/bin/ directly) ====="
+elif [[ "$PGO" == "1" ]]; then
+  # `mach build <target>` refuses every target under MOZ_PGO=1 ("Cannot specify
+  # targets"); `mach package` is the same `make package` without the check.
+  echo "===== START ./mach package (PGO) ====="
+  ./mach package || pkg_rc=$?
+  echo "===== END ./mach package (rc=$pkg_rc) ====="
 else
   echo "===== START ./mach build package ====="
   ./mach build package || pkg_rc=$?
