@@ -344,9 +344,12 @@ def print_symbols(kernel, root):
         f = root / f'alpine-{kernel}-{suffix}.md'
         if not f.exists():
             continue
-        body = f.read_text(errors='replace')
+        # The tables only: the per-instruction listings that follow them are
+        # for the artifact, the step summary stops accepting at 1 MiB.
+        body = f.read_text(errors='replace').split('<details>', 1)[0]
         print(f'<details><summary>`alpine` / `{kernel}` named hot symbols, '
-              f'{what} (from the link census)</summary>\n')
+              f'{what} (from the link census; annotated listings in the '
+              f'artifact)</summary>\n')
         print(body)
         print('</details>\n')
 
