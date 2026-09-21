@@ -69,7 +69,12 @@ does not fold even for distinct stack allocas, so every fixed-size `memcpy`
 `bit_cast`/`UNALIGNED_LOAD`, V8's `MemCopy` — carries 10–14 extra scalar
 instructions and a `ud2`. Vector-heavy raster stages are wall-to-wall such
 copies, hence the +50 % instructions at high IPC and the 2x per raster
-task; the same overhead is diffuse everywhere else.
+task. NOT diffuse: static `.text` insn count is 45.20 M vs official 44.96 M
+(+0.5 %) and `ud2` count 269 598 vs 266 063 (CFI/CHECK traps dominate, so
+`ud2` is no discriminator) — clang folds the compares at most sites; they
+survive where a pointer is opaque, which is exactly the raster-stage
+context pointer. Expect the lever to move raster-bound rows (nav, input,
+screenshot), not layout.
 
 **The driver audit's "FORTIFY is not a cost" was wrong**, and why: it
 tested for `__*_chk` symbols, which is glibc's mechanism; musl's shim emits
@@ -91,7 +96,7 @@ ask jean which —
 Either is a setup-layer edit → cold chain
 ([[project_chromium_round_images_sha_keyed]]). Expected to move goto_warm,
 input, screenshot (the Skia `from_10101010_xr` stage does the same copies)
-and probably the diffuse layout residual.
+— layout's residual is still the frontend-fetch shape, a separate lever.
 
 **How to apply:** when a musl build shows more instructions at higher IPC
 than its glibc twin, disassemble one hot leaf and look for
