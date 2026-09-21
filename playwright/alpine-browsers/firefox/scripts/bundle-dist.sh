@@ -117,6 +117,16 @@ fi
 # The ELF-magic gate is load-bearing -- icudt*.dat (33 MB) sits in this same
 # directory and `strip` must never be handed it. `du -sk` because the builder
 # is busybox, which has no `du -b`.
+# The unstripped libxul.so, kept beside the dist and never shipped: the
+# artifact image publishes it under /symbols, and browser-perf-record.yml
+# serves it to perf through a symfs (symbols_image / symbols_path) so our
+# firefox profiles get names — libxul is 95% of a layout kernel's samples and
+# every one of them was `[.] 0x...`. Same shape as WebKit's pre-strip twin.
+SYMBOLS="$(dirname "$DST")/firefox-symbols"
+rm -rf "$SYMBOLS" && mkdir -p "$SYMBOLS"
+cp "$DST/libxul.so" "$SYMBOLS/libxul.so"
+echo "===== Kept unstripped libxul.so in $SYMBOLS ($(du -sh "$SYMBOLS/libxul.so" | cut -f1)) ====="
+
 echo "===== Stripping ELF symbol tables ====="
 strip_before=$(du -sk "$DST" | cut -f1)
 stripped=0

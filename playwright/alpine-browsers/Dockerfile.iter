@@ -55,3 +55,6 @@ RUN --mount=type=cache,target=/root/.mozbuild,id=ffx-mozbuild-pb,sharing=locked 
 # Same shape as the regular Dockerfile: scratch image with /firefox = dist tree.
 FROM scratch AS artifact
 COPY --from=firefox-builder /work/firefox-dist /firefox
+# The unstripped libxul.so bundle-dist.sh set aside; consumers COPY /firefox
+# only, so this never reaches a shipped image (browser-perf-record.yml reads it).
+COPY --from=firefox-builder /work/firefox-symbols /symbols
