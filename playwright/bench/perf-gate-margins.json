@@ -1,0 +1,30 @@
+{
+  "_comment": [
+    "Noise allowance per row for assert-perf-gate.py, on top of the 1.00",
+    "ceiling. The gate compares medians-of-medians over `runs` shots of three",
+    "arms measured in ONE job on ONE runner, so what is left to absorb is",
+    "same-machine shot-to-shot noise, not the CPU-model lottery perf-budgets.json",
+    "has to live with. A row is a breach when candidate/reference exceeds",
+    "1 + margin; the geomean over all rows gets `geomean` and nothing else.",
+    "",
+    "Seeded from same-runner repeats (chromium perf-probe.yml runs=5, EPYC and",
+    "Xeon draws): the median-of-medians CV was 0.00-0.01 on int_math, js_alloc,",
+    "libm_fmod, locator_click, layout, screenshot and 0.02-0.05 on the",
+    "page-driving rows (goto_cold the widest). `tight` covers the first group,",
+    "`default` the second, `loose` the rows perf-budgets.json documents as",
+    "dispersion-bound even after repeats (firefox launch / js_alloc, webkit",
+    "eval_rtt / click_force). Every gate run prints the observed CV per row in",
+    "its summary; tune a margin from those, not from a failed run's ratio."
+  ],
+  "geomean": 0.02,
+  "default": 0.06,
+  "tight": {
+    "rows": ["int_math", "js_alloc", "libm_fmod", "locator_click", "layout", "screenshot"],
+    "margin": 0.03
+  },
+  "loose": {
+    "firefox": ["launch", "js_alloc"],
+    "webkit": ["eval_rtt", "click_force"],
+    "margin": 0.10
+  }
+}
