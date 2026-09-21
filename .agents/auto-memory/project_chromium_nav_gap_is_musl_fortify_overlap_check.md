@@ -87,16 +87,25 @@ disables FORTIFY at the compiler level via apply-and-build.sh") is false —
 binary carries the checks. The `__memcpy_chk trap (SkDescriptor)` crash it
 mentions is this same overlap check firing on a real overlap.
 
-**Lever (issue #259 candidate 4, now with the mechanism):** two variants,
-ask jean which —
-- parity: keep `_FORTIFY_SOURCE=2` and patch the overlap `if` out of
-  `/usr/include/fortify/string.h` in the setup image (the size checks fold
-  away like glibc's); semantics == official;
-- #259: `-U_FORTIFY_SOURCE` outright.
-Either is a setup-layer edit → cold chain
-([[project_chromium_round_images_sha_keyed]]). Expected to move goto_warm,
-input, screenshot (the Skia `from_10101010_xr` stage does the same copies)
-— layout's residual is still the frontend-fetch shape, a separate lever.
+**Lever — measured 2026-09-21, SHIPPED as the snapshot toolchain (PR
+#273).** The `perf/chromium-cfi-snapshot-clang` build (self-built clang,
+`Dockerfile.clang`, "deliberately NOT reproducing alpine's hardening driver
+patches") has no fortify include path, so it IS the fortify-free build:
+its `ml3::lowp::store_8888` is 0xb4 bytes / 44 insns, pure ymm + one
+cfi-icall tail check, against the shipped 0x361 / 207. Five `chs-perf-ab`
+draws snap-vs-cfi (eb48637) on four CPU families: geo 0.96–0.99 (5/5 < 1),
+nav 0.95–0.99, layout 0.93–0.98, input ~1.00. **Smaller than the profile
+predicted** (raster ≈22 % of main-binary CPU on goto_warm halved should be
+≈ −8 %): the raster stages run on VizCompositorTh and raster workers, off
+the renderer main thread's critical path, so −50 % raster CPU is ≈ −3 %
+wall. The check is real, the lever is real, and it is one lever among
+several — nav sits at ~1.06 after it, not 1.00.
+
+The two header-level variants (patch the overlap `if` out of
+`/usr/include/fortify/string.h`; `-U_FORTIFY_SOURCE`, #259 c4) were never
+built: the snapshot subsumes both (also drops the object-size checks and
+matches the PGO profile's compiler), so their ceiling is ≤ snap. Only worth
+a chain if the packaged Alpine clang ever has to come back.
 
 **How to apply:** when a musl build shows more instructions at higher IPC
 than its glibc twin, disassemble one hot leaf and look for
