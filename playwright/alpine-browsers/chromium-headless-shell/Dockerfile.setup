@@ -44,29 +44,47 @@ RUN apk add --no-cache \
         libxinerama-dev libxrandr-dev libxscrnsaver-dev libxt-dev libxtst-dev \
         pipewire-dev
 
-# COMPILER CANDIDATE — the one variable on this branch.
+# COMPILER CANDIDATE — Chromium's own clang snapshot, on top of CFI.
 #
-# Chromium 151 is compiled upstream with an LLVM 23 snapshot while aports pins
-# chromium to clang22 (`_llvmver=22`). alpine:edge ships clang23 23.1.1 since
-# September 2026, so the candidate is the packaged compiler, carrying the same
-# Alpine driver patches as the clang22 control — the version is the only thing
-# that moves. CHS_LLVM_VER points apply-and-build.sh at it ahead of aports'
-# _llvmver; clang22 stays installed above so nothing else in the image loses a
-# tool it expects.
+# Chromium 151 is compiled upstream with llvmorg-23-init-19482-g53d18800, and
+# its PGO profile's function hashes were computed by that compiler. With CFI on,
+# alpine's packaged clang23 (23.1.1) still mismatches 18 hot Blink functions
+# across six layout/style/DOM TUs (115 M counts dropped: Element::AttributeChanged
+# 62 M, RecalcOwnStyle 19 M, PseudoStateChanged 10 M...) and no build flag
+# recovers them (run 35082844081: cfi-cast, cfi-nvcall, jump tables, both
+# other libc++ hardening modes, no-inline-functions — each neutral or worse).
+# The same six TUs under the snapshot mismatch 0 / 0 (run 35086922334). So the
+# snapshot is the second variable this branch moves, after is_cfi.
 #
-# The self-built ghcr.io/jclaveau/chs-clang image (Dockerfile.clang) that this
-# block used to COPY in was built with COMPILER_RT_BUILD_SANITIZERS=OFF, which
-# also drops compiler-rt's sanitizer HEADERS; v8/src/sandbox/testing.cc
-# includes <sanitizer/common_interface_defs.h> unconditionally and failed on
-# every round of run 34576352942. The package's compiler-rt ships them.
-#
-# lld23 installs ld.lld under /usr/bin only, which clang23 finds through PATH;
-# the ThinLTO link below is the check that the linker really is lld 23, since
-# an lld from another major cannot read this clang's bitcode.
+# The snapshot image (Dockerfile.clang, COMPILER_RT_BUILD_SANITIZERS=OFF)
+# carries neither the sanitizer HEADERS nor compiler-rt's share/ ignorelists:
+# v8/src/sandbox/testing.cc includes <sanitizer/common_interface_defs.h>
+# unconditionally (run 34576352942 failed every round on it), and clang's CFI
+# driver refuses to compile without share/cfi_ignorelist.txt (run 35089594427,
+# r1, 29 s in: `missing sanitizer ignorelist`). The packaged compiler-rt ships
+# both, and they are data, not code, unchanged within a major: keep them
+# aside, replace the prefix with the snapshot, put them back. The runtime
+# archives stay behind — every sanitizer this build enables traps
+# (-fsanitize-trap=cfi, array-bounds, return), so nothing links one.
+# The snapshot brings its own ld.lld
+# under its bin/, which clang's driver finds ahead of lld23's /usr/bin copy;
+# the -### line asserts that, since only the same lld reads this clang's
+# bitcode, and the ThinLTO link asserts the pair works.
 RUN apk add --no-cache clang23 clang23-dev lld23 llvm23 \
+ && cp -a /usr/lib/llvm23/lib/clang/23/include/sanitizer /tmp/sanitizer-headers \
+ && cp -a /usr/lib/llvm23/lib/clang/23/share /tmp/sanitizer-share \
+ && rm -rf /usr/lib/llvm23
+COPY --from=ghcr.io/jclaveau/chs-clang:23-g53d18800eda3-alpine-55de724b2295 /usr/lib/llvm23 /usr/lib/llvm23
+RUN mv /tmp/sanitizer-headers /usr/lib/llvm23/lib/clang/23/include/sanitizer \
+ && mv /tmp/sanitizer-share /usr/lib/llvm23/lib/clang/23/share \
  && test -f /usr/lib/llvm23/lib/clang/23/include/sanitizer/common_interface_defs.h \
+ && test -f /usr/lib/llvm23/lib/clang/23/share/cfi_ignorelist.txt \
+ && printf 'struct A{virtual void f();}; void g(A*a){a->f();}\n' > /tmp/c.cc \
+ && /usr/lib/llvm23/bin/clang++ -flto=thin -fvisibility=hidden -fsanitize=cfi-vcall -fsanitize-trap=cfi -c /tmp/c.cc -o /tmp/c.o \
+ && rm -f /tmp/c.cc /tmp/c.o \
  && test -f /usr/lib/llvm23/lib/clang/23/lib/linux/libclang_rt.builtins-x86_64.a \
- && /usr/lib/llvm23/bin/clang --version | head -1 \
+ && /usr/lib/llvm23/bin/clang --version | head -1 | grep -q '23\.0\.0git' \
+ && /usr/lib/llvm23/bin/clang -### -fuse-ld=lld -x c /dev/null -o /dev/null 2>&1 | grep -q '"/usr/lib/llvm23/bin/ld.lld"' \
  && printf 'int main(void){return 0;}\n' > /tmp/m.c \
  && /usr/lib/llvm23/bin/clang -flto=thin -fuse-ld=lld -rtlib=compiler-rt /tmp/m.c -o /tmp/m \
  && /tmp/m && rm -f /tmp/m /tmp/m.c
