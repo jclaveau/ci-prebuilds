@@ -42,6 +42,7 @@ import subprocess
 import sys
 
 # `perf report --stdio -n --sort comm,sym`, unresolved rows only.
+CONTEXT = 3
 ROW = re.compile(
     r'^\s*([\d.]+)%\s+(\d+)\s+(\S+)\s+\[[.k]\]\s+0x([0-9a-f]+)')
 
@@ -178,13 +179,25 @@ def main():
                 insns.append((int(m.group(1), 16), m.group(2).strip()))
         if not insns:
             continue
-        print(f'<details><summary><code>{d[:120]}</code> — {n} samples, '
-              f'{len(insns)} insns, {hi - lo:#x} bytes</summary>\n')
+        # Only the sampled instructions and a few lines around each: a hot
+        # Blink function is thousands of instructions, and eight of them per
+        # kernel put the whole report past the 1 MiB step-summary cap.
+        hot = [k for k, (va, _) in enumerate(insns) if by_addr.get(va)]
+        keep = set()
+        for k in hot:
+            keep.update(range(max(0, k - CONTEXT), min(len(insns), k + CONTEXT + 1)))
+        print(f'<details><summary><code>{d[:120]}</code> — {n} samples on '
+              f'{len(hot)} of {len(insns)} insns, {hi - lo:#x} bytes</summary>\n')
         print('```')
-        for va, text in insns:
+        last = -1
+        for k in sorted(keep):
+            if k != last + 1:
+                print('      ...')
+            va, text = insns[k]
             c = by_addr.get(va, 0)
             mark = f'{c:6d}' if c else '      '
             print(f'{mark}  {va:x}: {text}')
+            last = k
         print('```\n</details>\n')
     return 0
 
