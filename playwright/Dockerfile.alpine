@@ -40,7 +40,8 @@ ARG BASE_IMAGE=jclaveau/alpine-dood-pnpm:latest
 # is in the diff, so a memory-only merge right after a retag rebuilds nothing.
 # Chromium ships the same way through `promote-chromium-from-source.yml`,
 # which retags `chs-<rev>` from a green branch chain; this comment is the
-# `playwright/` touch that rebuilt the consumer after the unbundle retag.
+# `playwright/` touch that rebuilt the consumer after the unbundle retag,
+# and again after the snapshot-clang retag (#273, chs-1234 → ccc8534).
 ARG CHS_SOURCE_TAG=chs-${CHS_REV}
 ARG FF_SOURCE_TAG=ff-${FF_REV}
 ARG WK_SOURCE_TAG=wk-${WK_REV}
