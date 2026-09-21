@@ -41,13 +41,16 @@
       "groupName": "nektos/act"
     },
     {
-      "matchPackageNames": ["ghcr.io/jclaveau/playwright-alpine-browsers"],
-      "groupName": "Chromium headless shell (alpine consumer fallback)"
-    },
-    {
       "matchUpdateTypes": ["major"],
       "description": "Majors open a PR and wait for a human: node 24 and ubuntu 26.04 change the runtime the images ship, not just a pin.",
       "automerge": false
+    },
+    {
+      "matchPackageNames": ["ghcr.io/jclaveau/playwright-alpine-browsers"],
+      "matchFileNames": ["playwright/Dockerfile.alpine"],
+      "groupName": "Playwright",
+      "automerge": true,
+      "description": "The three consumer revs (CHS_REV / FF_REV / WK_REV) travel in the Playwright PR, not in PRs of their own. A rev tag only exists once promote ran, and promote now needs the perf gate green, so the group PR is automergeable exactly when every browser matching the new Playwright has been built, conformed and priced at parity. Apart, either half landed alone and left the consumer red: a new driver on old browsers (#234) or the reverse. After the major rule on purpose: a revision jump (1234 -> 1300) reads as major under loose versioning and would otherwise switch automerge off for the whole group."
     }
   ],
   "customManagers": [
