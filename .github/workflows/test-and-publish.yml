@@ -1413,7 +1413,7 @@ jobs:
     runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).playwright
     needs: [github-context, build-playwright-dood]
-    timeout-minutes: 30
+    timeout-minutes: 40
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -1428,16 +1428,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Probe every target on this runner
+      # Three shots per target, interleaved (shot 1 of every target, then shot
+      # 2, …) so a runner that slows down partway through hurts every target
+      # alike instead of whichever one was last. perf-report.py and
+      # assert-perf-budgets.py median across the -runN files; one shot left
+      # every ratio inside its own sample spread ('~' in the tally) too often
+      # to read.
+      - name: Probe every target on this runner, 3 shots each, interleaved
         env:
           BROWSER: ${{ matrix.browser }}
           TARGETS: ${{ needs.github-context.outputs.perf_targets }}
           TAG: ${{ needs.github-context.outputs.build_tag }}
           PW: ${{ needs.github-context.outputs.pw_version }}
+          RUNS: 3
         run: |
           set -o pipefail
           mkdir -p perf-out && chmod 777 perf-out   # the container writes as its own uid
           rc=0
+          for i in $(seq 1 "$RUNS"); do
           for target in $(jq -r '.[]' <<< "$TARGETS"); do
             if [ "$target" = official ]; then
               image="mcr.microsoft.com/playwright:v${PW}-noble"
@@ -1446,7 +1454,7 @@ jobs:
               image="ghcr.io/jclaveau/${target}-dood-playwright:${TAG}"
               home=/home/runner
             fi
-            echo "::group::probe $target/$BROWSER ($image)"
+            echo "::group::shot $i/$RUNS — $target/$BROWSER ($image)"
             # seccomp=unconfined: WebKit-WPE's bwrap needs it on our alpine images
             # (no-op for the chromium/firefox legs and for the MCR control).
             # One target failing must not cost us the others' measurements, so the
@@ -1466,11 +1474,11 @@ jobs:
             # when it is only a flag set.
             # A hang must cost one target, not the job. Our WebKit used to eat
             # the whole 30-minute budget at newPage (issue #100, fixed by the
-            # base move); the `timeout` inside the container bounds any repeat
-            # to 5 minutes, against a healthy target's ~30-60s. 3 x 5 leaves
-            # half the job's 30 minutes spare, and the budget has to hold: a
-            # job timeout skips upload-artifact, losing every measurement
-            # rather than the one that hung.
+            # base move); the `timeout` inside the container bounds any shot
+            # to 3 minutes, against a healthy target's ~30-60s. 3 targets x 3
+            # shots x 3 min fits the job's 40 minutes, and the budget has to
+            # hold: a job timeout skips upload-artifact, losing every
+            # measurement rather than the one that hung.
             #
             # The timeout wraps the probe rather than `docker run` because `sh`
             # is PID 1 in the container and PID 1 ignores an un-handled
@@ -1478,13 +1486,14 @@ jobs:
             # burning the runner's cores while the next target is measured.
             # Killing the probe instead lets the container exit and `--rm` fire.
             # `timeout SECS CMD` is the one form busybox and GNU spell alike.
-            cname="probe-${target}-${BROWSER}"
+            cname="probe-${target}-${BROWSER}-${i}"
             docker rm -f "$cname" >/dev/null 2>&1 || true
             docker run --rm --name "$cname" \
               --security-opt seccomp=unconfined \
               --env "HOME=$home" \
               --env "PROBE_BROWSER=$BROWSER" \
               --env "PROBE_TARGET=$target" \
+              --env "PROBE_RUN=$i" \
               --env "PW_VERSION=$PW" \
               -v "$PWD/playwright/bench:/probe:ro" \
               -v "$PWD/playwright/scripts:/pwscripts:ro" \
@@ -1499,11 +1508,14 @@ jobs:
                 export NODE_PATH
                 node -e "require(\"playwright\")" 2>/dev/null \
                   || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
-                timeout 300 node /probe/runtime-probe.cjs \
+                timeout 180 node /probe/runtime-probe.cjs \
                   --browser "$PROBE_BROWSER" --target "$PROBE_TARGET" --out /out
-              ' 2>&1 | tee "perf-out/probe-${target}-${BROWSER}.log" || rc=1
+                mv "/out/$PROBE_TARGET-$PROBE_BROWSER.json" \
+                   "/out/$PROBE_TARGET-$PROBE_BROWSER-run$PROBE_RUN.json"
+              ' 2>&1 | tee "perf-out/probe-${target}-${BROWSER}-${i}.log" || rc=1
             docker rm -f "$cname" >/dev/null 2>&1 || true
             echo "::endgroup::"
+          done
           done
           exit "$rc"
 
