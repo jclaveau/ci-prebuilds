@@ -44,8 +44,11 @@
 # names, the DSO the symbol tables select and the process pattern strace
 # attaches to. Names for a stripped webkit/firefox come from an unstripped
 # twin the caller drops in $PERF_SYMBOLS_DIR (the producer's pre-strip dist),
-# served to perf through a symfs — the same file with its .symtab kept, so
-# build-ids agree and perf accepts it for the mapping it recorded.
+# served to perf through a symfs — the same file with its .symtab kept. The
+# twin is OUR build's, so it only names the alpine target: official ships a
+# different link of the same library, and perf would name its addresses off
+# the wrong table without a word. The libraries carry no build-id, so the
+# match is geometric — strip leaves .text where it was, a foreign link does not.
 #
 # usage: perf-profile.sh <target> <kernel> <outdir> <probe.cjs> <perf-binary>
 set -eu
@@ -365,8 +368,10 @@ if [ -d "$SYMBOLS_DIR" ] && [ "$BROWSER" != chromium ]; then
   mapped=$(find /ms-playwright -name "$DSO" 2>/dev/null | head -1)
   real=$(readlink -f "${mapped:-/nonexistent}" 2>/dev/null || true)
   twin=$(find "$SYMBOLS_DIR" -name "$(basename "${real:-/nonexistent}")" -type f 2>/dev/null | head -1)
+  text_geometry() { readelf -S -W "$1" 2>/dev/null | sed -n 's/^.*\] \.text  *//p' | awk '{ print $2, $4 }'; }
   if [ -n "$mapped" ] && [ -n "$twin" ] \
-     && [ "$(readelf -S -W "$twin" | grep -c '\.symtab')" -gt 0 ]; then
+     && [ "$(readelf -S -W "$twin" | grep -c '\.symtab')" -gt 0 ] \
+     && [ "$(text_geometry "$real")" = "$(text_geometry "$twin")" ]; then
     SYMFS=/tmp/symfs
     rm -rf "$SYMFS"
     mkdir -p "$SYMFS$(dirname "$mapped")"
@@ -377,7 +382,7 @@ if [ -d "$SYMBOLS_DIR" ] && [ "$BROWSER" != chromium ]; then
     ln -sf "$twin" "$SYMFS$mapped"
     echo "symfs: ${mapped} -> ${twin} ($(stat -c %s "$twin") bytes, .symtab kept)"
   else
-    echo "no unstripped twin for ${DSO} under ${SYMBOLS_DIR} — engine samples stay unnamed"
+    echo "no unstripped twin matching ${DSO} under ${SYMBOLS_DIR} — engine samples stay unnamed"
   fi
 fi
 "$PERF" report -i "$DATA" --stdio --sort dso,sym --percent-limit 0.1 -g none \
@@ -393,13 +398,16 @@ fi
 # Names straight from perf when the twin is in the symfs: the engine's
 # samples resolve like any other DSO's, no census and no PIE arithmetic.
 # Same file name as the census path writes, so the report embeds either.
+# Percentages are the engine's own (--percentage relative): a kernel that
+# spends 0.5% of its time in the engine — launch is the loader and the
+# kernel — still lists what that 0.5% is, instead of an empty table.
 named_symbols() {
   {
-    echo "### ${TARGET} / ${KERNEL} — hot symbols, $2, ${DSO} named from its unstripped twin"
+    echo "### ${TARGET} / ${KERNEL} — hot symbols, $2, ${DSO} named from its unstripped twin (share of the engine's own samples)"
     echo
     echo '```'
     "$PERF" report -i "$1" --stdio -n --sort comm,sym --dsos "$DSO" --symfs "$SYMFS" \
-      --percent-limit 0.2 -g none 2>/dev/null | grep -v '^#' | grep -v '^$' | head -60
+      --percentage relative --percent-limit 0.2 -g none 2>/dev/null | grep -v '^#' | grep -v '^$' | head -60
     echo '```'
   } > "$3" || true
 }
