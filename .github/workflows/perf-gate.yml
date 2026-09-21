@@ -1,0 +1,193 @@
+# The promote gate. A browser build reaches <browser>-latest only if, on one
+# runner in one job, it probes faster than official Playwright on every row
+# (parity) and no slower than the build it replaces (ratchet). Both arms of
+# ours are staged through playwright/Dockerfile.alpine — the real consumer
+# path with the real shims and preloads — by overriding the one *_SOURCE_TAG
+# that names the browser under test, so what is measured is what ships.
+# assert-perf-gate.py holds the rules; perf-gate-margins.json the noise.
+#
+# Called from playwright-alpine-browsers.yml (firefox, webkit) and
+# promote-chromium-from-source.yml (chromium); dispatchable by hand to price a
+# candidate without promoting it.
+name: perf gate
+
+on:
+  workflow_call:
+    inputs:
+      browser:
+        description: chromium | firefox | webkit
+        required: true
+        type: string
+      candidate_tag:
+        description: 'ghcr.io/jclaveau/playwright-alpine-browsers tag of the build under test (e.g. sha-<sha>, chs-fs-sha-<sha>)'
+        required: true
+        type: string
+      promoted_tag:
+        description: 'tag the channel points at today (ff-latest / wk-latest / chs-latest); absent on GHCR = ratchet skipped'
+        required: true
+        type: string
+      rev:
+        description: 'browser revision the candidate carries (PW browsers.json), i.e. the consumer *_REV'
+        required: true
+        type: string
+      pw_version:
+        description: Playwright version to stage and drive with
+        required: true
+        type: string
+      runs:
+        description: shots per arm
+        default: 5
+        type: number
+  workflow_dispatch:
+    inputs:
+      browser:
+        description: chromium | firefox | webkit
+        required: true
+        type: string
+      candidate_tag:
+        description: 'tag of the build under test (e.g. sha-<sha>, chs-fs-sha-<sha>)'
+        required: true
+        type: string
+      promoted_tag:
+        description: 'tag the channel points at today (ff-latest / wk-latest / chs-latest)'
+        required: true
+        type: string
+      rev:
+        description: 'browser revision the candidate carries (consumer *_REV)'
+        required: true
+        type: string
+      pw_version:
+        description: Playwright version to stage and drive with
+        default: '1.62.1'
+        type: string
+      runs:
+        description: shots per arm
+        default: 5
+        type: number
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  gate:
+    name: perf-gate-${{ inputs.browser }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stage candidate and promoted through the consumer Dockerfile
+        id: stage
+        env:
+          BROWSER: ${{ inputs.browser }}
+          CANDIDATE: ${{ inputs.candidate_tag }}
+          PROMOTED: ${{ inputs.promoted_tag }}
+          REV: ${{ inputs.rev }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -o pipefail
+          case "$BROWSER" in
+            chromium) prefix=CHS ;;
+            firefox)  prefix=FF ;;
+            webkit)   prefix=WK ;;
+            *) echo "::error::unknown browser $BROWSER"; exit 1 ;;
+          esac
+          repo=ghcr.io/jclaveau/playwright-alpine-browsers
+          stage() {
+            local arm="$1" tag="$2"
+            echo "::group::stage ${arm} (${repo}:${tag})"
+            docker build -f playwright/Dockerfile.alpine \
+              --build-arg "${prefix}_SOURCE_TAG=${tag}" \
+              --build-arg "${prefix}_REV=${REV}" \
+              --build-arg "PLAYWRIGHT_VERSION=${PW}" \
+              -t "gate-${arm}:${{ github.run_id }}" playwright
+            echo "::endgroup::"
+          }
+          docker manifest inspect "${repo}:${CANDIDATE}" >/dev/null \
+            || { echo "::error::candidate ${repo}:${CANDIDATE} not on GHCR"; exit 1; }
+          stage candidate "$CANDIDATE"
+          if docker manifest inspect "${repo}:${PROMOTED}" >/dev/null 2>&1; then
+            stage promoted "$PROMOTED"
+            echo "arms=candidate promoted official" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::${repo}:${PROMOTED} does not exist yet — first promotion, ratchet skipped"
+            echo "arms=candidate official" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Probe every arm, ${{ inputs.runs }}x each, interleaved
+        env:
+          BROWSER: ${{ inputs.browser }}
+          ARMS: ${{ steps.stage.outputs.arms }}
+          RUNS: ${{ inputs.runs }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -o pipefail
+          mkdir -p perf-out && chmod 777 perf-out   # the container writes as its own uid
+          grep -m1 'model name' /proc/cpuinfo || true
+          rc=0
+          for i in $(seq 1 "$RUNS"); do
+            for arm in $ARMS; do
+              if [ "$arm" = official ]; then
+                image="mcr.microsoft.com/playwright:v${PW}-noble"
+                home=/root                            # the MCR image runs as root
+              else
+                image="gate-${arm}:${{ github.run_id }}"
+                home=/home/runner
+              fi
+              echo "::group::run $i/$RUNS — $arm/$BROWSER ($image)"
+              cname="probe-${arm}-${i}"
+              docker rm -f "$cname" >/dev/null 2>&1 || true
+              # seccomp=unconfined and the 300 s timeout: same reasoning as
+              # test-and-publish.yml's perf-probe (webkit's bwrap; a hang costs
+              # one shot, not the job).
+              docker run --rm --name "$cname" \
+                --security-opt seccomp=unconfined \
+                --env "HOME=$home" \
+                --env "PROBE_BROWSER=$BROWSER" \
+                --env "PROBE_TARGET=$arm" \
+                --env "PROBE_RUN=$i" \
+                --env "PW_VERSION=$PW" \
+                -v "$PWD/playwright/bench:/probe:ro" \
+                -v "$PWD/playwright/scripts:/pwscripts:ro" \
+                -v "$PWD/perf-out:/out" \
+                "$image" \
+                sh -c '
+                  NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+                  export NODE_PATH
+                  node -e "require(\"playwright\")" 2>/dev/null \
+                    || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
+                  timeout 300 node /probe/runtime-probe.cjs \
+                    --browser "$PROBE_BROWSER" --target "$PROBE_TARGET" --out /out
+                  mv "/out/$PROBE_TARGET-$PROBE_BROWSER.json" \
+                     "/out/$PROBE_TARGET-$PROBE_BROWSER-run$PROBE_RUN.json"
+                ' 2>&1 | tee "perf-out/probe-${arm}-${i}.log" || rc=1
+              docker rm -f "$cname" >/dev/null 2>&1 || true
+              echo "::endgroup::"
+            done
+          done
+          exit "$rc"
+
+      - name: Assert parity and ratchet
+        if: always()
+        env:
+          BROWSER: ${{ inputs.browser }}
+          RUNS: ${{ inputs.runs }}
+        run: |
+          set -o pipefail
+          python3 playwright/bench/assert-perf-gate.py perf-out \
+            --browser "$BROWSER" --runs "$RUNS" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-gate-${{ inputs.browser }}
+          path: perf-out/
+          if-no-files-found: warn
+          retention-days: 90

@@ -665,6 +665,25 @@ jobs:
               cat /tmp/moz.log* 2>/dev/null | grep -iE "juggler|m-remote|command-line" | head -50 || echo "(no moz.log juggler entries)"
             '
 
+  # Prices the build against official Playwright (parity) and against
+  # ff-latest (ratchet) on one runner; promote-firefox needs it green. Runs on
+  # branch chains too, where it is the A/B of the experiment against what
+  # ships, without a hand dispatch of ff-perf-ab.yml.
+  perf-gate-firefox:
+    needs: [build-firefox, smoke-firefox]
+    if: |
+      !cancelled()
+      && needs.build-firefox.result == 'success'
+      && needs.smoke-firefox.result == 'success'
+    uses: ./.github/workflows/perf-gate.yml
+    with:
+      browser: firefox
+      candidate_tag: sha-${{ github.sha }}
+      promoted_tag: ff-latest
+      rev: ${{ needs.build-firefox.outputs.firefox_revision }}
+      pw_version: ${{ needs.build-firefox.outputs.pw_version }}
+    secrets: inherit
+
   promote-firefox:
     # Copy the GHCR sha tag to Docker Hub under version-pinned + moving tags.
     # Imagetools server-side copy — no rebuild.
@@ -679,14 +698,15 @@ jobs:
     # `!cancelled()` with an explicit `== 'success'` per need rather than bare
     # `needs:`: the prefix waives "a failed need skips this job" for EVERY
     # need, so each gate has to be spelled out or a skipped conformance would
-    # ship. Nothing promotes without smoke AND conformance.
-    needs: [build-firefox, smoke-firefox, smoke-firefox-library, conformance-firefox]
+    # ship. Nothing promotes without smoke AND conformance AND the perf gate.
+    needs: [build-firefox, smoke-firefox, smoke-firefox-library, conformance-firefox, perf-gate-firefox]
     if: |
       !cancelled()
       && needs.build-firefox.result == 'success'
       && needs.smoke-firefox.result == 'success'
       && needs.smoke-firefox-library.result == 'success'
       && needs.conformance-firefox.result == 'success'
+      && needs.perf-gate-firefox.result == 'success'
       && github.ref == 'refs/heads/main'
       && ((github.event_name == 'workflow_dispatch' && inputs.build_firefox == 'true')
           || github.event_name == 'push')
@@ -3486,12 +3506,29 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # Same shape as perf-gate-firefox: parity vs official, ratchet vs wk-latest,
+  # on the WPE artifact the consumer ships. promote-webkit needs it green.
+  perf-gate-webkit:
+    needs: [build-webkit-finalize, smoke-webkit]
+    if: |
+      !cancelled()
+      && needs.build-webkit-finalize.result == 'success'
+      && needs.smoke-webkit.result == 'success'
+    uses: ./.github/workflows/perf-gate.yml
+    with:
+      browser: webkit
+      candidate_tag: wk-sha-${{ github.sha }}
+      promoted_tag: wk-latest
+      rev: ${{ needs.build-webkit-finalize.outputs.webkit_revision }}
+      pw_version: ${{ needs.build-webkit-finalize.outputs.pw_version }}
+    secrets: inherit
+
   promote-webkit:
     # Promote both artifacts on both registries (GHCR for CI consumption;
     # Docker Hub for external catalog):
     #   wk-sha-<sha> (WPE-only) → wk-${REV} / wk-${VER} / wk-latest
     #   wk-gtk-sha-<sha> (WPE+GTK) → wk-gtk-${REV} / wk-gtk-${VER} / wk-gtk-latest
-    needs: [build-webkit-finalize, smoke-webkit, conformance-webkit]
+    needs: [build-webkit-finalize, smoke-webkit, conformance-webkit, perf-gate-webkit]
     # `!cancelled()` prefix: a skipped gtk-4 (GTK gated off) cascade-skips
     # dependents without an always/!cancelled conditional (actions/runner#491).
     # `build-webkit-finalize.result == 'success'`: on a push where build_webkit
@@ -3516,6 +3553,7 @@ jobs:
       && needs.build-webkit-finalize.result == 'success'
       && needs.smoke-webkit.result == 'success'
       && needs.conformance-webkit.result == 'success'
+      && needs.perf-gate-webkit.result == 'success'
       && github.ref == 'refs/heads/main'
       && ((github.event_name == 'workflow_dispatch' && inputs.build_webkit == 'true')
           || github.event_name == 'push')
