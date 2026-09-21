@@ -20,6 +20,11 @@ Measured on the artifact, **two of the three cost nothing**:
   page. On a realistic C++ TU (`<string> <vector> <map> <sstream> <regex>`) it
   emits **zero** probes and `.text` is **byte-identical** with and without it.
   Real, overridable with `-fno-stack-clash-protection`, and worth nothing.
+- **RETRACTED 2026-09-21** — see [[project_chromium_nav_gap_is_musl_fortify_overlap_check]]:
+  musl's fortify-headers are INLINE (compares + `ud2`, no `__*_chk` call), so
+  looking for `__*_chk` symbols tested glibc's mechanism, not musl's. The
+  overlap check IS in the shipped binary at every fixed-size memcpy and is
+  the goto_warm/raster instruction overrun. Original text follows.
 - `_FORTIFY_SOURCE` is predefined as 2, but **no `__*_chk` symbol is emitted at
   all** — in C++ *or* C, on a TU written to trigger it (fixed-size struct
   fields, runtime length, `strcpy`, `snprintf`). The include path is there; the
@@ -43,7 +48,7 @@ posture, confirmed from their source rather than inferred.
 compiler as one of two live candidates, and "what else is the driver injecting"
 was the cheap half of it. It is now answered: nothing else that costs.
 
-**How to apply:** do not open a stack-clash or FORTIFY candidate. The compiler
+**How to apply:** do not open a stack-clash candidate; the FORTIFY one is OPEN (see above). The compiler
 side of the chromium gap is fully accounted for by the SSP-parity chain already
 running plus the clang 22-vs-23 residual, which
 [[project_chromium_cft_build_chain_diff]] parks as too expensive to test.

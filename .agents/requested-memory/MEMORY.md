@@ -6,3 +6,4 @@ memory itself.
 - [Alpine apk bug draft](alpine-apk-bug-draft.md)
 - [chromium from-source stuck analysis](chromium_from_source_stuck_analysis.md)
 - [Perf budget gate — SHIPPED](parked_perf_budget_gate_design.md) — built and merged as PR #195 on 2026-09-09; kept for the design rationale and the budget-sizing correction (seed off single-shot p99, not the median)
+- [Open user rulings carried across sessions](open_user_rulings_carried_across_sessions.md) — tmp/scratch-mem deletion, fix140 branch+stashes, from_stage=playwright TP lever, #259 queue, dead snap branch cleanup; ask, don't decide
