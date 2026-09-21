@@ -114,3 +114,10 @@ Symbolize stripped chromium via the link census `symtab.nm.gz` (+0x1000).
 [[project_chromium_residual_gap_candidates]]
 [[project_chromium_screenshot_is_skia_highp]]
 [[project_chromium_trace_gap_is_uniform]]
+
+**After the snapshot toolchain shipped (2026-09-21, run 35590487107, 8573C):**
+VizCompositorTh 2.58 vs 2.54 ms/iter, Compositor 3.69 vs 3.65, ThreadPool
+7.03 vs 7.14 — the raster excess this memory describes is GONE. What is left
+of goto_warm (1.07x wall / 1.04x CPU) sits on the renderer main thread
+(27.8 vs 25.6 ms) and its one differing DSO is system libharfbuzz →
+[[project_chromium_residual_gap_candidates]] (text stack, PR #277).
