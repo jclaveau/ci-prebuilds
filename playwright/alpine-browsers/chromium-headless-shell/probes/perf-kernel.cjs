@@ -387,6 +387,19 @@ async function loop({
   console.log(`[perf-kernel] steady state reached, looping ${kernelName} `
     + `for ${seconds}s (tag ${tag})`);
 
+  // The iteration count, published after every iteration so the profiler
+  // can bracket each of its passes (record, stat, sched, strace) with the
+  // exact number of iterations that pass saw, instead of scaling one rate
+  // over the whole loop. A rename rather than a write-in-place, so a reader
+  // never sees a half-written number.
+  const progressFile = path.join(outDir, `${target}-${kernelName}-progress`);
+  fs.mkdirSync(outDir, { recursive: true });
+  const publish = (n) => {
+    fs.writeFileSync(`${progressFile}.tmp`, `${n}\n`);
+    fs.renameSync(`${progressFile}.tmp`, progressFile);
+  };
+  publish(0);
+
   const samples = [];
   const end = Date.now() + seconds * 1000;
   while (Date.now() < end) {
@@ -397,6 +410,7 @@ async function loop({
     // The in-page clock where the kernel has one: it excludes the protocol
     // round trip, which is a different metric with its own known gap.
     samples.push(r.ms === undefined ? wall : r.ms);
+    publish(samples.length);
   }
 
   if (teardown) await teardown();

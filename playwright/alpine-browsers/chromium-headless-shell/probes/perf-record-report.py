@@ -10,6 +10,12 @@ Percentages are of the whole system-wide sample, so they are only comparable
 between arms once normalised by how much work each arm got through in the
 window. `iterations` from the probe carries that, and the per-iteration
 milliseconds are printed next to it.
+
+The later passes (instructions, topdown, sched, strace) each have their own
+window bracketed by the probe's iteration counter (`<arm>-<kernel>-windows.txt`),
+so each is normalised by the iterations IT saw. Our binary's samples are
+named when the profile step had the link census (`<arm>-<kernel>-symbols.md`),
+and those tables are embedded as written.
 """
 
 import json
@@ -57,6 +63,24 @@ def read_dso(path):
         if m:
             out[m.group(2)] = float(m.group(1))
     return out
+
+
+def windows(root, arm, kernel):
+    """{pass: iterations seen} from the bracketing the profile step wrote."""
+    f = root / f'{arm}-{kernel}-windows.txt'
+    out = {}
+    if not f.exists():
+        return out
+    for line in f.read_text(errors='replace').splitlines():
+        p = line.split()
+        if len(p) == 4:
+            out[p[0]] = max(int(p[3]) - int(p[2]), 0)
+    return out
+
+
+def read_share_table(path):
+    """Overhead percent per row label from any `perf report --sort X` file."""
+    return read_dso(path)
 
 
 STAT_ROW = re.compile(
@@ -119,8 +143,213 @@ COUNTER_ROWS = (
     ('L1d miss / kI', 'L1-dcache-load-misses', 'instructions', 1e3),
     ('LLC miss / MI', 'cache-misses', 'instructions', 1e6),
     ('page faults / iter', 'page-faults', 'iter', 1),
+    ('context switches / iter', 'context-switches', 'iter', 1),
     ('task-clock ms / iter', 'task-clock', 'iter', 1),
+    ('iTLB loads / MI', 'iTLB-loads', 'instructions', 1e6),
+    ('LLC load miss / MI', 'LLC-load-misses', 'instructions', 1e6),
+    ('dTLB load miss / MI', 'dTLB-load-misses', 'instructions', 1e6),
 )
+
+TOPDOWN_ROW = re.compile(r'#\s+([\d.]+)\s*%\s+(\S+)')
+
+
+def topdown(root, arm, kernel):
+    """{metric: percent} from the topdown metric-group block, if the PMU had one."""
+    f = root / f'{arm}-{kernel}-topdown.txt'
+    out = {}
+    if not f.exists():
+        return out
+    for line in f.read_text(errors='replace').splitlines():
+        m = TOPDOWN_ROW.search(line)
+        if m:
+            out[m.group(2)] = float(m.group(1))
+    return out
+
+
+def print_topdown_table(kernel, td):
+    if not any(td.values()):
+        return
+    names = sorted(set().union(*(set(v) for v in td.values())))
+    print(f'`{kernel}` topdown level 1 (share of pipeline slots):\n')
+    print('| metric | alpine | official |')
+    print('|---|---:|---:|')
+    for n in names:
+        cells = ['—' if n not in td[arm] else f'{td[arm][n]:.1f}%' for arm in ARMS]
+        print(f'| `{n}` | {cells[0]} | {cells[1]} |')
+    print()
+
+
+SCHED_ROW = re.compile(
+    r'^\s*(\S+?)(?::\d+|:\(\d+\))?\s*\|\s*([\d.]+) ms\s*\|\s*(\d+)\s*\|'
+    r'\s*avg:\s*([\d.]+) ms\s*\|\s*max:\s*([\d.]+) ms')
+
+
+def sched(root, arm, kernel):
+    """Per thread name: runtime ms, switches, delay-weighted avg, max delay.
+
+    `perf sched latency` prints one row per task (thread), named comm:tid;
+    chromium has many threads of one name (raster workers, thread pool), so
+    rows fold by comm with the average delay weighted by switch count.
+    """
+    f = root / f'{arm}-{kernel}-sched.txt'
+    out = {}
+    if not f.exists():
+        return out
+    for line in f.read_text(errors='replace').splitlines():
+        m = SCHED_ROW.match(line)
+        if not m:
+            continue
+        comm = m.group(1)
+        # A row with no name is a task perf could not resolve (a pid from
+        # outside the namespace, or one that exited): nothing to fold it into.
+        if comm.startswith(':'):
+            continue
+        rt, n, avg, mx = (float(m.group(2)), int(m.group(3)),
+                          float(m.group(4)), float(m.group(5)))
+        row = out.setdefault(comm, {'rt': 0.0, 'n': 0, 'delay': 0.0, 'max': 0.0})
+        row['rt'] += rt
+        row['n'] += n
+        row['delay'] += avg * n
+        row['max'] = max(row['max'], mx)
+    return out
+
+
+def print_sched_table(kernel, sch, iters):
+    if not any(sch.values()) or not all(iters.values()):
+        return
+    comms = set().union(*(set(v) for v in sch.values()))
+    # Rank by the larger arm's runtime, and keep the chromium threads a
+    # reader would look for first even when they are cheap.
+    def rank(c):
+        return -max(sch[a].get(c, {}).get('rt', 0) / iters[a] for a in ARMS)
+    rows = sorted(comms, key=rank)[:12]
+    print(f'`{kernel}` scheduler, per thread name and iteration '
+          '(runtime = on-CPU ms; delay = wakeup→running, avg weighted by '
+          'switches):\n')
+    print('| thread | run ms alpine | official | switches alpine | official '
+          '| avg delay ms alpine | official | max delay ms alpine | official |')
+    print('|---|---:|---:|---:|---:|---:|---:|---:|---:|')
+    for c in rows:
+        cells = []
+        for key in ('rt', 'n', 'avgd', 'max'):
+            for arm in ARMS:
+                r = sch[arm].get(c)
+                if not r:
+                    cells.append('—')
+                elif key == 'rt':
+                    cells.append(f'{r["rt"] / iters[arm]:.2f}')
+                elif key == 'n':
+                    cells.append(f'{r["n"] / iters[arm]:.1f}')
+                elif key == 'avgd':
+                    cells.append(f'{r["delay"] / r["n"]:.3f}' if r['n'] else '—')
+                else:
+                    cells.append(f'{r["max"]:.2f}')
+        print(f'| `{c}` | ' + ' | '.join(cells) + ' |')
+    print()
+
+
+STRACE_ROW = re.compile(
+    r'^\s*([\d.]+)\s+([\d.]+)\s+(\d+)\s+(\d+)\s+(\d+)?\s*([a-z_0-9]+)\s*$')
+
+
+def strace(root, arm, kernel):
+    """{syscall: (wall seconds, calls)} from `strace -c -w`."""
+    f = root / f'{arm}-{kernel}-strace.txt'
+    out = {}
+    if not f.exists():
+        return out
+    for line in f.read_text(errors='replace').splitlines():
+        m = STRACE_ROW.match(line)
+        if m and m.group(6) != 'total':
+            out[m.group(6)] = (float(m.group(2)), int(m.group(4)))
+    return out
+
+
+def print_strace_table(kernel, st, iters):
+    if not any(st.values()) or not all(iters.values()):
+        return
+    names = set().union(*(set(v) for v in st.values()))
+    rows = sorted(names, key=lambda n: -max(
+        st[a].get(n, (0, 0))[1] / iters[a] for a in ARMS))[:14]
+    print(f'`{kernel}` syscalls per iteration, every chromium process, wall '
+          'time (a futex second is a second a thread WAITED; ptrace slows '
+          'the loop, so read the counts and the shares, not the absolute '
+          'ms):\n')
+    print('| syscall | calls/iter alpine | official | wall ms/iter alpine | official |')
+    print('|---|---:|---:|---:|---:|')
+    for n in rows:
+        cells = []
+        for arm in ARMS:
+            w, c = st[arm].get(n, (0.0, 0))
+            cells.append(f'{c / iters[arm]:.1f}')
+        for arm in ARMS:
+            w, c = st[arm].get(n, (0.0, 0))
+            cells.append(f'{w * 1000 / iters[arm]:.2f}')
+        print(f'| `{n}` | ' + ' | '.join(cells) + ' |')
+    print()
+
+
+def print_insn_table(kernel, root, rates, iters):
+    """Instruction-weighted share per DSO — the extra instructions, located."""
+    share = {arm: read_share_table(root / f'{arm}-{kernel}-insn-dso.txt')
+             for arm in ARMS}
+    if not any(share.values()):
+        for arm in ARMS:
+            if (root / f'{arm}-{kernel}-insn-unavailable').exists():
+                print(f'- `{arm}` / `{kernel}`: instruction-weighted profile '
+                      '**unavailable** (no PMU on this runner)')
+        print()
+        return
+    names = sorted(set().union(*(set(v) for v in share.values())),
+                   key=lambda n: -max(share[a].get(n, 0) for a in ARMS))
+    # Absolute instructions per iteration by DSO when the counter is there:
+    # share × (instructions / iteration) from the stat block.
+    absolute = {}
+    for arm in ARMS:
+        r = rates.get(arm) or {}
+        if r.get('instructions') and r.get('iter'):
+            absolute[arm] = r['instructions'] / r['iter'] / 1e6
+    unit = 'M instructions / iter' if len(absolute) == 2 else 'share of samples'
+    print(f'`{kernel}` by shared object, INSTRUCTION-weighted ({unit}). Time '
+          'says where the seconds go; this says where the instructions go, '
+          'and a DSO higher here than in the time table is code that runs '
+          'fast and often — the shape of an inlined check on every call:\n')
+    print('| shared object | alpine | official | delta |')
+    print('|---|---:|---:|---:|')
+    for n in names[:16]:
+        vals = []
+        for arm in ARMS:
+            sh = share[arm].get(n)
+            if sh is None:
+                vals.append(None)
+            elif arm in absolute and len(absolute) == 2:
+                vals.append(sh / 100 * absolute[arm])
+            else:
+                vals.append(sh)
+        cells = ['—' if v is None else
+                 (f'{v:.1f}' if len(absolute) == 2 else f'{v:.2f}%')
+                 for v in vals]
+        d = '—'
+        if None not in vals:
+            d = f'{vals[0] - vals[1]:+.1f}' if len(absolute) == 2 \
+                else f'{vals[0] - vals[1]:+.2f} pt'
+        print(f'| `{n}` | {cells[0]} | {cells[1]} | {d} |')
+    print()
+
+
+def print_symbols(kernel, root):
+    """Our named hot list, embedded as the profile step wrote it."""
+    for suffix, what in (('symbols', 'time-weighted'),
+                         ('insn-symbols', 'instruction-weighted')):
+        f = root / f'alpine-{kernel}-{suffix}.md'
+        if not f.exists():
+            continue
+        body = f.read_text(errors='replace')
+        print(f'<details><summary>`alpine` / `{kernel}` named hot symbols, '
+              f'{what} (from the link census)</summary>\n')
+        print(body)
+        print('</details>\n')
+
 
 
 def print_counter_table(kernel, rates):
@@ -275,6 +504,21 @@ def main(root):
                   f'{"available" if hw else "**unavailable**"}')
         print()
         print_counter_table(kernel, rates)
+        print_topdown_table(kernel, {arm: topdown(root, arm, kernel) for arm in ARMS})
+        win = {arm: windows(root, arm, kernel) for arm in ARMS}
+        print_insn_table(kernel, root, rates, win)
+        print_symbols(kernel, root)
+
+    print('### Threads and syscalls\n')
+    print('On-CPU profiles cannot see a thread that is waiting. The scheduler '
+          'table is wake-up latency and switches per thread; the syscall '
+          'table is the kernel boundary per iteration, wall-clock.\n')
+    for kernel in kernels:
+        win = {arm: windows(root, arm, kernel) for arm in ARMS}
+        print_sched_table(kernel, {arm: sched(root, arm, kernel) for arm in ARMS},
+                          {arm: win[arm].get('sched', 0) for arm in ARMS})
+        print_strace_table(kernel, {arm: strace(root, arm, kernel) for arm in ARMS},
+                           {arm: win[arm].get('strace', 0) for arm in ARMS})
     return 0
 
 

@@ -11,7 +11,10 @@
 # inside this container so the shim is linked against the same musl the browser
 # runs on. Installed unconditionally because a conditional apk would need a
 # build arg and a cache-busting layer to save about thirty seconds.
+#
+# python3 runs perf-symbolize.py against the link census; strace is the
+# syscall pass. Both in this layer for the same reason as gcc.
 ARG BASE
 FROM ${BASE}
 USER root
-RUN apk add --no-cache perf binutils gcc musl-dev
+RUN apk add --no-cache perf binutils gcc musl-dev python3 strace
