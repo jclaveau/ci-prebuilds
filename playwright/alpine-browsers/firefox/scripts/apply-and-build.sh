@@ -644,7 +644,14 @@ if grep -q '^ac_add_options MOZ_PGO=1' .mozconfig; then
   export DISPLAY=:99
   export MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_DISABLE_GMP_SANDBOX=1 \
     MOZ_DISABLE_RDD_SANDBOX=1 MOZ_DISABLE_SOCKET_PROCESS_SANDBOX=1
-  echo "  PGO=1 LLVM_PROFDATA=${LLVM_PROFDATA:-unset} DISPLAY=$DISPLAY"
+  # The profile run loads the instrumented package before bundle-dist.sh has
+  # patched RPATH=$ORIGIN into it. Mozilla's libxul.so carries no rpath of its
+  # own and musl's loader resolves a library's NEEDED from that library's rpath
+  # or LD_LIBRARY_PATH only, never from the executable's, so libmozsandbox.so
+  # "does not exist" for libxul (run 35619055612). Point the loader at the
+  # package; the directory only exists once the instrumented build has landed.
+  export LD_LIBRARY_PATH="$SRC/obj/instrumented/dist/firefox"
+  echo "  PGO=1 LLVM_PROFDATA=${LLVM_PROFDATA:-unset} DISPLAY=$DISPLAY LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
 fi
 
 # 8. Build. `./mach build` produces obj/dist/firefox/ (unpacked tree) AND
