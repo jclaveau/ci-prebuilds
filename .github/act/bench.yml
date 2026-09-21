@@ -2,7 +2,8 @@
 # .github/workflows/benchmark-playwright.yml. It deliberately lives OUTSIDE .github/workflows/ so GitHub
 # never runs it natively. The outer job picks the runner image via `-P ubuntu-latest=<image>` and passes
 # $SCENARIO (baseline installs Playwright from scratch; the others use the prebuilt image). It prints
-# ACT_TEST_START=<epoch> right before launching the tests so the outer job can measure time-to-tests.
+# ACT_TEST_START=<epoch> right before launching the tests so the outer job can measure time-to-tests,
+# and ACT_PERF_START/END around the runtime probe for the `perf` column.
 on: push
 jobs:
   bench:
@@ -44,4 +45,10 @@ jobs:
           pnpm exec playwright test $PROJECTS
           rc=$?
           echo "ACT_TEST_END=$(date +%s.%N)"
+          # Same probe as the hosted cells' `perf` column; its wall time is what the outer job reads.
+          echo "ACT_PERF_START=$(date +%s.%N)"
+          for b in ${PROJECTS//--project=/}; do
+            node bench/runtime-probe.cjs --browser "$b" --target "$SCENARIO" --out perf-out || rc=$?
+          done
+          echo "ACT_PERF_END=$(date +%s.%N)"
           exit $rc

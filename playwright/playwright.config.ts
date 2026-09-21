@@ -69,8 +69,8 @@ export default defineConfig({
   reporter: 'html',
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
-    /* Base URL to use in actions like `await page.goto('')`. */
-    // baseURL: 'http://localhost:3000',
+    /* The example spec navigates to the local fixture server below. */
+    baseURL: 'http://127.0.0.1:4173',
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
@@ -80,10 +80,12 @@ export default defineConfig({
      every flavor. See `projects` block above for rationale. */
   projects,
 
-  /* Run your local dev server before starting the tests */
-  // webServer: {
-  //   command: 'npm run start',
-  //   url: 'http://localhost:3000',
-  //   reuseExistingServer: !process.env.CI,
-  // },
+  /* Serves tests/fixtures/ so the tests never touch the network: the numbers
+     the benchmark reads from a test run are then the browser and the machine,
+     not DNS, TLS and a CDN's mood that day. */
+  webServer: {
+    command: 'node tests/serve.cjs',
+    url: 'http://127.0.0.1:4173/',
+    reuseExistingServer: !process.env.CI,
+  },
 });

@@ -165,12 +165,28 @@ jobs:
             P=(--project=chromium)
           fi
           pnpm exec playwright test "${P[@]}"
+      # The same probe test-and-publish gates on, so a cell's number is comparable
+      # with the perf-report of the build it benches. Its wall time is the `perf`
+      # column; the per-row json is uploaded for anyone who wants the rows.
+      - name: Run runtime probe
+        working-directory: playwright
+        run: |
+          for b in $([ "${{ matrix.browsers }}" = "all" ] && echo chromium firefox webkit || echo chromium); do
+            node bench/runtime-probe.cjs --browser "$b" --target "${{ matrix.scenario }}" --out perf-out
+          done
       - name: Upload install download size
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: install-dl-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}
           path: /tmp/install-dl-mb.txt
+          if-no-files-found: ignore
+      - name: Upload runtime probe rows
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}
+          path: playwright/perf-out/*.json
           if-no-files-found: ignore
 
   # Container scenarios: the official MS image and our two published images, each in both browser modes.
@@ -229,12 +245,27 @@ jobs:
             P=(--project=chromium --project=firefox --project=webkit)
           fi
           pnpm exec playwright test "${P[@]}"
+      - name: Run runtime probe
+        working-directory: playwright
+        shell: bash
+        run: |
+          [[ "${{ matrix.scenario }}" == official* ]] && export HOME=/root
+          for b in $([ "${{ matrix.browsers }}" = "all" ] && echo chromium firefox webkit || echo chromium); do
+            node bench/runtime-probe.cjs --browser "$b" --target "${{ matrix.scenario }}" --out perf-out
+          done
       - name: Upload install download size
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: install-dl-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}
           path: /tmp/install-dl-mb.txt
+          if-no-files-found: ignore
+      - name: Upload runtime probe rows
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}
+          path: playwright/perf-out/*.json
           if-no-files-found: ignore
 
   # Same benchmark, but executed through nektos/act (the "use these images as your local act runner"
@@ -276,8 +307,9 @@ jobs:
           echo "image=$IMG" >> "$GITHUB_OUTPUT"
       - name: Benchmark via act
         # All act cells use either the official PW image (pre-baked browsers+deps) or one of our prebuilt
-        # images, so the inner workload is well under a minute. 5 min is a generous ceiling for noise.
-        timeout-minutes: 5
+        # images, so the inner workload is well under a minute, plus the runtime probe: about a minute
+        # per browser. 12 min is a generous ceiling for noise.
+        timeout-minutes: 12
         run: |
           IMG="${{ steps.img.outputs.image }}"
           OUT="act-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}.json"
@@ -310,17 +342,21 @@ jobs:
           STEP_START=$(grep -aoE 'ACT_STEP_START=[0-9.]+' "$LOG" | head -1 | cut -d= -f2)
           TEST_START=$(grep -aoE 'ACT_TEST_START=[0-9.]+' "$LOG" | head -1 | cut -d= -f2)
           TEST_END=$(grep -aoE 'ACT_TEST_END=[0-9.]+' "$LOG" | head -1 | cut -d= -f2)
+          PERF_START=$(grep -aoE 'ACT_PERF_START=[0-9.]+' "$LOG" | head -1 | cut -d= -f2)
+          PERF_END=$(grep -aoE 'ACT_PERF_END=[0-9.]+' "$LOG" | head -1 | cut -d= -f2)
           DL_BYTES=$(grep -aoE 'ACT_INSTALL_DL_BYTES=[0-9]+' "$LOG" | head -1 | cut -d= -f2)
-          python3 - "$START" "$END" "$STEP_START" "$TEST_START" "$TEST_END" "$rc" "$OUT" "${{ matrix.scenario }}" "${{ matrix.browsers }}" "$DL_BYTES" "$DU_BEFORE" "$DU_AFTER" <<'PY'
+          python3 - "$START" "$END" "$STEP_START" "$TEST_START" "$TEST_END" "$rc" "$OUT" "${{ matrix.scenario }}" "${{ matrix.browsers }}" "$DL_BYTES" "$DU_BEFORE" "$DU_AFTER" "$PERF_START" "$PERF_END" <<'PY'
           import json, sys
-          start, end, step, tstart, tend, rc, out, sc, mode, dl, du_b, du_a = sys.argv[1:13]
+          start, end, step, tstart, tend, rc, out, sc, mode, dl, du_b, du_a, pstart, pend = sys.argv[1:15]
           f = lambda x: float(x) if x else None
           start, end, step, tstart, tend = float(start), float(end), f(step), f(tstart), f(tend)
+          pstart, pend = f(pstart), f(pend)
           rec = {"scenario": sc, "mode": mode, "rc": int(rc), "total": end - start}
           rec["pull"] = (step - start) if step else None              # incl. act start-up + image pull
           rec["install"] = (tstart - step) if (tstart and step) else None
           rec["ttt"] = (tstart - start) if tstart else None
           rec["test"] = (tend - tstart) if (tend and tstart) else None
+          rec["perf"] = (pend - pstart) if (pend and pstart) else None
           rec["install_dl_mb"] = (int(dl) // 1048576) if dl else None
           rec["disk_mb"] = ((int(du_a) - int(du_b)) // 1048576) if (du_a and du_b) else None
           json.dump(rec, open(out, "w"))
@@ -333,9 +369,11 @@ jobs:
         with:
           name: act-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}
           # JSON is consumed by the summary; .log is for human diagnosis (full tee of act --verbose).
+          # --bind runs the inner workflow on this checkout, so the probe's rows land in playwright/perf-out.
           path: |
             act-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}.json
             act-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}.log
+            playwright/perf-out/*.json
           if-no-files-found: ignore
 
   # Read GitHub's own per-step timings (hosted scenarios) + the act artifacts, and render the summary.
@@ -470,6 +508,7 @@ jobs:
               steps = j.get("steps") or []
               by = {s.get("name"): s for s in steps}
               test = by.get("Run Playwright tests", {})
+              perf = by.get("Run runtime probe", {})
               init = by.get("Initialize containers", {})
               install = sum(
                   d for s in steps if s.get("name") in INSTALL
@@ -482,6 +521,7 @@ jobs:
                   "install": install,
                   "ttt": dur(j.get("started_at"), test.get("started_at")),
                   "test": dur(test.get("started_at"), test.get("completed_at")),
+                  "perf": dur(perf.get("started_at"), perf.get("completed_at")),
                   "total": dur(j.get("started_at"), j.get("completed_at")),
               }
               for k, v in vals.items():
@@ -564,6 +604,14 @@ jobs:
                                           "style": "for-the-badge"})
               return f'<img src="{_BADGE}?{q}" alt="{label}">'
 
+          def perf_delta(sc, ref, m, base):
+              # The probe is the same work on every row, so its Δ % vs the reference is the
+              # one column here that reads as browser speed rather than install plumbing.
+              if sc == ref or m is None or not base:
+                  return "—", None
+              p = (m - base) / base * 100
+              return f"{'−' if p < 0 else '+'}{abs(p):.0f}%", p
+
           def col_range(values):
               vs = [v for v in values if v is not None]
               return (min(vs), max(vs)) if vs else (None, None)
@@ -596,18 +644,21 @@ jobs:
               L = {**LABEL, "baseline": "vm + manual install", "baseline-gyp": "vm + manual install + gyp"}
               bs = stats95(agg[(ref, mode)]["ttt"])
               base = bs[0] if bs else None
+              perf_base = mean_of(agg[(ref, mode)]["perf"])
               rows = []
               for sc in order_list:
                   key = (sc, mode)
                   if key not in seen:
                       continue
                   cell_str, ttt_m = ttt_cell(agg[key]["ttt"])
+                  perf_m = mean_of(agg[key]["perf"])
                   if sc == ref or ttt_m is None or not base:
                       d_str, p_str, d_num, p_num = "—", "—", None, None
                   else:
                       d_str, p_str = delta_cell(ttt_m, base, agg[key]["ttt"], agg[(ref, mode)]["ttt"])
                       d_num = ttt_m - base
                       p_num = d_num / base * 100
+                  pp_str, pp_num = perf_delta(sc, ref, perf_m, perf_base)
                   ok, n = oks[key]
                   rows.append({
                       "sc": sc,
@@ -615,11 +666,12 @@ jobs:
                       "install": mean_of(agg[key]["install"]),
                       "ttt":     ttt_m,
                       "test":    mean_of(agg[key]["test"]),
+                      "perf":    perf_m,
                       "total":   mean_of(agg[key]["total"]),
-                      "d_num": d_num, "p_num": p_num,
-                      "cell_str": cell_str, "d": d_str, "p": p_str, "ok": ok, "n": n,
+                      "d_num": d_num, "p_num": p_num, "pp_num": pp_num,
+                      "cell_str": cell_str, "d": d_str, "p": p_str, "pp": pp_str, "ok": ok, "n": n,
                   })
-              R = {k: col_range([r[k] for r in rows]) for k in ("d_num", "p_num")}
+              R = {k: col_range([r[k] for r in rows]) for k in ("d_num", "p_num", "pp_num")}
               out = [
                   f"### {title}",
                   "",
@@ -627,9 +679,10 @@ jobs:
                   '<thead><tr>'
                   '<th width="240">Scenario</th><th width="60">Runs OK</th><th width="90">Image&nbsp;size</th>'
                   '<th>pull</th><th>install</th><th width="90">full&nbsp;dl&nbsp;size</th><th>time to tests</th>'
-                  '<th>Test run</th><th>Total</th>'
+                  '<th>Test run</th><th>perf</th><th>Total</th>'
                   '<th>Δ</th>'
                   '<th>Δ %</th>'
+                  '<th>Δ perf %</th>'
                   '</tr></thead>',
                   '<tbody>',
               ]
@@ -644,9 +697,11 @@ jobs:
                       f'<td>{full_dl_cell(r["sc"], mode)}</td>'
                       f'<td>{r["cell_str"]}</td>'
                       f'<td>{fmt(r["test"])}</td>'
+                      f'<td>{fmt(r["perf"])}</td>'
                       f'<td>{fmt(r["total"])}</td>'
                       f'<td>{badge(r["d_num"], *R["d_num"], r["d"])}</td>'
                       f'<td>{badge(r["p_num"], *R["p_num"], r["p"])}</td>'
+                      f'<td>{badge(r["pp_num"], *R["pp_num"], r["pp"])}</td>'
                       f'</tr>'
                   )
               out.append('</tbody></table>')
@@ -666,7 +721,7 @@ jobs:
                   continue
               key = (sc, mode)
               act_seen.add(key)
-              for k in ("pull", "install", "ttt", "test", "total", "install_dl_mb", "disk_mb"):
+              for k in ("pull", "install", "ttt", "test", "perf", "total", "install_dl_mb", "disk_mb"):
                   if rec.get(k) is not None:
                       act[key][k].append(rec[k])
               act_ok[key][1] += 1
@@ -685,14 +740,16 @@ jobs:
               # node-gyp for gyp tables) — what the user pays on a warm run when the image is cached.
               warm_base = mean_of(act[bkey]["install"])
               disk_base = mean_of(act[bkey].get("disk_mb", []))
+              perf_base = mean_of(act[bkey]["perf"])
               rows = []
               for sc in order_list:
                   if sc in ("baseline", "baseline-gyp"):
                       rows.append({
                           "sc": sc, "pull": None, "install": None, "ttt": None,
-                          "test": None, "total": None, "disk": None,
+                          "test": None, "perf": None, "total": None, "disk": None,
                           "d_num": None, "p_num": None, "wd_num": None, "wp_num": None, "du_num": None,
-                          "cell_str": "—", "d": "—", "p": "—", "wd": "—", "wp": "—", "du": "—",
+                          "pp_num": None,
+                          "cell_str": "—", "d": "—", "p": "—", "wd": "—", "wp": "—", "du": "—", "pp": "—",
                           "ok": 0, "n": 0, "stub": True,
                       })
                       continue
@@ -702,6 +759,8 @@ jobs:
                   cell_str, ttt_m = ttt_cell(act[key]["ttt"])
                   warm_m = mean_of(act[key]["install"])
                   disk_m = mean_of(act[key].get("disk_mb", []))
+                  perf_m = mean_of(act[key]["perf"])
+                  pp, pp_num = perf_delta(sc, ref, perf_m, perf_base)
                   if sc == ref:
                       d, p, wd, wp, du = "—", "—", "—", "—", "—"
                       d_num = p_num = wd_num = wp_num = du_num = None
@@ -723,15 +782,16 @@ jobs:
                       "install": warm_m,
                       "ttt":     ttt_m,
                       "test":    mean_of(act[key]["test"]),
+                      "perf":    perf_m,
                       "total":   mean_of(act[key]["total"]),
                       "disk":    disk_m,
                       "d_num": d_num, "p_num": p_num, "wd_num": wd_num, "wp_num": wp_num,
-                      "du_num": du_num,
-                      "cell_str": cell_str, "d": d, "p": p, "wd": wd, "wp": wp, "du": du,
+                      "du_num": du_num, "pp_num": pp_num,
+                      "cell_str": cell_str, "d": d, "p": p, "wd": wd, "wp": wp, "du": du, "pp": pp,
                       "ok": ok, "n": n, "stub": False,
                   })
               R = {k: col_range([r[k] for r in rows]) for k in
-                   ("d_num", "p_num", "wd_num", "wp_num", "du_num")}
+                   ("d_num", "p_num", "wd_num", "wp_num", "du_num", "pp_num")}
               out = [
                   f"### {title}",
                   "",
@@ -739,13 +799,14 @@ jobs:
                   '<thead><tr>'
                   '<th width="240">Scenario</th><th width="60">Runs OK</th><th width="90">Image&nbsp;size</th>'
                   '<th>pull</th><th>install</th><th width="90">full&nbsp;dl&nbsp;size</th><th>time to tests</th>'
-                  '<th>Test run</th><th>Total</th>'
+                  '<th>Test run</th><th>perf</th><th>Total</th>'
                   '<th width="90">disk&nbsp;usage</th>'
                   '<th>Δ disk %</th>'
                   '<th>Δ</th>'
                   '<th>Δ %</th>'
                   '<th>Δ warm</th>'
                   '<th>Δ % warm</th>'
+                  '<th>Δ perf %</th>'
                   '</tr></thead>',
                   '<tbody>',
               ]
@@ -764,6 +825,7 @@ jobs:
                       f'<td>{full_dl_str}</td>'
                       f'<td>{r["cell_str"]}</td>'
                       f'<td>{fmt(r["test"])}</td>'
+                      f'<td>{fmt(r["perf"])}</td>'
                       f'<td>{fmt(r["total"])}</td>'
                       f'<td>{disk_str}</td>'
                       f'<td>{badge(r["du_num"], *R["du_num"], r["du"])}</td>'
@@ -771,6 +833,7 @@ jobs:
                       f'<td>{badge(r["p_num"],  *R["p_num"],  r["p"])}</td>'
                       f'<td>{badge(r["wd_num"], *R["wd_num"], r["wd"])}</td>'
                       f'<td>{badge(r["wp_num"], *R["wp_num"], r["wp"])}</td>'
+                      f'<td>{badge(r["pp_num"], *R["pp_num"], r["pp"])}</td>'
                       f'</tr>'
                   )
               out.append('</tbody></table>')
@@ -783,6 +846,11 @@ jobs:
               "(configure via the `runs` workflow_dispatch input; 1 = fast iteration, 10 = full 95% CI). "
               "Δ columns are point estimates when n=1; mean ± 95% MoE via Student's t when n≥2. "
               "**Time-to-tests** = job start → the moment `playwright test` begins (queue excluded). "
+              "**Test run** navigates a page served from the checkout itself (`playwright/tests/fixtures`), "
+              "so it carries no DNS, TLS or CDN time. **perf** is the wall time of "
+              "`playwright/bench/runtime-probe.cjs` on the cell's browsers — the same probe "
+              "test-and-publish gates on — and **Δ perf %** compares it to the table's reference row; "
+              "the per-row numbers are in the `perf-*` artifacts. "
               "*Image pull* is the `Initialize containers` step; *Install* is the runtime dep/browser "
               "install that the prebuilt images bake in. Δ is the time earned vs the table's reference row "
               "(hosted → manual install; act → official PW container); − = faster.",
