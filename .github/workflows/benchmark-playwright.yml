@@ -171,8 +171,10 @@ jobs:
       - name: Run runtime probe
         working-directory: playwright
         run: |
-          for b in $([ "${{ matrix.browsers }}" = "all" ] && echo chromium firefox webkit || echo chromium); do
-            node bench/runtime-probe.cjs --browser "$b" --target "${{ matrix.scenario }}" --out perf-out
+          SCENARIO="${{ matrix.scenario }}"
+          BROWSERS="${{ matrix.browsers }}"
+          for b in $([ "$BROWSERS" = "all" ] && echo chromium firefox webkit || echo chromium); do
+            node bench/runtime-probe.cjs --browser "$b" --target "$SCENARIO" --out perf-out
           done
       - name: Upload install download size
         if: always()
@@ -249,9 +251,11 @@ jobs:
         working-directory: playwright
         shell: bash
         run: |
-          [[ "${{ matrix.scenario }}" == official* ]] && export HOME=/root
-          for b in $([ "${{ matrix.browsers }}" = "all" ] && echo chromium firefox webkit || echo chromium); do
-            node bench/runtime-probe.cjs --browser "$b" --target "${{ matrix.scenario }}" --out perf-out
+          SCENARIO="${{ matrix.scenario }}"
+          BROWSERS="${{ matrix.browsers }}"
+          [[ "$SCENARIO" == official* ]] && export HOME=/root
+          for b in $([ "$BROWSERS" = "all" ] && echo chromium firefox webkit || echo chromium); do
+            node bench/runtime-probe.cjs --browser "$b" --target "$SCENARIO" --out perf-out
           done
       - name: Upload install download size
         if: always()
