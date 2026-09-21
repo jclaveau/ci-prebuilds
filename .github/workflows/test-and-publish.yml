@@ -2002,7 +2002,7 @@ jobs:
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           # `<image>` for the hardened (default) flavor; `<image>-sudoer` for the sudoer flavor.
           # The flavor suffix is in the IMAGE NAMESPACE, not in the tag — `:latest` keeps
