@@ -1,0 +1,246 @@
+name: webkit / firefox perf record
+
+# The chromium residual-gap campaign's perf-record arm, pointed at the other
+# two engines. Same instrument, same report: seven passes inside one steady
+# state loop of one runtime-probe row, both arms on ONE runner —
+#
+#   cpu-clock record    where the CPU time goes (DSO, thread, symbol)
+#   callers record      who calls memset (fp unwind, first hop only)
+#   instructions record where the instructions go (needs a PMU; a hosted
+#                       runner without one writes `insn-unavailable`)
+#   perf stat           HW pair, stalls, caches, SW counters, fetch
+#   topdown L1          retiring / bad-spec / frontend / backend (PMU)
+#   perf sched          wakeup→running latency per thread
+#   strace -c -w        syscalls per iteration, wall time
+#
+# — each bracketed by the probe's own iteration counter and normalised per
+# iteration. It exists because webkit and firefox had four workflows between
+# them (wk-perf-record, wk-lag-diagnostics, wk-load-probe, ff-perf-ab) and
+# not one of them collected stat, sched or topdown, nor put the passes in one
+# artifact with one report; the day a webkit or firefox row moves off parity
+# the question is the same one chromium's arm answers.
+#
+# What differs from chromium-gap-probes.yml's perf-record job, and why:
+#
+#   symbols     chromium names its stripped binary from the chain's link
+#               census (nm between link and strip). WebKit keeps an
+#               UNSTRIPPED twin instead: Dockerfile.finalize strips the dist,
+#               so the producer's `wk-wpe-4-sha-<sha>` intermediate still
+#               carries .symtab at /work/minibrowser-wpe-dist. Pass it as
+#               symbols_image and perf-profile.sh serves it to perf through a
+#               symfs — same build-id, names resolve natively, no PIE
+#               arithmetic. Firefox has no twin anywhere: its objdir is a
+#               BuildKit cache mount and `mach package` strips, so its
+#               samples stay per-DSO until the producer keeps a census.
+#   no trace    trace-probe.cjs is CDP tracing; neither engine has it.
+#   no memset   the counting-memset shim rewrites chromium's launch wrapper.
+#
+# Informational, dispatch-only, gates nothing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      browser:
+        description: 'Engine to profile'
+        default: 'webkit'
+        type: choice
+        options: [webkit, firefox]
+      perf_image:
+        description: 'A CONSUMER image carrying the shipped browser (Docker Hub has :latest, GHCR has sha-<40> and edge)'
+        default: 'jclaveau/alpine-dood-playwright:latest'
+        type: string
+      pw_version:
+        description: 'Playwright version to drive the probes, and the MCR control tag'
+        default: '1.62.1'
+        type: string
+      perf_kernels:
+        description: 'CSV of perf-kernel.cjs kernels: launch, context_page, goto_cold, goto_warm, layout_reflow, eval_rtt, locator_click, click_force, screenshot_png_text, screenshot_png, dom_churn, js_alloc, int_math, libm_fmod, layout_boxonly, layout_text'
+        default: 'goto_warm,goto_cold,layout_reflow,click_force,eval_rtt,screenshot_png_text,launch'
+        type: string
+      perf_loop_seconds:
+        description: 'How long each kernel loops in steady state (the seven passes need ~150; the loop must outlast them)'
+        default: '200'
+        type: string
+      symbols_image:
+        description: 'webkit only: the unstripped producer intermediate for our arm (ghcr.io/jclaveau/playwright-alpine-browsers:wk-wpe-4-sha-<sha> of the chain that built the browser in perf_image); empty = unnamed'
+        default: ''
+        type: string
+      symbols_path:
+        description: 'Directory inside symbols_image holding the unstripped dist'
+        default: '/work/minibrowser-wpe-dist'
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.browser }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  perf-record:
+    # Both arms in ONE job: hosted runners hand out different CPU models per
+    # job, and two profiles taken on different machines cannot be compared
+    # cell for cell.
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      BROWSER: ${{ inputs.browser }}
+      OURS: ${{ inputs.perf_image }}
+      PW: ${{ inputs.pw_version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Let perf see the machine
+        run: |
+          set -euo pipefail
+          # Ubuntu ships perf_event_paranoid=4, which forbids system-wide
+          # sampling outright. The runner is disposable and we are root on it.
+          sudo sysctl -w kernel.perf_event_paranoid=-1
+          sudo sysctl -w kernel.kptr_restrict=0
+          # Which silicon this landed on decides how to read the result: a
+          # hosted 8573C has no PMU (instructions/topdown absent), an EPYC has.
+          grep -m1 'model name' /proc/cpuinfo || true
+
+      - name: Resolve every image ref before spending the run
+        env:
+          SYMBOLS: ${{ inputs.symbols_image }}
+        run: |
+          set -euo pipefail
+          docker manifest inspect "$OURS" > /dev/null
+          docker manifest inspect "mcr.microsoft.com/playwright:v${PW}-noble" > /dev/null
+          [ -z "$SYMBOLS" ] || docker manifest inspect "$SYMBOLS" > /dev/null
+          echo "refs resolve"
+
+      - name: Build the arms (each with its own distro's perf)
+        run: |
+          set -euo pipefail
+          mkdir -p perf-out symbols && chmod 777 perf-out symbols
+          docker build --build-arg "BASE=$OURS" \
+            -t perf-alpine:${{ github.run_id }} \
+            -f playwright/bench/Dockerfile.perf-alpine playwright/bench
+          docker build \
+            --build-arg "BASE=mcr.microsoft.com/playwright:v${PW}-noble" \
+            -t perf-official:${{ github.run_id }} \
+            -f playwright/bench/Dockerfile.perf-official playwright/bench
+
+      - name: Fetch the unstripped twin that names our engine
+        if: inputs.symbols_image != ''
+        env:
+          SYMBOLS: ${{ inputs.symbols_image }}
+          SYMBOLS_PATH: ${{ inputs.symbols_path }}
+        run: |
+          set -euo pipefail
+          # Out of perf-out on purpose: the dist is ~1 GB of ELF and the
+          # artifact wants the reports, not the library they were named from.
+          docker create --name symbols "$SYMBOLS" /bin/true >/dev/null
+          docker cp "symbols:${SYMBOLS_PATH}/." symbols/
+          docker rm -f symbols >/dev/null
+          case "$BROWSER" in
+            webkit) twin=$(find symbols -name 'libWPEWebKit-*.so.*.*.*' -type f | head -1) ;;
+            firefox) twin=$(find symbols -name libxul.so -type f | head -1) ;;
+          esac
+          test -n "$twin"
+          symtabs=$(readelf -S -W "$twin" | grep -c '\.symtab' || true)
+          echo "twin: $twin ($(stat -c %s "$twin") bytes, .symtab sections: ${symtabs:-0})"
+          # A stripped twin is not a twin; refuse rather than name nothing
+          # after an hour of profiling.
+          test "${symtabs:-0}" -gt 0
+
+      - name: Profile every kernel on both arms
+        env:
+          KERNELS: ${{ inputs.perf_kernels }}
+          LOOP: ${{ inputs.perf_loop_seconds }}
+        run: |
+          set -o pipefail
+          rc=0
+          for kernel in $(echo "$KERNELS" | tr ',' ' '); do
+            # Arms interleaved per kernel rather than run in blocks: a runner
+            # that slows down partway through would otherwise land entirely
+            # on whichever arm went second.
+            for target in alpine official; do
+              if [ "$target" = official ]; then
+                image="perf-official:${{ github.run_id }}"
+                perfbin=/usr/local/bin/perf-real
+              else
+                image="perf-alpine:${{ github.run_id }}"
+                perfbin=perf
+              fi
+              echo "::group::${target} / ${kernel}"
+              cname="perfrec-${target}-${kernel}"
+              docker rm -f "$cname" >/dev/null 2>&1 || true
+              # --privileged for perf_event_open on every CPU, root because
+              # capabilities in a privileged container only reach uid 0.
+              # seccomp=unconfined is what the consumer image documents for
+              # webkit. tracefs for `perf sched`, --pid=host so the sched
+              # tracepoints' pids meet the names in /proc (see the chromium
+              # job for the first run that read every row as `:pid`). The
+              # cgroup filter (-G /) still scopes the samples to this
+              # container. The engine's own preloads (mimalloc, fastfmod,
+              # zlib-ng) come from the image's launch shim, untouched: this
+              # profiles the browser as shipped.
+              docker run --rm --name "$cname" \
+                --privileged \
+                --pid=host \
+                --user root \
+                --security-opt seccomp=unconfined \
+                --env HOME=/root \
+                --env "PROBE_BROWSER=$BROWSER" \
+                --env "PROBE_TARGET=$target" \
+                --env "PROBE_KERNEL=$kernel" \
+                --env "PW_VERSION=$PW" \
+                --env "PERF_BIN=$perfbin" \
+                --env "PERF_LOOP_SECONDS=$LOOP" \
+                --env "PERF_SYMBOLS_DIR=/symbols" \
+                -v /sys/kernel/tracing:/sys/kernel/tracing:ro \
+                -v /sys/kernel/debug:/sys/kernel/debug:ro \
+                -v "$PWD/playwright/bench:/probe:ro" \
+                -v "$PWD/playwright/scripts:/pwscripts:ro" \
+                -v "$PWD/symbols:/symbols:ro" \
+                -v "$PWD/perf-out:/out" \
+                "$image" \
+                sh -c '
+                  NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+                  export NODE_PATH
+                  node -e "require(\"playwright\")" 2>/dev/null \
+                    || npm install -g --no-fund --no-audit \
+                         "playwright@$PW_VERSION" >/dev/null 2>&1
+                  sh /probe/perf-profile.sh "$PROBE_TARGET" "$PROBE_KERNEL" \
+                     /out /probe/perf-kernel.cjs "$PERF_BIN"
+                ' 2>&1 | tee "perf-out/perfrec-${target}-${kernel}.log" || rc=1
+              docker rm -f "$cname" >/dev/null 2>&1 || true
+              echo "::endgroup::"
+            done
+          done
+          exit "$rc"
+
+      # perf runs as root inside the container and perf.data is mode 0600, so
+      # upload-artifact — which runs as the unprivileged runner — dies with
+      # EACCES on it and takes the whole job red AFTER every measurement has
+      # already been taken. Hand the tree back before it gets there.
+      - name: Give the profile back to the runner
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" perf-out || true
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "### ${BROWSER} perf record — \`$OURS\` vs official"
+            python3 playwright/bench/perf-record-report.py perf-out
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ inputs.browser }}-perf-record
+          path: perf-out/
+          if-no-files-found: warn
+          retention-days: 30

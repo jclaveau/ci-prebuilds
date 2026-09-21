@@ -39,6 +39,14 @@
 # be normalised per iteration on its own, not by a rate extrapolated from the
 # whole loop.
 #
+# Browser-generic since the webkit/firefox arm (browser-perf-record.yml):
+# PROBE_BROWSER picks the engine perf-kernel.cjs drives, the binary the census
+# names, the DSO the symbol tables select and the process pattern strace
+# attaches to. Names for a stripped webkit/firefox come from an unstripped
+# twin the caller drops in $PERF_SYMBOLS_DIR (the producer's pre-strip dist),
+# served to perf through a symfs — the same file with its .symtab kept, so
+# build-ids agree and perf accepts it for the mapping it recorded.
+#
 # usage: perf-profile.sh <target> <kernel> <outdir> <probe.cjs> <perf-binary>
 set -eu
 
@@ -47,6 +55,33 @@ KERNEL="${2:?kernel}"
 OUT="${3:?outdir}"
 PROBE="${4:?probe path}"
 PERF="${5:?perf binary}"
+BROWSER="${PROBE_BROWSER:-chromium}"
+SYMBOLS_DIR="${PERF_SYMBOLS_DIR:-/out/symbols}"
+
+case "$BROWSER" in
+  chromium)
+    # The .real behind the sh shim where the consumer image has one.
+    BIN=$(ls /ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell.real 2>/dev/null \
+       || ls /ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell 2>/dev/null \
+       || true)
+    DSO_PATTERN='chrome-headless-shell'
+    PROC_PATTERN='^/ms-playwright/[^ ]*chrome-headless-shell' ;;
+  webkit)
+    BIN=$(ls /ms-playwright/webkit-*/minibrowser-wpe/libWPEWebKit-*.so.*.*.* 2>/dev/null | head -1 || true)
+    DSO_PATTERN='libWPEWebKit'
+    # MiniBrowser, WPEWebProcess, WPENetworkProcess, WPEGPUProcess: every
+    # one execs from the bundle dir.
+    PROC_PATTERN='^/ms-playwright/webkit-[^ ]*/minibrowser-wpe/' ;;
+  firefox)
+    BIN=$(ls /ms-playwright/firefox-*/firefox/libxul.so 2>/dev/null | head -1 || true)
+    DSO_PATTERN='libxul'
+    # firefox.real behind the shim on ours, firefox on official; content and
+    # utility processes re-exec the same binary.
+    PROC_PATTERN='^/ms-playwright/firefox-[^ ]*/firefox/firefox' ;;
+  *)
+    echo "unknown PROBE_BROWSER $BROWSER" >&2
+    exit 2 ;;
+esac
 
 # The probe loops for LOOP seconds; sampling takes the first RECORD_WINDOW of
 # that and counting the next STAT_WINDOW, both strictly inside the steady state
@@ -79,8 +114,8 @@ window_close() {
 }
 
 echo "=== ${TARGET} / ${KERNEL}: starting probe ==="
-node "$PROBE" --target "$TARGET" --kernel "$KERNEL" --seconds "$LOOP" \
-  --out "$OUT" --ready "$READY" > "$PROBE_LOG" 2>&1 &
+node "$PROBE" --browser "$BROWSER" --target "$TARGET" --kernel "$KERNEL" \
+  --seconds "$LOOP" --out "$OUT" --ready "$READY" > "$PROBE_LOG" 2>&1 &
 PROBE_PID=$!
 
 # Poll for the probe's own steady-state marker rather than sleeping a guessed
@@ -149,10 +184,6 @@ echo "$RECORD_WINDOW" > "${OUT}/${TARGET}-${KERNEL}-window"
 # passes they pushed the later passes past the end of the loop — the first
 # local run had `stat`, `topdown` and `sched` bracketed 463→463 iterations,
 # i.e. sampling an exited browser. Capture first, read later.
-BIN=$(ls /ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell.real 2>/dev/null \
-   || ls /ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell 2>/dev/null \
-   || true)
-DSO=$(basename "${BIN:-chrome-headless-shell}")
 
 # A SECOND record, for callers only. The flat pass above answers "which DSO
 # burns the time"; run 34406201201 answered it — `memset` in ld-musl is 6.30% of
@@ -288,7 +319,7 @@ window_close
 # substring would also match the shell whose -c script mentions the wrapper
 # path, and strace would attach to itself.
 if command -v strace >/dev/null 2>&1; then
-  pids=$(pgrep -f '^/ms-playwright/[^ ]*chrome-headless-shell' | sed 's/^/-p /' | tr '\n' ' ')
+  pids=$(pgrep -f "$PROC_PATTERN" | sed 's/^/-p /' | tr '\n' ' ')
   if [ -n "$pids" ]; then
     window_open strace "$STRACE_WINDOW"
     # shellcheck disable=SC2086
@@ -316,6 +347,39 @@ head -40 "${OUT}/${TARGET}-${KERNEL}-dso.txt"
 
 "$PERF" report -i "$DATA" --stdio --sort comm,dso --percent-limit 0.1 -g none \
   > "${OUT}/${TARGET}-${KERNEL}-comm-dso.txt" 2>&1 || true
+
+# The engine's DSO as perf names it — the basename of the path the loader
+# mapped, which for a library is its soname symlink (libWPEWebKit-2.0.so.1)
+# and not the file the build produced. Read from the profile rather than
+# guessed from the filesystem for that reason.
+DSO=$(grep -o "${DSO_PATTERN}[^ ]*" "${OUT}/${TARGET}-${KERNEL}-dso.txt" | head -1)
+DSO="${DSO:-$(basename "${BIN:-$DSO_PATTERN}")}"
+echo "engine DSO: ${DSO}"
+
+# A symfs for a stripped engine whose unstripped twin the caller mounted: the
+# tree perf resolves is the container's own, with the one library swapped.
+# Symlinks, not copies — perf opens symfs + recorded path, and a link is
+# enough for everything except the twin itself.
+SYMFS=""
+if [ -d "$SYMBOLS_DIR" ] && [ "$BROWSER" != chromium ]; then
+  mapped=$(find /ms-playwright -name "$DSO" 2>/dev/null | head -1)
+  real=$(readlink -f "${mapped:-/nonexistent}" 2>/dev/null || true)
+  twin=$(find "$SYMBOLS_DIR" -name "$(basename "${real:-/nonexistent}")" -type f 2>/dev/null | head -1)
+  if [ -n "$mapped" ] && [ -n "$twin" ] \
+     && [ "$(readelf -S -W "$twin" | grep -c '\.symtab')" -gt 0 ]; then
+    SYMFS=/tmp/symfs
+    rm -rf "$SYMFS"
+    mkdir -p "$SYMFS$(dirname "$mapped")"
+    for d in /lib /lib64 /usr; do
+      [ -e "$d" ] && ln -s "$d" "$SYMFS$d"
+    done
+    cp -rs "$(dirname "$mapped")/." "$SYMFS$(dirname "$mapped")/"
+    ln -sf "$twin" "$SYMFS$mapped"
+    echo "symfs: ${mapped} -> ${twin} ($(stat -c %s "$twin") bytes, .symtab kept)"
+  else
+    echo "no unstripped twin for ${DSO} under ${SYMBOLS_DIR} — engine samples stay unnamed"
+  fi
+fi
 "$PERF" report -i "$DATA" --stdio --sort dso,sym --percent-limit 0.1 -g none \
   > "${OUT}/${TARGET}-${KERNEL}-sym.txt" 2>&1 || true
 
@@ -326,10 +390,29 @@ head -40 "${OUT}/${TARGET}-${KERNEL}-dso.txt"
   --percent-limit 0 -g none \
   > "${OUT}/${TARGET}-${KERNEL}-commsym.txt" 2>&1 || true
 
+# Names straight from perf when the twin is in the symfs: the engine's
+# samples resolve like any other DSO's, no census and no PIE arithmetic.
+# Same file name as the census path writes, so the report embeds either.
+named_symbols() {
+  {
+    echo "### ${TARGET} / ${KERNEL} — hot symbols, $2, ${DSO} named from its unstripped twin"
+    echo
+    echo '```'
+    "$PERF" report -i "$1" --stdio -n --sort comm,sym --dsos "$DSO" --symfs "$SYMFS" \
+      --percent-limit 0.2 -g none 2>/dev/null | grep -v '^#' | grep -v '^$' | head -60
+    echo '```'
+  } > "$3" || true
+}
+if [ -n "$SYMFS" ]; then
+  named_symbols "$DATA" "time-weighted (cpu-clock)" "${OUT}/${TARGET}-${KERNEL}-symbols.md"
+  head -50 "${OUT}/${TARGET}-${KERNEL}-symbols.md"
+fi
+
 if [ -s "$CG_DATA" ]; then
   echo "--- ${TARGET} / ${KERNEL}: callers ---"
+  # shellcheck disable=SC2086
   "$PERF" report -i "$CG_DATA" --stdio --no-children -g graph,0.5,caller \
-    --sort dso,sym --percent-limit 0.5 \
+    --sort dso,sym --percent-limit 0.5 ${SYMFS:+--symfs "$SYMFS"} \
     > "${OUT}/${TARGET}-${KERNEL}-callers.txt" 2>&1 || true
   head -60 "${OUT}/${TARGET}-${KERNEL}-callers.txt"
 
@@ -350,8 +433,9 @@ if [ -s "$CG_DATA" ]; then
   #     debug symbols, which perf finds by build-id.
   #
   # A control that cannot show anything is not a control.
+  # shellcheck disable=SC2086
   "$PERF" report -i "$CG_DATA" --stdio --no-children -g graph,0,caller \
-    --sort dso,sym --symbol-filter=memset \
+    --sort dso,sym --symbol-filter=memset ${SYMFS:+--symfs "$SYMFS"} \
     > "${OUT}/${TARGET}-${KERNEL}-memset-callers.txt" 2>&1 || true
   cat "${OUT}/${TARGET}-${KERNEL}-memset-callers.txt"
 fi
@@ -368,6 +452,9 @@ if [ -s "$INSN_DATA" ] && [ "$("$PERF" report -i "$INSN_DATA" --stdio --sort dso
     > "${OUT}/${TARGET}-${KERNEL}-insn-commsym.txt" 2>&1 || true
   echo "--- ${TARGET} / ${KERNEL}: by DSO, instruction-weighted ---"
   head -20 "${OUT}/${TARGET}-${KERNEL}-insn-dso.txt"
+  if [ -n "$SYMFS" ]; then
+    named_symbols "$INSN_DATA" "instruction-weighted" "${OUT}/${TARGET}-${KERNEL}-insn-symbols.md"
+  fi
 else
   echo "instructions record produced no samples (no hardware PMU on this runner)" \
     | tee "${OUT}/${TARGET}-${KERNEL}-insn-unavailable"
@@ -379,24 +466,26 @@ rm -f "$INSN_DATA"
 # offset, nm's is a virtual address, and the .text LOAD segment's
 # p_vaddr - p_offset is the difference (0x1000 on every build so far, but a
 # different linker script would move it silently).
-if [ -n "$BIN" ] && [ -s /out/census/symtab.nm.gz ]; then
+if [ -n "$SYMFS" ]; then
+  : # named above, straight from perf, through the symfs
+elif [ -n "$BIN" ] && [ -s /out/census/symtab.nm.gz ]; then
   set -- $(readelf -lW "$BIN" | awk '/LOAD/ && / R E /{print $2, $3; exit}')
   DELTA=$(printf '0x%x' $(( $2 - $1 )))
   echo "symbolizing ${DSO} with /out/census (PIE delta ${DELTA})"
-  python3 /probes/perf-symbolize.py --nm /out/census/symtab.nm.gz \
+  python3 /probe/perf-symbolize.py --nm /out/census/symtab.nm.gz \
     --binary "$BIN" --delta "$DELTA" \
     --report "${OUT}/${TARGET}-${KERNEL}-commsym.txt" --top 40 --annotate 8 \
     --title "${TARGET} / ${KERNEL} — hot symbols, time-weighted (cpu-clock)" \
     > "${OUT}/${TARGET}-${KERNEL}-symbols.md" 2>&1 || true
   head -50 "${OUT}/${TARGET}-${KERNEL}-symbols.md"
   if [ -s "${OUT}/${TARGET}-${KERNEL}-insn-commsym.txt" ]; then
-    python3 /probes/perf-symbolize.py --nm /out/census/symtab.nm.gz \
+    python3 /probe/perf-symbolize.py --nm /out/census/symtab.nm.gz \
       --binary "$BIN" --delta "$DELTA" \
       --report "${OUT}/${TARGET}-${KERNEL}-insn-commsym.txt" --top 40 --annotate 4 \
       --title "${TARGET} / ${KERNEL} — hot symbols, instruction-weighted" \
       > "${OUT}/${TARGET}-${KERNEL}-insn-symbols.md" 2>&1 || true
   fi
-elif [ "$TARGET" = alpine ]; then
+elif [ "$TARGET" = alpine ] && [ "$BROWSER" = chromium ]; then
   echo "no link census at /out/census — main-binary samples stay unnamed (pass census_run_id)"
 fi
 

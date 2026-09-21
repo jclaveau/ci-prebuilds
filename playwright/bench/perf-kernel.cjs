@@ -20,9 +20,18 @@
  * is load-bearing here is `iterations` (so a profile can be normalised per
  * iteration) and the output digest (so both arms are provably doing identical
  * work, the way screenshot-encode-probe.cjs establishes it).
+ *
+ * Written for chromium and now driven for all three browsers (`--browser`):
+ * the loop, the ready marker and the progress file are what the profiler
+ * needs and none of it is engine-specific. The kernels named after
+ * runtime-probe.cjs rows (goto_*, layout_reflow, click_force, locator_click,
+ * eval_rtt, context_page, dom_churn, js_alloc, int_math, libm_fmod,
+ * screenshot_png_text) copy that probe's page and actions verbatim, so a
+ * profile taken here describes the row whose ratio is on record.
  */
 
 const crypto = require('node:crypto');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
@@ -110,6 +119,121 @@ const REFLOW_HTML = `<!doctype html>
     pad.appendChild(d);
   }
 </script></body></html>`;
+
+// runtime-probe.cjs's page, verbatim: 100 buttons for the click rows, the
+// reflow target, a churn root and the 800-row pad. The click kernels need the
+// buttons and the in-page kernels their ids, and a profile of a different
+// page would answer a question nobody asked.
+const BUTTONS = 100;
+const PROBE_HTML = `<!doctype html>
+<html><head><meta charset="utf-8"><title>probe</title><style>
+  body { margin: 0; font: 12px/1.2 sans-serif; }
+  #pad div { padding: 1px 2px; border-bottom: 1px solid #eee; }
+  #btns button { width: 58px; height: 18px; font-size: 9px; padding: 0; margin: 1px; }
+  #layout { height: 20px; background: #ccc; }
+</style></head><body>
+<div id="btns"></div>
+<div id="layout"></div>
+<div id="churn"></div>
+<div id="pad"></div>
+<script>
+  window.__clicks = 0;
+  const btns = document.getElementById('btns');
+  for (let i = 0; i < ${BUTTONS}; i++) {
+    const b = document.createElement('button');
+    b.id = 'b' + i;
+    b.textContent = 'b' + i;
+    b.addEventListener('click', () => { window.__clicks++; });
+    btns.appendChild(b);
+  }
+  const pad = document.getElementById('pad');
+  for (let i = 0; i < 800; i++) {
+    const d = document.createElement('div');
+    d.className = 'p' + (i % 16);
+    d.textContent = 'row ' + i + ' lorem ipsum dolor sit amet';
+    pad.appendChild(d);
+  }
+</script></body></html>`;
+
+// Clicks every button once and asserts the page saw all of them, as
+// runtime-probe.cjs does: a click that silently misses would turn the kernel
+// into a measurement of nothing.
+async function clickAll(page, options) {
+  await page.evaluate(() => {
+    window.__clicks = 0;
+  });
+  for (let i = 0; i < BUTTONS; i++) {
+    await page.locator(`#b${i}`).click(options);
+  }
+  const clicks = await page.evaluate(() => window.__clicks);
+  if (clicks !== BUTTONS) {
+    throw new Error(`registered ${clicks} clicks, expected ${BUTTONS}`);
+  }
+  return { tag: `clicks=${clicks}` };
+}
+
+// runtime-probe.cjs's self-timed in-page kernels, verbatim. Each returns the
+// milliseconds IT measured, so the number never includes the evaluate() round
+// trip, and a checksum that has to agree between the arms.
+const IN_PAGE = {
+  dom_churn: `() => {
+    const root = document.getElementById('churn');
+    const t0 = performance.now();
+    for (let i = 0; i < 160000; i++) {
+      const d = document.createElement('div');
+      d.className = 'c' + (i & 7);
+      d.textContent = 'n' + i;
+      root.appendChild(d);
+      if (i & 1) { root.removeChild(d); }
+    }
+    const ms = performance.now() - t0;
+    const checksum = root.childElementCount;
+    root.textContent = '';
+    return { ms, checksum };
+  }`,
+
+  js_alloc: `() => {
+    const t0 = performance.now();
+    let acc = 0;
+    for (let i = 0; i < 24000000; i++) {
+      const o = { a: i, b: i + 1, c: 's' + (i & 255) };
+      acc += o.a + o.b + o.c.length;
+    }
+    return { ms: performance.now() - t0, checksum: acc };
+  }`,
+
+  // Integer-only: Math.imul + |0 keep every value in int32, so this compiles
+  // to integer machine code with NO libm call.
+  int_math: `() => {
+    const t0 = performance.now();
+    let x = 1 | 0;
+    for (let i = 0; i < 150000000; i++) {
+      x = (Math.imul(x, 1664525) + 1013904223) | 0;
+    }
+    return { ms: performance.now() - t0, checksum: x };
+  }`,
+
+  // The ENGINE's double-modulo path, not libc's (issue #126): JSC and V8
+  // serve `%` on doubles themselves; only firefox reaches a libm.
+  libm_fmod: `() => {
+    const t0 = performance.now();
+    let x = 0;
+    for (let i = 1; i < 9000000; i++) {
+      x += (i * 2654435761) % 4294967291;
+    }
+    return { ms: performance.now() - t0, checksum: x };
+  }`,
+};
+
+function inPageKernel(source) {
+  return {
+    page: PROBE_HTML,
+    run: async (page) => {
+      const r = await page.evaluate(`(${source})()`);
+      return { ms: r.ms, tag: `checksum=${r.checksum}` };
+    },
+  };
+}
 
 // Same 800 rows / 300 forced reflows as chromium-gap-probe.cjs, so a profile
 // taken here describes the kernel whose ratio is already on record rather than
@@ -266,6 +390,49 @@ const KERNELS = {
       return { tag: `rows=${rows}` };
     },
   },
+  // runtime-probe.cjs's `context_page`: the context + page lifecycle, paid
+  // once per test under Playwright's default of one context per test.
+  context_page: {
+    page: PROBE_HTML,
+    run: async (_page, { browser }) => {
+      const ctx = await browser.newContext();
+      const page = await ctx.newPage();
+      await page.close();
+      await ctx.close();
+      return { tag: 'context_page' };
+    },
+  },
+
+  // runtime-probe.cjs's `eval_rtt`: 500 trivial evaluates, the protocol
+  // round trip every Playwright action pays.
+  eval_rtt: {
+    page: PROBE_HTML,
+    run: async (page) => {
+      let acc = 0;
+      for (let i = 0; i < 500; i++) {
+        acc += await page.evaluate(() => 1);
+      }
+      return { tag: `evals=${acc}` };
+    },
+  },
+
+  // runtime-probe.cjs's two click rows. `locator_click` is frame-cadence
+  // bound (the stability check waits for two identical frames); `click_force`
+  // skips the waiting and is the CPU half of an action.
+  locator_click: {
+    page: PROBE_HTML,
+    run: (page) => clickAll(page, {}),
+  },
+  click_force: {
+    page: PROBE_HTML,
+    run: (page) => clickAll(page, { force: true }),
+  },
+
+  dom_churn: inPageKernel(IN_PAGE.dom_churn),
+  js_alloc: inPageKernel(IN_PAGE.js_alloc),
+  int_math: inPageKernel(IN_PAGE.int_math),
+  libm_fmod: inPageKernel(IN_PAGE.libm_fmod),
+
   /*
    * Not an in-page kernel: what `launch` measures IS the browser lifecycle, so
    * this one owns its browser instead of borrowing the shared page.
@@ -278,14 +445,50 @@ const KERNELS = {
    */
   launch: {
     standalone: true,
-    run: async (playwright, browserArgs) => {
-      const browser = await playwright.chromium.launch({ args: browserArgs });
+    run: async (browserType, browserArgs) => {
+      const browser = await browserType.launch({ args: browserArgs });
       const version = browser.version();
       await browser.close();
       return { tag: `version=${version}` };
     },
   },
 };
+
+/*
+ * Asks the shipped artifact what it is, as runtime-probe.cjs does. Chromium's
+ * executablePath() names the full chrome, which the from-source artifact does
+ * not ship, so the headless-shell sibling is looked up; webkit has no binary
+ * that answers --version (executablePath() is pw_run.sh) and is read from the
+ * so-name of the library the build produced. Never throws: a probe that dies
+ * reading metadata loses the profile.
+ */
+function shippedVersion(browserType, browserName) {
+  try {
+    let exe = browserType.executablePath();
+    if (browserName === 'chromium' && !fs.existsSync(exe)) {
+      const root = path.dirname(path.dirname(path.dirname(exe)));
+      const shell = fs.readdirSync(root).find((d) => /headless[_-]shell/.test(d));
+      exe = path.join(root, shell, 'chrome-headless-shell-linux64',
+        'chrome-headless-shell');
+    }
+    if (browserName === 'webkit') {
+      const soRe = /^libWPEWebKit-[\d.]+\.so\.(\d+\.\d+\.\d+)$/;
+      for (const entry of fs.readdirSync(path.dirname(exe), { recursive: true })) {
+        const found = path.basename(entry).match(soRe);
+        if (found) {
+          return `libWPEWebKit ${found[1]}`;
+        }
+      }
+      return 'unknown';
+    }
+    const out = execFileSync(exe, ['--version'], {
+      encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return out.trim().split('\n')[0].trim() || 'unknown';
+  } catch (err) {
+    return `unknown (${err.message.split('\n')[0]})`;
+  }
+}
 
 function digestTag(buf) {
   const sha = crypto.createHash('sha256').update(buf).digest('hex');
@@ -306,28 +509,37 @@ async function main() {
       + `${Object.keys(KERNELS).join(', ')}`);
   }
 
-  const playwright = require('playwright');
-  // Space-separated extra chromium flags. A build-config difference and a
+  const browserName = arg('browser', 'chromium');
+  const browserType = require('playwright')[browserName];
+  if (!browserType) {
+    throw new Error(`unknown browser "${browserName}"`);
+  }
+  // Space-separated extra browser flags. A build-config difference and a
   // runtime-flag difference produce the same profile, and only one of them
   // costs a 25-30 h rebuild — so the flag has to be testable first.
   const browserArgs = arg('browser-args', '').split(' ').filter(Boolean);
+  // What the shipped binary says it is, beside what Playwright believes: for
+  // webkit `browser.version()` is a playwright-core constant, the same on
+  // both arms whatever was built, so the parity check below is vacuous there
+  // and only the so-name read from the artifact can carry it.
+  const binaryVersion = shippedVersion(browserType, browserName);
 
   // A standalone kernel launches its own browser every iteration, so it gets
   // no shared page, no server and no warm browser to hold open. It still needs
   // a version for the parity assert below, and one throwaway launch is the
   // cheapest place to read it.
   if (kernel.standalone) {
-    const probe = await playwright.chromium.launch({ args: browserArgs });
+    const probe = await browserType.launch({ args: browserArgs });
     const version = probe.version();
     await probe.close();
     return loop({
-      target, kernelName, seconds, warmupSeconds, outDir, readyFile,
-      browserArgs, browserVersion: version, kernel,
-      runOnce: () => kernel.run(playwright, browserArgs),
+      target, browserName, binaryVersion, kernelName, seconds, warmupSeconds,
+      outDir, readyFile, browserArgs, browserVersion: version, kernel,
+      runOnce: () => kernel.run(browserType, browserArgs),
     });
   }
 
-  const browser = await playwright.chromium.launch({ args: browserArgs });
+  const browser = await browserType.launch({ args: browserArgs });
   const ctx = await browser.newContext({
     viewport: { width: 1280, height: 720 },
   });
@@ -355,8 +567,8 @@ async function main() {
   // profile that includes them describes startup, which is a different question
   // and already answered.
   await loop({
-    target, kernelName, seconds, warmupSeconds, outDir, readyFile,
-    browserArgs, browserVersion: browser.version(), kernel,
+    target, browserName, binaryVersion, kernelName, seconds, warmupSeconds,
+    outDir, readyFile, browserArgs, browserVersion: browser.version(), kernel,
     runOnce: () => kernel.run(page, { url, browser }),
     teardown: async () => {
       await ctx.close();
@@ -367,8 +579,8 @@ async function main() {
 }
 
 async function loop({
-  target, kernelName, seconds, warmupSeconds, outDir, readyFile,
-  browserArgs, browserVersion, kernel, runOnce, teardown,
+  target, browserName, binaryVersion, kernelName, seconds, warmupSeconds,
+  outDir, readyFile, browserArgs, browserVersion, kernel, runOnce, teardown,
 }) {
   const warmupEnd = Date.now() + warmupSeconds * 1000;
   let tag = '';
@@ -418,6 +630,7 @@ async function loop({
   const cpu = os.cpus()[0];
   const result = {
     target,
+    browser: browserName,
     kernel: kernelName,
     seconds,
     iterations: samples.length,
@@ -432,6 +645,7 @@ async function loop({
     // comparison, and every version tag in this repo is derived from a pin
     // rather than read from the artifact unless something like this reads it.
     browser_version: browserVersion,
+    binary_version: binaryVersion,
     libc: fs.existsSync('/lib/ld-musl-x86_64.so.1') ? 'musl' : 'glibc',
     runner: { cpu: cpu ? cpu.model : 'unknown', cores: os.cpus().length },
   };
