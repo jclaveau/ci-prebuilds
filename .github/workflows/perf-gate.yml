@@ -103,7 +103,11 @@ jobs:
           stage() {
             local arm="$1" tag="$2"
             echo "::group::stage ${arm} (${repo}:${tag})"
+            # Dockerfile.alpine's BASE_IMAGE default is the Docker Hub `latest`,
+            # which TP never builds from (build-layer passes the ghcr sha tag) and
+            # whose sudo asks for a password; `edge` is what main last published.
             docker build -f playwright/Dockerfile.alpine \
+              --build-arg "BASE_IMAGE=ghcr.io/jclaveau/alpine-dood-pnpm:edge" \
               --build-arg "${prefix}_SOURCE_TAG=${tag}" \
               --build-arg "${prefix}_REV=${REV}" \
               --build-arg "PLAYWRIGHT_VERSION=${PW}" \
