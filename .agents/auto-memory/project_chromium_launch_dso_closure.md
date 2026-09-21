@@ -183,7 +183,7 @@ independently of the compute controls, so the invalid-cell gate in
 (PR #217's first `Test and Publish` read `launch` 2.71x the same way).
 
 **How to apply:** the shipping candidate is unbundle (`2f82e9e`, stale vs
-main — rebase, then ~38h build + promote); textstack is not worth carrying.
+main — rebase, then ~38h build + promote); textstack is not worth carrying FOR LAUNCH — but its `goto_cold` 0.79x n=1 in the same run was never read; re-opened for nav 2026-09-21 (PR #277, [[project_chromium_residual_gap_candidates]]).
 Expected consumer-image `launch` ≈ 1.33 x 0.79 ≈ **1.05x** vs official.
 
 **The consumer image's `sh` wrapper is NOT a launch lever — PARKED 2026-09-18

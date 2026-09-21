@@ -1,6 +1,6 @@
 ---
 name: project_chromium_residual_gap_candidates
-description: CAMPAIGN REOPENED 2026-09-19 — 5-run/cpu sample (18 draws, 4 fleet CPUs) proved startup's 1.05x IS noise (tz fix from PR #266 holds, that row stays closed) but nav 1.06-1.14x, layout 1.11x on EPYC 7763, input 1.02-1.06x, and screenshot 1.24-1.50x on Intel are real on 18/18 draws; per jean's rule the bar is now ≤1.00 not ≤1.05; new perf-record counter-table instrument (PR #268, kernels goto_warm/goto_cold) shows nav is the OPPOSITE of the old layout finding — +50% instructions but BETTER icache/iTLB than official, so not code-layout/orderfile, something executes more code per navigation; chromium residual was 12% after both knobs — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (parity arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (same calls per iteration and same sizes as official to 0.5%/bucket, all interposable); clang 22-vs-23 is LIVE — layout 0.87x vs the shipped build on the slow runner (0.96 fast), vs official 1.40 (was 1.61), geomean 1.10; official codegen flags (aports' compiler.patch) DEAD at 1.01~; CFI SHIPPED 2026-09-17 (PR #260) — geo 0.94 vs prior shipped build, layout 0.74; CFI+snapshot-clang chain UN-DEAD 2026-09-21 — 5 draws snap/cfi geo 0.96-0.99 all <1, nav 0.95-0.99, SHIPPING via PR #273; issue #259's hardening-removal ladder is further optimization, not gap-closing
+description: CAMPAIGN REOPENED 2026-09-19 — 5-run/cpu sample (18 draws, 4 fleet CPUs) proved startup's 1.05x IS noise (tz fix from PR #266 holds, that row stays closed) but nav 1.06-1.14x, layout 1.11x on EPYC 7763, input 1.02-1.06x, and screenshot 1.24-1.50x on Intel are real on 18/18 draws; per jean's rule the bar is now ≤1.00 not ≤1.05; new perf-record counter-table instrument (PR #268, kernels goto_warm/goto_cold) shows nav is the OPPOSITE of the old layout finding — +50% instructions but BETTER icache/iTLB than official, so not code-layout/orderfile, something executes more code per navigation; chromium residual was 12% after both knobs — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (parity arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (same calls per iteration and same sizes as official to 0.5%/bucket, all interposable); clang 22-vs-23 is LIVE — layout 0.87x vs the shipped build on the slow runner (0.96 fast), vs official 1.40 (was 1.61), geomean 1.10; official codegen flags (aports' compiler.patch) DEAD at 1.01~; CFI SHIPPED 2026-09-17 (PR #260) — geo 0.94 vs prior shipped build, layout 0.74; CFI+snapshot-clang chain UN-DEAD 2026-09-21 — 5 draws snap/cfi geo 0.96-0.99 all <1, nav 0.95-0.99, SHIPPED via PR #273 (chs-1234 = ccc8534); 2026-09-21 perf-record on it (run 35590487107, 8573C): layout_reflow at PARITY (0.99x), goto_warm residual is the renderer main thread ONLY and its one differing DSO is system libharfbuzz (+trace: ShapeText the only slower Blink phase, 1.14x) — text stack UN-DEAD for nav, PR #277 rebuilds it in-tree on the snapshot chain; issue #259's hardening-removal ladder is further optimization, not gap-closing
 metadata:
   type: project
 ---
@@ -408,3 +408,34 @@ random — "unavailable" in the summary means redraw). Every future
 counter table for free, so future builds don't need a fresh instrument to
 re-check codegen shape. Read with `tally.py` on "tally"; state carried in
 `$S/topdown.log` (dev-box) — PR #268 not yet merged.
+
+**2026-09-21 — seven-pass perf-record on the snapshot-clang consumer
+(run 35590487107, 8573C, chs-1234 = ccc8534, PR #276's instrument).**
+No PMU on that runner (instructions/topdown unavailable — the "+45%
+instructions" question still needs an EPYC draw). What it did read:
+
+| kernel | wall | CPU | where |
+|---|---|---|---|
+| `layout_reflow` | 0.99x | 0.99x | PARITY — the layout row is closed on Intel |
+| `goto_warm` | 1.07x | 1.04x | renderer main thread ONLY: 27.8 vs 25.6 on-CPU ms/iter; Viz/Compositor/IO/ThreadPool at parity — the fortify raster excess is gone with the snapshot toolchain |
+| `goto_cold` | 1.11x | 1.04x | main +1.4, ThreadPool +1.35, browser main +0.85, Viz +0.67 ms; +28% context switches on renderer main / ChildIO / IO threads; `fcntl` +95/iter, `mremap` 144/iter (musl only); sched delays and syscall wall at parity |
+
+On the renderer main thread the DSO shares match to 1% except "other":
+3.2% vs 0.5%, which is system `libharfbuzz.so` (1.7 ms/iter goto_warm,
+1.8 ms goto_cold) + `libfontconfig` (0.8 ms goto_cold). Official has that
+code inside its PGO+ThinLTO binary. The trace agrees:
+`InlineNode::ShapeTextIncludingFirstLine` is the ONLY Blink phase slower in
+absolute ms (193 vs 169, 1.14x); every other phase at or below official.
+Named symbols work (2.2% past-end, census matched): top of goto_warm is
+PartitionAlloc Alloc/Free, cppgc sweep, `ml4::lowp::gather_8888`,
+`Deserializer::ReadObject`, `BlockLayoutAlgorithm::LayoutInlineChild`.
+musl string routines are a second, smaller residual: memcpy 1.35% vs
+glibc's 0.76%, strlen 0.71 vs 0.49, memset 0.91 vs 0.72 (~0.6 ms/iter).
+
+**Text stack UN-DEAD for nav (it was only ever dead for layout).** Chain E
+`f967bc4` was read for launch and layout; its `goto_cold` 0.79x n=1 (run
+34618356217, 9V74) was never read. Alpine's harfbuzz is gcc `-O2 -flto`,
+not `-Os`, so the lever is the profile + cross-DSO inlining, which only the
+in-tree build tests → PR #277 `perf/chromium-textstack-snap` (cold chain,
+~30 h). Read it with `chs-perf-ab` textstack-snap vs snap, nav + goto_cold
+rows first. Step-summary fix for the 4.3 MB report: PR #278.
