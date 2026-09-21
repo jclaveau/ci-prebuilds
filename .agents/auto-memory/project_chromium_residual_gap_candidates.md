@@ -1,6 +1,6 @@
 ---
 name: project_chromium_residual_gap_candidates
-description: chromium residual 12% after both knobs — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (parity arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (same calls per iteration and same sizes as official to 0.5%/bucket, all interposable); clang 22-vs-23 is LIVE — layout 0.87x vs the shipped build on the slow runner (0.96 fast), vs official 1.40 (was 1.61), geomean 1.10; official codegen flags (aports' compiler.patch) DEAD at 1.01~; CFI SHIPPED 2026-09-17 (PR #260) — geo 0.94 vs prior shipped build, layout 0.74; next levers are the CFI+snapshot-clang chain (blocked on a linker stack-overflow fix, unshipped) and issue #259's hardening-removal ladder, not more static gap-hunting
+description: CAMPAIGN REOPENED 2026-09-19 — 5-run/cpu sample (18 draws, 4 fleet CPUs) proved startup's 1.05x IS noise (tz fix from PR #266 holds, that row stays closed) but nav 1.06-1.14x, layout 1.11x on EPYC 7763, input 1.02-1.06x, and screenshot 1.24-1.50x on Intel are real on 18/18 draws; per jean's rule the bar is now ≤1.00 not ≤1.05; new perf-record counter-table instrument (PR #268, kernels goto_warm/goto_cold) shows nav is the OPPOSITE of the old layout finding — +50% instructions but BETTER icache/iTLB than official, so not code-layout/orderfile, something executes more code per navigation; chromium residual was 12% after both knobs — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (parity arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (same calls per iteration and same sizes as official to 0.5%/bucket, all interposable); clang 22-vs-23 is LIVE — layout 0.87x vs the shipped build on the slow runner (0.96 fast), vs official 1.40 (was 1.61), geomean 1.10; official codegen flags (aports' compiler.patch) DEAD at 1.01~; CFI SHIPPED 2026-09-17 (PR #260) — geo 0.94 vs prior shipped build, layout 0.74; CFI+snapshot-clang chain DEAD 2026-09-19 (snap/cfi geo 0.98, no measurable win); issue #259's hardening-removal ladder is further optimization, not gap-closing
 metadata:
   type: project
 ---
@@ -318,3 +318,85 @@ campaign entirely — removing test-irrelevant security hardening to chase
 *below* official, not closing a build-quality gap. See also the Thorium
 codegen-lever audit, [[project_chromium_thorium_audit]], for a third,
 independent ranking of what's left (libc++ hardening, AVX2 baseline).
+
+**CAMPAIGN CLOSED 2026-09-18 — not by anything on this list.** The launch
+residual that survived every static candidate above (allocator, fonts, musl
+string routines, hardening, orderfile, CFI, TLS, under-inlining, text stack,
+memset, PGO/clang) turned out to sit above codegen entirely: the consumer
+image paid for ICU walking 600 tzdata files against a missing
+`/etc/localtime`, found by `strace -f` syscall counts, not by any profile
+([[project_chromium_launch_dso_closure]]). One symlink (PR #266) closed it —
+post-fix TP read (35324815014) has chromium `startup` 1.16x → ~1.05x,
+geomean 1.07 → 1.05, no row left standing. Static inspection of the binary
+was exhausted correctly; the gap was never in the binary. The
+CFI+snapshot-clang chain and #259's hardening ladder are now further
+optimization, not gap-closing.
+
+**CFI+snapshot-clang chain (`perf/chromium-cfi-snapshot-clang`) — DEAD,
+2026-09-19.** Snap chain 35291178853 finished green (20/20 conformance +
+parity; linker `LLD 23.0.0` vs shipped's `23.1.1`, `.text` 5 MB smaller, same
+`PT_GNU_STACK`). Two A/Bs on main (35471647046 shipped-vs-snap,
+35471648695 cfi-vs-snap) both read flat: snap/cfi geo 0.98 (noise),
+snap/shipped 0.94 = cfi/shipped 0.94 — identical to the ratio CFI alone
+already banked. A self-built toolchain snapshot buys nothing measurable over
+the shipped CFI build; not shipped, branch left for cleanup
+(see [[open_user_rulings_carried_across_sessions]]).
+
+**RESOLVED 2026-09-19 — ~1.05 was NOT all noise; CAMPAIGN REOPENED.**
+`scripts/sample-cpu-models.sh` drew 18 samples (runs=10/draw) across all
+four fleet CPUs against `main-6be10b3` (tz-fix commit):
+
+| cpu | n | startup | nav | render | js | input | geo |
+|---|---|---|---|---|---|---|---|
+| EPYC 7763 | 5 | 1.02 | 1.09 | 1.03 | 1.01 | 1.04 | 1.04 |
+| EPYC 9V74 | 6 | 1.02 | 1.09 | 1.03 | 1.01 | 1.04 | 1.04 |
+| 8573C | 5 | 1.03 | 1.11 | 1.09 | 1.03 | 1.04 | 1.07 |
+| 8370C | 2 | 1.01 | 1.10 | 1.16 | 1.01 | 1.04 | 1.08 |
+
+Per-draw spread settles it kernel by kernel: **startup 0.96-1.06 is noise —
+the tz fix genuinely closed it**, confirming
+[[project_chromium_launch_dso_closure]]'s RESOLVED verdict stands. Three
+rows do NOT wash out: **nav 1.06-1.14, real on 18/18 draws** (`goto_cold`
+1.08-1.13, `goto_warm` 1.08-1.10 on every silicon — the single biggest
+universal residual); **input (`click_force`) 1.02-1.06, real on 18/18**,
+small; **render** is a mix — `layout` 1.11 on EPYC 7763 specifically (5/5
+draws ≥1.08) vs 1.04-1.06 elsewhere, `screenshot` at parity on EPYC (1.00)
+but **1.24-1.50 on Intel** (bimodal 1.00/1.16 on 8573C, the known Skia XR
+highp cost, [[project_chromium_screenshot_is_skia_highp]]), `dom_churn`/
+`js_alloc`/controls flat at 1.00. Per jean's ruling ("if not noise, the
+goal is better or equal parity, not 1.05") the bar tightens to **≤1.00**
+and static/runtime candidate hunting reopens, ranked: nav (1.09 universal),
+layout (1.11, EPYC-only), input (1.04), screenshot (Intel-only).
+
+**Instrument launched 2026-09-19 for nav — and it contradicts the old
+layout theory.** New `perf stat` counter-table kernels `goto_warm`/
+`goto_cold` (added to `perf-kernel.cjs` + a per-kernel counters table in
+`perf-record-report.py`'s step summary, dispatched via
+`chromium-gap-probes.yml`'s `run_perf_record`, PR #268 branch
+`diag/perf-counters-nav-kernels`, CI run 35496062522) re-reads the
+frontend-fetch finding post-CFI. First pair (`goto_warm`, dev-box,
+i5, parser-validated) reads the OPPOSITE of
+[[project_chromium_layout_gap_is_frontend_fetch]]'s layout numbers:
+
+| counter | alpine | official | ratio |
+|---|---|---|---|
+| instructions/iter | 328M | 219M | **1.50x** |
+| cycles/iter | 304M | 240M | **1.26x** |
+| IPC | 1.08 | 0.91 | 1.19x |
+| L1i miss/kI | 29.3 | 38.2 | 0.77x |
+| iTLB miss/MI | 319 | 432 | 0.74x |
+| L1d miss/kI | 11.5 | 17.6 | 0.66x |
+
+nav runs **+50% more instructions** than official while fetching BETTER
+(fewer icache/iTLB/L1d misses per instruction) — the opposite shape from
+layout's frontend-fetch bottleneck. Not code-layout, so not an orderfile
+candidate: something (cgroup-wide, may include the node driver process —
+the CI run's per-DSO split will tell) executes more code per navigation.
+`goto_cold` and `layout_reflow` counters were still running locally when
+this was captured; CI run 35496062522 carries the authoritative per-DSO
+table plus a PMU-availability check (Azure runners draw PMU access at
+random — "unavailable" in the summary means redraw). Every future
+`chromium-gap-probes` dispatch with `run_perf_record` now keeps this
+counter table for free, so future builds don't need a fresh instrument to
+re-check codegen shape. Read with `tally.py` on "tally"; state carried in
+`$S/topdown.log` (dev-box) — PR #268 not yet merged.

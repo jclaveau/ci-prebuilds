@@ -1,6 +1,6 @@
 ---
 name: project_chromium_launch_dso_closure
-description: the DSO closure is the launch gap and the USE_SYSTEM_LIBS trim IS worth it — MEASURED 2026-09-11 launch 0.79x on the unbundle arm (2f82e9e), text stack adds nothing (0.81x), layout unreadable at this n; census said 65 -> 49 DSOs (official 51), loader work bound 0.65x; --no-zygote is NOT a lever (saves 19% on BOTH libcs); PartitionAlloc is ACTIVE on musl so there is no allocator win; REVERSED 2026-09-18 — base arm (n=5) shows the shipped consumer image alone pays launch 1.27x on 7763 / 1.17x Xeon while the scratch artifact hits glibc parity on any alpine base; the Vulkan ICD candidate priced at ~4 ms of ~27 (35303365205); the rest is ICU's uprv_tzname() walking 600 tzdata files against a missing /etc/localtime — 9,300 extra file syscalls per launch, found by strace, fixed by one symlink (PR #266)
+description: the DSO closure is the launch gap and the USE_SYSTEM_LIBS trim IS worth it — MEASURED 2026-09-11 launch 0.79x on the unbundle arm (2f82e9e), text stack adds nothing (0.81x), layout unreadable at this n; census said 65 -> 49 DSOs (official 51), loader work bound 0.65x; --no-zygote is NOT a lever (saves 19% on BOTH libcs); PartitionAlloc is ACTIVE on musl so there is no allocator win; REVERSED 2026-09-18 — base arm (n=5) shows the shipped consumer image alone pays launch 1.27x on 7763 / 1.17x Xeon while the scratch artifact hits glibc parity on any alpine base; the Vulkan ICD candidate priced at ~4 ms of ~27 (35303365205); the rest is ICU's uprv_tzname() walking 600 tzdata files against a missing /etc/localtime — 9,300 extra file syscalls per launch, found by strace, fixed by one symlink (PR #266); RESOLVED 2026-09-18 — post-fix TP read: startup 1.16x -> ~1.05x, geomean 1.05, campaign closed, no residual row left
 metadata:
   type: project
 ---
@@ -265,13 +265,20 @@ folded in. Read the perf-probe startup row after the TP rebuild before calling
 the row closed. Lesson: when timing is unreadable, count syscalls — a
 structural diff is load-independent ([[feedback_read_the_stored_value]]).
 
-**Fix candidate open, UNCONFIRMED — PR #265**: two extra launch legs
-(`VK_DRIVER_FILES` pinned to the bundled swiftshader ICD manifest;
-driver-preload-off) added to the consumer-vs-scratch step of
-`chromium-gap-probes.yml`, chromium-scoped only (`playwright/Dockerfile.alpine:255`),
-WebKit's Mesa install untouched. Merge → dispatch on the cfi artifact → read
-the leg table before believing this closes it. If confirmed, the fix is a
-one-line `export VK_DRIVER_FILES=...` in the chromium shim, then a TP
-rebuild + perf-probe read; startup (currently 1.17 on 7763) would plausibly
-close since this is the only candidate that has ever isolated launch from
-codegen.
+**RESOLVED 2026-09-18 — TP 35324815014 (consumer rebuild with the tz
+symlink) read post-fix.** `perf-probe` on `main` @ 6be10b3: chromium
+`startup` 1.16x → **~1.05x** (inside run-to-run noise), geomean 1.07 → 1.05.
+Every row now sits ≤1.05 vs official — no row stands out as a residual
+anymore. This closes the multi-session "every runtime-probe row ≤ 1.00-1.05x,
+conformance green" campaign for chromium the same way it already closed for
+Firefox and WebKit ([[project_alpine_browser_perf_vs_glibc]]): the launch gap
+was never codegen, it was one missing `/etc/localtime` symlink.
+**Confirmed 2026-09-19** by an 18-draw/4-cpu noise check: `startup` spread
+0.96-1.06 across every fleet CPU is noise, this row stays closed — the
+campaign's OTHER rows (nav/layout/input/screenshot) turned out not to be,
+see the reopened [[project_chromium_residual_gap_candidates]]. The parallel
+CFI+snapshot-clang chain (`perf/chromium-cfi-snapshot-clang`,
+[[project_chromium_snapshot_lld_stack_overflow]]) is still running unwatched
+on its own cron-driven schedule as a further optimization, not a fix for an
+open gap — nothing is blocking on it. The `VK_DRIVER_FILES` shim export
+(~4 ms) remains an optional, un-shipped follow-up.
