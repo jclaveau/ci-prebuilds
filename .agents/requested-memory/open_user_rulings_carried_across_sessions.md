@@ -19,10 +19,10 @@ them entirely once the compaction chain that was carrying them ends.
 - **Issue #259's hardening-removal ladder** — 7 ranked candidates
   ([[project_chromium_hardening_removal_candidates]]), gated behind #249,
   queued but none dispatched.
-- **`perf/chromium-cfi-snapshot-clang` branch** — the snapshot-clang chain
-  is now confirmed DEAD (2026-09-19: A/B vs shipped-cfi geo 0.98, no
-  measurable win, [[project_chromium_residual_gap_candidates]]); branch
-  proposed for deletion, not yet actioned.
+- **`perf/chromium-cfi-snapshot-clang` branch** — RESOLVED 2026-09-21:
+  jean ruled "ship snap" after 5 A/B draws read snap/cfi geo 0.96–0.99
+  (the 09-19 DEAD call was n=1); PR #273 merges it, branch goes with the
+  merge ([[project_chromium_residual_gap_candidates]]).
 
 **How to apply:** don't act on any of these without asking — they're
 explicitly jean's call, not a default. Worth a one-line mention next time

@@ -1,6 +1,6 @@
 ---
 name: project_chromium_residual_gap_candidates
-description: CAMPAIGN REOPENED 2026-09-19 — 5-run/cpu sample (18 draws, 4 fleet CPUs) proved startup's 1.05x IS noise (tz fix from PR #266 holds, that row stays closed) but nav 1.06-1.14x, layout 1.11x on EPYC 7763, input 1.02-1.06x, and screenshot 1.24-1.50x on Intel are real on 18/18 draws; per jean's rule the bar is now ≤1.00 not ≤1.05; new perf-record counter-table instrument (PR #268, kernels goto_warm/goto_cold) shows nav is the OPPOSITE of the old layout finding — +50% instructions but BETTER icache/iTLB than official, so not code-layout/orderfile, something executes more code per navigation; chromium residual was 12% after both knobs — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (parity arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (same calls per iteration and same sizes as official to 0.5%/bucket, all interposable); clang 22-vs-23 is LIVE — layout 0.87x vs the shipped build on the slow runner (0.96 fast), vs official 1.40 (was 1.61), geomean 1.10; official codegen flags (aports' compiler.patch) DEAD at 1.01~; CFI SHIPPED 2026-09-17 (PR #260) — geo 0.94 vs prior shipped build, layout 0.74; CFI+snapshot-clang chain DEAD 2026-09-19 (snap/cfi geo 0.98, no measurable win); issue #259's hardening-removal ladder is further optimization, not gap-closing
+description: CAMPAIGN REOPENED 2026-09-19 — 5-run/cpu sample (18 draws, 4 fleet CPUs) proved startup's 1.05x IS noise (tz fix from PR #266 holds, that row stays closed) but nav 1.06-1.14x, layout 1.11x on EPYC 7763, input 1.02-1.06x, and screenshot 1.24-1.50x on Intel are real on 18/18 draws; per jean's rule the bar is now ≤1.00 not ≤1.05; new perf-record counter-table instrument (PR #268, kernels goto_warm/goto_cold) shows nav is the OPPOSITE of the old layout finding — +50% instructions but BETTER icache/iTLB than official, so not code-layout/orderfile, something executes more code per navigation; chromium residual was 12% after both knobs — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (parity arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (same calls per iteration and same sizes as official to 0.5%/bucket, all interposable); clang 22-vs-23 is LIVE — layout 0.87x vs the shipped build on the slow runner (0.96 fast), vs official 1.40 (was 1.61), geomean 1.10; official codegen flags (aports' compiler.patch) DEAD at 1.01~; CFI SHIPPED 2026-09-17 (PR #260) — geo 0.94 vs prior shipped build, layout 0.74; CFI+snapshot-clang chain UN-DEAD 2026-09-21 — 5 draws snap/cfi geo 0.96-0.99 all <1, nav 0.95-0.99, SHIPPING via PR #273; issue #259's hardening-removal ladder is further optimization, not gap-closing
 metadata:
   type: project
 ---
@@ -332,15 +332,23 @@ was exhausted correctly; the gap was never in the binary. The
 CFI+snapshot-clang chain and #259's hardening ladder are now further
 optimization, not gap-closing.
 
-**CFI+snapshot-clang chain (`perf/chromium-cfi-snapshot-clang`) — DEAD,
-2026-09-19.** Snap chain 35291178853 finished green (20/20 conformance +
-parity; linker `LLD 23.0.0` vs shipped's `23.1.1`, `.text` 5 MB smaller, same
-`PT_GNU_STACK`). Two A/Bs on main (35471647046 shipped-vs-snap,
-35471648695 cfi-vs-snap) both read flat: snap/cfi geo 0.98 (noise),
-snap/shipped 0.94 = cfi/shipped 0.94 — identical to the ratio CFI alone
-already banked. A self-built toolchain snapshot buys nothing measurable over
-the shipped CFI build; not shipped, branch left for cleanup
-(see [[open_user_rulings_carried_across_sessions]]).
+**CFI+snapshot-clang chain (`perf/chromium-cfi-snapshot-clang`) — was
+called DEAD 2026-09-19 on n=1, UN-DEAD and SHIPPING 2026-09-21 (PR #273).**
+Snap chain 35291178853 finished green (20/20 conformance + parity; linker
+`LLD 23.0.0` vs shipped's `23.1.1`, `.text` 5 MB smaller, same
+`PT_GNU_STACK`). The first A/B (35471648695 cfi-vs-snap) read snap/cfi geo
+0.98 with every row `~`, and "buys nothing" was written on that single
+draw. Four more draws (35573292214/295143/298193/300516, CPUs 8370C, 9V45,
+9V74, 7763) read geo 0.96/0.97/0.99/0.98 — 5/5 below 1 — nav 0.95–0.99,
+layout 0.93–0.98 (2 draws significant), one junk draw (9V45, launch 0.71~,
+click 0.83). Small but consistent: −2–4 % geo for an already-built,
+already-conformed artifact. Why it moves: the self-built clang carries no
+Alpine hardening driver patches, so no fortify-headers memcpy overlap check
+in Skia's raster stages
+([[project_chromium_nav_gap_is_musl_fortify_overlap_check]]), and it is the
+exact snapshot chromium's PGO profile was hashed by (18 hot Blink fns
+mismatch under packaged 23.1.1, 0 under the snapshot). n=1 `~` on every row
+is not a dead verdict; five draws on four CPUs is.
 
 **RESOLVED 2026-09-19 — ~1.05 was NOT all noise; CAMPAIGN REOPENED.**
 `scripts/sample-cpu-models.sh` drew 18 samples (runs=10/draw) across all
