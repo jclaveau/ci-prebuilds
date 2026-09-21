@@ -65,6 +65,18 @@ name: chromium residual-gap probes
 #                  CONSUMER image (the shipped browser) rather than the
 #                  from-source scratch artifact the arms above take, and
 #                  because neither needs the other to be dispatched.
+#                  Since the fortify finding it is six passes over the same
+#                  loop, not one: time-weighted samples; instruction-weighted
+#                  samples (the extra instructions, located); hardware,
+#                  stall, cache and topdown counters; scheduler latency per
+#                  thread; a wall-clock syscall histogram; and — with the
+#                  chain's link census (`census_run_id`) — our binary's hot
+#                  functions NAMED and annotated per instruction, which is
+#                  the pass that turned "the main binary" into "fortify's
+#                  memcpy overlap check in Skia's raster stages". The same
+#                  job also runs trace-probe.cjs on both arms: per-subsystem
+#                  self time on the main thread, and the compositor pipeline
+#                  per thread with a task COUNT per iteration.
 #
 #   memset-count   The perf-record arm again, with a counting `memset`
 #                  LD_PRELOADed into BOTH sides. perf named memset as the
@@ -152,12 +164,18 @@ on:
         default: 'screenshot_png_text,screenshot_png,screenshot_jpeg,layout_boxonly,layout_reflow'
         type: string
       perf_loop_seconds:
-        description: 'perf-record arm: how long each kernel loops in steady state'
-        default: '110'
+        description: 'perf-record arm: how long each kernel loops in steady state (six passes fit in 200; the loop must outlast them)'
+        default: '200'
         type: string
       perf_memset_count:
         description: 'perf-record arm: LD_PRELOAD a counting memset on both sides (perturbs the profile; read the counts, not the samples)'
         default: false
+      census_run_id:
+        description: 'perf-record arm: run id of the from-source chain that BUILT the browser in perf_image; its chromium-link-census artifact names our hot symbols (empty = unnamed)'
+        default: ''
+      run_trace:
+        description: 'perf-record job: also run trace-probe.cjs on both arms (main-thread self time per subsystem + compositor pipeline per thread)'
+        default: true
         type: boolean
       base_runs:
         description: 'base arm: interleaved passes of the layout kernels over shipped / scratch-on-edge / scratch-on-consumer-base / official (0 skips the arm)'
@@ -173,6 +191,8 @@ concurrency:
 permissions:
   contents: read
   packages: read
+  # gh run download of another run's link-census artifact.
+  actions: read
 
 jobs:
   probe:
@@ -1366,6 +1386,27 @@ jobs:
             -t perf-official:${{ github.run_id }} \
             -f "$PROBES/Dockerfile.perf-official" "$PROBES"
 
+      - name: Fetch the link census that names our binary
+        if: inputs.census_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.census_run_id }}
+        run: |
+          set -euo pipefail
+          # The census is the nm of the binary between link and strip, kept
+          # by link-census.sh on the chain that built it. It must be the
+          # census of THE browser in perf_image — perf-symbolize.py checks
+          # geometrically (samples past a symbol's end) and refuses to name
+          # anything when they disagree, but the input is still the caller's
+          # to get right: the consumer's chs-<rev> is a retag of one
+          # chs-fs-sha-<sha> image, and the chain whose head is that sha is
+          # the run id wanted here.
+          mkdir -p perf-out/census && chmod 777 perf-out/census
+          gh run download "$RUN_ID" -n chromium-link-census -D perf-out/census
+          ls -la perf-out/census
+          test -s perf-out/census/symtab.nm.gz
+          echo "census from run $RUN_ID: $(zcat perf-out/census/symtab.nm.gz | wc -l) symbols"
+
       - name: Profile every kernel on both arms
         env:
           KERNELS: ${{ inputs.perf_kernels }}
@@ -1405,8 +1446,18 @@ jobs:
               # capabilities in a privileged container only reach uid 0 (our
               # consumer image runs as `runner`). PW disables the chromium
               # sandbox by default, so running as root is not a launch problem.
+              # tracefs for `perf sched` (the sched_switch / sched_wakeup
+              # tracepoints live there); read-only is enough to read event
+              # ids, and a runner without it degrades that one pass to an
+              # empty file. --pid=host for the same pass: a tracepoint's
+              # payload carries pids of the ROOT pid namespace while perf
+              # names threads from the container's /proc, so in a private
+              # pid namespace every sched row reads `:pid:tid` and no thread
+              # is named (seen on the first local run). The cgroup filter
+              # (-G /) still scopes the samples to this container.
               docker run --rm --name "$cname" \
                 --privileged \
+                --pid=host \
                 --user root \
                 --security-opt seccomp=unconfined \
                 --env "HOME=$home" \
@@ -1416,6 +1467,8 @@ jobs:
                 --env "PERF_BIN=$perfbin" \
                 --env "PERF_LOOP_SECONDS=$LOOP" \
                 --env "MEMSET_COUNT=$count_memset" \
+                -v /sys/kernel/tracing:/sys/kernel/tracing:ro \
+                -v /sys/kernel/debug:/sys/kernel/debug:ro \
                 -v "$PWD/playwright/alpine-browsers/chromium-headless-shell/probes:/probes:ro" \
                 -v "$PWD/playwright/bench:/probe:ro" \
                 -v "$PWD/playwright/scripts:/pwscripts:ro" \
@@ -1517,6 +1570,49 @@ jobs:
           done
           exit "$rc"
 
+      - name: Trace both arms (main-thread subsystems + compositor pipeline)
+        if: always() && inputs.run_trace
+        env:
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -o pipefail
+          rc=0
+          # Same containers as the profile, no perf: CDP tracing is the
+          # browser's own clock, and it says which subsystem holds the time
+          # (Layout / Paint / Raster / DrawAndSwap ...) where perf says which
+          # binary. Per thread on the compositor side, with the event COUNT
+          # per iteration — a different number of raster tasks per navigation
+          # is a different pipeline, not a slower one.
+          for target in alpine official; do
+            if [ "$target" = official ]; then
+              image="perf-official:${{ github.run_id }}"
+            else
+              image="perf-alpine:${{ github.run_id }}"
+            fi
+            echo "::group::trace / ${target}"
+            docker run --rm --name "trace-${target}" \
+              --user root \
+              --security-opt seccomp=unconfined \
+              --env HOME=/root \
+              --env "PROBE_TARGET=$target" \
+              --env "PW_VERSION=$PW" \
+              -v "$PWD/playwright/bench:/probe:ro" \
+              -v "$PWD/playwright/scripts:/pwscripts:ro" \
+              -v "$PWD/perf-out:/out" \
+              "$image" \
+              sh -c '
+                NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+                export NODE_PATH
+                node -e "require(\"playwright\")" 2>/dev/null \
+                  || npm install -g --no-fund --no-audit \
+                       "playwright@$PW_VERSION" >/dev/null 2>&1
+                timeout 900 node /probe/trace-probe.cjs --target "$PROBE_TARGET" \
+                  --out /out --iters 5
+              ' 2>&1 | tee "perf-out/trace-${target}.log" || rc=1
+            echo "::endgroup::"
+          done
+          exit "$rc"
+
       # perf runs as root inside the container and perf.data is mode 0600, so
       # upload-artifact — which runs as the unprivileged runner — dies with
       # EACCES on it and takes the whole job red AFTER every measurement has
@@ -1535,6 +1631,10 @@ jobs:
             echo "### perf record — \`$OURS\` vs official"
             python3 "$REPORTS/perf-record-report.py" perf-out
             python3 "$REPORTS/memset-count-report.py" perf-out
+            if [ -s perf-out/official-trace.json ]; then
+              echo "### trace — self time per subsystem, compositor pipeline per thread"
+              python3 playwright/bench/trace-compare.py perf-out --md
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4

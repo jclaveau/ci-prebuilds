@@ -10,6 +10,14 @@
  * Writes <out>/<target>-trace.json: per scenario the wall time and, per trace
  * event name on the renderer main thread, the SELF time (children subtracted)
  * and the inclusive time, in ms.
+ *
+ * A second pass per scenario, `pipeline`, traces the compositor side
+ * (viz, cc, gpu) and aggregates per THREAD and event: raster tasks, frame
+ * submission, draw-and-swap — with a count per iteration next to the ms per
+ * iteration. The first read of it (goto_warm, by hand) had ours doing 3.1
+ * raster tasks per navigation at 1.45 ms against official's 5.5 at 0.73 ms:
+ * a different task SHAPE, not just a slower one, which the main-thread
+ * pass cannot see because none of it runs on the main thread.
  */
 'use strict';
 const http = require('http');
@@ -26,6 +34,11 @@ const CATEGORIES = [
   'devtools.timeline', 'disabled-by-default-devtools.timeline', 'blink',
   'blink.user_timing', 'v8.execute', 'toplevel', 'cc', 'loading',
 ];
+// The compositor pipeline. No `disabled-by-default-cc.debug.display_items`:
+// it serialises every display item into the trace and doubled the wall time
+// of the traced loop when tried, so anything timed under it is fiction.
+const PIPELINE_CATEGORIES = ['viz', 'cc', 'gpu', 'benchmark', 'toplevel'];
+const PIPELINE_EVENTS = /BeginFrame|DrawAndSwap|Display::|Swap|SubmitCompositorFrame|DrawFrame|Raster|Commit|Composite|Graphics\.Pipeline|BeginMainFrame|OutputSurface|Tile|Decode|Upload|Flush/;
 
 /** Self and inclusive time per event name, over every thread; B/E pairs folded into X. */
 function aggregate(traceEvents) {
@@ -83,6 +96,34 @@ function aggregate(traceEvents) {
   return { self_ms: toMs(self), inclusive_ms: toMs(incl) };
 }
 
+/** ms and count per event, per named thread — X events only; the pipeline is all X. */
+function aggregateByThread(traceEvents) {
+  const threads = new Map();
+  for (const e of traceEvents) {
+    if (e.ph === 'M' && e.name === 'thread_name') threads.set(`${e.pid}:${e.tid}`, e.args.name);
+  }
+  const out = {};
+  for (const e of traceEvents) {
+    if (e.ph !== 'X' || !PIPELINE_EVENTS.test(e.name)) continue;
+    const key = `${threads.get(`${e.pid}:${e.tid}`) || '?'}|${e.name}`;
+    const row = out[key] || (out[key] = { ms: 0, n: 0 });
+    row.ms += (e.dur || 0) / 1000;
+    row.n += 1;
+  }
+  return out;
+}
+
+async function tracedPipeline(browser, page, fn, iters) {
+  await browser.startTracing(page, { screenshots: false, categories: PIPELINE_CATEGORIES });
+  const t0 = process.hrtime.bigint();
+  for (let i = 0; i < iters; i++) await fn();
+  const wall = Number(process.hrtime.bigint() - t0) / 1e6;
+  const buf = await browser.stopTracing();
+  const trace = JSON.parse(buf.toString('utf8'));
+  const events = Array.isArray(trace) ? trace : trace.traceEvents;
+  return { iters, wall_ms: wall, events: events.length, by_thread: aggregateByThread(events) };
+}
+
 async function traced(browser, page, fn, iters) {
   await browser.startTracing(page, { screenshots: false, categories: CATEGORIES });
   const t0 = process.hrtime.bigint();
@@ -121,7 +162,7 @@ async function main() {
     scenarios[name] = () => page.evaluate(`(${source})()`);
   }
 
-  const result = { target, version: browser.version(), iters, scenarios: {} };
+  const result = { target, version: browser.version(), iters, scenarios: {}, pipeline: {} };
   for (const [name, fn] of Object.entries(scenarios)) {
     await fn(); // warm, untraced
     result.scenarios[name] = await traced(browser, page, fn, iters);
@@ -129,6 +170,17 @@ async function main() {
     const top = Object.entries(r.self_ms).sort((a, b) => b[1] - a[1]).slice(0, 8)
       .map(([k, v]) => `${k} ${v.toFixed(0)}`).join(', ');
     console.log(`${target} ${name}: wall ${r.wall_ms.toFixed(0)} ms, ${r.events} events; self: ${top}`);
+  }
+  // Only the scenarios that reach the compositor: a page.evaluate kernel
+  // never rasterises, so its pipeline trace would be empty by construction.
+  for (const name of ['goto_warm', 'click_force', 'screenshot']) {
+    const fn = scenarios[name];
+    await fn();
+    result.pipeline[name] = await tracedPipeline(browser, page, fn, iters);
+    const r = result.pipeline[name];
+    const top = Object.entries(r.by_thread).sort((a, b) => b[1].ms - a[1].ms).slice(0, 5)
+      .map(([k, v]) => `${k} ${v.ms.toFixed(0)}/${v.n}`).join(', ');
+    console.log(`${target} ${name} pipeline: ${r.events} events; ${top}`);
   }
 
   await ctx.close();

@@ -14,10 +14,10 @@ FROM ${BASE}
 # without.
 # gcc + libc6-dev: the memset-count arm compiles its shim and gate inside the
 # container, on both sides, so the control's histogram comes from the same
-# source as ours.
+# source as ours. strace: the syscall pass, on both sides for the same reason.
 RUN apt-get update -qq \
  && apt-get install -y -qq --no-install-recommends linux-tools-generic libc6-dbg \
-      gcc libc6-dev \
+      gcc libc6-dev strace \
  && ln -sf "$(ls -d /usr/lib/linux-tools-*/perf | head -1)" \
       /usr/local/bin/perf-real \
  && rm -rf /var/lib/apt/lists/*

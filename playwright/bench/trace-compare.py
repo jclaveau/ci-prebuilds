@@ -31,6 +31,49 @@ def rows(ours, official):
     return out[:14]
 
 
+def pipeline_rows(ours, official):
+    """thread|event rows with ms/iter and n/iter per arm, hottest first."""
+    a, o = ours["by_thread"], official["by_thread"]
+    ia, io = max(ours["iters"], 1), max(official["iters"], 1)
+    keys = set(a) | set(o)
+    out = []
+    for k in keys:
+        ra, ro = a.get(k, {"ms": 0, "n": 0}), o.get(k, {"ms": 0, "n": 0})
+        ms_a, ms_o = ra["ms"] / ia, ro["ms"] / io
+        if max(ms_a, ms_o) < 0.2:
+            continue
+        out.append((k, ms_a, ra["n"] / ia, ms_o, ro["n"] / io,
+                    ms_a / ms_o if ms_o else float("inf")))
+    out.sort(key=lambda r: -max(r[1], r[3]))
+    return out[:24]
+
+
+def render_pipeline(arm, ours, official, md):
+    """The compositor side: per thread and event, ms and COUNT per iteration.
+
+    A count that differs is a different pipeline shape (more or fewer raster
+    tasks, tiles, frames per navigation), which no per-event ms ratio shows.
+    """
+    for sc in ours.get("pipeline", {}):
+        if sc not in official.get("pipeline", {}):
+            continue
+        a, o = ours["pipeline"][sc], official["pipeline"][sc]
+        table = pipeline_rows(a, o)
+        if not table:
+            continue
+        if md:
+            print(f"\n**{arm}** `{sc}` compositor pipeline, per iteration "
+                  f"(wall {a['wall_ms'] / a['iters']:.1f} / {o['wall_ms'] / o['iters']:.1f} ms)\n")
+            print("| thread / event | ours ms | ours n | official ms | official n | ms× |")
+            print("|---|---:|---:|---:|---:|---:|")
+            for k, ms_a, n_a, ms_o, n_o, r in table:
+                print(f"| `{k[:60]}` | {ms_a:.2f} | {n_a:.1f} | {ms_o:.2f} | {n_o:.1f} | {r:.2f} |")
+        else:
+            print(f"== {arm} {sc} pipeline (wall/iter {a['wall_ms'] / a['iters']:.1f} / {o['wall_ms'] / o['iters']:.1f} ms)")
+            for k, ms_a, n_a, ms_o, n_o, r in table:
+                print(f"   {k[:60]:<60}{ms_a:>8.2f}{n_a:>6.1f}{ms_o:>8.2f}{n_o:>6.1f}{r:>7.2f}")
+
+
 def render(arm, ours, official, md):
     for sc in ours["scenarios"]:
         a, o = ours["scenarios"][sc], official["scenarios"][sc]
@@ -64,7 +107,10 @@ def main():
         print(f"no ours arm beside {control}", file=sys.stderr)
         return 1
     for path in arms:
-        render(path.name[: -len("-trace.json")], json.loads(path.read_text()), official, md)
+        ours = json.loads(path.read_text())
+        arm = path.name[: -len("-trace.json")]
+        render(arm, ours, official, md)
+        render_pipeline(arm, ours, official, md)
     return 0
 
 
