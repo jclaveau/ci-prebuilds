@@ -44,6 +44,34 @@ RUN apk add --no-cache \
         libxinerama-dev libxrandr-dev libxscrnsaver-dev libxt-dev libxtst-dev \
         pipewire-dev
 
+# FORTIFY PARITY — drop musl fortify-headers' memcpy OVERLAP check.
+#
+# Alpine's clang predefines _FORTIFY_SOURCE=2 and serves /usr/include/fortify
+# ahead of musl's headers. Its memcpy is an inline wrapper with two checks:
+# the size check (`__n > __bos(dst)`), which clang folds away at every
+# constant-size site exactly as glibc's __builtin___memcpy_chk does, and an
+# overlap check (`__d < __s && __d + __n > __s || …`) that glibc's fortify
+# does not have at all. clang cannot fold the overlap compares when a pointer
+# is opaque, which is every Skia raster-stage context: the shipped
+# chrome-headless-shell carries 10-14 scalar instructions and a ud2 after each
+# sk_unaligned_load/store, and goto_warm runs +50 % instructions at higher
+# IPC on the compositor and raster threads (renderer main at parity). Removing
+# the overlap check keeps _FORTIFY_SOURCE=2 and the size traps, so the
+# hardening matches official's; only the check official never had goes.
+# Setup-layer edit, so every round rebuilds (sha-keyed round images).
+RUN set -eux; \
+    f=/usr/include/fortify/string.h; \
+    test -f "$f"; \
+    before=$(grep -c __builtin_trap "$f"); \
+    sed -i '/trap if pointers are overlapping/,/__builtin_trap();/d' "$f"; \
+    ! grep -q '__d < __s' "$f"; \
+    test "$(grep -c __builtin_trap "$f")" -eq "$((before - 1))"; \
+    printf '#include <string.h>\nvoid f(void *o, const void *i){ char b[16]; memcpy(b, i, 16); memcpy(o, b, 16); }\n' > /tmp/fz.c; \
+    /usr/lib/llvm22/bin/clang -O2 -S -o /tmp/fz.s /tmp/fz.c; \
+    grep -q '^f:' /tmp/fz.s; \
+    ! grep -q ud2 /tmp/fz.s; \
+    rm -f /tmp/fz.c /tmp/fz.s
+
 # COMPILER CANDIDATE — Chromium's own clang snapshot, on top of CFI.
 #
 # Chromium 151 is compiled upstream with llvmorg-23-init-19482-g53d18800, and
