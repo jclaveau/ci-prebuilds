@@ -289,7 +289,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/jclaveau/playwright-alpine-browsers
           # Run-scoped sha tag + moving edge (consumer tags added by `promote` only on main).
@@ -1048,7 +1048,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/jclaveau/playwright-alpine-browsers
           tags: |
@@ -1860,7 +1860,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/jclaveau/playwright-alpine-browsers
           tags: |
@@ -2646,7 +2646,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/jclaveau/playwright-alpine-browsers
           tags: |
@@ -3239,14 +3239,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta-wpe
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/jclaveau/playwright-alpine-browsers
           tags: |
             type=raw,value=wk-sha-${{ github.sha }}
             type=raw,value=wk-edge,enable=${{ github.event_name != 'pull_request' }}
       - id: meta-gtk
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/jclaveau/playwright-alpine-browsers
           tags: |
