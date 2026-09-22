@@ -707,7 +707,14 @@ if [[ -r "$AUTOCONF_MK" ]]; then
   # rather than trusting the flag: a silently-dropped option produces a green
   # build whose numbers mean nothing, which is how the hardening arm went VOID.
   # The PW_SKIP_APORTS diagnostic path disables LTO on purpose, so it is exempt.
-  if [[ "$PW_SKIP_APORTS" != "1" ]]; then
+  #
+  # So is the instrumented PGO pass: moz.configure prints "Disabling LTO
+  # because --enable-profile-generate is specified" and drops MOZ_LTO. That
+  # build ships nothing — it only produces merged.profdata — and the profile-use
+  # pass that does ship still has to clear the assert.
+  if [[ "$PGO_STAGE" == "generate" ]]; then
+    echo "  LTO off by design (--enable-profile-generate); assert deferred to the use pass"
+  elif [[ "$PW_SKIP_APORTS" != "1" ]]; then
     if grep -qE '^MOZ_LTO[[:space:]]*=[[:space:]]*\S' "$AUTOCONF_MK"; then
       echo "  LTO reached configure ✓"
     else
