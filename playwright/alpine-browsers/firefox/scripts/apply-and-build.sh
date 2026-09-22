@@ -631,27 +631,46 @@ if ! grep -q '^#include <ios>' "$CSUTIL_HXX"; then
   echo "  hunspell csutil.hxx: added #include <ios> (libc++ 23 transitive-include drop)"
 fi
 
-# PGO (mozconfig.overlay's MOZ_PGO=1). mach's profile run launches the
-# instrumented firefox, which needs an X display even though nothing looks at
-# it, and configure only finds llvm-profdata beside `clang`, where Alpine does
-# not put it. The sandbox switches keep the profile run off seccomp/userns
-# paths a buildkit RUN step does not offer; they touch no hot code.
-PGO=0
-if grep -q '^ac_add_options MOZ_PGO=1' .mozconfig; then
-  PGO=1
-  [[ -n "${LLVMVER:-}" ]] && export LLVM_PROFDATA="/usr/lib/llvm${LLVMVER}/bin/llvm-profdata"
-  Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &
-  export DISPLAY=:99
-  export MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_DISABLE_GMP_SANDBOX=1 \
-    MOZ_DISABLE_RDD_SANDBOX=1 MOZ_DISABLE_SOCKET_PROCESS_SANDBOX=1
-  # The profile run loads the instrumented package before bundle-dist.sh has
-  # patched RPATH=$ORIGIN into it. Mozilla's libxul.so carries no rpath of its
-  # own and musl's loader resolves a library's NEEDED from that library's rpath
-  # or LD_LIBRARY_PATH only, never from the executable's, so libmozsandbox.so
-  # "does not exist" for libxul (run 35619055612). Point the loader at the
-  # package; the directory only exists once the instrumented build has landed.
-  export LD_LIBRARY_PATH="$SRC/obj/instrumented/dist/firefox"
-  echo "  PGO=1 LLVM_PROFDATA=${LLVM_PROFDATA:-unset} DISPLAY=$DISPLAY LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+# PGO, split in two builds because mach's own MOZ_PGO=1 flow (instrumented
+# build, profile run, -fprofile-use build, all in one `mach build`) is two
+# full firefox compiles and does not fit GitHub's 6h job cap (run 35646182344
+# died at 360 min with the second compile half done). PGO_STAGE selects the
+# half this run is:
+#   generate — instrumented build, profile run through build/pgo/profileserver.py,
+#              merged.profdata + jarlog left in /work/pgo; no dist is staged.
+#   use      — normal build consuming /work/pgo (the workflow's
+#              build-firefox-pgo-profile job publishes it as an image).
+#   ''       — plain build, no PGO.
+# Only C/C++ is profiled: `=cross` would instrument Rust too, and Alpine's
+# rustc and clang carry different LLVMs whose llvm-profdata refuse each
+# other's profiles.
+: "${PGO_STAGE:=}"
+PGO_DIR=/work/pgo
+case "$PGO_STAGE" in
+  generate)
+    echo "ac_add_options --enable-profile-generate" >> .mozconfig
+    ;;
+  use)
+    if [[ ! -s "$PGO_DIR/merged.profdata" ]]; then
+      echo "ERROR: PGO_STAGE=use but $PGO_DIR/merged.profdata is missing or empty" >&2
+      ls -la "$PGO_DIR" >&2 || true
+      exit 1
+    fi
+    echo "ac_add_options --enable-profile-use" >> .mozconfig
+    echo "ac_add_options --with-pgo-profile-path=$PGO_DIR/merged.profdata" >> .mozconfig
+    [[ -s "$PGO_DIR/en-US.log" ]] && echo "ac_add_options --with-pgo-jarlog=$PGO_DIR/en-US.log" >> .mozconfig
+    echo "===== PGO profile consumed ====="
+    ls -l "$PGO_DIR" | sed 's/^/  /'
+    echo "===== end PGO profile ====="
+    ;;
+  "") ;;
+  *) echo "ERROR: PGO_STAGE='$PGO_STAGE' is not generate, use or empty" >&2; exit 1 ;;
+esac
+# configure only finds llvm-profdata beside `clang`, where Alpine does not
+# put it.
+if [[ -n "$PGO_STAGE" && -n "${LLVMVER:-}" ]]; then
+  export LLVM_PROFDATA="/usr/lib/llvm${LLVMVER}/bin/llvm-profdata"
+  echo "  PGO_STAGE=$PGO_STAGE LLVM_PROFDATA=$LLVM_PROFDATA"
 fi
 
 # 8. Build. `./mach build` produces obj/dist/firefox/ (unpacked tree) AND
@@ -721,17 +740,8 @@ fi
 # actually wrote) and independent of the Rust source's `const COUNT` form,
 # which varies across revisions. If the initializer can't be found, FAIL LOUD
 # instead of guessing.
-#
-# Under PGO the header is generated twice — once in obj/instrumented, once in
-# obj — so each stage trips the bug and needs its own patch + retry.
-FFI_HDR_REL="dist/include/mozilla/webrender/webrender_ffi_generated.h"
-for _pass in 1 2; do
-  [[ "$mach_rc" != "0" ]] || break
-  FFI_HDR=
-  for candidate in /work/firefox-src/obj/instrumented/$FFI_HDR_REL /work/firefox-src/obj/$FFI_HDR_REL; do
-    [[ -f "$candidate" ]] && grep -q '\[COUNT\]' "$candidate" && FFI_HDR="$candidate" && break
-  done
-  [[ -n "$FFI_HDR" ]] || break
+FFI_HDR="/work/firefox-src/obj/dist/include/mozilla/webrender/webrender_ffi_generated.h"
+if [[ "$mach_rc" != "0" && -f "$FFI_HDR" ]] && grep -q '\[COUNT\]' "$FFI_HDR"; then
   BUDGET_COUNT=$(awk '/BudgetType_VALUES\[COUNT\] = \{/ { print gsub(/BudgetType::/, "&"); exit }' "$FFI_HDR")
   if [[ -z "$BUDGET_COUNT" || "$BUDGET_COUNT" -lt 1 ]]; then
     echo "ERROR: cbindgen [COUNT] patch: could not derive BudgetType::COUNT from" >&2
@@ -739,22 +749,12 @@ for _pass in 1 2; do
     echo "       Refusing to guess an array size — inspect the generated header." >&2
     exit 1
   fi
-  echo "===== Patching $FFI_HDR — cbindgen bare-COUNT bug (COUNT=$BUDGET_COUNT) ====="
+  echo "===== Patching webrender_ffi_generated.h — cbindgen bare-COUNT bug (COUNT=$BUDGET_COUNT) ====="
   sed -i "s/\[COUNT\]/[$BUDGET_COUNT]/g" "$FFI_HDR"
-  echo "===== Retry ./mach build after webrender FFI patch (pass $_pass) ====="
+  echo "===== Retry ./mach build after webrender FFI patch ====="
   mach_rc=0
   ./mach build || mach_rc=$?
   echo "===== END ./mach build retry (rc=$mach_rc) ====="
-done
-
-# PGO proof: the profile the -fprofile-use stage consumed. An empty or missing
-# merged.profdata means the arm built without a profile and its numbers are
-# a plain build's.
-if [[ "$PGO" == "1" ]]; then
-  echo "===== PGO profile ====="
-  ls -l obj/instrumented/merged.profdata 2>&1 | sed 's/^/  /'
-  echo "  profraw files: $(find obj/instrumented -maxdepth 1 -name '*.profraw' | wc -l)"
-  echo "===== end PGO profile ====="
 fi
 
 # `./mach build` populates obj/dist/bin/ but NOT obj/dist/firefox/ — the
@@ -771,12 +771,6 @@ fi
 pkg_rc=0
 if [[ "$PW_SKIP_APORTS" == "1" ]]; then
   echo "===== SKIP ./mach build package (PW_SKIP_APORTS=1; use obj/dist/bin/ directly) ====="
-elif [[ "$PGO" == "1" ]]; then
-  # `mach build <target>` refuses every target under MOZ_PGO=1 ("Cannot specify
-  # targets"); `mach package` is the same `make package` without the check.
-  echo "===== START ./mach package (PGO) ====="
-  ./mach package || pkg_rc=$?
-  echo "===== END ./mach package (rc=$pkg_rc) ====="
 else
   echo "===== START ./mach build package ====="
   ./mach build package || pkg_rc=$?
@@ -844,6 +838,36 @@ if [ -z "$DIST" ] || [ ! -x "$DIST/firefox" ]; then
   exit 1
 fi
 echo "===== Built: $SRC/$DIST (mach rc=$mach_rc, package rc=$pkg_rc; artifact OK) ====="
+
+if [[ "$PGO_STAGE" == "generate" ]]; then
+  # Mirrors what `mach build` does under MOZ_PGO=1 between its two compiles:
+  # profileserver.py drives the packaged instrumented firefox through the PGO
+  # corpus, then merges the .profraw files it wrote in its cwd. The run needs
+  # an X display even though nothing looks at it, and the sandbox switches
+  # keep it off seccomp/userns paths a buildkit RUN step does not offer.
+  # Mozilla's libxul.so carries no rpath and musl's loader resolves a
+  # library's NEEDED from that library's rpath or LD_LIBRARY_PATH only, never
+  # from the executable's, so without LD_LIBRARY_PATH libmozsandbox.so "does
+  # not exist" for libxul (run 35619055612); bundle-dist.sh's RPATH=$ORIGIN
+  # only lands on the shipped tree.
+  echo "===== START PGO profile run ====="
+  Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &
+  export DISPLAY=:99
+  export MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_DISABLE_GMP_SANDBOX=1 \
+    MOZ_DISABLE_RDD_SANDBOX=1 MOZ_DISABLE_SOCKET_PROCESS_SANDBOX=1
+  mkdir -p obj/jarlog "$PGO_DIR"
+  (
+    cd obj
+    LD_LIBRARY_PATH="$SRC/$DIST" JARLOG_FILE="$SRC/obj/jarlog/en-US.log" \
+      ../mach python ../build/pgo/profileserver.py --binary "$SRC/$DIST/firefox"
+  )
+  cp obj/merged.profdata "$PGO_DIR/"
+  [[ -s obj/jarlog/en-US.log ]] && cp obj/jarlog/en-US.log "$PGO_DIR/"
+  echo "  profraw files: $(find obj -maxdepth 1 -name '*.profraw' | wc -l)"
+  ls -l "$PGO_DIR" | sed 's/^/  /'
+  echo "===== END PGO profile run; nothing to stage, the use build ships ====="
+  exit 0
+fi
 
 # libxul's .text size is the cheapest evidence that a codegen-level option
 # (LTO here, hardening before it) actually changed the artifact: an arm whose

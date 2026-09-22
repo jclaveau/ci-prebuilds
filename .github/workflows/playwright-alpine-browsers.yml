@@ -226,7 +226,14 @@ jobs:
           fi
           echo "pw_version=$PW_VERSION" >> "$GITHUB_OUTPUT"
 
-  build-firefox:
+  build-firefox-pgo-profile:
+    # First half of the firefox PGO build: the instrumented compile plus the
+    # profile run, published as :ff-pgo-profile-sha-<sha> (a scratch image
+    # holding /pgo/merged.profdata + jarlog, a few MB) for build-firefox to
+    # consume. Two jobs because mach's one-shot MOZ_PGO=1 flow is two full
+    # ~3h20 compiles and GitHub caps a job at 6h: run 35646182344 hit the cap
+    # with the second compile half done.
+    #
     # FF gate. Runs on:
     # - push to main: always (canonical promotion path)
     # - workflow_dispatch: only when build_firefox=true (default off — see
@@ -236,6 +243,50 @@ jobs:
       github.event_name == 'push'
       || (github.event_name == 'workflow_dispatch' && inputs.build_firefox == 'true')
       || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-firefox'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Free up runner disk (FF source + obj dir is ~15 GB)
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Always the cold Dockerfile: the instrumented compile shares nothing
+      # with a prebuilt-base's obj/. Its own cache ref keeps the instrumented
+      # layers from displacing the plain build's in :buildcache.
+      - name: Build PGO profile image
+        uses: docker/build-push-action@v7
+        with:
+          context: playwright/alpine-browsers
+          file: playwright/alpine-browsers/Dockerfile
+          target: pgo-profile
+          push: true
+          tags: ghcr.io/jclaveau/playwright-alpine-browsers:ff-pgo-profile-sha-${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-ff-pgo
+          cache-to: type=registry,ref=ghcr.io/jclaveau/playwright-alpine-browsers:buildcache-ff-pgo,mode=max
+          build-args: |
+            PGO_STAGE=generate
+            PW_JUGGLER_ORDER_FIRST=${{ inputs.juggler_order_first || 'false' }}
+            PW_JUGGLER_CATEGORY_RENAME=${{ inputs.juggler_category_rename || 'false' }}
+            PW_JUGGLER_INSTRUMENT=${{ inputs.juggler_instrument || 'false' }}
+            PW_JUGGLER_SERVICE_BOOTSTRAP=${{ inputs.juggler_service_bootstrap || 'false' }}
+
+  build-firefox:
+    # Second half of the PGO build (the -fprofile-use compile); the profile
+    # job carries the FF gate, so this runs exactly when it succeeded.
+    needs: build-firefox-pgo-profile
+    if: needs.build-firefox-pgo-profile.result == 'success'
     runs-on: ubuntu-latest
     # 6h ceiling. The old 4h was written against a "clean build ~2h" that no
     # longer holds: the last clean one (2026-08-23, run 32650828651) took
@@ -312,6 +363,9 @@ jobs:
       #   ff-${rev}-${patchset_hash} exists on GHCR, else cold. Lets PR iteration
       #   loops finish in ~10min instead of ~3h, transparently.
       #
+      # PGO overrides all of it: -fprofile-use reconfigures every object, so a
+      # prebuilt obj/ saves nothing and Dockerfile.iter knows no PGO_STAGE.
+      #
       # Why not always iter: BuildKit's --mount=type=cache mounts don't export
       # via cache-to=registry (verified by inspecting the buildcache config —
       # zero exec.cachemount records). So obj/.mozbuild/sccache go cold every
@@ -322,6 +376,7 @@ jobs:
       - id: dockerfile-choice
         env:
           BASE_TAG: ghcr.io/jclaveau/playwright-alpine-browsers:prebuilt-base-ff-${{ steps.pins.outputs.firefox_revision }}-${{ steps.pins.outputs.patchset_hash }}
+          PGO_STAGE: use
         run: |
           choose_iter() {
             echo "file=playwright/alpine-browsers/Dockerfile.iter" >> "$GITHUB_OUTPUT"
@@ -333,18 +388,23 @@ jobs:
             echo "base=" >> "$GITHUB_OUTPUT"
             echo "::notice::cold path: full Dockerfile build (no prebuilt-base for ff-${{ steps.pins.outputs.firefox_revision }}-${{ steps.pins.outputs.patchset_hash }})"
           }
-          case "${{ inputs.use_prebuilt }}" in
-            true)  choose_iter ;;
-            false) choose_cold ;;
-            "")
-              # Auto-select. Pre-flight: does the prebuilt-base tag exist?
-              if docker manifest inspect "$BASE_TAG" >/dev/null 2>&1; then
-                choose_iter
-              else
-                choose_cold
-              fi
-              ;;
-          esac
+          if [ -n "$PGO_STAGE" ]; then
+            choose_cold
+            echo "::notice::PGO_STAGE=$PGO_STAGE forces the cold Dockerfile"
+          else
+            case "${{ inputs.use_prebuilt }}" in
+              true)  choose_iter ;;
+              false) choose_cold ;;
+              "")
+                # Auto-select. Pre-flight: does the prebuilt-base tag exist?
+                if docker manifest inspect "$BASE_TAG" >/dev/null 2>&1; then
+                  choose_iter
+                else
+                  choose_cold
+                fi
+                ;;
+            esac
+          fi
 
       - name: Build artifact image
         uses: docker/build-push-action@v7
@@ -369,6 +429,8 @@ jobs:
           # it); set to the prebuilt-base tag when use_prebuilt=true so
           # Dockerfile.iter's `FROM ${BASE_PREBUILT}` resolves.
           build-args: |
+            PGO_STAGE=use
+            PGO_PROFILE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:ff-pgo-profile-sha-${{ github.sha }}
             PW_JUGGLER_ORDER_FIRST=${{ inputs.juggler_order_first || 'false' }}
             PW_JUGGLER_CATEGORY_RENAME=${{ inputs.juggler_category_rename || 'false' }}
             PW_JUGGLER_INSTRUMENT=${{ inputs.juggler_instrument || 'false' }}
