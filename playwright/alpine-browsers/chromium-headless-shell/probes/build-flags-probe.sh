@@ -223,3 +223,95 @@ if [[ -n "${ALT_CLANG:-}" ]]; then
       "$(wc -l < "$OUT/mismatched-alt-$tag.txt")" "$(awk '$2 > 0' "$OUT/mismatched-alt-$tag.txt" | wc -l)" "$err" | tee -a "$OUT/summary.txt"
   done
 fi
+
+# ---- 5. the residual mismatches, and whether we could profile ourselves -----
+# Part 4 answered "is it our compiler"; CFI turned 330 mismatches into 18 on
+# the six hot TUs (run 35036941795). Those 18 sit in exactly the functions the
+# nav row runs — Element::AttributeChanged 62 M counts, RecalcOwnStyle 19 M,
+# PseudoStateChanged 10 M — so some other flag of the official build still
+# shapes their CFG. Google's profile is a BORROWED artifact: every flag that
+# changes IR before the hash is computed has to match theirs, and we only ever
+# checked the ones we had a reason to suspect.
+#
+# 5a lists the CFG-shaping flags the build does NOT pass and re-counts the
+# residual with each one added, one variant at a time. A variant that drops
+# the mismatch count is the missing flag; all of them flat means the borrowed
+# profile cannot be made to fit and the answer is 5b.
+RESIDUAL_SRCS="
+third_party/blink/renderer/core/dom/element.cc
+third_party/blink/renderer/core/css/resolver/style_adjuster.cc
+third_party/blink/renderer/core/layout/block_node.cc
+third_party/blink/renderer/core/layout/block_layout_algorithm.cc
+"
+: > /tmp/objs-residual.txt
+for src in $RESIDUAL_SRCS; do obj_for_src "$src" >> /tmp/objs-residual.txt; done
+echo "== residual TUs: $(wc -l < /tmp/objs-residual.txt) of 4 resolved" | tee -a "$OUT/summary.txt"
+
+# Presence is read off the resolved cc1 line, not the driver args: Chromium
+# passes some of these through -Xclang and the driver adds others itself.
+echo "== CFG-shaping flags on the element.cc cc1 line" | tee -a "$OUT/summary.txt"
+CC1_ELEMENT="$OUT/cc1-element.txt"
+VARIANTS=""
+for flag in -fwhole-program-vtables -fsplit-lto-unit -fno-semantic-interposition \
+            -fsanitize=cfi-mfcall -fforce-emit-vtables; do
+  if [[ -s "$CC1_ELEMENT" ]] && grep -qF -- "$flag" "$CC1_ELEMENT"; then
+    echo "  present: $flag" | tee -a "$OUT/summary.txt"
+  else
+    echo "  ABSENT : $flag" | tee -a "$OUT/summary.txt"
+    VARIANTS="$VARIANTS $flag"
+  fi
+done
+
+# One variant per pass, baseline first, so a drop is attributable to a single
+# flag. -Wno- is overridden by the later -W, same trick as part 2.
+printf '%-34s %9s %16s\n' variant 'fns mismatch' 'counts dropped' | tee -a "$OUT/summary.txt"
+for variant in BASELINE $VARIANTS; do
+  extra=""; [[ "$variant" == BASELINE ]] || extra="$variant"
+  vtag=$(echo "$variant" | tr -c 'A-Za-z0-9' '_')
+  rm -rf "/tmp/pgo-var-$vtag"; mkdir -p "/tmp/pgo-var-$vtag"
+  xargs -P "$(nproc)" -I{} bash -c '
+    obj="$1"; vtag="$2"; build="$3"; pgo_on="$4"; extra="$5"
+    line=$(ninja -C "$build" -t commands "$obj" 2>/dev/null | tail -1 | sed "s/^sccache //")
+    [ -n "$line" ] || exit 0
+    line=$(printf "%s" "$line" | sed -E "s# -o [^ ]+# -o /tmp/pgo-var-$vtag/$(echo "$obj" | tr / _)#")
+    { echo "### $obj"; (cd "$build" && eval "$line $pgo_on $extra" 2>&1 || true); } \
+      > "/tmp/pgo-var-$vtag/$(echo "$obj" | tr / _).log"
+  ' _ {} "$vtag" "$BUILD" "$PGO_ON" "$extra" < /tmp/objs-residual.txt
+  cat "/tmp/pgo-var-$vtag"/*.log 2>/dev/null > "$OUT/pgo-var-$vtag.log"
+  # A variant clang rejects outright would read as a clean zero otherwise.
+  verr=$(grep -c ' error: ' "$OUT/pgo-var-$vtag.log" || true)
+  grep -oE '\(hash mismatch\) [^ ]+ Hash = [0-9]+ up to [0-9]+' "$OUT/pgo-var-$vtag.log" \
+    | awk '{ print $3, $NF }' | sort -u > "$OUT/mismatched-var-$vtag.txt"
+  read -r nv cv < <(awk '{ n++; c+=$2 } END { printf "%d %d", n, c }' "$OUT/mismatched-var-$vtag.txt")
+  printf '%-34s %9s %16s  (%s errors)\n' "$variant" "$nv" "$cv" "$verr" | tee -a "$OUT/summary.txt"
+done
+
+# 5b. Could we generate our own profile instead of borrowing Google's?
+# The prerequisite is the one that killed three firefox dispatches: a clang
+# whose -fprofile-generate runtime (libclang_rt.profile) actually exists for
+# the target. Alpine's clang ships as a bare compiler when aports' pin and
+# edge's default llvm disagree, and the miss only surfaces at LINK time, so a
+# compile-only check would pass and the 30 h build would still die.
+echo "== self-PGO prerequisite: -fprofile-generate roundtrip" | tee -a "$OUT/summary.txt"
+CLANGXX=$(awk '{print $1}' "$OUT/cmd-values.txt")
+echo "  clang: $("$CLANGXX" --version 2>&1 | head -1)" | tee -a "$OUT/summary.txt"
+echo "  resource dir: $("$CLANGXX" -print-resource-dir 2>&1)" | tee -a "$OUT/summary.txt"
+ls "$("$CLANGXX" -print-resource-dir 2>/dev/null)/lib"/*/libclang_rt.profile* 2>/dev/null \
+  | tee -a "$OUT/summary.txt" || echo "  no libclang_rt.profile* under the resource dir" | tee -a "$OUT/summary.txt"
+cat > /tmp/pgen.cc <<'CCEOF'
+#include <cstdio>
+int spin(int n) { int a = 0; for (int i = 0; i < n; i++) a += i % 7; return a; }
+int main() { std::printf("%d\n", spin(1000)); return 0; }
+CCEOF
+if "$CLANGXX" -fprofile-generate -o /tmp/pgen /tmp/pgen.cc 2> "$OUT/pgen-link.err"; then
+  ( cd /tmp && LLVM_PROFILE_FILE=/tmp/pgen.profraw /tmp/pgen >/dev/null 2>&1 )
+  if [[ -s /tmp/pgen.profraw ]] \
+     && "$LLVM_BIN/llvm-profdata" merge -o /tmp/pgen.profdata /tmp/pgen.profraw 2>> "$OUT/pgen-link.err"; then
+    echo "  OK: link + run + llvm-profdata merge ($(stat -c%s /tmp/pgen.profdata) bytes)" | tee -a "$OUT/summary.txt"
+  else
+    echo "  FAIL: linked, but no usable profraw — see pgen-link.err" | tee -a "$OUT/summary.txt"
+  fi
+else
+  echo "  FAIL: -fprofile-generate does not link:" | tee -a "$OUT/summary.txt"
+  head -5 "$OUT/pgen-link.err" | tee -a "$OUT/summary.txt"
+fi
