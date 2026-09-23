@@ -149,8 +149,8 @@ jobs:
               --slurpfile a out/p1-none.json --slurpfile b out/p5-none.json \
               --slurpfile c out/p2-loaded-off.json --slurpfile d out/p4-loaded-off.json \
               --slurpfile e out/p3-loaded-on.json \
-              '($a[0].metrics[$r].median_ms + $b[0].metrics[$r].median_ms) / 2 as $none
-             | ($c[0].metrics[$r].median_ms + $d[0].metrics[$r].median_ms) / 2 as $off
+              '(($a[0].metrics[$r].median_ms + $b[0].metrics[$r].median_ms) / 2) as $none
+             | (($c[0].metrics[$r].median_ms + $d[0].metrics[$r].median_ms) / 2) as $off
              | $e[0].metrics[$r].median_ms as $on
              | "\($r): closure \(($off/$none*1000|round)/1000)  string \(($on/$off*1000|round)/1000)"'
           done
