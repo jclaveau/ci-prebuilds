@@ -12,7 +12,7 @@
 # /firefox /opt/playwright/firefox` and `apk add` the runtime libs themselves.
 
 # Builder uses Alpine edge because aports HEAD's community/firefox APKBUILD
-# tracks edge (`_llvmver=22` etc.) — Alpine 3.21 stable doesn't ship clang22.
+# tracks edge — Alpine 3.21 stable doesn't ship a new enough clang.
 # The artifact image (FROM scratch) inherits no Alpine version; the runtime
 # Alpine version is the consumer's choice.
 ARG ALPINE_VERSION=edge
@@ -21,16 +21,19 @@ ARG ALPINE_VERSION=edge
 FROM alpine:${ALPINE_VERSION} AS firefox-builder
 
 # Bash + tooling for our scripts; the rest matches aports' community/firefox
-# `makedepends`. Versions of clang/lld/llvm are pinned in lockstep with aports'
-# `_llvmver` (read by apply-and-build.sh at build time, not hard-coded here).
+# `makedepends`. clang/lld/llvm track edge's DEFAULT llvm, not aports'
+# `_llvmver`: compiler-rt and wasi-sdk exist only for the default one, and a
+# build that links a profile runtime or the wasm sandbox needs them. The
+# version actually used is picked by apply-and-build.sh, which prefers the pin
+# and falls forward to whichever llvm owns the runtimes.
 RUN apk add --no-cache \
         bash curl git patch patchutils tar xz gzip jq gettext-envsubst make sccache \
         alsa-lib-dev automake binutils bsd-compat-headers cargo cbindgen \
-        clang22 clang22-libclang clang22-dev compiler-rt \
+        clang23 clang23-libclang clang23-dev compiler-rt \
         dbus dbus-dev gettext gtk+3.0-dev hunspell-dev icu-dev icu-data-full \
         libevent-dev libffi-dev libjpeg-turbo-dev libnotify-dev libogg-dev \
         libtheora-dev libtool libvorbis-dev libvpx-dev libwebp-dev \
-        libxcomposite-dev libxt-dev lld22 llvm22-dev m4 mesa-dev \
+        libxcomposite-dev libxt-dev lld23 llvm23-dev m4 mesa-dev \
         mesa-dri-gallium mimalloc2-insecure nasm nodejs nspr-dev nss-dev \
         patchelf pciutils pipewire-dev pulseaudio-dev py3-mozshellutil \
         python3 perl scudo-malloc sed wasi-sdk wireless-tools-dev \
