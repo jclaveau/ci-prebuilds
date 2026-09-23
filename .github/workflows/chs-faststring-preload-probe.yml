@@ -156,10 +156,11 @@ jobs:
           done
           echo
           echo "## drift check — the two reads of each repeated arm"
-          for pair in "p1-none p5-none" "p2-loaded-off p4-loaded-off"; do
-            set -- $pair
-            echo "--- $1 vs $2"
-            jq -r -n --slurpfile x "out/$1.json" --slurpfile y "out/$2.json" \
+          for pair in p1-none:p5-none p2-loaded-off:p4-loaded-off; do
+            first="${pair%%:*}"
+            second="${pair##*:}"
+            echo "--- $first vs $second"
+            jq -r -n --slurpfile x "out/$first.json" --slurpfile y "out/$second.json" \
               '$x[0].metrics | keys[] as $k
              | "  \($k) \($x[0].metrics[$k].median_ms) vs \($y[0].metrics[$k].median_ms)"'
           done
