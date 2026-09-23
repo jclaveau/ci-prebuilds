@@ -560,6 +560,16 @@ mkdir -p "$SCCACHE_DIR"
 sccache --start-server 2>/dev/null || true
 sccache --show-stats || true
 
+# A clang owns a compiler-rt runtime iff its resource dir has a lib/ subdir.
+# `clang-N --version` proves nothing here: the compiler installs fine without
+# any runtime at all.
+llvm_owns_runtimes() {
+  local resource_dir
+  command -v "clang-$1" >/dev/null 2>&1 || return 1
+  resource_dir=$("clang-$1" -print-resource-dir 2>/dev/null) || return 1
+  [[ -d "$resource_dir/lib" ]]
+}
+
 # clang/lld version: aports pins via `_llvmver`. When skipping aports, fall back
 # to whatever `clang` / `clang++` the builder image provides (e.g. clang-19 on
 # Ubuntu 24.04).
@@ -568,7 +578,29 @@ if [[ "$PW_SKIP_APORTS" == "1" ]]; then
   export CXX="${CXX:-clang++}"
   echo "  CC=$CC CXX=$CXX (PW_SKIP_APORTS=1 defaults)"
 else
-  LLVMVER=$(awk -F= '$1=="_llvmver"{gsub(/[^0-9]/,"",$2); print $2; exit}' "$APORTS/APKBUILD")
+  APORTS_LLVMVER=$(awk -F= '$1=="_llvmver"{gsub(/[^0-9]/,"",$2); print $2; exit}' "$APORTS/APKBUILD")
+  LLVMVER="$APORTS_LLVMVER"
+  # Alpine edge ships compiler-rt and wasi-sdk for its DEFAULT llvm only, while
+  # aports' firefox pin lags behind it. A clang with no resource dir still
+  # compiles, so the skew surfaces at link time and only under the flags that
+  # need a runtime: --enable-profile-generate finds no libclang_rt.profile.a,
+  # the wasm sandbox finds no builtins. Symlinking the runtimes across versions
+  # is not a fix either -- llvm-profdata refuses a profraw written by a newer
+  # runtime ("PLEASE update this tool to version in the raw profile"). So
+  # follow the runtimes rather than the pin, and say so in the log.
+  if ! llvm_owns_runtimes "$LLVMVER"; then
+    for llvm_candidate in $(ls -d /usr/lib/llvm*/lib/clang/*/lib 2>/dev/null \
+                            | sed -n 's#^/usr/lib/llvm\([0-9]\+\)/.*#\1#p' \
+                            | sort -rn -u); do
+      if llvm_owns_runtimes "$llvm_candidate"; then LLVMVER="$llvm_candidate"; break; fi
+    done
+    if [[ "$LLVMVER" == "$APORTS_LLVMVER" ]]; then
+      echo "ERROR: aports pins _llvmver=$APORTS_LLVMVER, whose clang ships no compiler-rt," >&2
+      echo "       and no other installed llvm has one either." >&2
+      exit 1
+    fi
+    echo "  aports pins _llvmver=$APORTS_LLVMVER, which ships no compiler-rt; using clang-$LLVMVER"
+  fi
   export CC="clang-${LLVMVER}"
   export CXX="clang++-${LLVMVER}"
 fi

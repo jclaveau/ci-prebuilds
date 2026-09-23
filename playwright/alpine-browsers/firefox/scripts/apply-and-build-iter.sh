@@ -158,6 +158,13 @@ sccache --start-server 2>/dev/null || true
 sccache --show-stats || true
 
 LLVMVER=$(awk -F= '$1=="_llvmver"{gsub(/[^0-9]/,"",$2); print $2; exit}' "$APORTS/APKBUILD")
+# Mirrors apply-and-build.sh's fall-forward: the base image this iterates on was
+# compiled by whichever llvm owns the runtimes, and relinking with a different
+# one would mix two toolchains in one obj dir.
+if ! [[ -d "$(clang-${LLVMVER} -print-resource-dir 2>/dev/null)/lib" ]]; then
+  LLVMVER=$(ls -d /usr/lib/llvm*/lib/clang/*/lib 2>/dev/null \
+            | sed -n 's#^/usr/lib/llvm\([0-9]\+\)/.*#\1#p' | sort -rn -u | head -n 1)
+fi
 export CC="clang-${LLVMVER}"
 export CXX="clang++-${LLVMVER}"
 
