@@ -1,0 +1,172 @@
+name: chromium faststring preload probe
+
+# Does libfaststring.so move the rows the nav/input profile implicates, and
+# what does carrying it cost?
+#
+# libfaststring.so is built into the published image and deliberately NOT
+# loaded (Dockerfile.alpine). The note there rests on runs 34355411280 and
+# 34357346361: `launch` 1.43x with against 1.36x without on an EPYC 7763,
+# 1.35x against 1.28x on a Xeon 8370C, and `layout_text` flat. Two things have
+# changed since:
+#
+#   1. The rows under suspicion are different. The nav/input perf-record (run
+#      35869661523) compared the arms symbol by symbol on `goto_warm` and
+#      found musl's memset at 2.48% against glibc's 1.36% and memcpy at 1.03%
+#      against 0.60% — +1.55pp, with every kernel symbol and every browser
+#      address otherwise matching. `click_force` shows the same shape at
+#      +0.76pp. Neither `goto_warm` nor `click_force` was read in those runs.
+#   2. `launch`'s denominator moved. PR #266 closed the startup gap (ICU
+#      walking 600 tzdata files); the DSO-closure cost of a 66th object was
+#      priced against the pre-#266 launch row.
+#
+# THREE arms, one job, so the runner divides out and the two effects separate
+# — which the earlier pair could not do:
+#
+#   none        the image as published, no preload
+#   loaded-off  the shim preloaded, CHS_FAST_STRING=0 so every kernel forwards
+#               to musl: the DSO is in the closure but none of its code runs
+#   loaded-on   the shim preloaded and active
+#
+# none -> loaded-off prices the closure ALONE. loaded-off -> loaded-on prices
+# the string implementation ALONE. A verdict needs both: the shim is worth
+# shipping only if the second gap beats the first.
+#
+# Arms run on/off/on style — none, loaded-off, loaded-on, loaded-off, none —
+# so a drift over the job shows up as disagreement between a row's two reads
+# of the same arm rather than as a result.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: 'Our image to probe (must be one that SHIPS /usr/lib/libfaststring.so)'
+        default: 'jclaveau/alpine-dood-playwright:latest'
+        type: string
+      pw_version:
+        description: 'Playwright version driving the probe'
+        default: '1.62.1'
+        type: string
+
+concurrency:
+  group: chs-faststring-preload-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Record the runner
+        # Every ratio in this repo moves with the core, so the model is part of
+        # the result, not context.
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          nproc
+
+      - name: The image ships the shim, and does not load it
+        env:
+          OURS: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          docker pull "$OURS"
+          docker run --rm --entrypoint sh "$OURS" -c '
+            ls -l /usr/lib/libfaststring.so
+            echo "--- container LD_PRELOAD (mimalloc only, expected)"
+            printenv LD_PRELOAD || echo "(unset)"
+            echo "--- the shim exports what it claims"
+            nm -D --defined-only /usr/lib/libfaststring.so 2>/dev/null \
+              | grep -E " (memcpy|memmove|memset|memcmp|strlen)$" \
+              || echo "nm unavailable in this image"
+          '
+
+      - name: Five passes — none, loaded-off, loaded-on, loaded-off, none
+        env:
+          OURS: ${{ inputs.image }}
+          PW: ${{ inputs.pw_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          pass=0
+          for arm in none loaded-off loaded-on loaded-off none; do
+            pass=$((pass + 1))
+            env_args=""
+            case "$arm" in
+              loaded-off) env_args="--env LD_PRELOAD=/usr/lib/libfaststring.so --env CHS_FAST_STRING=0" ;;
+              loaded-on)  env_args="--env LD_PRELOAD=/usr/lib/libfaststring.so" ;;
+            esac
+            echo "::group::pass $pass — $arm"
+            # shellcheck disable=SC2086
+            docker run --rm \
+              --security-opt seccomp=unconfined \
+              --env HOME=/home/runner \
+              --env PW_VERSION="$PW" \
+              --env "TAG=p$pass-$arm" \
+              $env_args \
+              -v "$PWD/playwright/bench:/probe:ro" \
+              -v "$PWD/playwright/scripts:/pwscripts:ro" \
+              -v "$PWD/out:/out" \
+              "$OURS" \
+              sh -c '
+                NODE_PATH="$(sh /pwscripts/global-node-path.sh)"
+                export NODE_PATH
+                node -e "require(\"playwright\")" 2>/dev/null \
+                  || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
+                timeout 600 node /probe/runtime-probe.cjs \
+                  --browser chromium --target alpine --out /out
+                mv /out/alpine-chromium.json "/out/$TAG.json"
+              '
+            echo "::endgroup::"
+          done
+
+      - name: Read the arms
+        # Printed per row rather than as a geomean: the claim under test is
+        # about goto_warm, click_force and launch specifically, and a geomean
+        # would let the other rows hide all three.
+        run: |
+          set -euo pipefail
+          echo "## per-pass medians (ms)"
+          printf '%-16s %10s %10s %10s %10s %10s\n' row p1-none p2-off p3-on p4-off p5-none
+          for row in launch context_page goto_cold goto_warm layout dom_churn \
+                     screenshot eval_rtt js_alloc click_force locator_click \
+                     int_math libm_fmod; do
+            printf '%-16s' "$row"
+            for tag in p1-none p2-loaded-off p3-loaded-on p4-loaded-off p5-none; do
+              printf ' %10s' "$(jq -r --arg r "$row" '.metrics[$r].median_ms // "-"' "out/$tag.json")"
+            done
+            printf '\n'
+          done
+          echo
+          echo "## the two questions, each as a ratio of arm means"
+          echo "closure cost      = mean(loaded-off) / mean(none)      — >1 means carrying the DSO costs"
+          echo "string benefit    = mean(loaded-on)  / mean(loaded-off) — <1 means the kernels pay off"
+          for row in launch goto_warm click_force layout screenshot; do
+            jq -r -n --arg r "$row" \
+              --slurpfile a out/p1-none.json --slurpfile b out/p5-none.json \
+              --slurpfile c out/p2-loaded-off.json --slurpfile d out/p4-loaded-off.json \
+              --slurpfile e out/p3-loaded-on.json \
+              '($a[0].metrics[$r].median_ms + $b[0].metrics[$r].median_ms) / 2 as $none
+             | ($c[0].metrics[$r].median_ms + $d[0].metrics[$r].median_ms) / 2 as $off
+             | $e[0].metrics[$r].median_ms as $on
+             | "\($r): closure \(($off/$none*1000|round)/1000)  string \(($on/$off*1000|round)/1000)"'
+          done
+          echo
+          echo "## drift check — the two reads of each repeated arm"
+          for pair in p1-none:p5-none p2-loaded-off:p4-loaded-off; do
+            first="${pair%%:*}"
+            second="${pair##*:}"
+            echo "--- $first vs $second"
+            jq -r -n --slurpfile x "out/$first.json" --slurpfile y "out/$second.json" \
+              '$x[0].metrics | keys[] as $k
+             | "  \($k) \($x[0].metrics[$k].median_ms) vs \($y[0].metrics[$k].median_ms)"'
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chs-faststring-preload
+          path: out/*.json
