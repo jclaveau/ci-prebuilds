@@ -192,46 +192,62 @@ def recent_failures(build_runs, now):
             and now - ts(r["updatedAt"]) < RECENT_FAILURE_WINDOW]
 
 
-def section_builds(now):
+def build_row(run, now, profile):
+    """One build chain as a row: chromium stage + ETA, or whichever job is running."""
+    jl = jobs(run["databaseId"], run["status"] == "completed")
+    running = [j for j in jl if j["status"] == "in_progress"]
+    failed = [j["name"] for j in jl if j["conclusion"] == "failure"]
+    # A firefox-only dispatch still carries every chromium job, skipped.
+    # Counting those as a chain reported "chs between jobs 0/14" for a run
+    # with no chromium in it at all.
+    stages = {chs_stage(j["name"]): j for j in jl
+              if chs_stage(j["name"]) and j["conclusion"] != "skipped"}
+    row = [BUILD_WF.removesuffix(".yml"), run["headBranch"], run["headSha"][:7], run["databaseId"]]
+    if run["status"] == "completed":
+        row += [run["conclusion"], f"{hm((now - ts(run['updatedAt'])).total_seconds())} ago"]
+    elif stages:
+        done = [s for s in stage_order() if stages.get(s, {}).get("conclusion") == "success"]
+        cur = [s for s in stage_order() if stages.get(s, {}).get("status") == "in_progress"]
+        if cur:
+            stage = cur[0]
+            started = ts(stages[stage]["started_at"])
+            remaining = max(0.0, profile.get(stage, 0) - (now - started).total_seconds())
+            later = stage_order()[stage_order().index(stage) + 1:]
+            remaining += sum(profile.get(s, 0) for s in later) + CONFORMANCE_TAIL
+            eta = now + dt.timedelta(seconds=remaining)
+            row += [f"chs {stage}", hm((now - started).total_seconds()), f"{len(done)}/14",
+                    f"{eta:%m-%d %H:%MZ} (+{hm(remaining)})"]
+        elif done and "finalize" in done:
+            row += ["chs conformance", "", f"{len(done)}/14"]
+        else:
+            row += ["chs between jobs", "", f"{len(done)}/14"]
+    else:
+        # Build jobs first: a firefox dispatch also runs the chromium
+        # conformance shards, and those are not what the row is about.
+        running.sort(key=lambda j: not j["name"].startswith("build-"))
+        row += [", ".join(j["name"] for j in running[:2]) or "queued"]
+    if failed:
+        row += [""] * (8 - len(row)) + [f"FAILED: {', '.join(failed[:3])}"]
+    return row
+
+
+def section_builds(now, only_run=None):
     build_runs = runs(BUILD_WF, 60)
-    live = [r for r in build_runs if r["status"] != "completed"]
     profile, profile_sha = round_profile(build_runs)
+    # A watcher polls one chain and nothing else: no header, no other workflows,
+    # no failure backlog -- one line it can diff against its last poll.
+    if only_run:
+        run = next((r for r in build_runs if r["databaseId"] == only_run), None)
+        if run:
+            print_aligned([build_row(run, now, profile)], indent="")
+        else:
+            print(f"run {only_run} is not among the last 60 {BUILD_WF} runs")
+        return build_runs
+    live = [r for r in build_runs if r["status"] != "completed"]
     print(f"BUILDS  ({now:%m-%d %H:%MZ}; round profile from {profile_sha})")
     rows = [("workflow", "branch", "sha", "run", "stage", "in", "done", "ETA", "")]
     for run in live:
-        jl = jobs(run["databaseId"], False)
-        running = [j for j in jl if j["status"] == "in_progress"]
-        failed = [j["name"] for j in jl if j["conclusion"] == "failure"]
-        # A firefox-only dispatch still carries every chromium job, skipped.
-        # Counting those as a chain reported "chs between jobs 0/14" for a run
-        # with no chromium in it at all.
-        stages = {chs_stage(j["name"]): j for j in jl
-                  if chs_stage(j["name"]) and j["conclusion"] != "skipped"}
-        row = [BUILD_WF.removesuffix(".yml"), run["headBranch"], run["headSha"][:7], run["databaseId"]]
-        if stages:
-            done = [s for s in stage_order() if stages.get(s, {}).get("conclusion") == "success"]
-            cur = [s for s in stage_order() if stages.get(s, {}).get("status") == "in_progress"]
-            if cur:
-                stage = cur[0]
-                started = ts(stages[stage]["started_at"])
-                remaining = max(0.0, profile.get(stage, 0) - (now - started).total_seconds())
-                later = stage_order()[stage_order().index(stage) + 1:]
-                remaining += sum(profile.get(s, 0) for s in later) + CONFORMANCE_TAIL
-                eta = now + dt.timedelta(seconds=remaining)
-                row += [f"chs {stage}", hm((now - started).total_seconds()), f"{len(done)}/14",
-                        f"{eta:%m-%d %H:%MZ} (+{hm(remaining)})"]
-            elif done and "finalize" in done:
-                row += ["chs conformance", "", f"{len(done)}/14"]
-            else:
-                row += ["chs between jobs", "", f"{len(done)}/14"]
-        else:
-            # Build jobs first: a firefox dispatch also runs the chromium
-            # conformance shards, and those are not what the row is about.
-            running.sort(key=lambda j: not j["name"].startswith("build-"))
-            row += [", ".join(j["name"] for j in running[:2]) or "queued"]
-        if failed:
-            row += [""] * (8 - len(row)) + [f"FAILED: {', '.join(failed[:3])}"]
-        rows.append(row)
+        rows.append(build_row(run, now, profile))
     others = [(wf, r) for wf in (AB_WF, PUBLISH_WF, "promote-chromium-from-source.yml")
               for r in runs(wf, 5) if r["status"] != "completed"]
     for wf, r in others:
@@ -523,18 +539,18 @@ def ab_rows(ab_limit):
     return table
 
 
-def section_perf(ab_limit, gate_limit):
+def section_perf(ab_limit, gate_limit, draws, browsers):
     print("PERF  ours/official. '~' = every row of the group inside its shot spread (noise); k/n = draws of an aggregate reading > 1.00; n = probe shots behind the row; geo = non-control rows, raw")
     shipped = shipped_rows()
     gates = gate_rows(runs(BUILD_WF, 60), gate_limit)
     ab = ab_rows(ab_limit)
     mix, jobs_seen = fleet_mix()
-    for browser in BROWSERS:
+    for browser in browsers:
         rows = shipped.get(browser, [])
         if not rows:
             continue
         table = []
-        for run, cell, groups, overall in rows[:4]:
+        for run, cell, groups, overall in rows[:draws]:
             table.append((f"{run['headSha'][:7]} {run['createdAt'][5:10]} {run['databaseId']}", cpu_short(cell["cpu"]), cell["shots"], groups, overall))
         by_cpu = {}
         for run, cell, groups, overall in rows:
@@ -554,7 +570,7 @@ def section_perf(ab_limit, gate_limit):
                     "main sha date  run", table)
     # candidates: perf-gate jobs, candidate vs official with the promoted build's
     # ratio on the same runner as the reference line
-    for browser in BROWSERS:
+    for browser in browsers:
         table = []
         for run, (cand_tag, prom_tag), cells in gates.get(browser, []):
             cand = cand_tag or f"{run['headBranch']}@{run['headSha'][:7]}"
@@ -565,7 +581,7 @@ def section_perf(ab_limit, gate_limit):
                 table.append((f"      {prom_tag or f'{browser[:2]}-latest'} vs official (same job)", "", cells["promoted"]["shots"], groups, overall))
         if table:
             print_table(f"{browser} candidates (perf-gate; candidate vs official, then what the promoted build does on that runner)", "date  candidate", table)
-    if ab:
+    if ab and "chromium" in browsers:
         print_table("chromium A/B (chs-perf-ab; 'B / A' = candidate over its baseline, both ours; prefer perf-gate for vs-official)", "date  pair", ab)
     if mix:
         print(f"  GHA runner mix over {jobs_seen} cached probe jobs: " + ", ".join(f"{cpu} {share:.0%}" for cpu, share in mix.items()))
@@ -573,19 +589,27 @@ def section_perf(ab_limit, gate_limit):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("section", nargs="?", choices=["builds", "conformance", "perf"])
-    ap.add_argument("--ab", type=int, default=12, help="chs-perf-ab runs to read")
+    ap.add_argument("--ab", type=int, default=4, help="chs-perf-ab runs to read")
+    ap.add_argument("--draws", type=int, default=1,
+                    help="per-draw rows listed under each shipped block; the geo rows below them read every draw either way")
+    ap.add_argument("--browser", choices=BROWSERS, help="restrict perf to one browser")
+    ap.add_argument("--run", type=int, help="print only this build run's row, bare, for a watcher to poll")
     ap.add_argument("--gate", type=int, default=12, help="perf-gate dispatch runs to read (build-workflow gates are found via their jobs)")
     ap.add_argument("--depth", type=int, default=60, help="build runs to scan for conformance verdicts (300 once to seed the cache)")
     args = ap.parse_args()
     now = dt.datetime.now(dt.timezone.utc)
+    # --run is the watcher's whole output; conformance and perf say nothing
+    # about one chain in flight.
+    section = "builds" if args.run else args.section
     build_runs = None
-    if args.section in (None, "builds"):
-        build_runs = section_builds(now)
-        section_prs()
-    if args.section in (None, "conformance"):
+    if section in (None, "builds"):
+        build_runs = section_builds(now, args.run)
+        if not args.run:
+            section_prs()
+    if section in (None, "conformance"):
         section_conformance(build_runs if build_runs is not None else runs(BUILD_WF, 60), args.depth)
-    if args.section in (None, "perf"):
-        section_perf(args.ab, args.gate)
+    if section in (None, "perf"):
+        section_perf(args.ab, args.gate, args.draws, (args.browser,) if args.browser else BROWSERS)
 
 
 if __name__ == "__main__":
