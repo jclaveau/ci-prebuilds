@@ -15,8 +15,16 @@ ARG ALPINE_VERSION=edge
 
 FROM alpine:${ALPINE_VERSION} AS webkit-builder
 
+# The deps below pin no LLVM version on purpose: WebKit takes edge's default
+# clang/lld/compiler-rt, so it never skews the way aports' firefox pin does.
+# The cost is that `cache-from` restores this layer verbatim, and an edge
+# toolchain bump stays invisible — the image keeps the clang it was first
+# built with. Pass a new WK_TOOLCHAIN_EPOCH to re-resolve against today's edge.
+ARG WK_TOOLCHAIN_EPOCH=""
+
 # Build deps (same set as the single-port checkpoint design).
-RUN apk add --no-cache \
+RUN echo "toolchain epoch: ${WK_TOOLCHAIN_EPOCH}" \
+    && apk add --no-cache \
         bash curl git patch patchutils tar xz gzip jq sccache \
         build-base \
         clang clang-dev lld llvm-dev compiler-rt \
@@ -43,7 +51,8 @@ RUN apk add --no-cache \
         gettext-dev \
         sysprof-dev \
         \
-        meson py3-pip wayland-dev wayland-protocols
+        meson py3-pip wayland-dev wayland-protocols \
+    && clang --version | head -n 1
 
 # Build libwpe + libwpebackend-fdo from upstream master. Alpine apk versions
 # (libwpe 1.16.3 / libwpebackend-fdo 1.16.1) hit an ABI/static-init wall on
