@@ -64,6 +64,12 @@ CHS_JOB = "build-chromium-headless-shell-from-source"
 FALLBACK_PROFILE = {"setup": 25 * 60, **{f"r{i}": 5.2 * 3600 for i in range(1, 8)},
                     **{f"r{i}": 20 * 60 for i in range(8, 13)}, "finalize": 25 * 60}
 CONFORMANCE_TAIL = 12 * 60
+# A build chain that dies between two tallies is otherwise invisible: the
+# BUILDS table listed runs still in flight and nothing else, so three
+# consecutive firefox failures in one night each left no trace. Chromium
+# chains are long enough to be caught live; a 3h firefox build is not.
+RECENT_FAILURE_WINDOW = dt.timedelta(hours=24)
+DEAD_CONCLUSIONS = ("failure", "timed_out")
 
 
 def gh(*args, json_out=True):
@@ -179,6 +185,13 @@ def print_aligned(rows, indent="  "):
         print(indent + "  ".join(c.ljust(w) for c, w in zip(r, width)).rstrip())
 
 
+def recent_failures(build_runs, now):
+    """Build chains that died recently enough to still be the thing to look at."""
+    return [r for r in build_runs
+            if r["conclusion"] in DEAD_CONCLUSIONS
+            and now - ts(r["updatedAt"]) < RECENT_FAILURE_WINDOW]
+
+
 def section_builds(now):
     build_runs = runs(BUILD_WF, 60)
     live = [r for r in build_runs if r["status"] != "completed"]
@@ -189,7 +202,11 @@ def section_builds(now):
         jl = jobs(run["databaseId"], False)
         running = [j for j in jl if j["status"] == "in_progress"]
         failed = [j["name"] for j in jl if j["conclusion"] == "failure"]
-        stages = {chs_stage(j["name"]): j for j in jl if chs_stage(j["name"])}
+        # A firefox-only dispatch still carries every chromium job, skipped.
+        # Counting those as a chain reported "chs between jobs 0/14" for a run
+        # with no chromium in it at all.
+        stages = {chs_stage(j["name"]): j for j in jl
+                  if chs_stage(j["name"]) and j["conclusion"] != "skipped"}
         row = [BUILD_WF.removesuffix(".yml"), run["headBranch"], run["headSha"][:7], run["databaseId"]]
         if stages:
             done = [s for s in stage_order() if stages.get(s, {}).get("conclusion") == "success"]
@@ -208,7 +225,10 @@ def section_builds(now):
             else:
                 row += ["chs between jobs", "", f"{len(done)}/14"]
         else:
-            row += [", ".join(j["name"] for j in running[:3]) or "queued"]
+            # Build jobs first: a firefox dispatch also runs the chromium
+            # conformance shards, and those are not what the row is about.
+            running.sort(key=lambda j: not j["name"].startswith("build-"))
+            row += [", ".join(j["name"] for j in running[:2]) or "queued"]
         if failed:
             row += [""] * (8 - len(row)) + [f"FAILED: {', '.join(failed[:3])}"]
         rows.append(row)
@@ -216,6 +236,12 @@ def section_builds(now):
               for r in runs(wf, 5) if r["status"] != "completed"]
     for wf, r in others:
         rows.append((wf.removesuffix(".yml"), r["headBranch"], r["headSha"][:7], r["databaseId"], r["status"]))
+    for run in recent_failures(build_runs, now):
+        failed = [j["name"] for j in jobs(run["databaseId"], True) if j["conclusion"] == "failure"]
+        age = hm((now - ts(run["updatedAt"])).total_seconds())
+        rows.append((BUILD_WF.removesuffix(".yml"), run["headBranch"], run["headSha"][:7],
+                     run["databaseId"], run["conclusion"], f"{age} ago", "", "",
+                     f"FAILED: {', '.join(failed[:3]) or 'no failed job'}"))
     if len(rows) > 1:
         print_aligned(rows)
     else:
