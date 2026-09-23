@@ -608,6 +608,29 @@ fi
 # `envsubst` substitutes $CBUILD/$CHOST/$builddir inside aports' mozconfig.
 envsubst < .mozconfig > .mozconfig.expanded && mv .mozconfig.expanded .mozconfig
 
+# wasi-sysroot's libc++ 23 dropped the transitive <ios> that bundled hunspell's
+# csutil.hxx relies on, leaving `std::ios_base::openmode` at line 128 with
+# nothing but the forward declaration in <__fwd/ios.h>:
+#   csutil.hxx:128:38: error: incomplete type 'std::ios_base' named in nested
+#   name specifier
+# Only the rlbox/wasm pass sees it -- the native pass compiles against
+# libstdc++ -- so it surfaces ~3h in, at phonet.wasm, after everything else has
+# already built. Declaring the include the header actually needs is narrower
+# than pinning the sysroot back.
+CSUTIL_HXX="$SRC/extensions/spellcheck/hunspell/src/csutil.hxx"
+if ! grep -q '^#include <ios>' "$CSUTIL_HXX"; then
+  if ! grep -q 'std::ios_base' "$CSUTIL_HXX"; then
+    echo "ERROR: $CSUTIL_HXX no longer names std::ios_base — drop this patch" >&2
+    exit 1
+  fi
+  if ! grep -q '^#include ' "$CSUTIL_HXX"; then
+    echo "ERROR: $CSUTIL_HXX has no #include to anchor <ios> before" >&2
+    exit 1
+  fi
+  sed -i '0,/^#include /s//#include <ios>\n&/' "$CSUTIL_HXX"
+  echo "  hunspell csutil.hxx: added #include <ios> (libc++ 23 transitive-include drop)"
+fi
+
 # 8. Build. `./mach build` produces obj/dist/firefox/ (unpacked tree) AND
 # obj/dist/firefox-*.tar.xz (the same thing tarballed) — we use the unpacked
 # tree directly, so no `./mach package` step needed (it would re-run packaging
