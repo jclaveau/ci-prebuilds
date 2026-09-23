@@ -20,7 +20,10 @@ consecutive rows are re-draws of the SAME image on whichever runner GitHub
 handed out. "candidates" rows are perf-gate jobs (candidate, promoted and
 official probed on one runner, `runs` shots each): the candidate is shown
 against official, with the promoted build's own ratio on that same runner
-underneath as the reference. chs-perf-ab rows are the older two-cell A/B.
+underneath as the reference. One gate run is one draw, so a candidate with
+two or more of them gets the same per-cpu and fleet geomeans as the shipped
+rows — shots cut the noise inside a draw, only draws cut the runner lottery
+between them. chs-perf-ab rows are the older two-cell A/B.
 """
 import argparse
 import datetime as dt
@@ -615,16 +618,40 @@ def section_perf(ab_limit, gate_limit, draws, browsers):
         print_table(f"shipped {browser} (main test-and-publish; same pinned browsers re-drawn per run, alpine vs official in one job)",
                     "main sha date  run", table)
     # candidates: perf-gate jobs, candidate vs official with the promoted build's
-    # ratio on the same runner as the reference line
+    # ratio on the same runner as the reference line. One gate run is ONE draw,
+    # on whichever runner GitHub handed out, so a candidate's draws are binned
+    # per cpu the way the shipped rows above are: a single draw's per-row
+    # verdict flips between runner models (the same chromium candidate read
+    # layout 1.03 on an EPYC 7763 and 0.99 on a 9V45), the per-cpu geo does not.
     for browser in browsers:
-        table = []
+        by_candidate = {}
         for run, (cand_tag, prom_tag), cells in gates.get(browser, []):
             cand = cand_tag or f"{run['headBranch']}@{run['headSha'][:7]}"
-            _, groups, overall = ratio_row(cells["candidate"], cells["official"])
-            table.append((f"{run['createdAt'][5:10]} {cand} vs official", cpu_short(cells["candidate"]["cpu"]), cells["candidate"]["shots"], groups, overall))
-            if "promoted" in cells:
-                _, groups, overall = ratio_row(cells["promoted"], cells["official"])
-                table.append((f"      {prom_tag or f'{browser[:2]}-latest'} vs official (same job)", "", cells["promoted"]["shots"], groups, overall))
+            by_candidate.setdefault(cand, []).append((run, prom_tag, cells))
+        table = []
+        for cand, draws in by_candidate.items():
+            by_cpu = {}
+            for run, prom_tag, cells in draws:
+                cpu = cpu_short(cells["candidate"]["cpu"])
+                _, groups, overall = ratio_row(cells["candidate"], cells["official"])
+                by_cpu.setdefault(cpu, []).append((groups, overall))
+                table.append((f"{run['createdAt'][5:10]} {cand} vs official", cpu, cells["candidate"]["shots"], groups, overall))
+                if "promoted" in cells:
+                    _, prom_groups, prom_overall = ratio_row(cells["promoted"], cells["official"])
+                    table.append((f"      {prom_tag or f'{browser[:2]}-latest'} vs official (same job)", "", cells["promoted"]["shots"], prom_groups, prom_overall))
+            if len(draws) < 2:
+                continue
+            for cpu, lst in sorted(by_cpu.items()):
+                table.append((f"  per-cpu geo (n={len(lst)})", cpu, "", aggregate([x[0] for x in lst]), geomean([x[1] for x in lst])))
+            every_draw = [x for lst in by_cpu.values() for x in lst]
+            table.append((f"  global geo (n={len(every_draw)} draws, as drawn)", "all", "",
+                          aggregate([x[0] for x in every_draw]), geomean([x[1] for x in every_draw])))
+            cpus = sorted(by_cpu)
+            weights = [mix.get(c, 0.0) for c in cpus]
+            if sum(weights):
+                table.append(("  fleet geo (per-cpu geo x fleet share)", "all", "",
+                              aggregate([aggregate([x[0] for x in by_cpu[c]]) for c in cpus], weights),
+                              weighted_geomean([geomean([x[1] for x in by_cpu[c]]) for c in cpus], weights)))
         if table:
             print_table(f"{browser} candidates (perf-gate; candidate vs official, then what the promoted build does on that runner)", "date  candidate", table)
     if ab and "chromium" in browsers:
