@@ -192,7 +192,40 @@ def recent_failures(build_runs, now):
             and now - ts(r["updatedAt"]) < RECENT_FAILURE_WINDOW]
 
 
-def build_row(run, now, profile):
+def job_durations(build_runs):
+    """Seconds each recent successful build job took, per job name, ascending.
+
+    Every completed run in the window, not a slice of it: firefox and webkit
+    dispatches are rare next to the chromium chains, so the last 20 runs held a
+    single build-firefox success and the cold one that carries the real ETA sat
+    at 38.
+    """
+    out = {}
+    for run in [r for r in build_runs if r["status"] == "completed"]:
+        for j in jobs(run["databaseId"], True):
+            if j["conclusion"] == "success" and j["started_at"] and j["completed_at"]:
+                out.setdefault(j["name"], []).append(
+                    (ts(j["completed_at"]) - ts(j["started_at"])).total_seconds())
+    return {name: sorted(v) for name, v in out.items()}
+
+
+def remaining_seconds(durations, elapsed):
+    """The shortest past success still ahead of us, less what has already run.
+
+    build-firefox is bimodal: a warm relink off the BuildKit cache mount is 2-4
+    minutes, a cold compile 2h48, and a patchset-hash reseed decides which
+    without saying so in any job field. A median over past successes predicts
+    neither. Reading the next success above the elapsed time instead starts on
+    the warm cluster and steps up to the cold one the moment the relink window
+    passes -- no hash, and self-correcting.
+    """
+    for d in durations:
+        if d > elapsed:
+            return d - elapsed
+    return None
+
+
+def build_row(run, now, profile, durations):
     """One build chain as a row: chromium stage + ETA, or whichever job is running."""
     jl = jobs(run["databaseId"], run["status"] == "completed")
     running = [j for j in jl if j["status"] == "in_progress"]
@@ -226,6 +259,18 @@ def build_row(run, now, profile):
         # conformance shards, and those are not what the row is about.
         running.sort(key=lambda j: not j["name"].startswith("build-"))
         row += [", ".join(j["name"] for j in running[:2]) or "queued"]
+        if running and running[0]["started_at"]:
+            elapsed = (now - ts(running[0]["started_at"])).total_seconds()
+            remaining = remaining_seconds(durations.get(running[0]["name"], []), elapsed)
+            row += [hm(elapsed), ""]
+            past = durations.get(running[0]["name"], [])
+            if remaining is not None:
+                eta = now + dt.timedelta(seconds=remaining)
+                row += [f"{eta:%m-%d %H:%MZ} (+{hm(remaining)})"]
+            elif past:
+                # Nothing left to predict from: this run is already longer than
+                # every success on record, which is the interesting part.
+                row += [f"past {hm(past[-1])}, its longest success"]
     if failed:
         row += [""] * (8 - len(row)) + [f"FAILED: {', '.join(failed[:3])}"]
     return row
@@ -236,10 +281,11 @@ def section_builds(now, only_run=None):
     profile, profile_sha = round_profile(build_runs)
     # A watcher polls one chain and nothing else: no header, no other workflows,
     # no failure backlog -- one line it can diff against its last poll.
+    durations = job_durations(build_runs)
     if only_run:
         run = next((r for r in build_runs if r["databaseId"] == only_run), None)
         if run:
-            print_aligned([build_row(run, now, profile)], indent="")
+            print_aligned([build_row(run, now, profile, durations)], indent="")
         else:
             print(f"run {only_run} is not among the last 60 {BUILD_WF} runs")
         return build_runs
@@ -247,7 +293,7 @@ def section_builds(now, only_run=None):
     print(f"BUILDS  ({now:%m-%d %H:%MZ}; round profile from {profile_sha})")
     rows = [("workflow", "branch", "sha", "run", "stage", "in", "done", "ETA", "")]
     for run in live:
-        rows.append(build_row(run, now, profile))
+        rows.append(build_row(run, now, profile, durations))
     others = [(wf, r) for wf in (AB_WF, PUBLISH_WF, "promote-chromium-from-source.yml")
               for r in runs(wf, 5) if r["status"] != "completed"]
     for wf, r in others:
