@@ -1781,7 +1781,7 @@ jobs:
   #       layer: [pnpm, pnpm-gyp, playwright, playwright-gyp]
   #   steps:
   #     - uses: actions/checkout@v7
-  #     - uses: docker/login-action@v3
+  #     - uses: docker/login-action@v4
   #       with:
   #         registry: ghcr.io
   #         username: ${{ github.actor }}
