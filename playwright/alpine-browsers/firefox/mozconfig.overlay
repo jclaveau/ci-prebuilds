@@ -36,3 +36,9 @@ ac_add_options --enable-lto=cross
 # (run 32800234529). aports' `--disable-jemalloc` is a musl requirement, not
 # performance it declined. The allocator win ships at RUNTIME instead, as the
 # mimalloc preload in playwright/Dockerfile.alpine's firefox shim.
+
+# PGO. Official Playwright firefox ships without it (omni.ja unordered, see
+# project_ff_build_missing_pgo_lto_jemalloc), so this is beyond parity, not a
+# gap. Not a line here: apply-and-build.sh appends --enable-profile-generate
+# or --enable-profile-use per PGO_STAGE, because the two compiles have to be
+# two CI jobs (see the script).

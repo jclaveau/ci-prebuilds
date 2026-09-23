@@ -16,8 +16,18 @@
 # The artifact image (FROM scratch) inherits no Alpine version; the runtime
 # Alpine version is the consumer's choice.
 ARG ALPINE_VERSION=edge
+# PGO profile input for the `use` stage: an image holding /pgo/merged.profdata
+# (+ en-US.log), published by the workflow's build-firefox-pgo-profile job from
+# this same Dockerfile's `pgo-profile` target. Unset = an empty /pgo, which the
+# script only reads under PGO_STAGE=use.
+ARG PGO_PROFILE_IMAGE
 
 # ---- Firefox builder ---------------------------------------------------------
+FROM alpine:${ALPINE_VERSION} AS pgo-profile-none
+RUN mkdir /pgo
+
+FROM ${PGO_PROFILE_IMAGE:-pgo-profile-none} AS pgo-profile-in
+
 FROM alpine:${ALPINE_VERSION} AS firefox-builder
 
 # Bash + tooling for our scripts; the rest matches aports' community/firefox
@@ -80,6 +90,9 @@ ARG PW_JUGGLER_CATEGORY_RENAME=false
 ARG PW_SKIP_APORTS=false
 ARG PW_ENABLE_TESTS=false
 ARG PW_JUGGLER_INSTRUMENT=false
+# generate | use | '' — see apply-and-build.sh.
+ARG PGO_STAGE=
+COPY --from=pgo-profile-in /pgo /work/pgo
 
 RUN --mount=type=cache,target=/work/firefox-src/obj,id=ffx-obj,sharing=locked \
     --mount=type=cache,target=/root/.mozbuild,id=ffx-mozbuild,sharing=locked \
@@ -90,7 +103,14 @@ RUN --mount=type=cache,target=/work/firefox-src/obj,id=ffx-obj,sharing=locked \
        PW_SKIP_APORTS="$PW_SKIP_APORTS" \
        PW_ENABLE_TESTS="$PW_ENABLE_TESTS" \
        PW_JUGGLER_INSTRUMENT="$PW_JUGGLER_INSTRUMENT" \
+       PGO_STAGE="$PGO_STAGE" \
        bash /work/firefox/scripts/apply-and-build.sh /work
+
+# ---- PGO profile ----------------------------------------------------------
+# What a PGO_STAGE=generate build leaves behind: the merged profile and the
+# jarlog, a few MB. The `use` build pulls it back in as PGO_PROFILE_IMAGE.
+FROM scratch AS pgo-profile
+COPY --from=firefox-builder /work/pgo /pgo
 
 # ---- Artifact ----------------------------------------------------------------
 # Scratch image with just the built firefox/ dist tree under /firefox.

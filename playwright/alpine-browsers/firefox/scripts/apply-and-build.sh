@@ -631,6 +631,48 @@ if ! grep -q '^#include <ios>' "$CSUTIL_HXX"; then
   echo "  hunspell csutil.hxx: added #include <ios> (libc++ 23 transitive-include drop)"
 fi
 
+# PGO, split in two builds because mach's own MOZ_PGO=1 flow (instrumented
+# build, profile run, -fprofile-use build, all in one `mach build`) is two
+# full firefox compiles and does not fit GitHub's 6h job cap (run 35646182344
+# died at 360 min with the second compile half done). PGO_STAGE selects the
+# half this run is:
+#   generate — instrumented build, profile run through build/pgo/profileserver.py,
+#              merged.profdata + jarlog left in /work/pgo; no dist is staged.
+#   use      — normal build consuming /work/pgo (the workflow's
+#              build-firefox-pgo-profile job publishes it as an image).
+#   ''       — plain build, no PGO.
+# Only C/C++ is profiled: `=cross` would instrument Rust too, and Alpine's
+# rustc and clang carry different LLVMs whose llvm-profdata refuse each
+# other's profiles.
+: "${PGO_STAGE:=}"
+PGO_DIR=/work/pgo
+case "$PGO_STAGE" in
+  generate)
+    echo "ac_add_options --enable-profile-generate" >> .mozconfig
+    ;;
+  use)
+    if [[ ! -s "$PGO_DIR/merged.profdata" ]]; then
+      echo "ERROR: PGO_STAGE=use but $PGO_DIR/merged.profdata is missing or empty" >&2
+      ls -la "$PGO_DIR" >&2 || true
+      exit 1
+    fi
+    echo "ac_add_options --enable-profile-use" >> .mozconfig
+    echo "ac_add_options --with-pgo-profile-path=$PGO_DIR/merged.profdata" >> .mozconfig
+    [[ -s "$PGO_DIR/en-US.log" ]] && echo "ac_add_options --with-pgo-jarlog=$PGO_DIR/en-US.log" >> .mozconfig
+    echo "===== PGO profile consumed ====="
+    ls -l "$PGO_DIR" | sed 's/^/  /'
+    echo "===== end PGO profile ====="
+    ;;
+  "") ;;
+  *) echo "ERROR: PGO_STAGE='$PGO_STAGE' is not generate, use or empty" >&2; exit 1 ;;
+esac
+# configure only finds llvm-profdata beside `clang`, where Alpine does not
+# put it.
+if [[ -n "$PGO_STAGE" && -n "${LLVMVER:-}" ]]; then
+  export LLVM_PROFDATA="/usr/lib/llvm${LLVMVER}/bin/llvm-profdata"
+  echo "  PGO_STAGE=$PGO_STAGE LLVM_PROFDATA=$LLVM_PROFDATA"
+fi
+
 # 8. Build. `./mach build` produces obj/dist/firefox/ (unpacked tree) AND
 # obj/dist/firefox-*.tar.xz (the same thing tarballed) — we use the unpacked
 # tree directly, so no `./mach package` step needed (it would re-run packaging
@@ -665,7 +707,14 @@ if [[ -r "$AUTOCONF_MK" ]]; then
   # rather than trusting the flag: a silently-dropped option produces a green
   # build whose numbers mean nothing, which is how the hardening arm went VOID.
   # The PW_SKIP_APORTS diagnostic path disables LTO on purpose, so it is exempt.
-  if [[ "$PW_SKIP_APORTS" != "1" ]]; then
+  #
+  # So is the instrumented PGO pass: moz.configure prints "Disabling LTO
+  # because --enable-profile-generate is specified" and drops MOZ_LTO. That
+  # build ships nothing — it only produces merged.profdata — and the profile-use
+  # pass that does ship still has to clear the assert.
+  if [[ "$PGO_STAGE" == "generate" ]]; then
+    echo "  LTO off by design (--enable-profile-generate); assert deferred to the use pass"
+  elif [[ "$PW_SKIP_APORTS" != "1" ]]; then
     if grep -qE '^MOZ_LTO[[:space:]]*=[[:space:]]*\S' "$AUTOCONF_MK"; then
       echo "  LTO reached configure ✓"
     else
@@ -796,6 +845,36 @@ if [ -z "$DIST" ] || [ ! -x "$DIST/firefox" ]; then
   exit 1
 fi
 echo "===== Built: $SRC/$DIST (mach rc=$mach_rc, package rc=$pkg_rc; artifact OK) ====="
+
+if [[ "$PGO_STAGE" == "generate" ]]; then
+  # Mirrors what `mach build` does under MOZ_PGO=1 between its two compiles:
+  # profileserver.py drives the packaged instrumented firefox through the PGO
+  # corpus, then merges the .profraw files it wrote in its cwd. The run needs
+  # an X display even though nothing looks at it, and the sandbox switches
+  # keep it off seccomp/userns paths a buildkit RUN step does not offer.
+  # Mozilla's libxul.so carries no rpath and musl's loader resolves a
+  # library's NEEDED from that library's rpath or LD_LIBRARY_PATH only, never
+  # from the executable's, so without LD_LIBRARY_PATH libmozsandbox.so "does
+  # not exist" for libxul (run 35619055612); bundle-dist.sh's RPATH=$ORIGIN
+  # only lands on the shipped tree.
+  echo "===== START PGO profile run ====="
+  Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &
+  export DISPLAY=:99
+  export MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_DISABLE_GMP_SANDBOX=1 \
+    MOZ_DISABLE_RDD_SANDBOX=1 MOZ_DISABLE_SOCKET_PROCESS_SANDBOX=1
+  mkdir -p obj/jarlog "$PGO_DIR"
+  (
+    cd obj
+    LD_LIBRARY_PATH="$SRC/$DIST" JARLOG_FILE="$SRC/obj/jarlog/en-US.log" \
+      ../mach python ../build/pgo/profileserver.py --binary "$SRC/$DIST/firefox"
+  )
+  cp obj/merged.profdata "$PGO_DIR/"
+  [[ -s obj/jarlog/en-US.log ]] && cp obj/jarlog/en-US.log "$PGO_DIR/"
+  echo "  profraw files: $(find obj -maxdepth 1 -name '*.profraw' | wc -l)"
+  ls -l "$PGO_DIR" | sed 's/^/  /'
+  echo "===== END PGO profile run; nothing to stage, the use build ships ====="
+  exit 0
+fi
 
 # libxul's .text size is the cheapest evidence that a codegen-level option
 # (LTO here, hardening before it) actually changed the artifact: an arm whose
