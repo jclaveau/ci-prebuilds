@@ -62,6 +62,7 @@ COPY versions.env /work/versions.env
 # scripts don't invalidate the heavy RUN below.
 COPY firefox/scripts /work/firefox/scripts
 COPY firefox/mozconfig.overlay /work/firefox/mozconfig.overlay
+COPY firefox/pgo-corpus /work/firefox/pgo-corpus
 
 # Fetch aports community/firefox + PW's browser_patches/firefox. Both are
 # version-pinned via versions.env so the layer cache invalidates iff the pins

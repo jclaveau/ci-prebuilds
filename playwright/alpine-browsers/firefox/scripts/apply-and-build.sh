@@ -857,6 +857,32 @@ if [[ "$PGO_STAGE" == "generate" ]]; then
   # from the executable's, so without LD_LIBRARY_PATH libmozsandbox.so "does
   # not exist" for libxul (run 35619055612); bundle-dist.sh's RPATH=$ORIGIN
   # only lands on the shipped tree.
+  # Append our probe corpus to Mozilla's own rather than replacing it.
+  # -fprofile-use treats an unprofiled function as cold and optimizes it for
+  # size, so a corpus narrower than Mozilla's would pessimize everything it
+  # does not reach and the result would be unreadable: "training on our
+  # workload does not help" and "our corpus is too narrow" produce the same
+  # number. Appending holds coverage constant and varies only what is added.
+  # Absent on main (the directory ships only on the branch testing this), so
+  # the shipped PGO path is untouched.
+  if [[ -d "$WORK/firefox/pgo-corpus" ]]; then
+    echo "===== PGO corpus: appending the probe kernels to Mozilla's ====="
+    rm -rf "$SRC/build/pgo/probe-corpus"
+    cp -r "$WORK/firefox/pgo-corpus" "$SRC/build/pgo/probe-corpus"
+    rm -f "$SRC/build/pgo/probe-corpus/build-corpus.cjs"
+    anchor='  var items = defaultItemUrls.map(x => new Item(x));'
+    grep -qxF "$anchor" "$SRC/build/pgo/index.html" \
+      || { echo "ERROR: build/pgo/index.html has no items anchor to append after" >&2; exit 9; }
+    sed -i "\\|^$anchor$|a\\  items.push(new Item(\"probe-corpus/index.html\", extendedTimeout));" \
+      "$SRC/build/pgo/index.html"
+    n=$(grep -c 'probe-corpus/index.html' "$SRC/build/pgo/index.html")
+    [[ "$n" == 1 ]] || { echo "ERROR: probe corpus landed $n times in index.html, expected 1" >&2; exit 9; }
+    echo "  corpus files: $(ls "$SRC/build/pgo/probe-corpus" | tr '\n' ' ')"
+    grep -n 'probe-corpus' "$SRC/build/pgo/index.html" | sed 's/^/  /'
+  else
+    echo "===== PGO corpus: mozilla default only (no $WORK/firefox/pgo-corpus) ====="
+  fi
+
   echo "===== START PGO profile run ====="
   Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &
   export DISPLAY=:99
@@ -869,6 +895,16 @@ if [[ "$PGO_STAGE" == "generate" ]]; then
       ../mach python ../build/pgo/profileserver.py --binary "$SRC/$DIST/firefox"
   )
   cp obj/merged.profdata "$PGO_DIR/"
+  # Proof the corpus change reached the profile. A corpus item that wedges is
+  # closed by profileserver's own timeout and contributes nothing, which looks
+  # exactly like a successful run from the outside — so print the profile's
+  # shape here and compare it against the main-branch generate job's before
+  # reading anything the use build produces.
+  if [[ -n "${LLVM_PROFDATA:-}" ]]; then
+    echo "===== merged profile summary ====="
+    "$LLVM_PROFDATA" show "$PGO_DIR/merged.profdata" 2>&1 | sed 's/^/  /'
+    echo "===== end merged profile summary ====="
+  fi
   [[ -s obj/jarlog/en-US.log ]] && cp obj/jarlog/en-US.log "$PGO_DIR/"
   echo "  profraw files: $(find obj -maxdepth 1 -name '*.profraw' | wc -l)"
   ls -l "$PGO_DIR" | sed 's/^/  /'
