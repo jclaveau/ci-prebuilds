@@ -36,26 +36,46 @@ If `pnpm install` ever rebuilds a `*.node` (native addon), switch to
 - The version-pinned tag carries the pnpm minor (`…-pnpmX.Y`); the `-gyp` variant adds a `-gyp` suffix
   (`…-pnpmX.Y-gyp`).
 
-## Known limit: `pnpm install -g` under `act --bind --user <non-1001>`
+## `pnpm install -g` under `act --bind --user <non-1001>`
 
-When a consumer runs the [`act --bind --user $(id -u):$(id -g) --group-add 1001`](../dood/README.md#running-locally-with-act---bind)
-recipe on a pnpm-bearing image and does `pnpm install -g <pkg>` during the job, pnpm's
-`linkBin` step re-`chmod`s the bin entries of every package in the global tree — including
-pre-baked CLIs on the `*-playwright[-gyp]` layers. POSIX `chmod(2)` is owner-or-root
-regardless of mode bits or ACLs, so the host UID EPERMs on inodes owned by the image-build
-`runner` user.
+Works, with `--group-add 1001` — the flag the
+[act recipe](../dood/README.md#running-locally-with-act---bind) already carries.
 
-No image-side fix without giving up isolation. Tracked upstream:
-[pnpm/pnpm#3699 — EPERM: operation not permitted, chmod](https://github.com/pnpm/pnpm/issues/3699)
-(open since 2021, maintainer-acknowledged, no fix in 4 years). Workaround in the consumer
-workflow until then, gated so it's a no-op on hosted GHA (where `USER=runner` *is* the owner):
+`pnpm install -g` writes the global tree, the content-addressable store and the config as
+whoever runs the job, but the image bakes those dirs as `runner` (UID 1001) and the
+consumer's host UID is unknown at build time. So the pnpm layer hands them to the `runner`
+**group** instead — `2775`, setgid, same shape gha-tools already uses for
+`/opt/hostedtoolcache`:
 
-```yaml
-- name: Adopt /home/runner ownership (act-local only)
-  if: ${{ env.ACT == 'true' }}
-  run: sudo chown -R $(id -u):$(id -g) /home/runner/.local /home/runner/.cache
-```
+    $PNPM_HOME  $PNPM_HOME/bin  ~/.cache/pnpm  ~/.config/pnpm  ~/playwright-browsers
 
-Requires the `-sudoer` flavor under act — the published `:latest` is hardened and strips
-broad `sudo`, so the `chown` step would fail. Append `-sudoer` to the image tag for the
-local dev loop.
+Directories only: chmod-ing the baked files would copy every one of them up into this
+layer. They keep `0755 runner:runner`, but note what that does *not* buy — POSIX governs
+unlink by the containing directory, so a job holding group `runner` can replace the baked
+`playwright` shim, and `pnpm install -g playwright@<other>` legitimately does. A sticky
+bit would forbid that, and would break that upgrade with it, so the dirs stay `2775`.
+The trade, stated plainly: anything holding group `runner` may create, replace and delete
+entries in those dirs. Inside these images only `runner` holds it, and under act the
+consumer opts in explicitly with `--group-add 1001`.
+
+Ancestors of those dirs (`~/.local`, `~/.local/share`, `~/.config`) are chowned to
+`runner` but left `0755` — they only need to be traversable.
+
+`npm install -g` is unaffected and still needs `sudo`: its prefix is the root-owned
+`/usr/lib/node_modules`, which this change does not touch. Use `pnpm install -g`, or the
+`-sudoer` image flavour.
+
+Asserted by `tests/act/smoke-dood-bind-arbitrary-uid.yml` (UID 5000), which drives a real
+`pnpm install -g` beside the pre-baked playwright rather than only probing `mkdir`.
+
+### Why this is not pnpm#3699
+
+The earlier diagnosis here blamed
+[pnpm/pnpm#3699](https://github.com/pnpm/pnpm/issues/3699) — `linkBin` re-`chmod`ing bin
+entries it does not own. That was a pnpm ≤11 shape, where every global install shared one
+`node_modules`. pnpm 12 gives each `install -g` its own `global/v11/<hash>` tree, so it
+never walks a tree another user baked, and the wall we actually hit was plain directory
+ownership (`ERR_PNPM_PNPM_DIR_NOT_WRITABLE`). #3699 itself was fixed upstream on
+2026-09-22 by [pnpm#15281](https://github.com/pnpm/pnpm/pull/15281) — already-executable
+targets skip the `chmod` — which landed after `v12.6.0` was cut and so ships in the next
+release; nothing here waits on it.

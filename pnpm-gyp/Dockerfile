@@ -33,3 +33,43 @@ RUN echo "TEMP: distutils shim for legacy node-gyp <10 on Python 3.12" \
     && sudo apt-get update \
     && sudo apt-get install -y --no-install-recommends python3-setuptools \
     && sudo rm -rf /var/lib/apt/lists/*
+
+# `share-dir-with-runner-group <dir>...`: makes an image-baked state dir under
+# /home/runner writable by the `runner` GROUP, so a container run under an
+# arbitrary host UID — the `act --bind --user $(id -u):$(id -g) --group-add 1001`
+# recipe in dood/README.md — can still create entries in it. chown is not an
+# option: the consumer's UID is unknown at build time. Setgid keeps entries
+# created later in group `runner`, same shape as gha-tools' `chmod 2775
+# /opt/hostedtoolcache`. Directories only — chmod-ing the baked files would copy
+# every one of them up into this layer. Inlined here (vs COPY) because the build
+# context is this per-image dir, not the repo root — kept identical to
+# pnpm/Dockerfile.
+RUN <<'EOF' sudo bash
+cat > /usr/local/bin/share-dir-with-runner-group <<'SCRIPT'
+#!/bin/sh
+set -e
+for dir in "$@"; do
+  mkdir -p "$dir"
+  find "$dir" -type d -exec chown runner:runner {} + -exec chmod 2775 {} +
+  # An ancestor `mkdir -p` created as root only has to be traversable, not
+  # group-writable: nothing is ever created directly in ~/.local/share. Leave a
+  # dir an earlier argument already shared (-perm -2020) alone, or `$PNPM_HOME/bin`
+  # would walk up and strip the group write `$PNPM_HOME` was just given.
+  parent=$(dirname "$dir")
+  while [ "$parent" != /home/runner ] && [ "$parent" != / ]; do
+    chown runner:runner "$parent"
+    [ -n "$(find "$parent" -maxdepth 0 -perm -2020)" ] || chmod 0755 "$parent"
+    parent=$(dirname "$parent")
+  done
+done
+SCRIPT
+chmod 0755 /usr/local/bin/share-dir-with-runner-group
+EOF
+
+# pnpm writes its global tree, store and config as the user running the job, so
+# all three have to be group-shared before a non-`runner` UID can install
+# anything. The playwright layer re-runs this for the dirs it adds.
+RUN sudo share-dir-with-runner-group \
+        "${PNPM_HOME}" "${PNPM_HOME}/bin" \
+        /home/runner/.cache/pnpm \
+        /home/runner/.config/pnpm

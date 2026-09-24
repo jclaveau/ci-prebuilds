@@ -503,7 +503,8 @@ COPY --from=zlibng-build /usr/lib/libz-ng-compat.so.1 /usr/lib/libz-ng-compat.so
 # container-wide one.
 COPY --from=faststring-build /usr/lib/libfaststring.so /usr/lib/libfaststring.so
 
-RUN pnpm install -g playwright@${PLAYWRIGHT_VERSION}
+RUN pnpm install -g playwright@${PLAYWRIGHT_VERSION} \
+    && sudo share-dir-with-runner-group "${PNPM_HOME}"
 
 COPY --from=browsers-staged /ms-playwright/chromium_headless_shell-${CHS_REV} /ms-playwright/chromium_headless_shell-${CHS_REV}
 # Firefox first: webkit's ICU libs are relative symlinks into the firefox tree,
