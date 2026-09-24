@@ -236,7 +236,23 @@ if [[ "$WK_PGO" == "on" && "$PORT" == "WPE" && ! -s "$PGO_PROFILE" ]]; then
   export HOME="${HOME:-/root}"
   export XDG_RUNTIME_DIR=/tmp/pgo-xdg
   mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
-  export LLVM_PROFILE_FILE="$PGO_RAW/wk-%p-%c.profraw"
+  # %m, one file per instrumented image, is what keeps continuous mode alive
+  # here. Every instrumented shared library links its own copy of
+  # compiler-rt's profile runtime, and WebKit builds about a dozen of them.
+  # Without %m they all resolve to the same filename, and each one in turn
+  # ftruncates that file to the size ITS counters need and mmaps it, which
+  # unmaps the pages the libraries before it are still writing through: the
+  # first counter increment after that dies on SIGBUS. Run 35999751957 hit
+  # exactly this — `Bus error (core dumped)` on `about:blank`, a 288-byte
+  # truncated profraw, `no profile can be merged` — and a three-DSO
+  # reduction on Alpine clang 23.1.2 reproduces it verbatim and is fixed by
+  # %m alone (1 function recovered before, 1204 after).
+  #
+  # %c stays because it is what actually turns continuous mode on: with the
+  # same binary compiled -fprofile-continuous but run under a path without
+  # %c, a SIGTERM leaves ZERO profraw files, and the corpus run is ended by
+  # SIGTERM.
+  export LLVM_PROFILE_FILE="$PGO_RAW/wk-%p-%m-%c.profraw"
 
   # Smoke the instrumented binary before the corpus: "MiniBrowser cannot run
   # headless in this builder" and "the corpus never started" produce the same
@@ -274,10 +290,14 @@ if [[ "$WK_PGO" == "on" && "$PORT" == "WPE" && ! -s "$PGO_PROFILE" ]]; then
     "http://127.0.0.1:$PGO_HTTP_PORT/train.html" || true
   kill "$HTTPD_PID" 2>/dev/null || true
 
+  # One file per (process, image) under %p-%m, so this counts instrumented
+  # images that ran, not processes: MiniBrowser alone brings its own binary
+  # plus libWebKit, libJavaScriptCore and the rest.
   RAW_COUNT=$(find "$PGO_RAW" -name '*.profraw' | wc -l)
   echo "  profraw files after corpus: $RAW_COUNT"
   if (( RAW_COUNT < 2 )); then
-    echo "ERROR: expected at least a UI process and a WPEWebProcess profile, got $RAW_COUNT" >&2
+    echo "ERROR: expected the MiniBrowser binary and at least one instrumented" >&2
+    echo "       WebKit library to have written a profile, got $RAW_COUNT" >&2
     exit 1
   fi
 
