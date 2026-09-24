@@ -10,7 +10,16 @@
 #   1. Every non-comment line in `skip-list-ubuntu/<b>.{files,titles}.txt`
 #      MUST appear (byte-identical) in `skip-list/<b>.{files,titles}.txt`.
 #      Violation = FAIL (missing baseline skip on Alpine).
-#   2. Alpine extras are allowed (informational count reported).
+#   2. `skip-list/<b>.needs-headed.titles.txt` counts toward Alpine's titles.
+#      run.sh applies it when the artifact carries no headed binary, which is
+#      the WPE-only build we ship by default — so those titles really are
+#      skipped on Alpine, just conditionally. Keeping them in their own file
+#      is what lets a GTK build run them; folding them into
+#      `<b>.titles.txt` to satisfy this gate would skip them unconditionally
+#      and throw that away. A GTK build runs MORE than the baseline skips,
+#      which this rule's intent (never run-and-pass something Ubuntu knows is
+#      broken) permits.
+#   3. Alpine extras are allowed (informational count reported).
 #
 # Output: GitHub-flavored markdown, one browser per row, files + titles side
 # by side. Header line surfaces the PW version + each browser's exact
@@ -61,6 +70,11 @@ for b in "${BROWSERS[@]}"; do
     [ -f "$u_file" ] || { echo "MISSING file: $u_file" >&2; rc=1; continue; }
 
     a_entries=$(sed 's/\r$//' "$a_file" | grep -vE '^\s*(#|$)' || true)
+    needs_headed_file="$ALPINE_DIR/$b.needs-headed.titles.txt"
+    if [ "$t" = titles ] && [ -f "$needs_headed_file" ]; then
+      needs_headed=$(sed 's/\r$//' "$needs_headed_file" | grep -vE '^\s*(#|$)' || true)
+      [ -n "$needs_headed" ] && a_entries=$(printf '%s\n%s' "$a_entries" "$needs_headed")
+    fi
     u_entries=$(sed 's/\r$//' "$u_file" | grep -vE '^\s*(#|$)' || true)
 
     A[$b.$t]=$([ -z "$a_entries" ] && echo 0 || printf '%s\n' "$a_entries" | wc -l)
@@ -92,7 +106,9 @@ else
 fi
 echo ""
 echo "Alpine skip-lists must be a **superset** of the Ubuntu baseline. Alpine"
-echo "extras (musl-specific gaps) are counted but allowed."
+echo "extras (musl-specific gaps) are counted but allowed. Alpine titles"
+echo "include \`<browser>.needs-headed.titles.txt\`, which run.sh applies on an"
+echo "artifact with no headed binary."
 echo ""
 echo "| Browser | version pin | files (A / U / +alpine-only) | titles (A / U / +alpine-only) | status |"
 echo "|---|---|---|---|---|"
