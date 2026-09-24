@@ -1,0 +1,59 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WebKit PGO training driver</title>
+<!--
+  Drives WebKit's own PerformanceTests as the PGO training corpus. Copied next
+  to PerformanceTests/ and served over http by apply-and-build-port.sh, so the
+  iframe is same-origin and its startTest() is reachable — file:// gives every
+  document a unique origin and blocks the call.
+
+  Speedometer will not start on its own: resources/benchmark-report.js only
+  auto-runs under DumpRenderTree (window.testRunner) or the '#webkit' hash,
+  and that path pulls in PerfTestRunner, which is not what a browser run
+  exercises. Calling startTest() directly is the same entry point the Start
+  button uses.
+
+  Rounds repeat forever; the driver script kills MiniBrowser when the corpus
+  wall budget expires, and -fprofile-continuous has already flushed counters.
+-->
+<body>
+<div id="status">starting</div>
+<iframe id="bench" width="1280" height="800" style="border:0"></iframe>
+<script>
+const CORPUS_ENTRIES = [
+    { url: '/Speedometer2.1/index.html?iterationCount=5', startFunction: 'startTest' },
+];
+const ROUND_TIMEOUT_MS = 10 * 60 * 1000;
+
+let roundIndex = 0;
+
+function runNextEntry() {
+    const entry = CORPUS_ENTRIES[roundIndex % CORPUS_ENTRIES.length];
+    roundIndex += 1;
+    document.getElementById('status').textContent = 'round ' + roundIndex + ': ' + entry.url;
+
+    const frame = document.getElementById('bench');
+    let advanced = false;
+    const advance = () => {
+        if (advanced)
+            return;
+        advanced = true;
+        setTimeout(runNextEntry, 0);
+    };
+
+    frame.onload = () => {
+        try {
+            frame.contentWindow[entry.startFunction]();
+        } catch (error) {
+            document.getElementById('status').textContent = 'round ' + roundIndex
+                + ' could not start: ' + error;
+            advance();
+        }
+    };
+    setTimeout(advance, ROUND_TIMEOUT_MS);
+    frame.src = entry.url + '&pgoRound=' + roundIndex;
+}
+
+runNextEntry();
+</script>
+</body>

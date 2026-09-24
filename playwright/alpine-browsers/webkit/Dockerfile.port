@@ -15,9 +15,13 @@ FROM ${BASE_IMAGE} AS webkit-builder
 # Refresh scripts and overlay each stage (they may have been tweaked).
 COPY webkit/scripts /work/webkit/scripts
 COPY webkit/cmake-flags.overlay /work/webkit/cmake-flags.overlay
+COPY webkit/pgo-corpus /work/webkit/pgo-corpus
 
 ARG PORT=WPE
 ARG ENABLE_JIT=ON
+# WK_PGO=on adds Phase 0 (instrumented build + corpus run + merge) ahead of the
+# ordinary Release build, which then compiles with -fprofile-use.
+ARG WK_PGO=off
 
 # sccache mount id is per-port so WPE and GTK don't compete on shared cache
 # locks when they run in parallel. (cmake's compile-launcher sccache wraps
@@ -26,4 +30,5 @@ RUN --mount=type=cache,target=/root/.cache/sccache,id=wk-sccache-${PORT},sharing
     set -a && . /work/versions.env && set +a \
     && ENABLE_JIT="$ENABLE_JIT" \
        PORT="$PORT" \
+       WK_PGO="$WK_PGO" \
        bash /work/webkit/scripts/apply-and-build-port.sh /work
