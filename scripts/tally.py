@@ -17,7 +17,10 @@ PERF has three sources. "shipped" rows are main's test-and-publish runs: the
 `main sha` is the commit that run built the consumer image from, the browsers
 inside are whatever Dockerfile.alpine pins (chs-1234/ff-1538/wk-2336), so
 consecutive rows are re-draws of the SAME image on whichever runner GitHub
-handed out. "candidates" rows are perf-gate jobs (candidate, promoted and
+handed out. Those geos read only the draws taken SINCE that browser's last
+promote -- an older draw measured the browser build the promote replaced, and
+pooling the two averages across it; older draws stay listed, marked
+`pre-promote`. "candidates" rows are perf-gate jobs (candidate, promoted and
 official probed on one runner, `runs` shots each): the candidate is shown
 against official, with the promoted build's own ratio on that same runner
 underneath as the reference. One gate run is one draw, so a candidate with
@@ -45,6 +48,13 @@ AB_WF = "chs-perf-ab.yml"
 GATE_WF = "perf-gate.yml"
 BROWSERS = ("chromium", "firefox", "webkit")
 CONFORMANCE_WF = "tests-conformance.yml"
+# <browser>-latest moves in two places: the build workflow's own promote job,
+# and a standalone promote-*.yml dispatch.
+PROMOTE_JOBS = {"promote-firefox": "firefox",
+                "promote-webkit": "webkit",
+                "promote-chromium-headless-shell": "chromium"}
+PROMOTE_WFS = {"promote-firefox.yml": "firefox",
+               "promote-chromium-from-source.yml": "chromium"}
 
 # The probe's rows, by what they exercise. Controls are pure compute that a
 # build cannot move (int_math is V8 JIT, libm_fmod is the shipped fmod shim);
@@ -525,8 +535,55 @@ def fleet_mix():
     return {cpu: n / total for cpu, n in sorted(counts.items(), key=lambda kv: -kv[1])}, total
 
 
-def shipped_rows():
-    """{browser: [(run, cell, groups, overall)]} from main's test-and-publish runs, newest first."""
+def last_promotes(build_runs):
+    """{browser: (when, run_id)} of the newest successful promote of <browser>-latest.
+
+    A shipped draw taken before that moment measured the browser build the
+    promote replaced, so pooling it with later draws averages across the
+    promote: firefox's post-PGO 0.75 kept reading 0.83 for six runs because two
+    pre-PGO draws at 0.93/0.94 were still in the pool."""
+    newest = {}
+
+    def note(browser, when, run_id):
+        if when and (browser not in newest or when > newest[browser][0]):
+            newest[browser] = (when, run_id)
+
+    for run in build_runs:
+        if run["status"] != "completed":
+            continue
+        for job in jobs(run["databaseId"], True):
+            browser = PROMOTE_JOBS.get(job["name"])
+            if browser and job["conclusion"] == "success":
+                note(browser, ts(job["completed_at"]), run["databaseId"])
+    for workflow, browser in PROMOTE_WFS.items():
+        for run in runs(workflow, 10):
+            if run["status"] == "completed" and run["conclusion"] == "success":
+                note(browser, ts(run["updatedAt"]), run["databaseId"])
+    return newest
+
+
+def since_promote(run, promote):
+    return not promote or ts(run["createdAt"]) > promote[0]
+
+
+def promote_note(promote, current, total):
+    """The clause appended to a shipped block's title, so the geo says what it read."""
+    if not promote:
+        return "; no promote found in the scanned window, geo over every draw"
+    when, run_id = promote
+    if not current:
+        return f"; NO draw since the {when:%m-%d %H:%MZ} promote (run {run_id}) -- geo withheld"
+    older = total - current
+    excluded = f", {older} older draw(s) marked pre-promote and excluded" if older else ""
+    return f"; geo over the {current} draw(s) since the {when:%m-%d %H:%MZ} promote (run {run_id}){excluded}"
+
+
+def shipped_rows(promotes=None):
+    """{browser: [(run, cell, groups, overall)]} from main's test-and-publish runs, newest first.
+
+    Reads on until it holds six draws NEWER than each browser's promote, not six
+    draws overall -- the pre-promote ones are listed but never pooled."""
+    promotes = promotes or {}
     per_browser = {}
     for run in [r for r in runs(PUBLISH_WF, 30) if r["status"] == "completed" and r["headBranch"] == "main"]:
         d = artifact(run["databaseId"], "runtime-perf")
@@ -538,7 +595,9 @@ def shipped_rows():
                 continue
             _, groups, overall = ratio_row(cell, cells[(browser, "official")])
             per_browser.setdefault(browser, []).append((run, cell, groups, overall))
-        if all(len(v) >= 6 for v in per_browser.values()) and len(per_browser) >= 3:
+        if len(per_browser) >= 3 and all(
+                sum(1 for r, *_ in v if since_promote(r, promotes.get(b))) >= 6
+                for b, v in per_browser.items()):
             break
     return per_browser
 
@@ -590,23 +649,29 @@ def ab_rows(ab_limit):
 
 def section_perf(ab_limit, gate_limit, draws, browsers):
     print("PERF  ours/official. '~' = every row of the group inside its shot spread (noise); k/n = draws of an aggregate reading > 1.00; n = probe shots behind the row; geo = non-control rows, raw")
-    shipped = shipped_rows()
-    gates = gate_rows(runs(BUILD_WF, 60), gate_limit)
+    build_runs = runs(BUILD_WF, 60)
+    promotes = last_promotes(build_runs)
+    shipped = shipped_rows(promotes)
+    gates = gate_rows(build_runs, gate_limit)
     ab = ab_rows(ab_limit)
     mix, jobs_seen = fleet_mix()
     for browser in browsers:
         rows = shipped.get(browser, [])
         if not rows:
             continue
+        promote = promotes.get(browser)
+        current = [r for r in rows if since_promote(r[0], promote)]
         table = []
         for run, cell, groups, overall in rows[:draws]:
-            table.append((f"{run['headSha'][:7]} {run['createdAt'][5:10]} {run['databaseId']}", cpu_short(cell["cpu"]), cell["shots"], groups, overall))
+            mark = "" if since_promote(run, promote) else " pre-promote"
+            table.append((f"{run['headSha'][:7]} {run['createdAt'][5:10]} {run['databaseId']}{mark}", cpu_short(cell["cpu"]), cell["shots"], groups, overall))
         by_cpu = {}
-        for run, cell, groups, overall in rows:
+        for run, cell, groups, overall in current:
             by_cpu.setdefault(cpu_short(cell["cpu"]), []).append((groups, overall))
         for cpu, lst in sorted(by_cpu.items()):
             table.append((f"  per-cpu geo (n={len(lst)})", cpu, "", aggregate([x[0] for x in lst]), geomean([x[1] for x in lst])))
-        table.append((f"  global geo (n={len(rows)} draws, as drawn)", "all", "", aggregate([x[2] for x in rows]), geomean([x[3] for x in rows])))
+        if current:
+            table.append((f"  global geo (n={len(current)} draws, as drawn)", "all", "", aggregate([x[2] for x in current]), geomean([x[3] for x in current])))
         # the same per-cpu geos, weighted by how often the fleet hands out each
         # model rather than by how many of these few draws happened to land on it
         cpus = sorted(by_cpu)
@@ -615,7 +680,8 @@ def section_perf(ab_limit, gate_limit, draws, browsers):
             table.append(("  fleet geo (per-cpu geo x fleet share)", "all", "",
                           aggregate([aggregate([x[0] for x in by_cpu[c]]) for c in cpus], weights),
                           weighted_geomean([geomean([x[1] for x in by_cpu[c]]) for c in cpus], weights)))
-        print_table(f"shipped {browser} (main test-and-publish; same pinned browsers re-drawn per run, alpine vs official in one job)",
+        print_table(f"shipped {browser} (main test-and-publish; same pinned browsers re-drawn per run, alpine vs official in one job"
+                    f"{promote_note(promote, len(current), len(rows))})",
                     "main sha date  run", table)
     # candidates: perf-gate jobs, candidate vs official with the promoted build's
     # ratio on the same runner as the reference line. One gate run is ONE draw,
