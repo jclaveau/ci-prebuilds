@@ -213,8 +213,16 @@ enable_nocompile_tests = false             # no nocompile testing
 # arm links and runs (run 34387189058 SIGILLed on sqlite's ioctl cast alone,
 # fixed in scripts/musl-source-fixes.sh).
 is_cfi = true
-use_cfi_icall = true
-use_thin_lto = true                        # see the PGO block above; measured together
+# cfi-icall OFF, cfi-vcall kept. The PGO hash argument above is entirely a
+# vcall argument — 310 of the 312 mismatches came back with vcall alone — so
+# icall buys none of the layout recovery while costing a jump-table thunk and
+# a range check on every indirect call. It is also what made sqlite's ioctl
+# cast SIGILL (scripts/musl-source-fixes.sh). Issue #259's first candidate:
+# the cheapest and most tightly scoped of the hardening removals, and the one
+# whose cost is paid in exactly the indirect-call-dense Blink code the
+# navigation rows run through.
+use_cfi_icall = false
+use_thin_lto = true                       # see the PGO block above; measured together
 fatal_linker_warnings = false              # match aports — alpine's lld trips a few warnings
 safe_browsing_use_unrar = false            # no unrar (we don't ship)
 
