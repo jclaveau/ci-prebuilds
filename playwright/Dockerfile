@@ -17,7 +17,8 @@ ENV PLAYWRIGHT_BROWSERS_PATH='/home/runner/playwright-browsers'
 
 RUN echo "Install Playwright globally https://playwright.dev/docs/docker#build-your-own-image" \
     && pnpm install -g playwright@${PLAYWRIGHT_VERSION} \
-    && playwright install --with-deps --only-shell
+    && playwright install --with-deps --only-shell \
+    && sudo share-dir-with-runner-group "${PNPM_HOME}" "${PLAYWRIGHT_BROWSERS_PATH}"
 
 # TODO
 # - RUN pnpm env --global 22 https://pnpm.io/cli/env available with v10?
