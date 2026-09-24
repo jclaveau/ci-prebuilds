@@ -162,6 +162,13 @@ on:
         type: choice
         options: ['ON', 'OFF']
 
+      webkit_pgo:
+        description: 'WebKit PGO (WPE only): instrumented build + PerformanceTests corpus run + -fprofile-use rebuild, inside the same checkpoint chain'
+        required: false
+        default: 'off'
+        type: choice
+        options: ['off', 'on']
+
       webkit_toolchain_epoch:
         description: 'WK_TOOLCHAIN_EPOCH: any new value re-resolves source-prep apk deps against today''s edge (picks up an edge clang/lld bump the build cache would otherwise hide)'
         required: false
@@ -3056,6 +3063,7 @@ jobs:
             BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-source-prep.outputs.tag }}
             PORT=WPE
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
+            WK_PGO=${{ inputs.webkit_pgo || 'off' }}
 
   build-webkit-wpe-2:
     needs: [build-webkit-wpe-1]
@@ -3083,6 +3091,7 @@ jobs:
             BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-wpe-1.outputs.tag }}
             PORT=WPE
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
+            WK_PGO=${{ inputs.webkit_pgo || 'off' }}
 
   build-webkit-wpe-3:
     needs: [build-webkit-wpe-2]
@@ -3110,6 +3119,7 @@ jobs:
             BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-wpe-2.outputs.tag }}
             PORT=WPE
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
+            WK_PGO=${{ inputs.webkit_pgo || 'off' }}
 
   build-webkit-wpe-4:
     needs: [build-webkit-wpe-3]
@@ -3137,6 +3147,7 @@ jobs:
             BASE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:${{ needs.build-webkit-wpe-3.outputs.tag }}
             PORT=WPE
             ENABLE_JIT=${{ inputs.webkit_enable_jit || 'ON' }}
+            WK_PGO=${{ inputs.webkit_pgo || 'off' }}
 
   # GTK chain re-enabled iter #26 — WPE Tier-2 PW SDK green confirmed the
   # _FORTIFY_SOURCE=0 cmake fix. GTK uses the same Skia codepaths so the
