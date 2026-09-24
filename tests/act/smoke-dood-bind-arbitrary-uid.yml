@@ -48,3 +48,11 @@ jobs:
           command -v sort-package-json
           # the pre-baked bin must survive, still owned by the image-build user
           if command -v playwright >/dev/null; then playwright --version; fi
+      # Re-running the install rewrites the baked $PLAYWRIGHT_BROWSERS_PATH/.links
+      # entry in place — the one baked FILE a consumer has to write. Downloads
+      # nothing: the browser it names is already staged in the image.
+      - name: consumer playwright install rewrites the .links entry
+        run: |
+          command -v playwright || { echo 'no playwright layer; skipping'; exit 0; }
+          test -d "$PLAYWRIGHT_BROWSERS_PATH/.links" || { echo 'browsers staged elsewhere; skipping'; exit 0; }
+          playwright install chromium-headless-shell
