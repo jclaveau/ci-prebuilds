@@ -34,3 +34,5 @@ jobs:
       - uses: actions/checkout@v7
       - name: prebuilt-base patch-set hash unit test
         run: bash tests/firefox/test-patchset-hash.sh
+      - name: PGO corpus patcher unit test
+        run: bash tests/firefox/test-pgo-corpus-patches.sh

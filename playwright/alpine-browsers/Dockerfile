@@ -94,6 +94,19 @@ ARG PW_JUGGLER_INSTRUMENT=false
 ARG PGO_STAGE=
 COPY --from=pgo-profile-in /pgo /work/pgo
 
+# The extended PGO corpus: JetStream3 (what Mozilla's own `--extended-corpus`
+# means; its fetch is taskcluster-only, and our two-job split calls
+# profileserver.py directly) plus MotionMark, which Mozilla pins for raptor and
+# no PGO corpus but chromium's carries. Only a `generate` build reads it, and
+# JetStream's tarball is 194 MB, so the other stages skip the download rather
+# than cache it for nothing.
+RUN set -a && . /work/versions.env && set +a \
+    && if [ "$PGO_STAGE" = generate ]; then \
+         bash /work/firefox/scripts/fetch-pgo-corpus.sh /work/pgo-extended-corpus; \
+       else \
+         echo "PGO_STAGE='$PGO_STAGE': extended corpus not needed"; \
+       fi
+
 RUN --mount=type=cache,target=/work/firefox-src/obj,id=ffx-obj,sharing=locked \
     --mount=type=cache,target=/root/.mozbuild,id=ffx-mozbuild,sharing=locked \
     --mount=type=cache,target=/root/.cache/sccache,id=ffx-sccache,sharing=locked \

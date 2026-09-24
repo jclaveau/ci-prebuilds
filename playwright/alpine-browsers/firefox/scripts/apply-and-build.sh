@@ -646,6 +646,8 @@ fi
 # other's profiles.
 : "${PGO_STAGE:=}"
 PGO_DIR=/work/pgo
+# JetStream3 + MotionMark, fetched by the Dockerfile for a `generate` build.
+: "${PGO_EXTENDED_CORPUS_DIR:=/work/pgo-extended-corpus}"
 case "$PGO_STAGE" in
   generate)
     echo "ac_add_options --enable-profile-generate" >> .mozconfig
@@ -857,6 +859,18 @@ if [[ "$PGO_STAGE" == "generate" ]]; then
   # from the executable's, so without LD_LIBRARY_PATH libmozsandbox.so "does
   # not exist" for libxul (run 35619055612); bundle-dist.sh's RPATH=$ORIGIN
   # only lands on the shipped tree.
+
+  # Make the corpus train on finished work instead of on a stopwatch, and add
+  # the two benchmarks the tree does not carry. Run here, after the build: every
+  # file it touches is served at runtime, never compiled, so patching them does
+  # not cost a recompile.
+  if [[ ! -d "$PGO_EXTENDED_CORPUS_DIR" ]]; then
+    echo "ERROR: PGO_STAGE=generate but no extended corpus at $PGO_EXTENDED_CORPUS_DIR" >&2
+    echo "  (the Dockerfile's fetch-pgo-corpus.sh step runs only for PGO_STAGE=generate)" >&2
+    exit 1
+  fi
+  python3 "$WORK/firefox/scripts/pgo-corpus-patches.py" "$SRC" "$PGO_EXTENDED_CORPUS_DIR"
+
   echo "===== START PGO profile run ====="
   Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &
   export DISPLAY=:99
@@ -866,7 +880,8 @@ if [[ "$PGO_STAGE" == "generate" ]]; then
   (
     cd obj
     LD_LIBRARY_PATH="$SRC/$DIST" JARLOG_FILE="$SRC/obj/jarlog/en-US.log" \
-      ../mach python ../build/pgo/profileserver.py --binary "$SRC/$DIST/firefox"
+      ../mach python ../build/pgo/profileserver.py --binary "$SRC/$DIST/firefox" \
+        --extended-corpus "$PGO_EXTENDED_CORPUS_DIR"
   )
   cp obj/merged.profdata "$PGO_DIR/"
   [[ -s obj/jarlog/en-US.log ]] && cp obj/jarlog/en-US.log "$PGO_DIR/"
