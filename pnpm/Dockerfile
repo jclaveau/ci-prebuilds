@@ -39,10 +39,14 @@ set -e
 for dir in "$@"; do
   mkdir -p "$dir"
   find "$dir" -type d -exec chown runner:runner {} + -exec chmod 2775 {} +
+  # An ancestor `mkdir -p` created as root only has to be traversable, not
+  # group-writable: nothing is ever created directly in ~/.local/share. Leave a
+  # dir an earlier argument already shared (-perm -2020) alone, or `$PNPM_HOME/bin`
+  # would walk up and strip the group write `$PNPM_HOME` was just given.
   parent=$(dirname "$dir")
   while [ "$parent" != /home/runner ] && [ "$parent" != / ]; do
     chown runner:runner "$parent"
-    chmod 2775 "$parent"
+    [ -n "$(find "$parent" -maxdepth 0 -perm -2020)" ] || chmod 0755 "$parent"
     parent=$(dirname "$parent")
   done
 done

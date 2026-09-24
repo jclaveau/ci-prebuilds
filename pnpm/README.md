@@ -49,11 +49,21 @@ consumer's host UID is unknown at build time. So the pnpm layer hands them to th
 
     $PNPM_HOME  $PNPM_HOME/bin  ~/.cache/pnpm  ~/.config/pnpm  ~/playwright-browsers
 
-Directories only. The pre-baked bins keep `0755 runner:runner`, so a job running under
-another UID can add to the global tree but cannot rewrite `playwright` out from under
-itself. The trade is that anything holding group `runner` may now create entries in those
-dirs; inside these images only `runner` does, and under act the consumer opts in
-explicitly with `--group-add 1001`.
+Directories only: chmod-ing the baked files would copy every one of them up into this
+layer. They keep `0755 runner:runner`, but note what that does *not* buy — POSIX governs
+unlink by the containing directory, so a job holding group `runner` can replace the baked
+`playwright` shim, and `pnpm install -g playwright@<other>` legitimately does. A sticky
+bit would forbid that, and would break that upgrade with it, so the dirs stay `2775`.
+The trade, stated plainly: anything holding group `runner` may create, replace and delete
+entries in those dirs. Inside these images only `runner` holds it, and under act the
+consumer opts in explicitly with `--group-add 1001`.
+
+Ancestors of those dirs (`~/.local`, `~/.local/share`, `~/.config`) are chowned to
+`runner` but left `0755` — they only need to be traversable.
+
+`npm install -g` is unaffected and still needs `sudo`: its prefix is the root-owned
+`/usr/lib/node_modules`, which this change does not touch. Use `pnpm install -g`, or the
+`-sudoer` image flavour.
 
 Asserted by `tests/act/smoke-dood-bind-arbitrary-uid.yml` (UID 5000), which drives a real
 `pnpm install -g` beside the pre-baked playwright rather than only probing `mkdir`.
