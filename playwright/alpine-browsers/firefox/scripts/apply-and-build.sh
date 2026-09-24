@@ -543,7 +543,19 @@ fi
 # build() function exports a tuned CFLAGS, but we don't run that function, so
 # we set a plain default here. Mozilla rejects an empty --enable-optimize=.
 # We're not shipping a hardened distro package — -O2 is fine.
-: "${CFLAGS:=-O2 -pipe}"
+#
+# _FORTIFY_SOURCE=0: alpine's clang driver turns fortify on at -O2 and puts
+# fortify-headers on the include path. Under musl that is NOT glibc's
+# out-of-line __memcpy_chk call — fortify-headers expands every fixed-size
+# memcpy into a two-range compare plus an inline __builtin_trap() on the
+# caller's own hot path. Chromium measured that as a real cost on Skia's
+# raster path (-3% nav wall) and now builds against a snapshot clang carrying
+# none of alpine's hardening driver patches; WebKit turns it off in
+# cmake-flags.overlay (there it was a correctness fix — the SkDescriptor UD2).
+# Firefox ships its own copy of Skia, builds with the packaged alpine clang,
+# and so still pays it. The block below asserts the posture rather than
+# assuming it.
+: "${CFLAGS:=-O2 -pipe -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0}"
 : "${CXXFLAGS:=$CFLAGS}"
 # rpath so the built firefox finds its libs at /usr/lib/firefox (matches the
 # install layout the producer image consumer expects).
@@ -604,6 +616,41 @@ else
   export CC="clang-${LLVMVER}"
   export CXX="clang++-${LLVMVER}"
 fi
+
+# Did the fortify flags actually reach the compiler? The perf/firefox-no-hardening
+# arm went VOID because a flag that never reached configure produces a
+# byte-identical .text and nobody checked, so ask the compiler directly instead
+# of grepping a log. Two compiles of one TU whose memcpy fortify-headers can
+# see through:
+#
+#   control — $CC with driver defaults only: MUST trap. Zero traps there means
+#             alpine stopped fortifying by default and this arm removes
+#             nothing, which is a finding, not a build to spend 6h on.
+#   ours    — $CC $CFLAGS: MUST NOT trap.
+FORTIFY_PROBE_DIR=$(mktemp -d)
+cat > "$FORTIFY_PROBE_DIR/probe.c" <<'PROBE'
+#include <string.h>
+char fortify_probe_dst[8];
+void fortify_probe(const char *src, size_t n) { memcpy(fortify_probe_dst, src, n); }
+PROBE
+count_traps() {
+  "$CC" "$@" -S -o - "$FORTIFY_PROBE_DIR/probe.c" 2>/dev/null | grep -c 'ud2' || true
+}
+FORTIFY_TRAPS_DEFAULT=$(count_traps -O2)
+# shellcheck disable=SC2086 — CFLAGS is a flag list, word splitting is the point
+FORTIFY_TRAPS_OURS=$(count_traps $CFLAGS)
+echo "  fortify probe: driver default $FORTIFY_TRAPS_DEFAULT trap(s), our CFLAGS $FORTIFY_TRAPS_OURS trap(s)"
+if [[ "$FORTIFY_TRAPS_DEFAULT" -eq 0 ]]; then
+  echo "ERROR: $CC emits no fortify trap at its own defaults — there is nothing for" >&2
+  echo "       -D_FORTIFY_SOURCE=0 to remove, so this build would measure nothing." >&2
+  exit 1
+fi
+if [[ "$FORTIFY_TRAPS_OURS" -ne 0 ]]; then
+  echo "ERROR: CFLAGS still fortify the build ($FORTIFY_TRAPS_OURS trap(s) left)." >&2
+  echo "       CFLAGS=$CFLAGS" >&2
+  exit 1
+fi
+rm -rf "$FORTIFY_PROBE_DIR"
 
 # `envsubst` substitutes $CBUILD/$CHOST/$builddir inside aports' mozconfig.
 envsubst < .mozconfig > .mozconfig.expanded && mv .mozconfig.expanded .mozconfig
