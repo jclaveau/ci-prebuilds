@@ -167,6 +167,18 @@ if [[ "$WK_PGO" == "on" && "$PORT" == "WPE" && ! -s "$PGO_PROFILE" ]]; then
   # MiniBrowser would leave an empty profile.
   PGO_GEN_FLAGS="-fprofile-generate=$PGO_RAW -fprofile-continuous"
 
+  # -disable-vp because continuous mode syncs only the counters: it never
+  # writes the value-profile section that IR instrumentation appends at every
+  # indirect call. The raw header still declares that section, so llvm-profdata
+  # reads past the end of the file and rejects the image as "truncated profile
+  # data" -- and one rejected input makes the whole merge fail with "no profile
+  # can be merged", which is how a C++ tree full of virtual dispatch lost all 7
+  # of its profiles. Turning the instrumentation off makes the header match what
+  # continuous mode actually writes. It costs indirect-call promotion, which
+  # continuous mode cannot feed either way. Compile-only: -mllvm at link time is
+  # an unused argument outside LTO, and this pass builds with LTO_MODE empty.
+  PGO_GEN_CFLAGS="$PGO_GEN_FLAGS -mllvm -disable-vp=true"
+
   if [[ ! -f "$GEN_BUILD_DIR/CMakeCache.txt" ]]; then
     echo "--- Phase 0: cmake configure (instrumented) ---"
     mkdir -p "$GEN_BUILD_DIR"
@@ -179,8 +191,8 @@ if [[ "$WK_PGO" == "on" && "$PORT" == "WPE" && ! -s "$PGO_PROFILE" ]]; then
       -B "$GEN_BUILD_DIR" \
       "${CMAKE_SHARED_FLAGS[@]}" \
       -DLTO_MODE= \
-      "-DCMAKE_C_FLAGS=$(overlay_flag_value CMAKE_C_FLAGS) $PGO_GEN_FLAGS" \
-      "-DCMAKE_CXX_FLAGS=$(overlay_flag_value CMAKE_CXX_FLAGS) $PGO_GEN_FLAGS" \
+      "-DCMAKE_C_FLAGS=$(overlay_flag_value CMAKE_C_FLAGS) $PGO_GEN_CFLAGS" \
+      "-DCMAKE_CXX_FLAGS=$(overlay_flag_value CMAKE_CXX_FLAGS) $PGO_GEN_CFLAGS" \
       "-DCMAKE_EXE_LINKER_FLAGS=$LDFLAGS $PGO_GEN_FLAGS" \
       "-DCMAKE_SHARED_LINKER_FLAGS=$LDFLAGS $PGO_GEN_FLAGS" \
       "-DCMAKE_MODULE_LINKER_FLAGS=$LDFLAGS $PGO_GEN_FLAGS"
