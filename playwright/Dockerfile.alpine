@@ -376,6 +376,21 @@ RUN sudo touch /ms-playwright/webkit-${WK_REV}/INSTALLATION_COMPLETE \
 # WK_ZLIB_NG=0 drops only the zlib-ng entry. It exists so the runtime perf
 # probe can put both arms on ONE runner: the ratio is CPU-model dependent, and
 # two runs on two runners cannot be differenced.
+#
+# MIMALLOC_PURGE_DELAY=-1 stops mimalloc returning freed pages to the kernel.
+# Profiling a steady-state click loop against Playwright's official image
+# (browser-perf-record runs 35615190100 and 35625723200, one job per arm)
+# showed our arm at parity on total CPU and BELOW official on kernel cycles,
+# yet paying 2.7-3.3x the madvise calls and ~5x the page faults, with every
+# thread's scheduler delay 1.1-2.3x and cpu-migrations 1.3-1.6x higher at an
+# identical thread count. The purge is what generates that churn: disabling it
+# removes 36% of the container's page faults (240319/248300/234858 ->
+# 157680/152647/156949 over three interleaved 45s pairs) and does not cost
+# memory (peak 470/472 MB -> 372/461 MB).
+#
+# WK_MIMALLOC_PURGE=1 restores mimalloc's own default, same reason WK_ZLIB_NG
+# exists: an arm that cannot be switched inside one container cannot be probed
+# against its control on one runner.
 RUN sudo mv /ms-playwright/webkit-${WK_REV}/pw_run.sh \
             /ms-playwright/webkit-${WK_REV}/pw_run.real.sh \
  && printf '%s\n' \
@@ -384,6 +399,7 @@ RUN sudo mv /ms-playwright/webkit-${WK_REV}/pw_run.sh \
         'ZNG=""' \
         '[ "${WK_ZLIB_NG:-1}" = 1 ] && ZNG=":/usr/lib/libz-ng-compat.so.1"' \
         'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so$ZNG' \
+        '[ "${WK_MIMALLOC_PURGE:-0}" = 1 ] || export MIMALLOC_PURGE_DELAY=-1' \
         'export WEBKIT_SKIA_ENABLE_CPU_RENDERING=1' \
         'exec "$DIR/pw_run.real.sh" "$@"' \
   | sudo tee /ms-playwright/webkit-${WK_REV}/pw_run.sh >/dev/null \
