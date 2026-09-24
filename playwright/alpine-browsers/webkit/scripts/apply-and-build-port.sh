@@ -148,11 +148,17 @@ if [[ "$WK_PGO" == "on" && "$PORT" == "WPE" && ! -s "$PGO_PROFILE" ]]; then
 
   # A missing libclang_rt.profile links fine and then writes nothing at runtime,
   # which would only surface after the instrumented build has burnt its hours.
-  if ! "$CC" -fprofile-generate -x c /dev/null -o /tmp/pgo-link-probe 2>/dev/null; then
+  # The probe compiles a real main: an empty translation unit fails the link on
+  # `undefined reference to main` whether or not the profile runtime is there,
+  # so it would report a missing runtime on every toolchain. clang's stderr is
+  # kept because "cannot find libclang_rt.profile.a" is the line that tells the
+  # two apart.
+  printf 'int main(void){return 0;}\n' > /tmp/pgo-link-probe.c
+  if ! "$CC" -fprofile-generate /tmp/pgo-link-probe.c -o /tmp/pgo-link-probe; then
     echo "ERROR: $CC cannot link -fprofile-generate — compiler-rt's profile runtime is missing" >&2
     exit 1
   fi
-  rm -f /tmp/pgo-link-probe
+  rm -f /tmp/pgo-link-probe /tmp/pgo-link-probe.c
 
   mkdir -p "$PGO_RAW"
 
