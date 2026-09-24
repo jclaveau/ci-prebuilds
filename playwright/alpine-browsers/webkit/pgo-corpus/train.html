@@ -7,53 +7,95 @@
   iframe is same-origin and its startTest() is reachable — file:// gives every
   document a unique origin and blocks the call.
 
-  Speedometer will not start on its own: resources/benchmark-report.js only
-  auto-runs under DumpRenderTree (window.testRunner) or the '#webkit' hash,
-  and that path pulls in PerfTestRunner, which is not what a browser run
-  exercises. Calling startTest() directly is the same entry point the Start
-  button uses.
+  Two kinds of entry, because PerformanceTests has two kinds of page:
 
-  Rounds repeat forever; the driver script kills MiniBrowser when the corpus
-  wall budget expires, and -fprofile-continuous has already flushed counters.
+  - benchmark-harness entries carry a startFunction. Speedometer and StyleBench
+    will not start on their own: resources/benchmark-report.js only auto-runs
+    under DumpRenderTree (window.testRunner) or the '#webkit' hash, and that
+    path pulls in PerfTestRunner, which is not what a browser run exercises.
+    Calling startTest() directly is the same entry point the Start button uses.
+
+  - every other entry is a plain PerfTestRunner page and needs no hook at all.
+    resources/runner.js runs on load whether or not window.testRunner exists;
+    all it changes is the iteration count (20 in a browser, 5 under DRT) and
+    that it logs to the page instead of the test runner. Navigating to it is
+    the whole driver.
+
+  Dwell is computed, not configured per page: the harness entries share
+  deepShare of the budget and the PerfTestRunner pages split the rest, so one
+  full pass fits the corpus budget exactly and no dir is starved by its
+  position in the list. A page that overruns its dwell is navigated away
+  mid-run, which costs counts but never stalls the build.
+
+  Rounds repeat until the driver script kills MiniBrowser at the corpus wall
+  budget; -fprofile-continuous has already flushed counters by then.
 -->
 <body>
-<div id="status">starting</div>
+<div id="status">loading manifest</div>
 <iframe id="bench" width="1280" height="800" style="border:0"></iframe>
 <script>
-const CORPUS_ENTRIES = [
-    { url: '/Speedometer2.1/index.html?iterationCount=5', startFunction: 'startTest' },
-];
-const ROUND_TIMEOUT_MS = 10 * 60 * 1000;
+const MANIFEST_URL = '/corpus-manifest.json';
 
-let roundIndex = 0;
-
-function runNextEntry() {
-    const entry = CORPUS_ENTRIES[roundIndex % CORPUS_ENTRIES.length];
-    roundIndex += 1;
-    document.getElementById('status').textContent = 'round ' + roundIndex + ': ' + entry.url;
-
-    const frame = document.getElementById('bench');
-    let advanced = false;
-    const advance = () => {
-        if (advanced)
-            return;
-        advanced = true;
-        setTimeout(runNextEntry, 0);
-    };
-
-    frame.onload = () => {
-        try {
-            frame.contentWindow[entry.startFunction]();
-        } catch (error) {
-            document.getElementById('status').textContent = 'round ' + roundIndex
-                + ' could not start: ' + error;
-            advance();
-        }
-    };
-    setTimeout(advance, ROUND_TIMEOUT_MS);
-    frame.src = entry.url + '&pgoRound=' + roundIndex;
+function setStatus(text) {
+    document.getElementById('status').textContent = text;
 }
 
-runNextEntry();
+function computeDwells(manifest) {
+    const deep = manifest.entries.filter(entry => entry.startFunction);
+    const flat = manifest.entries.filter(entry => !entry.startFunction);
+    const deepBudget = manifest.budgetMs * manifest.deepShare;
+    return {
+        deepMs: deep.length ? Math.floor(deepBudget / deep.length) : 0,
+        flatMs: flat.length ? Math.floor((manifest.budgetMs - deepBudget) / flat.length) : 0,
+    };
+}
+
+function runCorpus(manifest) {
+    const dwells = computeDwells(manifest);
+    const frame = document.getElementById('bench');
+    let entryIndex = 0;
+    let passIndex = 1;
+
+    function runNextEntry() {
+        if (entryIndex >= manifest.entries.length) {
+            entryIndex = 0;
+            passIndex += 1;
+        }
+        const entry = manifest.entries[entryIndex];
+        const dwellMs = entry.startFunction ? dwells.deepMs : dwells.flatMs;
+        entryIndex += 1;
+
+        setStatus('pass ' + passIndex + ' [' + entryIndex + '/'
+            + manifest.entries.length + '] ' + entry.url + ' (' + dwellMs + 'ms)');
+
+        let advanced = false;
+        const advance = () => {
+            if (advanced)
+                return;
+            advanced = true;
+            setTimeout(runNextEntry, 0);
+        };
+
+        frame.onload = () => {
+            if (!entry.startFunction)
+                return;
+            try {
+                frame.contentWindow[entry.startFunction]();
+            } catch (error) {
+                setStatus(entry.url + ' could not start: ' + error);
+                advance();
+            }
+        };
+        setTimeout(advance, dwellMs);
+        frame.src = entry.url + (entry.url.includes('?') ? '&' : '?') + 'pgoPass=' + passIndex;
+    }
+
+    runNextEntry();
+}
+
+fetch(MANIFEST_URL)
+    .then(response => response.json())
+    .then(runCorpus)
+    .catch(error => setStatus('manifest unreadable: ' + error));
 </script>
 </body>

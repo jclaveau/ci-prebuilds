@@ -266,6 +266,9 @@ if [[ "$WK_PGO" == "on" && "$PORT" == "WPE" && ! -s "$PGO_PROFILE" ]]; then
   # across the iframe boundary and file:// gives every document its own origin.
   echo "--- Phase 0: corpus run (${PGO_CORPUS_SECONDS}s) ---"
   cp "$WORK/webkit/pgo-corpus/train.html" "$SRC/PerformanceTests/train.html"
+  bash "$WORK/webkit/pgo-corpus/build-manifest.sh" \
+    "$SRC/PerformanceTests" "$SRC/PerformanceTests/corpus-manifest.json" \
+    "$PGO_CORPUS_SECONDS"
   python3 -m http.server --bind 127.0.0.1 --directory "$SRC/PerformanceTests" \
     "$PGO_HTTP_PORT" >/dev/null 2>&1 &
   HTTPD_PID=$!
@@ -293,8 +296,8 @@ if [[ "$WK_PGO" == "on" && "$PORT" == "WPE" && ! -s "$PGO_PROFILE" ]]; then
   echo "  corpus total count: ${CORPUS_COUNT:-unreported} (about:blank: ${SMOKE_COUNT:-unreported})"
   if [[ "$SMOKE_COUNT" =~ ^[0-9]+$ && "$CORPUS_COUNT" =~ ^[0-9]+$ ]]; then
     if (( CORPUS_COUNT < SMOKE_COUNT * 3 )); then
-      echo "ERROR: the corpus contributed less than 3x browser startup — Speedometer" >&2
-      echo "       never started, so this profile would train on startup only." >&2
+      echo "ERROR: the corpus contributed less than 3x browser startup — no entry" >&2
+      echo "       ran, so this profile would train on startup only." >&2
       exit 1
     fi
   else
