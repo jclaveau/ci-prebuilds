@@ -630,6 +630,41 @@ else
 fi
 echo "  using gn at: $GN"
 
+# libc++ hardening EXTENSIVE -> FAST.
+#
+# Chromium compiles every TU with
+# _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE (the use_safe_libcxx
+# branch of build/config/compiler/BUILD.gn), which turns on libc++'s O(n)
+# checks as well as its O(1) ones — a bounds check on every vector/span/string
+# subscript in hot Blink C++. FAST keeps the O(1) half.
+#
+# Not reachable as a gn arg: enable_safe_libcxx lives in
+# build_overrides/build.gni OUTSIDE any declare_args() block, and it only
+# selects EXTENSIVE-or-NONE anyway, so no argument reaches FAST. The define
+# site is rewritten instead, with a count assertion so an upstream rename
+# fails the build rather than silently leaving the arm at EXTENSIVE.
+#
+# Official pays EXTENSIVE too, which is what makes this the one candidate in
+# the Thorium audit that can push BELOW official rather than toward it. Issue
+# #259 ranks the same lever third from the opposite motivation: a CI container
+# running Playwright's own suite is not the threat model libc++ hardening
+# exists for.
+LIBCXX_MODE_FILE="build/config/compiler/BUILD.gn"
+LIBCXX_MODE_FROM="_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE"
+LIBCXX_MODE_TO="_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_FAST"
+LIBCXX_MODE_HITS=$(grep -c -- "$LIBCXX_MODE_FROM" "$LIBCXX_MODE_FILE" || true)
+if [[ "$LIBCXX_MODE_HITS" != "1" ]]; then
+  echo "ERROR: expected exactly one $LIBCXX_MODE_FROM in $LIBCXX_MODE_FILE," >&2
+  echo "       found $LIBCXX_MODE_HITS — upstream moved the define" >&2
+  exit 7
+fi
+sed -i "s/$LIBCXX_MODE_FROM/$LIBCXX_MODE_TO/" "$LIBCXX_MODE_FILE"
+grep -q -- "$LIBCXX_MODE_TO" "$LIBCXX_MODE_FILE" || {
+  echo "ERROR: libc++ hardening rewrite did not land in $LIBCXX_MODE_FILE" >&2
+  exit 7
+}
+echo "  libc++ hardening: EXTENSIVE -> FAST"
+
 "$GN" gen "$OUT_DIR"
 
 # 6. Build. headless_shell is the canonical chrome-headless-shell binary
