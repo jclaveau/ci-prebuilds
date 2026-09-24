@@ -218,6 +218,22 @@ use_thin_lto = true                        # see the PGO block above; measured t
 fatal_linker_warnings = false              # match aports — alpine's lld trips a few warnings
 safe_browsing_use_unrar = false            # no unrar (we don't ship)
 
+# Stack-variable auto-initialization OFF.
+#
+# Chromium's default for our config is init_stack_vars = true with
+# init_stack_vars_zero = is_official_build && !dcheck_always_on, i.e. every
+# uninitialized local in the binary gets an explicit zero store. It exists to
+# make an uninitialized read deterministic instead of exploitable — a
+# hardening property, not a correctness one, and the threat model it answers
+# (untrusted web content in front of a real user) is not the one a CI
+# container running Playwright's own suite lives in.
+#
+# Issue #259's sixth candidate. Its cost is spread over every function with a
+# local array rather than concentrated anywhere, so it is the candidate most
+# likely to read as nothing — which is why it gets its own draw rather than
+# riding along with another flag.
+init_stack_vars = false
+
 # Note: tried enable_extensions=false / enable_pdf=false / enable_remoting=false
 # here. They trigger downstream assert failures (e.g. //chrome/browser/background/
 # extensions/BUILD.gn asserts enable_extensions_core regardless of whether the
