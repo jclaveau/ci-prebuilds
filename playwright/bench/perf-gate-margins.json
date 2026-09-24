@@ -12,9 +12,25 @@
     "libm_fmod, locator_click, layout, screenshot and 0.02-0.05 on the",
     "page-driving rows (goto_cold the widest). `tight` covers the first group,",
     "`default` the second, `loose` the rows perf-budgets.json documents as",
-    "dispersion-bound even after repeats (firefox launch / js_alloc, webkit",
-    "eval_rtt / click_force). Every gate run prints the observed CV per row in",
-    "its summary; tune a margin from those, not from a failed run's ratio."
+    "dispersion-bound even after repeats (webkit eval_rtt / click_force).",
+    "Every gate run prints the observed CV per row in its summary; tune a",
+    "margin from those, not from a failed run's ratio.",
+    "",
+    "firefox WAS in `loose` (launch, js_alloc) and came back out once the gate",
+    "had printed enough CV columns to size the two rows. The entry was copied",
+    "from perf-budgets.json's dispersion-bound list, which is about the",
+    "cross-run CPU-model lottery — something this gate structurally does not",
+    "have, since all three arms share one job on one runner. Measured here",
+    "instead: firefox launch reads cv 0.018 / 0.028 / 0.042 across three gate",
+    "runs, so a 1.10 ceiling was 2.4-5.6x its own noise and a real 7% launch",
+    "regression would have promoted. js_alloc never took the loose margin at",
+    "all — `tight` is tested first and lists it — and at cv 0.009-0.012 it",
+    "should not: 1.03 is already about 2.5x its noise, and the 1.065 that",
+    "row read on 799bdf7 was a real regression, not spread.",
+    "",
+    "webkit's two rows stay until perf-gate-webkit prints CV columns of its",
+    "own. It runs only when webkit is actually rebuilt, so every run looked at",
+    "so far reads `skipped`."
   ],
   "geomean": 0.02,
   "default": 0.06,
@@ -23,7 +39,6 @@
     "margin": 0.03
   },
   "loose": {
-    "firefox": ["launch", "js_alloc"],
     "webkit": ["eval_rtt", "click_force"],
     "margin": 0.10
   }
