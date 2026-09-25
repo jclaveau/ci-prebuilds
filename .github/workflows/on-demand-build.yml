@@ -365,6 +365,9 @@ jobs:
               echo
               # shellcheck disable=SC2016  # backticks are literal markdown code-formatting, not command substitution
               echo "$TAGS" | sed 's/^/- `/; s/$/`/'
+              echo
+              # shellcheck disable=SC2016  # backticks are literal markdown code-formatting, not command substitution
+              echo 'Also on GHCR: prefix any tag above with `ghcr.io/`.'
             } >> /tmp/comment.md
           else
             echo ':white_check_mark: Build complete. New pinned tag(s) live under https://hub.docker.com/u/jclaveau — no per-tag list was emitted by the run.' >> /tmp/comment.md

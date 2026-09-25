@@ -1906,7 +1906,7 @@ jobs:
   # ----------------------------------------------------------------------------
 
   promote:
-    # Publish consumer tags to Docker Hub ONLY on main pushes OR via workflow_call
+    # Publish consumer tags to Docker Hub and GHCR ONLY on main pushes OR via workflow_call
     # (the on-demand path), ONLY after all tests pass. The test-gate is satisfied by
     # `needs:` enumerating every `test-*` job below; this `if:` blocks topic-branch /
     # PR / Renovate pushes from publishing tags.
@@ -1954,7 +1954,7 @@ jobs:
     needs: [github-context, versions, build-hardened-variants, test-gha-tools-usage, test-gha-tools-effects, test-gha-tools-hardened-effects, test-dind-hardened-effects, test-dood-dind-usage, test-dood-dind-effects, test-dood-dind-act, test-dind-registry-autostart, test-node-usage, test-pnpm-usage, test-pnpm-gyp-usage, test-playwright-usage, perf-report]
     steps:
       - uses: docker/setup-buildx-action@v4
-      # GHCR login to READ the tested source image.
+      # GHCR login to READ the tested source image and PUSH its consumer tags.
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -1962,6 +1962,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       # Docker Hub login to PUSH the consumer tags. promote copies GHCR -> Docker Hub, so Docker Hub is
       # only ever pushed to here (a push, not subject to the pull rate limit).
+      # The same tags also land on GHCR, whose pulls from GH-hosted runners skip Docker Hub's
+      # rate limit and stay on GitHub's network (#67).
       - uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -2007,7 +2009,9 @@ jobs:
           # `<image>` for the hardened (default) flavor; `<image>-sudoer` for the sudoer flavor.
           # The flavor suffix is in the IMAGE NAMESPACE, not in the tag — `:latest` keeps
           # semantically the same per flavor.
-          images: jclaveau/${{ matrix.os }}-${{ matrix.image }}${{ matrix.flavor }}
+          images: |
+            jclaveau/${{ matrix.os }}-${{ matrix.image }}${{ matrix.flavor }}
+            ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.image }}${{ matrix.flavor }}
           tags: |
             type=ref,event=pr
             # `:latest` is the consumer-default for the primary stack. The on-demand
