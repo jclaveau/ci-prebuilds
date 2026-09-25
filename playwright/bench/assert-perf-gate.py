@@ -101,31 +101,32 @@ WRITE_GRID_MS = 0.001
 # overshoots, never near.
 TICKS_PER_MARGIN_FLOOR = 2
 
-
-def greatest_common_step(left, right):
-    """Euclid on reals, stopped at the grid the probe writes on."""
-    while right > WRITE_GRID_MS:
-        left, right = right, math.fmod(left, right)
-    return left
+# No clock on the fleet ticks coarser than this: 1 ms is WebKit's and firefox's
+# clamp, chromium grants 5 us. It bounds what a handful of shots may claim.
+COARSEST_TICK_MS = 1.0
 
 
 def observed_tick(*shot_lists):
-    """The coarsest step every shot is a multiple of: the clock's resolution as
-    these shots reveal it.
+    """The coarsest decimal step every shot is written on: the clock's
+    resolution as these shots reveal it.
 
     WebKit clamps performance.now() to 1 ms, so its in-page rows come back as
-    whole integers and this reads 1.0; a row timed from node reads the 0.001
-    floor. Drift in the float arithmetic can only shrink the result, which
-    floors to the grid -- the detector under-claims, never over-claims.
+    whole integers and this reads 1.0; a row timed from node carries three
+    decimals and reads the 0.001 write grid.
+
+    Read off the decimal grid rather than the shots' greatest common step,
+    which over-claims when they barely differ and over-claims worst when they
+    do not differ at all: int_math read 188.0 on all ten shots of both arms,
+    whose common step is 188, and the row reported a 188 ms clock and flagged
+    itself (run 36126861080). Nothing ticks every 188 ms, or every 1.5 ms --
+    real steps are decimal, so a decimal grid can only under-claim.
     """
-    step = 0.0
-    for shots in shot_lists:
-        for value in shots:
-            step = greatest_common_step(step, value)
-    # Snap to the grid: Euclid leaves the last remainder just off it, so a
-    # decimal row would otherwise report 0.001000000256 and read as a clock
-    # nobody has.
-    return max(round(step / WRITE_GRID_MS) * WRITE_GRID_MS, WRITE_GRID_MS)
+    units = [round(value / WRITE_GRID_MS) for shots in shot_lists for value in shots]
+    coarsest = round(COARSEST_TICK_MS / WRITE_GRID_MS)
+    grid = 1
+    while grid * 10 <= coarsest and all(unit % (grid * 10) == 0 for unit in units):
+        grid *= 10
+    return grid * WRITE_GRID_MS
 
 
 def compare(arms, candidate, reference, browser, margins):

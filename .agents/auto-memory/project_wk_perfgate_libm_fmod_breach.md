@@ -1,6 +1,6 @@
 ---
 name: project_wk_perfgate_libm_fmod_breach
-description: 2026-09-24 perf-gate-webkit red on ONE row, libm_fmod 1.044-1.052 vs the 1.03 tight ceiling, ratchet 1.000 — RESOLVED 2026-09-25 as an instrument fault, not a regression: WebKit clamps performance.now() to 1 ms, so all SIX in-page probe rows come back as whole integers and the ceiling fell between two reachable ratios; fixed by sizing the kernel 9M to 36M and by making the gate print the observed clock tick per row
+description: 2026-09-24 perf-gate-webkit red on ONE row, libm_fmod 1.044-1.052 vs the 1.03 tight ceiling, ratchet 1.000 — RESOLVED 2026-09-25 as an instrument fault, not a regression: WebKit clamps performance.now() to 1 ms, so all SIX in-page probe rows come back as whole integers and the ceiling fell between two reachable ratios; fixed by sizing the kernel 9M to 36M and by making the gate print the observed clock tick per row, and the re-run PASSED at 1.026
 metadata:
   type: project
 ---
@@ -51,22 +51,33 @@ two apart; nothing in the summary could have.
 - `runtime-probe.cjs` — libm_fmod 9M to **36M** iterations (~250 ms, one tick
   under 0.5%), plus a **SIZING RULE** comment over the whole `KERNELS` block:
   size every in-page kernel so 1 ms is under ~0.5% of it.
-- `assert-perf-gate.py` — a **`tick` column** per row: `observed_tick()` takes
-  the float-GCD of every shot in both arms (floored at the 0.001 grid
-  `toFixed(3)` writes on) and divides by the reference median. Rows whose
-  margin spans fewer than 2 ticks get a warning marker and a named section.
-  **Advisory — it does not change the exit code**, because the point is that a
-  quantized row's verdict is evidence neither way.
+- `assert-perf-gate.py` — a **`tick` column** per row: `observed_tick()` reads
+  the coarsest **decimal grid** every shot in both arms sits on (0.001 from
+  `toFixed(3)` up to 1 ms, `COARSEST_TICK_MS`) and divides by the reference
+  median. Rows whose margin spans fewer than 2 ticks get a warning marker and
+  a named section. **Advisory — it does not change the exit code**, because
+  the point is that a quantized row's verdict is evidence neither way.
+  It first took the float-GCD of the shots instead, which **over-claims**: on
+  the very first run `int_math` read 188.0 on all ten shots of both arms, so
+  their GCD was 188 and the steadiest row on the board reported a 188 ms clock
+  and flagged itself. A GCD over few shots is not a clock; real steps are
+  decimal. Fixed same day (Euclid deleted, 6/6 mutants killed).
 - `tests/bench/test-assert-perf-gate.py` + `tests-perf-gate.yml` — the gate's
   **first test file**; it had zero coverage while gating every browser build.
 
 Replayed against run 36048405627's real artifact, `libm_fmod` is the only
-flagged row (2.22%, margin spans 1.3 ticks); int_math 0.6% and js_alloc 0.9%
+flagged row (2.22%, margin spans 1.3 ticks); int_math 0.5% and js_alloc 0.9%
 stay clean at the same 0.03.
 
-**How to apply:** `libm_fmod` is also a **control** in `perf-budgets.json`
-`_invalid_cell.controls` alongside `int_math` — re-verify the pair still
-agrees on the first run after the resize. Raw `libm_fmod` milliseconds before
+**The fix landed green.** Gate run **36126861080** (2026-09-25, same candidate
+`wk-sha-95f8ef7`, EPYC 9V74) **PASSED**: `libm_fmod` parity **1.026** against
+the 1.03 ceiling at tick **0.4%**, ratchet 1.007, geomean 0.903 / 0.998, no
+row flagged. So the row's real gap vs official is **2.6%, under the bar** —
+the old 1.044/1.052 were the rounding artifact, not a regression, and this is
+the first measurement of the row that means anything. The `_invalid_cell`
+control pair agrees: `int_math` 1.000/1.000 beside `libm_fmod` 1.026/1.007.
+
+**How to apply:** raw `libm_fmod` milliseconds before
 and after 2026-09-25 are **not comparable on any browser** (~4x), ratios are.
 The webkit `loose` ruling (eval_rtt 0.010-0.024, click_force 0.016-0.047
 against a 1.10 ceiling) is still open and still rests on one CPU's worth of

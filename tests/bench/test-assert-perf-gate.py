@@ -22,6 +22,12 @@ import tempfile
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "playwright" / "bench"))
 import importlib.util  # noqa: E402
 
+# No .pyc for the module under test: a mutation run rewrites the gate many
+# times a second, and CPython accepts a cached .pyc whose recorded mtime and
+# size still match -- so an edited gate silently ran the previous version's
+# bytecode and reported its mutants killed.
+sys.dont_write_bytecode = True
+
 spec = importlib.util.spec_from_file_location(
     "assert_perf_gate",
     pathlib.Path(__file__).resolve().parents[2] / "playwright" / "bench" / "assert-perf-gate.py",
@@ -77,17 +83,29 @@ check("whole-ms shots reveal a 1 ms clock",
 check("decimal shots floor at the write grid",
       gate.observed_tick([69.313, 70.1, 69.42, 71.008, 69.3]), 0.001)
 
-# Honest under-claim: five identical integers cannot prove a clock finer than
-# themselves, and saying so is what makes the row flagged rather than trusted.
-check("identical shots claim no resolution below the value",
-      gate.observed_tick([62.0, 62.0, 62.0, 62.0, 62.0]), 62.0)
+# int_math, run 36126861080: all ten shots of both arms read 188.0. Their
+# greatest common step is 188, and reading the tick that way claimed a 188 ms
+# clock and flagged the steadiest row on the board. The decimal grid cannot.
+check("identical shots claim one tick, not their own value",
+      gate.observed_tick([62.0, 62.0, 62.0, 62.0, 62.0]), 1.0)
+check("a steady decimal row reads its own grid, not its own value",
+      gate.observed_tick([69.5, 69.5, 69.5]), 0.1)
 
-# 48 = 32 x 1.5 and 46.5 = 31 x 1.5; reading the first arm alone would say 48.
+# 48 = 32 x 1.5 and 46.5 = 31 x 1.5, so the common step is 1.5 -- but nothing
+# ticks every 1.5 ms, and 46.5 is written on the 0.1 grid. The first arm read
+# alone sits on 1.0, so the two arms genuinely disagree.
 check("both arms are read together",
-      gate.observed_tick([48.0, 48.0], [46.5, 46.5]), 1.5)
+      gate.observed_tick([48.0, 48.0], [46.5, 46.5]), 0.1)
+check("one arm alone reads a different grid",
+      gate.observed_tick([48.0, 48.0]), 1.0)
 
-check("a whole-ms arm beside a decimal arm floors to the grid",
-      gate.observed_tick([61.0, 61.0], [58.25, 58.5]), 0.25)
+check("a whole-ms arm beside a decimal arm floors to the finer grid",
+      gate.observed_tick([61.0, 61.0], [58.25, 58.5]), 0.01)
+
+check("one tenth anywhere pulls the whole row down a decade",
+      gate.observed_tick([188.0, 187.5]), 0.1)
+check("no shot list claims a clock coarser than one tick",
+      gate.observed_tick([2000.0, 4000.0]), 1.0)
 
 # ------------------------------------------------------------------- compare
 
@@ -154,6 +172,16 @@ loose_table, _, _ = gate.compare(
     arms_from({"eval_rtt": {"candidate": [232.0] * 5, "official": [230.0] * 5}}),
     "candidate", "official", "webkit", MARGINS)
 check("a margin wider than two ticks is not flagged", gate.unresolvable(loose_table), [])
+
+# int_math as run 36126861080 really measured it: a stable 188 ms row where
+# every shot of both arms agreed. The first tick column called that a 188 ms
+# clock -- 100% of the reference -- and flagged the steadiest row on the board.
+steady_table, _, _ = gate.compare(
+    arms_from({"int_math": {"candidate": [188.0] * 5, "official": [188.0] * 5}}),
+    "candidate", "official", "webkit", MARGINS)
+near("a row every shot agrees on still reads one tick",
+     steady_table[0].tick_fraction, 1.0 / 188.0, 0.0001)
+check("and resolves, because 0.03 spans 5 ticks of it", gate.unresolvable(steady_table), [])
 
 # ---------------------------------------------------------------- structure
 
