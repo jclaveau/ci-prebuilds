@@ -14,7 +14,8 @@ Speed up [GitHub Actions](https://docs.github.com/en/actions/get-started/quickst
 
 ## Quickstart
 
-Pull from Docker Hub (`docker.io/jclaveau/<image>`) — drop one into your workflow as the job
+Pull from Docker Hub (`docker.io/jclaveau/<image>`) or GHCR (`ghcr.io/jclaveau/<image>`, same
+tags; no Docker Hub rate limit on GitHub-hosted runners) — drop one into your workflow as the job
 `container:`:
 
 ```yaml
@@ -93,8 +94,9 @@ current chain (Ubuntu 24.04 / Node 22.12 / pnpm 9.15 / Playwright 1.50):
 | `jclaveau/ubuntu-dood-playwright-gyp` | `:latest` | `:ubuntu24.04-node22.12-pnpm9.15-pw1.50-gyp` |
 
 
-> `ghcr.io/jclaveau/…:sha-<commit>` tags also exist but are **build intermediates** — the consumer
-> contract is Docker Hub `:latest` and the version-pinned tags above.
+> `ghcr.io/jclaveau/…:sha-<commit>`, `:edge` and `:buildcache` tags also exist but are **build
+> intermediates** — the consumer contract is `:latest` and the version-pinned tags above, on either
+> registry.
 
 ## Security
 
