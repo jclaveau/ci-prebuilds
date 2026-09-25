@@ -1,0 +1,32 @@
+name: tests-perf-gate
+
+# Unit tests for the promote gate. It reds and greens every browser build and
+# had no test at all until 2026-09-25, when a row it called precise (cv 0.008)
+# turned out to be quantized: WebKit clamps performance.now() to 1 ms, so
+# libm_fmod repeated one integer per shot and its 0.03 margin fell between the
+# only two ratios the row could produce. Pure functions, no network, seconds.
+
+on:
+  pull_request:
+    paths:
+      - 'playwright/bench/assert-perf-gate.py'
+      - 'playwright/bench/perf-gate-margins.json'
+      - 'tests/bench/**'
+      - '.github/workflows/tests-perf-gate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'playwright/bench/assert-perf-gate.py'
+      - 'playwright/bench/perf-gate-margins.json'
+      - 'tests/bench/**'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: promote gate unit test
+        run: python3 tests/bench/test-assert-perf-gate.py
