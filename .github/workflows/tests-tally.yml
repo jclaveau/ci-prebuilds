@@ -1,0 +1,29 @@
+name: tests-tally
+
+# Unit tests for tally's build forecast. The ETA it prints is what a watcher
+# sleeps on between polls, so arithmetic that predicts a chromium chain's tail
+# from its CURRENT round reads ~63 h for a chain that takes ~36 and every poll
+# after it lands in the wrong place. Pure functions, no network, seconds.
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/tally.py'
+      - 'tests/scripts/**'
+      - '.github/workflows/tests-tally.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/tally.py'
+      - 'tests/scripts/**'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: build forecast unit test
+        run: python3 tests/scripts/test-tally.py

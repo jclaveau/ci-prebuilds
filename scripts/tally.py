@@ -5,6 +5,7 @@ conformance verdicts, and runtime perf vs Playwright's official images.
     scripts/tally.py            # everything
     scripts/tally.py builds     # one section: builds | conformance | perf
     scripts/tally.py --ab 20    # read more chs-perf-ab runs (default 12)
+    scripts/tally.py --format eta  # per-run boundary/chain ETAs + a watcher's poll delay
 
 Reads GitHub through `gh` and caches every completed run's job list and perf
 artifacts under $XDG_CACHE_HOME/ci-prebuilds-tally (a completed run never
@@ -77,6 +78,12 @@ CHS_JOB = "build-chromium-headless-shell-from-source"
 FALLBACK_PROFILE = {"setup": 25 * 60, **{f"r{i}": 5.2 * 3600 for i in range(1, 8)},
                     **{f"r{i}": 20 * 60 for i in range(8, 13)}, "finalize": 25 * 60}
 CONFORMANCE_TAIL = 12 * 60
+# A watcher sleeping between polls: how long to wait, and the slack that makes
+# it land PAST the boundary instead of two minutes short of it. The ceiling is
+# the scheduler's own cap, so a boundary further out than an hour costs several
+# quiet polls no matter what this script says.
+WAKEUP_BOUNDS = (60, 3600)
+WAKEUP_SLACK = 3 * 60
 # A build chain that dies between two tallies is otherwise invisible: the
 # BUILDS table listed runs still in flight and nothing else, so three
 # consecutive firefox failures in one night each left no trace. Chromium
@@ -170,18 +177,28 @@ def chs_stage(job_name):
     return f"r{m.group(1)}" if m else None
 
 
+PROFILE_SEARCH_DEPTH = 200
+
+
 def round_profile(build_runs):
-    """Per-stage durations from the newest completed chain that ran every stage."""
-    for run in build_runs:
-        if run["status"] != "completed":
-            continue
-        prof = {}
-        for j in jobs(run["databaseId"], True):
-            stage = chs_stage(j["name"])
-            if stage and j["conclusion"] == "success" and j["started_at"] and j["completed_at"]:
-                prof[stage] = (ts(j["completed_at"]) - ts(j["started_at"])).total_seconds()
-        if set(FALLBACK_PROFILE) <= set(prof):
-            return prof, run["headSha"][:7]
+    """Per-stage durations from the newest completed chain that ran every stage.
+
+    Falls back to a deeper run list before the hardcoded profile: a full chain
+    is 35 h of one branch, so a week of firefox, webkit and conformance
+    dispatches pushes the last one past any caller's window, and the hardcoded
+    shape charges a full round for the partial r7 every real chain has.
+    """
+    for pool in (build_runs, runs(BUILD_WF, PROFILE_SEARCH_DEPTH)):
+        for run in pool:
+            if run["status"] != "completed":
+                continue
+            prof = {}
+            for j in jobs(run["databaseId"], True):
+                stage = chs_stage(j["name"])
+                if stage and j["conclusion"] == "success" and j["started_at"] and j["completed_at"]:
+                    prof[stage] = (ts(j["completed_at"]) - ts(j["started_at"])).total_seconds()
+            if set(FALLBACK_PROFILE) <= set(prof):
+                return prof, run["headSha"][:7]
     return FALLBACK_PROFILE, "fallback"
 
 
@@ -238,63 +255,139 @@ def remaining_seconds(durations, elapsed):
     return None
 
 
-def build_row(run, now, profile, durations):
-    """One build chain as a row: chromium stage + ETA, or whichever job is running."""
-    jl = jobs(run["databaseId"], run["status"] == "completed")
-    running = [j for j in jl if j["status"] == "in_progress"]
-    failed = [j["name"] for j in jl if j["conclusion"] == "failure"]
+def run_pace(stages, profile):
+    """How this chain's finished stages compare with the profile's, 1.0 = same.
+
+    The profile is one past chain on one runner; a candidate keeps its own
+    silicon for its whole chain, so the SHAPE transfers but the pace does not.
+    Weighting by the profile's own durations keeps the twelve-minute link-only
+    rounds from outvoting the five-hour ones.
+    """
+    ran = want = 0.0
+    for stage, job in stages.items():
+        budget = profile.get(stage)
+        if budget and job.get("conclusion") == "success" and job.get("completed_at"):
+            ran += (ts(job["completed_at"]) - ts(job["started_at"])).total_seconds()
+            want += budget
+    return ran / want if want else 1.0
+
+
+def build_eta(jl, now, profile, durations):
+    """What this run is doing, when its next boundary lands, when it all lands.
+
+    One source of truth for the ETA column and for `--format eta`: a watcher
+    sizing its next poll off different arithmetic than the table it reads would
+    drift from it silently. `boundary` is the next thing worth waking for -- the
+    end of a chromium round, or the end of a plain build job -- while `chain` is
+    the end of the whole thing. Both are None when there is nothing to predict
+    from; the caller decides what to print.
+    """
+    blank = {"stage": "queued", "done": None, "elapsed": None, "pace": None,
+             "boundary_left": None, "chain_left": None, "longest_past": None}
     # A firefox-only dispatch still carries every chromium job, skipped.
     # Counting those as a chain reported "chs between jobs 0/14" for a run
     # with no chromium in it at all.
     stages = {chs_stage(j["name"]): j for j in jl
               if chs_stage(j["name"]) and j["conclusion"] != "skipped"}
+    if stages:
+        done = [s for s in stage_order() if stages.get(s, {}).get("conclusion") == "success"]
+        cur = next((s for s in stage_order() if stages.get(s, {}).get("status") == "in_progress"), None)
+        if cur is None:
+            return {**blank, "done": len(done),
+                    "stage": "chs conformance" if "finalize" in done else "chs between jobs"}
+        pace = run_pace(stages, profile)
+        elapsed = (now - ts(stages[cur]["started_at"])).total_seconds()
+        boundary_left = max(0.0, profile.get(cur, 0) * pace - elapsed)
+        later = stage_order()[stage_order().index(cur) + 1:]
+        return {**blank, "stage": f"chs {cur}", "done": len(done), "elapsed": elapsed, "pace": pace,
+                "boundary_left": boundary_left,
+                "chain_left": boundary_left + pace * sum(profile.get(s, 0) for s in later) + CONFORMANCE_TAIL}
+    # Build jobs first: a firefox dispatch also runs the chromium
+    # conformance shards, and those are not what the row is about.
+    running = sorted([j for j in jl if j["status"] == "in_progress"],
+                     key=lambda j: not j["name"].startswith("build-"))
+    if not running:
+        return blank
+    label = ", ".join(j["name"] for j in running[:2])
+    if not running[0]["started_at"]:
+        return {**blank, "stage": label}
+    past = durations.get(running[0]["name"], [])
+    elapsed = (now - ts(running[0]["started_at"])).total_seconds()
+    left = remaining_seconds(past, elapsed)
+    return {**blank, "stage": label, "elapsed": elapsed, "boundary_left": left, "chain_left": left,
+            # Nothing left to predict from: this run is already longer than
+            # every success on record, which is the interesting part.
+            "longest_past": past[-1] if past and left is None else None}
+
+
+def wakeup_delay(seconds_to_boundary):
+    """Seconds a watcher should sleep to wake just past the next boundary."""
+    low, high = WAKEUP_BOUNDS
+    return int(min(high, max(low, seconds_to_boundary + WAKEUP_SLACK)))
+
+
+def build_row(run, now, profile, durations):
+    """One build chain as a row: chromium stage + ETA, or whichever job is running."""
+    jl = jobs(run["databaseId"], run["status"] == "completed")
+    failed = [j["name"] for j in jl if j["conclusion"] == "failure"]
     row = [BUILD_WF.removesuffix(".yml"), run["headBranch"], run["headSha"][:7], run["databaseId"]]
     if run["status"] == "completed":
         row += [run["conclusion"], f"{hm((now - ts(run['updatedAt'])).total_seconds())} ago"]
-    elif stages:
-        done = [s for s in stage_order() if stages.get(s, {}).get("conclusion") == "success"]
-        cur = [s for s in stage_order() if stages.get(s, {}).get("status") == "in_progress"]
-        if cur:
-            stage = cur[0]
-            started = ts(stages[stage]["started_at"])
-            remaining = max(0.0, profile.get(stage, 0) - (now - started).total_seconds())
-            later = stage_order()[stage_order().index(stage) + 1:]
-            remaining += sum(profile.get(s, 0) for s in later) + CONFORMANCE_TAIL
-            eta = now + dt.timedelta(seconds=remaining)
-            row += [f"chs {stage}", hm((now - started).total_seconds()), f"{len(done)}/14",
-                    f"{eta:%m-%d %H:%MZ} (+{hm(remaining)})"]
-        elif done and "finalize" in done:
-            row += ["chs conformance", "", f"{len(done)}/14"]
-        else:
-            row += ["chs between jobs", "", f"{len(done)}/14"]
     else:
-        # Build jobs first: a firefox dispatch also runs the chromium
-        # conformance shards, and those are not what the row is about.
-        running.sort(key=lambda j: not j["name"].startswith("build-"))
-        row += [", ".join(j["name"] for j in running[:2]) or "queued"]
-        if running and running[0]["started_at"]:
-            elapsed = (now - ts(running[0]["started_at"])).total_seconds()
-            remaining = remaining_seconds(durations.get(running[0]["name"], []), elapsed)
-            row += [hm(elapsed), ""]
-            past = durations.get(running[0]["name"], [])
-            if remaining is not None:
-                eta = now + dt.timedelta(seconds=remaining)
-                row += [f"{eta:%m-%d %H:%MZ} (+{hm(remaining)})"]
-            elif past:
-                # Nothing left to predict from: this run is already longer than
-                # every success on record, which is the interesting part.
-                row += [f"past {hm(past[-1])}, its longest success"]
+        eta = build_eta(jl, now, profile, durations)
+        row += [eta["stage"],
+                hm(eta["elapsed"]) if eta["elapsed"] is not None else "",
+                f"{eta['done']}/14" if eta["done"] is not None else ""]
+        if eta["chain_left"] is not None:
+            lands = now + dt.timedelta(seconds=eta["chain_left"])
+            row += [f"{lands:%m-%d %H:%MZ} (+{hm(eta['chain_left'])})"]
+        elif eta["longest_past"]:
+            row += [f"past {hm(eta['longest_past'])}, its longest success"]
     if failed:
         row += [""] * (8 - len(row)) + [f"FAILED: {', '.join(failed[:3])}"]
     return row
 
 
-def section_builds(now, only_run=None):
+def print_eta_lines(now, live, profile, durations):
+    """`--format eta`: one `key=value` line per live run, then the poll delay.
+
+    A watcher that picks its own interval either wakes on a round that has not
+    finished or sleeps through one that has. The delay belongs to whoever owns
+    the round profile, which is this script.
+    """
+    boundaries = []
+    for run in live:
+        eta = build_eta(jobs(run["databaseId"], False), now, profile, durations)
+        fields = [f"run={run['databaseId']}", f"branch={run['headBranch']}",
+                  f"sha={run['headSha'][:7]}", f"stage={eta['stage'].replace(' ', '-')}"]
+        if eta["elapsed"] is not None:
+            fields.append(f"elapsed={int(eta['elapsed'])}")
+        if eta["pace"] is not None:
+            fields.append(f"pace={eta['pace']:.3f}")
+        if eta["boundary_left"] is not None:
+            lands = now + dt.timedelta(seconds=eta["boundary_left"])
+            boundaries.append((lands, run["databaseId"], eta["stage"]))
+            fields.append(f"boundary_eta={lands:%Y-%m-%dT%H:%M:%SZ}")
+        if eta["chain_left"] is not None:
+            fields.append(f"chain_eta={now + dt.timedelta(seconds=eta['chain_left']):%Y-%m-%dT%H:%M:%SZ}")
+        print(" ".join(fields))
+    if not boundaries:
+        print(f"next_boundary=none wakeup_delay={WAKEUP_BOUNDS[1]}")
+        return
+    lands, run_id, stage = min(boundaries)
+    print(f"next_boundary={lands:%Y-%m-%dT%H:%M:%SZ} run={run_id} "
+          f"stage={stage.replace(' ', '-')} wakeup_delay={wakeup_delay((lands - now).total_seconds())}")
+
+
+def section_builds(now, only_run=None, output="table"):
     build_runs = runs(BUILD_WF, 60)
     profile, profile_sha = round_profile(build_runs)
     # A watcher polls one chain and nothing else: no header, no other workflows,
     # no failure backlog -- one line it can diff against its last poll.
     durations = job_durations(build_runs)
+    if output == "eta":
+        print_eta_lines(now, [r for r in build_runs if r["status"] != "completed"], profile, durations)
+        return build_runs
     if only_run:
         run = next((r for r in build_runs if r["databaseId"] == only_run), None)
         if run:
@@ -735,15 +828,17 @@ def main():
     ap.add_argument("--run", type=int, help="print only this build run's row, bare, for a watcher to poll")
     ap.add_argument("--gate", type=int, default=12, help="perf-gate dispatch runs to read (build-workflow gates are found via their jobs)")
     ap.add_argument("--depth", type=int, default=60, help="build runs to scan for conformance verdicts (300 once to seed the cache)")
+    ap.add_argument("--format", choices=["table", "eta"], default="table",
+                    help="eta: machine-readable forecast per live run plus the delay a watcher should sleep")
     args = ap.parse_args()
     now = dt.datetime.now(dt.timezone.utc)
     # --run is the watcher's whole output; conformance and perf say nothing
     # about one chain in flight.
-    section = "builds" if args.run else args.section
+    section = "builds" if (args.run or args.format == "eta") else args.section
     build_runs = None
     if section in (None, "builds"):
-        build_runs = section_builds(now, args.run)
-        if not args.run:
+        build_runs = section_builds(now, args.run, args.format)
+        if not args.run and args.format == "table":
             section_prs()
     if section in (None, "conformance"):
         section_conformance(build_runs if build_runs is not None else runs(BUILD_WF, 60), args.depth)
