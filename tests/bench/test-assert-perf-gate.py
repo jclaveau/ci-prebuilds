@@ -126,6 +126,22 @@ check("loose margin applies per browser",
       gate.margin_for(MARGINS, "webkit", "eval_rtt"), 0.10)
 check("loose does not cross browsers",
       gate.margin_for(MARGINS, "firefox", "eval_rtt"), 0.06)
+
+# The shipped file, not the fixture above: `loose` was retired browser by
+# browser (firefox 2026-09-16, webkit 2026-09-25) once gate runs priced the
+# rows, and nothing may quietly take it back. eval_rtt is the node<->CDP round
+# trip, identical on all three arms -- a control that may swing 10% is not a
+# control -- and click_force reads 1.023-1.043 against official in every draw,
+# a standing gap 1.10 was calling green.
+SHIPPED = json.loads((pathlib.Path(__file__).resolve().parents[2]
+                      / "playwright" / "bench" / "perf-gate-margins.json").read_text())
+check("no browser holds a loose margin",
+      [key for key in SHIPPED["loose"] if not key.startswith("_") and key != "margin"], [])
+check("webkit eval_rtt takes the default", gate.margin_for(SHIPPED, "webkit", "eval_rtt"), 0.06)
+check("webkit click_force takes the default",
+      gate.margin_for(SHIPPED, "webkit", "click_force"), 0.06)
+check("the rows that price a build stay tight",
+      gate.margin_for(SHIPPED, "webkit", "libm_fmod"), 0.03)
 check("default margin otherwise",
       gate.margin_for(MARGINS, "webkit", "goto_cold"), 0.06)
 
