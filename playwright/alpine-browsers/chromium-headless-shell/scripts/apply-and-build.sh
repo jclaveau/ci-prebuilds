@@ -549,7 +549,10 @@ export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-DCHS_SSP_LEVEL=$SSP_LEVEL"
 # x86-64-v3 clang emits VEX-encoded 32-byte moves in place of a call into musl.
 #
 # It reaches cc1 through //build/config/compiler:compiler, beside the -msse3
-# that config already passes, and NOT through CFLAGS/CXXFLAGS. The unbundle
+# that config already passes, and NOT through CFLAGS/CXXFLAGS. Chromium 151
+# builds that flag in build/config/compiler_cpu_abi.gn (consumed by
+# :compiler_cpu_abi), which carries -msse3 twice: once for x64 and once for
+# 32-bit x86, so the anchor is the x64 line alone. The unbundle
 # toolchain appends extra_cflags at the END of every compile line, after the
 # per-target configs, and clang honors the last -march it reads: run
 # 35969194229 died in r7 on skcms_TransformSkx.cc, whose own config asks for
@@ -569,14 +572,15 @@ if ! "$CC" -march="$CHS_MARCH" -x c -c /dev/null -o /dev/null 2>/dev/null; then
   echo "ERROR: $CC rejects -march=$CHS_MARCH" >&2
   exit 7
 fi
-CHS_MARCH_FILE="build/config/compiler/BUILD.gn"
-CHS_MARCH_HITS=$(grep -c -- '"-msse3"' "$CHS_MARCH_FILE" || true)
-if [[ "$CHS_MARCH_HITS" == "0" ]]; then
-  echo "ERROR: no \"-msse3\" in $CHS_MARCH_FILE to anchor -march=$CHS_MARCH on" >&2
+CHS_MARCH_FILE="build/config/compiler_cpu_abi.gn"
+CHS_MARCH_ANCHOR='cpu_abi_cflags += [ "-msse3" ]'
+CHS_MARCH_HITS=$(grep -cF -- "$CHS_MARCH_ANCHOR" "$CHS_MARCH_FILE" || true)
+if [[ "$CHS_MARCH_HITS" != "1" ]]; then
+  echo "ERROR: want exactly 1 '$CHS_MARCH_ANCHOR' in $CHS_MARCH_FILE, got $CHS_MARCH_HITS" >&2
   exit 7
 fi
-sed -i "s/\"-msse3\"/\"-msse3\", \"-march=$CHS_MARCH\"/" "$CHS_MARCH_FILE"
-echo "  SIMD baseline: -march=$CHS_MARCH beside $CHS_MARCH_HITS -msse3 in $CHS_MARCH_FILE"
+sed -i "s/cpu_abi_cflags += \[ \"-msse3\" \]/cpu_abi_cflags += [ \"-msse3\", \"-march=$CHS_MARCH\" ]/" "$CHS_MARCH_FILE"
+echo "  SIMD baseline: -march=$CHS_MARCH beside the x64 -msse3 in $CHS_MARCH_FILE"
 
 # clang 23 deprecates attributes abseil still uses, and rejects two -Wno- names
 # chromium 151 passes; each one prints a six-line caret block on nearly every
