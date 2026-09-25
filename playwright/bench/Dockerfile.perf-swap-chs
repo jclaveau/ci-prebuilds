@@ -1,0 +1,34 @@
+# A consumer image with its chromium-headless-shell swapped for a scratch
+# artifact, so the perf-record arm can profile a candidate that never got a
+# consumer image of its own (every from-source candidate: only a green
+# dispatch on the promote path builds one).
+#
+# The rest of the consumer stays as shipped — apk set, fonts, tz, the
+# LD_PRELOAD-clearing wrapper — so a row that moves between two swaps moved
+# because of the browser. Swap the shipped artifact in too (chs-latest) when
+# comparing against a candidate, so both sides come through this file.
+#
+# The wrapper is re-created exactly as playwright/Dockerfile.alpine writes it:
+# without it the image-wide LD_PRELOAD would put mimalloc under
+# PartitionAlloc and the swap would measure the allocator instead.
+ARG ARTIFACT
+ARG BASE
+FROM ${ARTIFACT} AS artifact
+
+FROM ${BASE}
+ARG CHS_REV
+USER root
+RUN CHS=/ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64 \
+ && test -x "$CHS/chrome-headless-shell.real" \
+ && rm -rf "$CHS"
+COPY --from=artifact /chrome-headless-shell-linux64 /ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64
+RUN CHS=/ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64 \
+ && mv "$CHS/chrome-headless-shell" "$CHS/chrome-headless-shell.real" \
+ && printf '%s\n' \
+        '#!/bin/sh' \
+        'DIR="$(dirname "$0")"' \
+        'unset LD_PRELOAD' \
+        'exec "$DIR/chrome-headless-shell.real" "$@"' \
+      > "$CHS/chrome-headless-shell" \
+ && chmod 755 "$CHS/chrome-headless-shell" \
+ && md5sum "$CHS/chrome-headless-shell.real"

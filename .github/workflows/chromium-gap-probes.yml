@@ -159,6 +159,10 @@ on:
         description: 'perf-record arm: a CONSUMER image carrying the shipped browser (Docker Hub has :latest, GHCR has sha-<40> and edge)'
         default: 'jclaveau/alpine-dood-playwright:latest'
         type: string
+      perf_chs_artifact:
+        description: 'perf-record arm: a scratch artifact (chs-fs-sha-<40>) swapped into perf_image in place of its browser, for a candidate with no consumer image; empty = perf_image as is'
+        default: ''
+        type: string
       perf_kernels:
         description: 'perf-record arm, CSV: screenshot_png_text, screenshot_png, screenshot_jpeg, layout_boxonly, layout_text, layout_reflow, goto_warm, goto_cold, launch'
         default: 'screenshot_png_text,screenshot_png,screenshot_jpeg,layout_boxonly,layout_reflow'
@@ -1356,6 +1360,7 @@ jobs:
       - name: Resolve both image refs before spending the run
         env:
           OURS: ${{ inputs.perf_image }}
+          ARTIFACT: ${{ inputs.perf_chs_artifact }}
           PW: ${{ inputs.pw_version }}
         run: |
           set -euo pipefail
@@ -1364,17 +1369,28 @@ jobs:
           # ref fails as `manifest unknown` only once the job is already
           # burning. Seconds here, minutes saved there.
           docker manifest inspect "$OURS" > /dev/null
+          if [ -n "$ARTIFACT" ]; then docker manifest inspect "$ARTIFACT" > /dev/null; fi
           docker manifest inspect "mcr.microsoft.com/playwright:v${PW}-noble" > /dev/null
-          echo "both refs resolve"
+          echo "all refs resolve"
 
       - name: Build the arms (each with its own distro's perf)
         env:
           OURS: ${{ inputs.perf_image }}
+          ARTIFACT: ${{ inputs.perf_chs_artifact }}
+          CHS_REV: ${{ inputs.chs_rev }}
           PW: ${{ inputs.pw_version }}
         run: |
           set -euo pipefail
           mkdir -p perf-out && chmod 777 perf-out
           PROBES=playwright/bench
+
+          if [ -n "$ARTIFACT" ]; then
+            docker build --build-arg "BASE=$OURS" \
+              --build-arg "ARTIFACT=$ARTIFACT" --build-arg "CHS_REV=$CHS_REV" \
+              -t perf-swap:${{ github.run_id }} \
+              -f "$PROBES/Dockerfile.perf-swap-chs" "$PROBES"
+            OURS=perf-swap:${{ github.run_id }}
+          fi
 
           docker build --build-arg "BASE=$OURS" \
             -t perf-alpine:${{ github.run_id }} \
@@ -1623,9 +1639,11 @@ jobs:
         if: always()
         env:
           OURS: ${{ inputs.perf_image }}
+          ARTIFACT: ${{ inputs.perf_chs_artifact }}
         run: |
           {
             echo "### perf record — \`$OURS\` vs official"
+            if [ -n "$ARTIFACT" ]; then echo "browser swapped for \`$ARTIFACT\`"; fi
             python3 playwright/bench/perf-record-report.py perf-out
             python3 playwright/alpine-browsers/chromium-headless-shell/probes/memset-count-report.py perf-out
             if [ -s perf-out/official-trace.json ]; then
