@@ -34,6 +34,7 @@ on:
     types: [edited]
 
 permissions:
+  actions: read     # test-and-publish perf-report downloads the previous report artifact
   contents: read    # test-and-publish needs checkout
   issues: write     # comment + label
   packages: write   # GHCR push (build-layer)
