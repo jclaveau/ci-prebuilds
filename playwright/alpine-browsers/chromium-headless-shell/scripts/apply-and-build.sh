@@ -548,15 +548,17 @@ export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-DCHS_SSP_LEVEL=$SSP_LEVEL"
 # never reach a PLT. Raising the ISA baseline is what moves those — at
 # x86-64-v3 clang emits VEX-encoded 32-byte moves in place of a call into musl.
 #
-# It reaches cc1 through CFLAGS/CXXFLAGS because our custom_toolchain
-# (//build/toolchain/linux/unbundle:default) reads extra_cflags = getenv("CFLAGS"),
-# the same mechanism the stack-protector block above documents. Unlike -Xclang
-# this is an ordinary driver flag, so sccache still caches each compile and
-# re-keys them automatically when the baseline moves.
-#
-# Targets that set their own -m flags (the AVX2/AVX512 specializations in Skia
-# and libyuv) keep winning: gcc_toolchain places extra_cflags ahead of the
-# per-target cflags, and the last -m flag on the line is the one clang honors.
+# It reaches cc1 through //build/config/compiler:compiler, beside the -msse3
+# that config already passes, and NOT through CFLAGS/CXXFLAGS. The unbundle
+# toolchain appends extra_cflags at the END of every compile line, after the
+# per-target configs, and clang honors the last -march it reads: run
+# 35969194229 died in r7 on skcms_TransformSkx.cc, whose own config asks for
+# -march=x86-64-v4 (arg 126) and got overridden back down to v3 by ours
+# (arg 163), leaving its AVX-512 intrinsics with no avx512f to inline into.
+# The compiler config is the first on every target's config list, so from
+# there any target that raises its own baseline (Skia's AVX2/AVX-512
+# specializations, libyuv) still has the last word. It stays an ordinary
+# driver flag, so sccache caches and re-keys each compile as before.
 #
 # NOT SHIPPABLE WITHOUT A RULING: a v3 binary SIGILLs on anything older than
 # Haswell / Excavator (pre-2015). Every GH-hosted runner is AVX2-capable so the
@@ -567,9 +569,14 @@ if ! "$CC" -march="$CHS_MARCH" -x c -c /dev/null -o /dev/null 2>/dev/null; then
   echo "ERROR: $CC rejects -march=$CHS_MARCH" >&2
   exit 7
 fi
-export CFLAGS="${CFLAGS:+$CFLAGS }-march=$CHS_MARCH"
-export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-march=$CHS_MARCH"
-echo "  SIMD baseline: -march=$CHS_MARCH"
+CHS_MARCH_FILE="build/config/compiler/BUILD.gn"
+CHS_MARCH_HITS=$(grep -c -- '"-msse3"' "$CHS_MARCH_FILE" || true)
+if [[ "$CHS_MARCH_HITS" == "0" ]]; then
+  echo "ERROR: no \"-msse3\" in $CHS_MARCH_FILE to anchor -march=$CHS_MARCH on" >&2
+  exit 7
+fi
+sed -i "s/\"-msse3\"/\"-msse3\", \"-march=$CHS_MARCH\"/" "$CHS_MARCH_FILE"
+echo "  SIMD baseline: -march=$CHS_MARCH beside $CHS_MARCH_HITS -msse3 in $CHS_MARCH_FILE"
 
 # clang 23 deprecates attributes abseil still uses, and rejects two -Wno- names
 # chromium 151 passes; each one prints a six-line caret block on nearly every
@@ -668,13 +675,24 @@ echo "  using gn at: $GN"
 "$GN" gen "$OUT_DIR"
 
 # A codegen flag that never reaches the compile line is a null arm that ships
-# looking like a result, so read the baseline back out of the generated ninja
-# rules before spending a 37 h chain on it.
-if ! grep -q -- "-march=$CHS_MARCH" "$OUT_DIR"/*.ninja; then
-  echo "ERROR: -march=$CHS_MARCH is absent from the generated ninja rules in $OUT_DIR" >&2
+# looking like a result, and one that lands AFTER a target's own -march
+# silently lowers that target -- run 35969194229 found out in r7, 31 h in.
+# Read both back out of the generated rules before spending a chain: the
+# baseline is on the per-target cflags, and on skcms's AVX-512 target it sits
+# ahead of the -march=x86-64-v4 that target asks for.
+CHS_MARCH_TARGETS=$(grep -rl -- "-march=$CHS_MARCH" "$OUT_DIR/obj" | wc -l)
+if [[ "$CHS_MARCH_TARGETS" == "0" ]]; then
+  echo "ERROR: -march=$CHS_MARCH is absent from the generated ninja rules in $OUT_DIR/obj" >&2
   exit 7
 fi
-echo "  verified: -march=$CHS_MARCH is on the generated compile line"
+CHS_SKX_NINJA="$OUT_DIR/obj/skia/skcms_TransformSkx.ninja"
+CHS_SKX_ORDER=$(grep -E '^cflags(_cc)? = ' "$CHS_SKX_NINJA" | tr ' ' '\n' | grep -- '^-march=' | tr '\n' ' ')
+if [[ "$CHS_SKX_ORDER" != "-march=$CHS_MARCH -march=x86-64-v4 " ]]; then
+  echo "ERROR: $CHS_SKX_NINJA reads -march order '$CHS_SKX_ORDER'," >&2
+  echo "       expected our baseline first and the target's x86-64-v4 last" >&2
+  exit 7
+fi
+echo "  verified: -march=$CHS_MARCH on $CHS_MARCH_TARGETS targets, skcms Skx keeps x86-64-v4 last"
 
 # 6. Build. headless_shell is the canonical chrome-headless-shell binary
 #    target. ninja parallelism caps to the runner's CPU count automatically.
