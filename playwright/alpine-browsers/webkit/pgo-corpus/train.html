@@ -13,6 +13,20 @@
   exercises. Calling startTest() directly is the same entry point the Start
   button uses.
 
+  A round ends when Speedometer finishes its last iteration, not when a fixed
+  slice of wall clock runs out: an instrumented build is several times slower
+  than the one any fixed slice would be picked for, and a round cut short
+  trains only the suites that happen to run first. Same origin, so the driver
+  wraps the benchmark's own benchmarkClient.didFinishLastIteration — the hook
+  its results screen hangs off — and needs no patch to the benchmark itself.
+  ROUND_CAP_MS is the backstop for a round that never reports.
+
+  Every round start and end is a GET of /pgo-round?..., which the driver
+  script's http.server logs, so the build log says how long each round took
+  and whether it finished, hit the cap, or failed to start. A start with no end
+  is the round the corpus budget cut off. A round that fails to start ends the
+  loop and carries the error.
+
   Rounds repeat forever; the driver script kills MiniBrowser when the corpus
   wall budget expires, and -fprofile-continuous has already flushed counters.
 -->
@@ -23,35 +37,56 @@
 const CORPUS_ENTRIES = [
     { url: '/Speedometer2.1/index.html?iterationCount=5', startFunction: 'startTest' },
 ];
-const ROUND_TIMEOUT_MS = 10 * 60 * 1000;
+const ROUND_CAP_MS = 25 * 60 * 1000;
 
 let roundIndex = 0;
+
+function reportRound(round, event, elapsedMs, errorText) {
+    const query = 'round=' + round + '&event=' + event
+        + (elapsedMs === undefined ? '' : '&ms=' + Math.round(elapsedMs))
+        + (errorText === undefined ? '' : '&error=' + encodeURIComponent(errorText));
+    fetch('/pgo-round?' + query).catch(() => {});
+    document.getElementById('status').textContent = 'round ' + round + ': ' + event;
+}
 
 function runNextEntry() {
     const entry = CORPUS_ENTRIES[roundIndex % CORPUS_ENTRIES.length];
     roundIndex += 1;
-    document.getElementById('status').textContent = 'round ' + roundIndex + ': ' + entry.url;
+    const round = roundIndex;
+    const startedAt = performance.now();
+    reportRound(round, 'start');
 
     const frame = document.getElementById('bench');
-    let advanced = false;
-    const advance = () => {
-        if (advanced)
+    let ended = false;
+    const endRound = (event, errorText) => {
+        if (ended)
             return;
-        advanced = true;
-        setTimeout(runNextEntry, 0);
+        ended = true;
+        reportRound(round, event, performance.now() - startedAt, errorText);
+        // A start failure repeats identically every round, so retrying it
+        // would spin thousands of empty rounds and train nothing.
+        if (event !== 'start-failed')
+            setTimeout(runNextEntry, 0);
     };
 
     frame.onload = () => {
         try {
+            const benchClient = frame.contentWindow.benchmarkClient;
+            const finishLastIteration = benchClient.didFinishLastIteration;
+            benchClient.didFinishLastIteration = function () {
+                try {
+                    finishLastIteration.apply(this, arguments);
+                } finally {
+                    endRound('done');
+                }
+            };
             frame.contentWindow[entry.startFunction]();
         } catch (error) {
-            document.getElementById('status').textContent = 'round ' + roundIndex
-                + ' could not start: ' + error;
-            advance();
+            endRound('start-failed', String(error));
         }
     };
-    setTimeout(advance, ROUND_TIMEOUT_MS);
-    frame.src = entry.url + '&pgoRound=' + roundIndex;
+    setTimeout(() => endRound('cap'), ROUND_CAP_MS);
+    frame.src = entry.url + '&pgoRound=' + round;
 }
 
 runNextEntry();

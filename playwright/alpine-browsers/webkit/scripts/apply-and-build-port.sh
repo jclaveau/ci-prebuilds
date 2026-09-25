@@ -294,13 +294,36 @@ if [[ "$WK_PGO" == "on" && "$PORT" == "WPE" && ! -s "$PGO_PROFILE" ]]; then
   # across the iframe boundary and file:// gives every document its own origin.
   echo "--- Phase 0: corpus run (${PGO_CORPUS_SECONDS}s) ---"
   cp "$WORK/webkit/pgo-corpus/train.html" "$SRC/PerformanceTests/train.html"
+  # http.server logs every request to stderr, and train.html reports each round
+  # as a GET of /pgo-round?round=N&event=start|done|cap|start-failed&ms=...
+  HTTPD_LOG="$PGO_DIR/corpus-http.log"
   python3 -m http.server --bind 127.0.0.1 --directory "$SRC/PerformanceTests" \
-    "$PGO_HTTP_PORT" >/dev/null 2>&1 &
+    "$PGO_HTTP_PORT" >/dev/null 2>"$HTTPD_LOG" &
   HTTPD_PID=$!
   timeout -s TERM "$PGO_CORPUS_SECONDS" \
     "$GEN_BUILD_DIR/bin/MiniBrowser" --headless \
     "http://127.0.0.1:$PGO_HTTP_PORT/train.html" || true
   kill "$HTTPD_PID" 2>/dev/null || true
+
+  # A start with no matching end is the round the corpus budget cut off. Zero
+  # starts means train.html never loaded, and the count checks below would
+  # then read a startup-only profile.
+  echo "  corpus rounds (event, elapsed ms):"
+  grep -ao 'GET /pgo-round?[^ ]*' "$HTTPD_LOG" | sed 's|^GET /pgo-round?|    |' || true
+  ROUND_STARTS=$(grep -ac 'GET /pgo-round?[^ ]*event=start HTTP' "$HTTPD_LOG" || true)
+  ROUNDS_DONE=$(grep -ac 'GET /pgo-round?[^ ]*event=done' "$HTTPD_LOG" || true)
+  echo "  rounds started: $ROUND_STARTS, finished: $ROUNDS_DONE"
+  if (( ROUND_STARTS == 0 )); then
+    echo "ERROR: train.html reported no round — the driver page never ran" >&2
+    exit 1
+  fi
+  if grep -aq 'GET /pgo-round?[^ ]*event=start-failed' "$HTTPD_LOG"; then
+    echo "ERROR: Speedometer did not start (error in the start-failed line above)" >&2
+    exit 1
+  fi
+  if (( ROUNDS_DONE == 0 )); then
+    echo "::warning::no Speedometer round finished inside the corpus budget — the profile trains only the suites that ran first"
+  fi
 
   # One file per (process, image) under %p-%m, so this counts instrumented
   # images that ran, not processes: MiniBrowser alone brings its own binary
