@@ -41,7 +41,7 @@ name: webkit / firefox perf record
 # counted second opinion on a ratchet row: the gate reads wall-clock medians,
 # and a 1.05 on one draw cannot tell a slower build from a noisy shot; CPU-ms
 # per iteration (cpu-clock, no PMU needed) and instructions per iteration
-# (PMU, when the runner has one) can.
+# (PMU, required: a runner without one fails in the first minute) can.
 #
 # Informational, dispatch-only, gates nothing.
 
@@ -134,6 +134,13 @@ jobs:
           # Which silicon this landed on decides how to read the result: a
           # hosted 8573C has no PMU (instructions/topdown absent), an EPYC has.
           grep -m1 'model name' /proc/cpuinfo || true
+
+      # A candidate is priced against promoted by instructions per iteration,
+      # which only a PMU gives: stop here, before the image builds, so a
+      # runner without one costs a minute and a rerun instead of the full run.
+      - name: Require a PMU (candidate mode)
+        if: inputs.candidate_tag != ''
+        run: python3 playwright/bench/pmu-check.py
 
       - name: Resolve every image ref before spending the run
         env:
