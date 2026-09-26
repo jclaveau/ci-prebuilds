@@ -131,8 +131,9 @@ jobs:
           # sampling outright. The runner is disposable and we are root on it.
           sudo sysctl -w kernel.perf_event_paranoid=-1
           sudo sysctl -w kernel.kptr_restrict=0
-          # Which silicon this landed on decides how to read the result: a
-          # hosted 8573C has no PMU (instructions/topdown absent), an EPYC has.
+          # Logged for the record only: no hosted runner passes a PMU through
+          # (run 36242651767: 8/8 attempts, EPYC 9V74 and 7763, Xeon 8370C,
+          # 8573C and 6973P-C, all ENOENT on the instructions counter).
           grep -m1 'model name' /proc/cpuinfo || true
 
       # A candidate is priced against promoted by instructions per iteration,
