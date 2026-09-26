@@ -35,6 +35,14 @@ name: webkit / firefox perf record
 #   no trace    trace-probe.cjs is CDP tracing; neither engine has it.
 #   no memset   the counting-memset shim rewrites chromium's launch wrapper.
 #
+# With `candidate_tag` set, the two arms are two of OUR builds instead —
+# candidate vs promoted, both staged through playwright/Dockerfile.alpine the
+# way perf-gate.yml stages them — and perf_image is ignored. That is the
+# counted second opinion on a ratchet row: the gate reads wall-clock medians,
+# and a 1.05 on one draw cannot tell a slower build from a noisy shot; CPU-ms
+# per iteration (cpu-clock, no PMU needed) and instructions per iteration
+# (PMU, when the runner has one) can.
+#
 # Informational, dispatch-only, gates nothing.
 
 on:
@@ -69,6 +77,18 @@ on:
         description: 'Directory inside symbols_image holding the unstripped dist'
         default: '/work/minibrowser-wpe-dist'
         type: string
+      candidate_tag:
+        description: 'ghcr.io/jclaveau/playwright-alpine-browsers tag of a build under test (sha-<sha>, wk-sha-<sha>); set = candidate vs promoted instead of perf_image vs official'
+        default: ''
+        type: string
+      promoted_tag:
+        description: 'candidate mode: the tag it is priced against; empty = ff-latest / wk-latest'
+        default: ''
+        type: string
+      rev:
+        description: 'candidate mode: browser revision both builds carry (consumer FF_REV / WK_REV, e.g. 1538)'
+        default: ''
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.browser }}-${{ github.ref }}
@@ -89,6 +109,12 @@ jobs:
       BROWSER: ${{ inputs.browser }}
       OURS: ${{ inputs.perf_image }}
       PW: ${{ inputs.pw_version }}
+      CANDIDATE: ${{ inputs.candidate_tag }}
+      PROMOTED: ${{ inputs.promoted_tag || (inputs.browser == 'firefox' && 'ff-latest' || 'wk-latest') }}
+      REV: ${{ inputs.rev }}
+      # Ours first, its reference second; perf-record-report.py reads the
+      # same pair back as PERF_RECORD_ARMS.
+      ARMS: ${{ inputs.candidate_tag != '' && 'candidate promoted' || 'alpine official' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -114,8 +140,15 @@ jobs:
           SYMBOLS: ${{ inputs.symbols_image }}
         run: |
           set -euo pipefail
-          docker manifest inspect "$OURS" > /dev/null
-          docker manifest inspect "mcr.microsoft.com/playwright:v${PW}-noble" > /dev/null
+          if [ -n "$CANDIDATE" ]; then
+            repo=ghcr.io/jclaveau/playwright-alpine-browsers
+            test -n "$REV" || { echo "::error::candidate mode needs rev"; exit 1; }
+            docker manifest inspect "${repo}:${CANDIDATE}" > /dev/null
+            docker manifest inspect "${repo}:${PROMOTED}" > /dev/null
+          else
+            docker manifest inspect "$OURS" > /dev/null
+            docker manifest inspect "mcr.microsoft.com/playwright:v${PW}-noble" > /dev/null
+          fi
           [ -z "$SYMBOLS" ] || docker manifest inspect "$SYMBOLS" > /dev/null
           echo "refs resolve"
 
@@ -123,6 +156,30 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p perf-out symbols && chmod 777 perf-out symbols
+          if [ -n "$CANDIDATE" ]; then
+            case "$BROWSER" in
+              firefox) prefix=FF ;;
+              webkit)  prefix=WK ;;
+            esac
+            # The same staging as perf-gate.yml, so the arms are the consumer
+            # images the gate measured: real shims, real preloads.
+            for arm in candidate promoted; do
+              tag=$CANDIDATE
+              [ "$arm" = promoted ] && tag=$PROMOTED
+              echo "::group::stage ${arm} (${tag})"
+              docker build -f playwright/Dockerfile.alpine \
+                --build-arg "BASE_IMAGE=ghcr.io/jclaveau/alpine-dood-pnpm:edge" \
+                --build-arg "${prefix}_SOURCE_TAG=${tag}" \
+                --build-arg "${prefix}_REV=${REV}" \
+                --build-arg "PLAYWRIGHT_VERSION=${PW}" \
+                -t "stage-${arm}:${{ github.run_id }}" playwright
+              docker build --build-arg "BASE=stage-${arm}:${{ github.run_id }}" \
+                -t "perf-${arm}:${{ github.run_id }}" \
+                -f playwright/bench/Dockerfile.perf-alpine playwright/bench
+              echo "::endgroup::"
+            done
+            exit 0
+          fi
           docker build --build-arg "BASE=$OURS" \
             -t perf-alpine:${{ github.run_id }} \
             -f playwright/bench/Dockerfile.perf-alpine playwright/bench
@@ -165,14 +222,10 @@ jobs:
             # Arms interleaved per kernel rather than run in blocks: a runner
             # that slows down partway through would otherwise land entirely
             # on whichever arm went second.
-            for target in alpine official; do
-              if [ "$target" = official ]; then
-                image="perf-official:${{ github.run_id }}"
-                perfbin=/usr/local/bin/perf-real
-              else
-                image="perf-alpine:${{ github.run_id }}"
-                perfbin=perf
-              fi
+            for target in $ARMS; do
+              image="perf-${target}:${{ github.run_id }}"
+              perfbin=perf
+              [ "$target" = official ] && perfbin=/usr/local/bin/perf-real
               echo "::group::${target} / ${kernel}"
               cname="perfrec-${target}-${kernel}"
               docker rm -f "$cname" >/dev/null 2>&1 || true
@@ -232,9 +285,15 @@ jobs:
       - name: Report
         if: always()
         run: |
+          if [ -n "$CANDIDATE" ]; then
+            heading="\`$CANDIDATE\` vs \`$PROMOTED\`"
+          else
+            heading="\`$OURS\` vs official"
+          fi
           {
-            echo "### ${BROWSER} perf record — \`$OURS\` vs official"
-            python3 playwright/bench/perf-record-report.py perf-out
+            echo "### ${BROWSER} perf record — ${heading}"
+            PERF_RECORD_ARMS=$(echo "$ARMS" | tr ' ' ',') \
+              python3 playwright/bench/perf-record-report.py perf-out
           } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4

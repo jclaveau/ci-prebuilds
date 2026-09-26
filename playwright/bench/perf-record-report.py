@@ -19,11 +19,15 @@ and those tables are embedded as written.
 """
 
 import json
+import os
 import pathlib
 import re
 import sys
 
-ARMS = ('alpine', 'official')
+# Ours first, the reference it is priced against second: alpine vs official by
+# default, candidate vs promoted when the workflow stages two of our builds.
+ARMS = tuple(os.environ.get('PERF_RECORD_ARMS', 'alpine,official').split(','))
+OURS, REFERENCE = ARMS
 # Which engine the profile is of, read from the kernels' own metadata (they
 # carry `browser` since the webkit/firefox arm); names the headings only.
 BROWSER = 'chromium'
@@ -174,7 +178,7 @@ def print_topdown_table(kernel, td):
         return
     names = sorted(set().union(*(set(v) for v in td.values())))
     print(f'`{kernel}` topdown level 1 (share of pipeline slots):\n')
-    print('| metric | alpine | official |')
+    print(f'| metric | {OURS} | {REFERENCE} |')
     print('|---|---:|---:|')
     for n in names:
         cells = ['—' if n not in td[arm] else f'{td[arm][n]:.1f}%' for arm in ARMS]
@@ -229,8 +233,8 @@ def print_sched_table(kernel, sch, iters):
     print(f'`{kernel}` scheduler, per thread name and iteration '
           '(runtime = on-CPU ms; delay = wakeup→running, avg weighted by '
           'switches):\n')
-    print('| thread | run ms alpine | official | switches alpine | official '
-          '| avg delay ms alpine | official | max delay ms alpine | official |')
+    print(f'| thread | run ms {OURS} | {REFERENCE} | switches {OURS} | {REFERENCE} '
+          f'| avg delay ms {OURS} | {REFERENCE} | max delay ms {OURS} | {REFERENCE} |')
     print('|---|---:|---:|---:|---:|---:|---:|---:|---:|')
     for c in rows:
         cells = []
@@ -278,7 +282,7 @@ def print_strace_table(kernel, st, iters):
           'time (a futex second is a second a thread WAITED; ptrace slows '
           'the loop, so read the counts and the shares, not the absolute '
           'ms):\n')
-    print('| syscall | calls/iter alpine | official | wall ms/iter alpine | official |')
+    print(f'| syscall | calls/iter {OURS} | {REFERENCE} | wall ms/iter {OURS} | {REFERENCE} |')
     print('|---|---:|---:|---:|---:|')
     for n in rows:
         cells = []
@@ -317,7 +321,7 @@ def print_insn_table(kernel, root, rates, iters):
           'says where the seconds go; this says where the instructions go, '
           'and a DSO higher here than in the time table is code that runs '
           'fast and often — the shape of an inlined check on every call:\n')
-    print('| shared object | alpine | official | delta |')
+    print(f'| shared object | {OURS} | {REFERENCE} | delta |')
     print('|---|---:|---:|---:|')
     for n in names[:16]:
         vals = []
@@ -344,13 +348,13 @@ def print_symbols(kernel, root):
     """Our named hot list, embedded as the profile step wrote it."""
     for suffix, what in (('symbols', 'time-weighted'),
                          ('insn-symbols', 'instruction-weighted')):
-        f = root / f'alpine-{kernel}-{suffix}.md'
+        f = root / f'{OURS}-{kernel}-{suffix}.md'
         if not f.exists():
             continue
         # The tables only: the per-instruction listings that follow them are
         # for the artifact, the step summary stops accepting at 1 MiB.
         body = f.read_text(errors='replace').split('<details>', 1)[0]
-        print(f'<details><summary>`alpine` / `{kernel}` named hot symbols, '
+        print(f'<details><summary>`{OURS}` / `{kernel}` named hot symbols, '
               f'{what} (from the link census or the unstripped twin; '
               f'annotated listings in the artifact)</summary>\n')
         print(body)
@@ -384,10 +388,10 @@ def print_counter_table(kernel, rates):
         return
     print(f'`{kernel}` per iteration / per instruction '
           '(M = millions, kI/MI = per thousand/million instructions):\n')
-    print('| counter | alpine | official | ratio |')
+    print(f'| counter | {OURS} | {REFERENCE} | ratio |')
     print('|---|---|---|---|')
     for label, vals in rows:
-        a, o = vals.get('alpine'), vals.get('official')
+        a, o = vals.get(OURS), vals.get(REFERENCE)
         cells = ['—' if v is None else f'{v:.3g}' for v in (a, o)]
         ratio = '—' if not (a and o) else f'**{a / o:.2f}x**'
         print(f'| {label} | {cells[0]} | {cells[1]} | {ratio} |')
@@ -428,19 +432,19 @@ def main(root):
         print(f'### `{kernel}`\n')
         cpu = {arm: None for arm in ARMS}
         if len(meta) == len(ARMS):
-            a, o = meta['alpine'], meta['official']
+            a, o = meta[OURS], meta[REFERENCE]
             cpu = {arm: cpu_ms_per_iteration(root, arm, kernel, meta[arm])
                    for arm in ARMS}
             wall = (a['median_ms'] / o['median_ms']) if o['median_ms'] else 0
             cpu_ratio = None
-            if cpu['alpine'] and cpu['official']:
-                cpu_ratio = cpu['alpine'] / cpu['official']
+            if cpu[OURS] and cpu[REFERENCE]:
+                cpu_ratio = cpu[OURS] / cpu[REFERENCE]
             print('| arm | iterations | median ms | wall | CPU-ms/iter | CPU |'
                   ' output tag |')
             print('|---|---|---|---|---|---|---|')
-            for arm, m in (('alpine', a), ('official', o)):
+            for arm, m in ((OURS, a), (REFERENCE, o)):
                 c = cpu[arm]
-                mine = arm == 'alpine'
+                mine = arm == OURS
                 print(f'| {arm} | {m["iterations"]} | {m["median_ms"]:.2f} | '
                       + (f'**{wall:.2f}x**' if mine else '1.00x') + ' | '
                       + ('—' if c is None else f'{c:.1f}') + ' | '
@@ -462,9 +466,9 @@ def main(root):
 
         dso = {arm: read_dso(root / f'{arm}-{kernel}-dso.txt') for arm in ARMS}
         names = sorted(
-            set(dso['alpine']) | set(dso['official']),
-            key=lambda n: -max(dso['alpine'].get(n, 0),
-                               dso['official'].get(n, 0)),
+            set(dso[OURS]) | set(dso[REFERENCE]),
+            key=lambda n: -max(dso[OURS].get(n, 0),
+                               dso[REFERENCE].get(n, 0)),
         )
         if not names:
             print('_perf produced no samples for this kernel._\n')
@@ -474,7 +478,7 @@ def main(root):
               'be comparable between the arms: they get through different '
               'numbers of iterations in the same window, so each share is '
               'weighted by that arm\'s own cost per iteration.\n')
-        print('| shared object | alpine | official | delta |')
+        print(f'| shared object | {OURS} | {REFERENCE} | delta |')
         print('|---|---|---|---|')
         for n in names[:22]:
             cells, vals = [], {}
@@ -486,10 +490,10 @@ def main(root):
                 else:
                     vals[arm] = (share or 0.0) / 100 * c
                     cells.append(f'{vals[arm]:.2f} ms')
-            if vals['alpine'] is None or vals['official'] is None:
+            if vals[OURS] is None or vals[REFERENCE] is None:
                 cells.append('—')
             else:
-                cells.append(f"{vals['alpine'] - vals['official']:+.2f} ms")
+                cells.append(f"{vals[OURS] - vals[REFERENCE]:+.2f} ms")
             print(f'| `{n}` | ' + ' | '.join(cells) + ' |')
         print()
 
@@ -497,8 +501,8 @@ def main(root):
     for arm in ARMS:
         seen = sorted(versions.get(arm, {'(no run completed)'}))
         print(f'- **{arm}**: {", ".join(seen)}')
-    alpine_v = versions.get('alpine', set())
-    official_v = versions.get('official', set())
+    alpine_v = versions.get(OURS, set())
+    official_v = versions.get(REFERENCE, set())
     if alpine_v and official_v and alpine_v != official_v:
         print(f'\n> The arms are on DIFFERENT {BROWSER} versions. Everything '
               'above is a comparison of two browsers, not of two builds.')
