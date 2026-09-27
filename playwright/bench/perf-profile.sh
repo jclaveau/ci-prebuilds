@@ -109,11 +109,17 @@ rm -f "$PROGRESS" "$WINDOWS"
 # The probe writes its iteration count to $PROGRESS after every iteration;
 # bracketing a pass with it says how many iterations that pass saw, so the
 # pass normalises per iteration on its own. `window <name> <seconds> <before>
-# <after>` lines, one per pass, read back by perf-record-report.py.
+# <after>` lines, one per pass, read back by perf-record-report.py. The
+# seconds are measured, not the pass's nominal length: the stat pass runs
+# five perf stat blocks back to back, 50 s plus their startup.
 iters_now() { cat "$PROGRESS" 2>/dev/null || echo 0; }
-window_open() { WIN_NAME="$1"; WIN_SECS="$2"; WIN_BEFORE=$(iters_now); }
+uptime_now() { cut -d' ' -f1 /proc/uptime; }
+window_open() { WIN_NAME="$1"; WIN_T0=$(uptime_now); WIN_BEFORE=$(iters_now); }
 window_close() {
-  echo "$WIN_NAME $WIN_SECS $WIN_BEFORE $(iters_now)" >> "$WINDOWS"
+  local after elapsed
+  after=$(iters_now)
+  elapsed=$(awk -v a="$WIN_T0" -v b="$(uptime_now)" 'BEGIN { printf "%.2f", b - a }')
+  echo "$WIN_NAME $elapsed $WIN_BEFORE $after" >> "$WINDOWS"
 }
 
 echo "=== ${TARGET} / ${KERNEL}: starting probe ==="
@@ -163,7 +169,7 @@ samples_in() {
     | grep -c '%' || true
 }
 
-window_open cpu-clock "$RECORD_WINDOW"
+window_open cpu-clock
 record -G /
 window_close
 if [ "$(samples_in)" -eq 0 ]; then
@@ -205,7 +211,7 @@ echo "$RECORD_WINDOW" > "${OUT}/${TARGET}-${KERNEL}-window"
 # bearing here: chromium is compiled without frame pointers, so treat anything
 # above the immediate caller as noise.
 CG_DATA="${OUT}/${TARGET}-${KERNEL}-cg.data"
-window_open callers "$CG_WINDOW"
+window_open callers
 "$PERF" record -e cpu-clock -F 999 -a -G / --call-graph fp \
   --no-buildid-cache -o "$CG_DATA" -- sleep "$CG_WINDOW" \
   2>&1 | sed 's/^/  perf-cg: /' || true
@@ -222,7 +228,7 @@ window_close
 # A hardware event, so a VM may refuse it; an empty profile is reported as
 # absent, never as zero.
 INSN_DATA="${OUT}/${TARGET}-${KERNEL}-insn.data"
-window_open instructions "$INSN_WINDOW"
+window_open instructions
 "$PERF" record -e instructions -F 999 -a -G / --no-buildid-cache \
   -o "$INSN_DATA" -- sleep "$INSN_WINDOW" 2>&1 | sed 's/^/  perf-insn: /' || true
 window_close
@@ -256,7 +262,7 @@ SW='task-clock,context-switches,cpu-migrations,page-faults,minor-faults'
 # ruled in or out with the same read. Its own block, since one unsupported
 # event rejects the whole list.
 FETCH='iTLB-loads,LLC-load-misses,dTLB-load-misses'
-window_open stat "$((STAT_WINDOW + 25))"
+window_open stat
 {
   # -e BEFORE -G, always: perf stat rejects a cgroup it has no event to
   # attach yet with "must define events before cgroups", and the `|| true`
@@ -283,7 +289,7 @@ window_close
 # zen4 tables carry PipelineL1; whichever this runner's perf lists is the
 # one asked for, and a runner with neither (or no PMU) writes an empty file.
 # --for-each-cgroup rather than -G: -M rejects a bare cgroup filter.
-window_open topdown "$TOPDOWN_WINDOW"
+window_open topdown
 {
   echo "### ${TARGET} / ${KERNEL} — topdown level 1"
   found=0
@@ -310,7 +316,7 @@ window_close
 # caller also runs this container in the host pid namespace, or the
 # tracepoint pids never meet the names in /proc and every row is `:pid`.
 SCHED_DATA="${OUT}/${TARGET}-${KERNEL}-sched.data"
-window_open sched "$SCHED_WINDOW"
+window_open sched
 "$PERF" sched record -a -G / -o "$SCHED_DATA" -- sleep "$SCHED_WINDOW" \
   2>&1 | sed 's/^/  perf-sched: /' || true
 window_close
@@ -340,7 +346,7 @@ if command -v strace >/dev/null 2>&1; then
     pids="-p $PROBE_PID"
     attached="probe (browser pid not caught by pgrep; children followed)"
   fi
-  window_open strace "$STRACE_WINDOW"
+  window_open strace
   {
     echo "# strace attached to: ${attached}"
     # shellcheck disable=SC2086

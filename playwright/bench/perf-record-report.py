@@ -125,12 +125,32 @@ def counter_rates(root, arm, kernel):
             m = STAT_ROW.match(line)
             if m and not m.group(1).startswith('<'):
                 block[m.group(2)] = float(m.group(1).replace(',', ''))
+    # The iteration rate of the stat pass itself, not of the whole loop: the
+    # loop runs slower under strace and the fp unwinder, unevenly per arm, so
+    # the whole-run average read 1.35x instructions on a build whose libxul
+    # SIMD was byte-identical to its reference (the bracket read 0.997).
+    stat_window = stat_bracket(root, arm, kernel)
+    if stat_window:
+        rates['iter'] = stat_window
+        return rates
     meta = root / f'{arm}-{kernel}-kernel.json'
     if meta.exists():
         doc = json.loads(meta.read_text())
         if doc.get('seconds'):
             rates['iter'] = doc['iterations'] / doc['seconds']
     return rates
+
+
+def stat_bracket(root, arm, kernel):
+    """Iterations per second over the stat pass's own bracket, or None."""
+    f = root / f'{arm}-{kernel}-windows.txt'
+    if not f.exists():
+        return None
+    for line in f.read_text(errors='replace').splitlines():
+        p = line.split()
+        if len(p) == 4 and p[0] == 'stat' and float(p[1]) > 0:
+            return (int(p[3]) - int(p[2])) / float(p[1])
+    return None
 
 
 # (label, numerator event, denominator event, scale) — per-iteration where
@@ -366,8 +386,8 @@ def print_counter_table(kernel, rates):
     """The two arms' counters per iteration and per instruction, with the ratio.
 
     Per iteration rather than per window: the arms get through different
-    numbers of iterations in the same seconds, and the kernel JSON carries
-    each arm's own rate. Per instruction for the miss rows, which is the
+    numbers of iterations in the same seconds, and the stat pass's bracket
+    carries each arm's own rate. Per instruction for the miss rows, which is the
     normalisation the frontend-fetch finding was read in.
     """
     if any(r is None for r in rates.values()):
