@@ -667,10 +667,14 @@ case "$PGO_STAGE" in
     # extended corpus doubled that cutoff and pushed libpng's row filters under
     # it (+15% screenshot instructions, a scalar Sub filter). Off, cold code
     # keeps its -O2 codegen and PGO still steers inlining, layout and
-    # hot/cold splitting.
+    # hot/cold splitting. ThinLTO vectorizes in lld's backend, so the flag
+    # must reach the link too; CFLAGS alone left libxul byte-identical in
+    # its SIMD (sha-7c4e2ab).
     CFLAGS="$CFLAGS -mllvm -pgso=false"
     CXXFLAGS="$CXXFLAGS -mllvm -pgso=false"
+    LDFLAGS="$LDFLAGS -Wl,-mllvm,-pgso=false"
     echo "PGO use: CFLAGS=$CFLAGS"
+    echo "PGO use: LDFLAGS=$LDFLAGS"
     echo "===== PGO profile consumed ====="
     ls -l "$PGO_DIR" | sed 's/^/  /'
     echo "===== end PGO profile ====="
