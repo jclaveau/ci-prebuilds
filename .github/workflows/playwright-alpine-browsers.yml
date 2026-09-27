@@ -497,6 +497,9 @@ jobs:
     # Juggler (launch, navigate, route, screenshot). If patches are broken,
     # newContext() or goto() hangs/throws.
     needs: build-firefox
+    # Explicit, because the implicit success() reads every upstream job,
+    # and a dispatch with ff_pgo_profile_sha skips build-firefox-pgo-profile.
+    if: ${{ !cancelled() && needs.build-firefox.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -555,6 +558,9 @@ jobs:
     # so the only added wall-clock is the script itself (~30-45s for one
     # browser launch + 8 context-scoped sections).
     needs: build-firefox
+    # Explicit, because the implicit success() reads every upstream job,
+    # and a dispatch with ff_pgo_profile_sha skips build-firefox-pgo-profile.
+    if: ${{ !cancelled() && needs.build-firefox.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
