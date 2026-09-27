@@ -49,6 +49,15 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
+      # A use build against an existing :ff-pgo-profile-sha-<sha> instead of a
+      # fresh 3h20 generate, so a codegen-only change is compared on the SAME
+      # profile: the profile run is not deterministic, and a new one would move
+      # the result on its own.
+      ff_pgo_profile_sha:
+        description: 'Firefox: reuse the PGO profile of this full commit sha, skip the generate job (empty = generate)'
+        required: false
+        default: ''
+        type: string
       build_chromium_headless_shell:
         description: 'Build chromium-headless-shell APK path (musl) — PAUSED; use build_chromium_headless_shell_from_source instead'
         required: false
@@ -241,7 +250,8 @@ jobs:
     # - pull_request: only when the `build-firefox` label is on the PR
     if: |
       github.event_name == 'push'
-      || (github.event_name == 'workflow_dispatch' && inputs.build_firefox == 'true')
+      || (github.event_name == 'workflow_dispatch' && inputs.build_firefox == 'true'
+          && inputs.ff_pgo_profile_sha == '')
       || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'build-firefox'))
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -286,7 +296,13 @@ jobs:
     # Second half of the PGO build (the -fprofile-use compile); the profile
     # job carries the FF gate, so this runs exactly when it succeeded.
     needs: build-firefox-pgo-profile
-    if: needs.build-firefox-pgo-profile.result == 'success'
+    if: |
+      !cancelled()
+      && (needs.build-firefox-pgo-profile.result == 'success'
+          || (needs.build-firefox-pgo-profile.result == 'skipped'
+              && github.event_name == 'workflow_dispatch'
+              && inputs.build_firefox == 'true'
+              && inputs.ff_pgo_profile_sha != ''))
     runs-on: ubuntu-latest
     # 6h ceiling. The old 4h was written against a "clean build ~2h" that no
     # longer holds: the last clean one (2026-08-23, run 32650828651) took
@@ -430,7 +446,7 @@ jobs:
           # Dockerfile.iter's `FROM ${BASE_PREBUILT}` resolves.
           build-args: |
             PGO_STAGE=use
-            PGO_PROFILE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:ff-pgo-profile-sha-${{ github.sha }}
+            PGO_PROFILE_IMAGE=ghcr.io/jclaveau/playwright-alpine-browsers:ff-pgo-profile-sha-${{ inputs.ff_pgo_profile_sha || github.sha }}
             PW_JUGGLER_ORDER_FIRST=${{ inputs.juggler_order_first || 'false' }}
             PW_JUGGLER_CATEGORY_RENAME=${{ inputs.juggler_category_rename || 'false' }}
             PW_JUGGLER_INSTRUMENT=${{ inputs.juggler_instrument || 'false' }}

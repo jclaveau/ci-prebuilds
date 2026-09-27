@@ -661,6 +661,16 @@ case "$PGO_STAGE" in
     echo "ac_add_options --enable-profile-use" >> .mozconfig
     echo "ac_add_options --with-pgo-profile-path=$PGO_DIR/merged.profdata" >> .mozconfig
     [[ -s "$PGO_DIR/en-US.log" ]] && echo "ac_add_options --with-pgo-jarlog=$PGO_DIR/en-US.log" >> .mozconfig
+    # LLVM's profile-guided size optimization compiles every block under the
+    # profile's 95% cutoff as if for -Os, and the loop vectorizer then refuses
+    # it the runtime alias checks most loops over two buffers need. The
+    # extended corpus doubled that cutoff and pushed libpng's row filters under
+    # it (+15% screenshot instructions, a scalar Sub filter). Off, cold code
+    # keeps its -O2 codegen and PGO still steers inlining, layout and
+    # hot/cold splitting.
+    CFLAGS="$CFLAGS -mllvm -pgso=false"
+    CXXFLAGS="$CXXFLAGS -mllvm -pgso=false"
+    echo "PGO use: CFLAGS=$CFLAGS"
     echo "===== PGO profile consumed ====="
     ls -l "$PGO_DIR" | sed 's/^/  /'
     echo "===== end PGO profile ====="
