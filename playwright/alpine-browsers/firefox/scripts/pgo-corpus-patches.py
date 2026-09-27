@@ -11,7 +11,8 @@ What this script changes, all at build time so no vendored copy drifts:
 
   build/pgo/index.html         Item.run races real completion signals against a
                                cap, and logs which one ended each item; adds the
-                               MotionMark entry.
+                               MotionMark entry and a PNG encode item.
+  build/pgo/png-encode.html    new: the PNG encode item's page.
   build/pgo/profileserver.py   serves MotionMark on port 8002 and turns on the
                                prefs that put Item.run's log line on stdout.
   Speedometer3, JetStream3,    each posts "corpus-item-done" to its opener from
@@ -206,6 +207,74 @@ LONG_ITEMS_NEW = """  items.push(
       superExtendedTimeout
     ),"""
 
+PNG_ITEM_OLD = """    new Item(
+      "webkit/PerformanceTests/webaudio/index.html?raptor&rendering-buffer-length=30",
+      extendedTimeout
+    )
+  );"""
+
+PNG_ITEM_NEW = """    new Item(
+      "webkit/PerformanceTests/webaudio/index.html?raptor&rendering-buffer-length=30",
+      extendedTimeout
+    ),
+    // page.screenshot() ends in the PNG encoder, and nothing else in the
+    // corpus encodes more than a few hundred rows of PNG.
+    new Item("png-encode.html")
+  );"""
+
+# Written into build/pgo/, the profile server's docroot. The corpus trained
+# the PNG row filters on 420 rows in total, which put their hottest block at
+# 362,832 counts. That cleared the 95% cutoff of the old corpus (232,664) but
+# not the extended one's (446,455), so LLVM's profile-guided size optimization
+# treated the encoder as cold and refused the loop vectorizer the runtime
+# alias check the Sub filter needs: screenshot_png_text ran a byte-at-a-time
+# filter where the previous build ran a psubb loop, +15% instructions.
+# Twenty 1280x720 encodes put those blocks around 30x over the cutoff.
+PNG_PAGE = """<!doctype html>
+<meta charset="utf-8">
+<title>PGO corpus: PNG encode</title>
+<canvas id="c" width="1280" height="720"></canvas>
+<script>
+  // What page.screenshot() does after capture: encode a page-sized, text-heavy
+  // bitmap to PNG. Text, because antialiased glyph edges make the encoder try
+  // every row filter the way a real page does; a flat fill would not.
+  var canvas = document.getElementById("c");
+  var g = canvas.getContext("2d", { alpha: false });
+  for (var pass = 0; pass < 20; pass++) {
+    g.fillStyle = "#fff";
+    g.fillRect(0, 0, 1280, 720);
+    g.fillStyle = "#222";
+    g.font = "14px sans-serif";
+    for (var line = 0; line < 40; line++) {
+      g.fillText(
+        "Pass " + pass + " line " + line +
+          ": the quick brown fox jumps over the lazy dog 0123456789",
+        12 + (pass % 7),
+        18 + line * 17
+      );
+    }
+    g.fillStyle = "hsl(" + pass * 17 + ", 60%, 70%)";
+    g.fillRect(900, 40 + pass * 8, 300, 120);
+    canvas.toDataURL("image/png");
+  }
+  if (window.tpRecordTime) {
+    tpRecordTime();
+  }
+</script>
+"""
+
+
+def write_page(path, content, label):
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            if fh.read() == content:
+                print(f"  {label}: already written")
+                return
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(content)
+    print(f"  {label}: written")
+
+
 MM_HTTPD_OLD = '''        js3_httpd.start(block=False)
         print("started JS3 server on port 8001")'''
 
@@ -321,6 +390,10 @@ def main():
     replace_once(index_html, CONSTRUCTOR_OLD, CONSTRUCTOR_NEW, "index.html Item.endsOnLoad")
     replace_once(index_html, ITEM_RUN_OLD, ITEM_RUN_NEW, "index.html Item.run")
     replace_once(index_html, LONG_ITEMS_OLD, LONG_ITEMS_NEW, "index.html Speedometer3 cap")
+    replace_once(index_html, PNG_ITEM_OLD, PNG_ITEM_NEW, "index.html PNG encode item")
+    write_page(
+        os.path.join(src, "build", "pgo", "png-encode.html"), PNG_PAGE, "png-encode.html"
+    )
 
     profileserver = os.path.join(src, "build", "pgo", "profileserver.py")
     replace_once(profileserver, DUMP_PREFS_OLD, DUMP_PREFS_NEW, "profileserver dump prefs")

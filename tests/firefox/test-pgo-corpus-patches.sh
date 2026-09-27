@@ -201,6 +201,9 @@ expect_contains "cross-origin channel is listened on" "$index" \
   'window.addEventListener("message", onMessage);'
 expect_contains "per-item timing line" "$index" '"PGO corpus item: "'
 expect_contains "MotionMark item added" "$index" "http://localhost:8002/index.html?autostart=true"
+expect_contains "PNG encode item added" "$index" 'new Item("png-encode.html")'
+expect_contains "PNG encode page written beside index.html" \
+  "$clean/src/build/pgo/png-encode.html" 'canvas.toDataURL("image/png");'
 
 # Only the default-timeout items may treat load as completion — the long ones
 # merely START at load, so reading it as "done" would cut each to a moment.
@@ -264,6 +267,8 @@ drift "index.html timeouts" src/build/pgo/index.html \
   "var defaultTimeout = 2 \* 1000;" "var defaultTimeout = 3 * 1000;"
 drift "index.html Item.run" src/build/pgo/index.html \
   "var subWindow = window.open(this.url);" "let subWindow = window.open(this.url);"
+drift "index.html webaudio item" src/build/pgo/index.html \
+  "rendering-buffer-length=30" "rendering-buffer-length=31"
 drift "profileserver JS3 print" src/build/pgo/profileserver.py \
   'print("started JS3 server on port 8001")' 'print("started JS3 server on 8001")'
 drift "Speedometer3 summary" \
