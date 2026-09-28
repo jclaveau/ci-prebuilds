@@ -4,7 +4,7 @@
 # exists. No hosted runner has passed one through (run 36242651767: 8
 # attempts, five CPU models, all ENOENT), so on CI both report CPU-ms only.
 #
-#   playwright/bench/local-counted-compare.sh <firefox|webkit> <candidate_tag> <rev> [promoted_tag]
+#   playwright/bench/local-counted-compare.sh <chromium|firefox|webkit> <candidate_tag> <rev> [promoted_tag]
 #   playwright/bench/local-counted-compare.sh <chromium|firefox|webkit> official [consumer_image]
 #
 # The first prices a candidate against promoted, both staged the way
@@ -38,9 +38,10 @@ else
   candidate_tag=$2
   rev_number=$3
   case "$browser_name" in
-    firefox) build_prefix=FF; promoted_tag=${4:-ff-latest} ;;
-    webkit)  build_prefix=WK; promoted_tag=${4:-wk-latest} ;;
-    *) echo "a candidate compare takes firefox or webkit" >&2; exit 2 ;;
+    chromium) build_prefix=CHS; promoted_tag=${4:-chs-latest} ;;
+    firefox)  build_prefix=FF; promoted_tag=${4:-ff-latest} ;;
+    webkit)   build_prefix=WK; promoted_tag=${4:-wk-latest} ;;
+    *) echo "browser must be chromium, firefox or webkit" >&2; exit 2 ;;
   esac
   arm_names="candidate promoted"
   default_kernels=layout_reflow,screenshot_png_text,js_alloc
