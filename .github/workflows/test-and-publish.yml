@@ -1500,7 +1500,7 @@ jobs:
               -v "$PWD/perf-out:/out" \
               "$image" \
               sh -c '
-                # `playwright` is a global install in all of these images (pnpm -g on
+                # `playwright` is a global install in all of these images (pnpm or npm -g on
                 # ours, npm -g on the control), and the probe is CommonJS precisely so
                 # NODE_PATH resolution applies — ESM ignores NODE_PATH. The npm
                 # fallback covers a control image that stops baking it in.

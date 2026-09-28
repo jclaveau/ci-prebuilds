@@ -5,8 +5,8 @@
 #
 # - `playwright` is a global install in these images, and every caller is
 #   CommonJS precisely so NODE_PATH resolution applies — ESM ignores it.
-# - Both package managers are tried: our images install it with pnpm, the
-#   official control image bakes it with npm.
+# - Both package managers are tried: the glibc image installs it with pnpm,
+#   the alpine one and the official control image with npm.
 # - pnpm 11 moved the global store, which is what broke every caller at once
 #   when the v11 bump landed. `pnpm root -g` used to name the global
 #   node_modules directory itself; it now names its grandparent, with a
