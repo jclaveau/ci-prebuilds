@@ -85,7 +85,7 @@ window.__ready = true;
  */
 const TEXT_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>perf-kernel</title><style>
-  body { margin: 0; font: 12px/1.2 sans-serif; }
+  body { margin: 0; font: 12px/1.2 FreeSans, sans-serif; }
   #pad div { padding: 1px 2px; border-bottom: 1px solid #eee; }
 </style></head><body><div id="pad"></div>
 <script>
@@ -100,12 +100,12 @@ const TEXT_HTML = `<!doctype html>
 
 const DOM_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>perf-kernel</title><style>
-  body { margin: 0; font: 12px/1.2 sans-serif; }
+  body { margin: 0; font: 12px/1.2 FreeSans, sans-serif; }
 </style></head><body><div id="host"></div></body></html>`;
 
 const REFLOW_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>perf-kernel</title><style>
-  body { margin: 0; font: 12px/1.2 sans-serif; }
+  body { margin: 0; font: 12px/1.2 FreeSans, sans-serif; }
   #pad div { padding: 1px 2px; border-bottom: 1px solid #eee; }
   #layout { height: 20px; background: #ccc; }
 </style></head><body>
@@ -127,7 +127,7 @@ const REFLOW_HTML = `<!doctype html>
 const BUTTONS = 100;
 const PROBE_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>probe</title><style>
-  body { margin: 0; font: 12px/1.2 sans-serif; }
+  body { margin: 0; font: 12px/1.2 FreeSans, sans-serif; }
   #pad div { padding: 1px 2px; border-bottom: 1px solid #eee; }
   #btns button { width: 58px; height: 18px; font-size: 9px; padding: 0; margin: 1px; }
   #layout { height: 20px; background: #ccc; }

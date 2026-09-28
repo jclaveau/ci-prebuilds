@@ -89,9 +89,9 @@ async function clickAll(page, options) {
 
 const PAGE_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>probe</title><style>
-  body { margin: 0; font: 12px/1.2 sans-serif; }
+  body { margin: 0; font: 12px/1.2 FreeSans, sans-serif; }
   #pad div { padding: 1px 2px; border-bottom: 1px solid #eee; }
-  #btns button { width: 58px; height: 18px; font-size: 9px; padding: 0; margin: 1px; }
+  #btns button { width: 58px; height: 18px; font: 9px FreeSans, sans-serif; padding: 0; margin: 1px; }
   #layout { height: 20px; background: #ccc; }
 </style></head><body>
 <div id="btns"></div>
