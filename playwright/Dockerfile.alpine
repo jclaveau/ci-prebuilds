@@ -503,7 +503,13 @@ COPY --from=zlibng-build /usr/lib/libz-ng-compat.so.1 /usr/lib/libz-ng-compat.so
 # container-wide one.
 COPY --from=faststring-build /usr/lib/libfaststring.so /usr/lib/libfaststring.so
 
-RUN pnpm install -g playwright@${PLAYWRIGHT_VERSION} \
+# npm -g, not pnpm -g: Playwright captures a stack trace on every API call
+# and regex-parses each frame, so the client pays per character of the
+# playwright-core path. pnpm's global store path is ~150 chars, npm's
+# /usr/local/lib/node_modules one ~80, as official's /usr/lib. Local
+# 500x page.evaluate, node CPU ms: pnpm 164-175, npm 161-167, official
+# 154-162. global-node-path.sh already resolves `npm root -g`.
+RUN sudo npm install -g --no-fund --no-audit playwright@${PLAYWRIGHT_VERSION} \
     && sudo share-dir-with-runner-group "${PNPM_HOME}"
 
 COPY --from=browsers-staged /ms-playwright/chromium_headless_shell-${CHS_REV} /ms-playwright/chromium_headless_shell-${CHS_REV}
