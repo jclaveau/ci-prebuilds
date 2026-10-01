@@ -353,6 +353,17 @@ if command -v strace >/dev/null 2>&1; then
     timeout -s INT "$STRACE_WINDOW" strace -f -c -w $pids 2>&1 || true
   } > "${OUT}/${TARGET}-${KERNEL}-strace.txt"
   window_close
+  # Opt-in: who makes a syscall the histogram above says one arm makes more
+  # of. PERF_STRACE_STACKS is strace's own list (mremap,fcntl); each call is
+  # printed with its user stack.
+  if [ -n "${PERF_STRACE_STACKS:-}" ]; then
+    window_open strace-stacks
+    # shellcheck disable=SC2086
+    timeout -s INT "${PERF_STRACE_STACKS_WINDOW:-5}" \
+      strace -f -k -e "trace=${PERF_STRACE_STACKS}" $pids \
+      > "${OUT}/${TARGET}-${KERNEL}-strace-stacks.txt" 2>&1 || true
+    window_close
+  fi
 else
   echo "strace not installed in the perf image" \
     > "${OUT}/${TARGET}-${KERNEL}-strace-unavailable"

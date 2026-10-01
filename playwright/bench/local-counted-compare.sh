@@ -59,9 +59,11 @@ mkdir -p tmp/counted-symbols
 
 if [ "$arm_names" = "alpine official" ]; then
   # The two images chromium-gap-probes' perf-record arm profiles, each with
-  # its own distro's perf. Pulled, so a stale local tag is not the one priced.
+  # its own distro's perf. Pulled, so a stale local tag is not the one priced;
+  # a consumer variant built only here has nothing to pull and is used as is.
   official_image="mcr.microsoft.com/playwright:v${pw_version}-noble"
-  docker pull -q "$consumer_image"
+  docker pull -q "$consumer_image" 2>/dev/null \
+    || docker image inspect "$consumer_image" >/dev/null
   docker pull -q "$official_image"
   docker build --build-arg "BASE=$consumer_image" \
     -t perf-alpine:counted -f playwright/bench/Dockerfile.perf-alpine playwright/bench
@@ -101,6 +103,7 @@ for kernel_name in $(echo "$kernel_list" | tr ',' ' '); do
       --env "PW_VERSION=$pw_version" \
       --env "PERF_BIN=$perf_binary" \
       --env "PERF_LOOP_SECONDS=${PERF_LOOP_SECONDS:-200}" \
+      --env "PERF_STRACE_STACKS=${PERF_STRACE_STACKS:-}" \
       --env "PERF_SYMBOLS_DIR=/symbols" \
       -v /sys/kernel/tracing:/sys/kernel/tracing:ro \
       -v /sys/kernel/debug:/sys/kernel/debug:ro \
