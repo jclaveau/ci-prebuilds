@@ -171,7 +171,7 @@ jobs:
 
       - name: Upload shard report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pw-conformance-${{ inputs.browser }}-shard-${{ matrix.shard }}
           path: playwright/alpine-browsers/conformance/report-*
@@ -186,7 +186,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Download all shard reports
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: pw-conformance-${{ inputs.browser }}-shard-*
           merge-multiple: true

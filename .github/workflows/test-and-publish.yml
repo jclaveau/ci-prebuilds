@@ -1519,7 +1519,7 @@ jobs:
           done
           exit "$rc"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: perf-${{ matrix.browser }}
@@ -1544,7 +1544,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: perf-*
           path: perf-current
@@ -1582,7 +1582,7 @@ jobs:
         run: python3 playwright/bench/assert-perf-budgets.py perf-current
 
       # Published under a stable name so the NEXT run can find it by artifact name.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: runtime-perf
@@ -2059,7 +2059,7 @@ jobs:
           mkdir -p /tmp/tag
           echo "jclaveau/${{ matrix.os }}-${{ matrix.image }}${{ matrix.flavor }}:${{ steps.pin.outputs.tag }}" \
             > /tmp/tag/tag-${{ matrix.os }}-${{ matrix.image }}${{ matrix.flavor || '-hardened' }}.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           # Artifact names must be unique across the matrix. Empty flavor (hardened)
           # is rewritten to `-hardened` so the name has the same shape as `-sudoer`.
@@ -2082,7 +2082,7 @@ jobs:
     outputs:
       tags: ${{ steps.collect.outputs.tags }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: tag-*
           merge-multiple: true

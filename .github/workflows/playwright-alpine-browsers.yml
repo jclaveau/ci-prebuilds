@@ -957,7 +957,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: pw-conformance-*
           merge-multiple: false
@@ -1986,7 +1986,7 @@ jobs:
           else
             echo "::warning::link census produced no summary.md"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: chromium-link-census
           path: /tmp/chs-census
@@ -3569,7 +3569,7 @@ jobs:
 
       - name: Upload cores + bt as artifact
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: webkit-smoke-cores-${{ github.run_number }}
           path: /tmp/cores/core.*
