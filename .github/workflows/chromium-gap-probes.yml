@@ -1325,7 +1325,7 @@ jobs:
                     f"({arms[a]['runner']['cores']} cores) |")
           PY
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: chromium-gap-probes
@@ -1652,7 +1652,7 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: chromium-perf-record

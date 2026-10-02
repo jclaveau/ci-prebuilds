@@ -271,7 +271,7 @@ jobs:
       # One artifact per job, and the report keeps them in separate directories:
       # two draws of the same browser write identically-named files, and merging
       # them would silently drop every draw but one.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always() && steps.cpu.outputs.keep == 'true'
         with:
           name: perf-probe-${{ matrix.browser }}-${{ matrix.slot.i }}
@@ -286,7 +286,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: perf-probe-*
           path: perf-current
@@ -392,7 +392,7 @@ jobs:
             done
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: runtime-perf

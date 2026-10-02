@@ -241,7 +241,7 @@ jobs:
               jq -r ".metrics.libm_fmod.median_ms" /count/alpine-webkit.json
             '
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: wk-fmod-preload
