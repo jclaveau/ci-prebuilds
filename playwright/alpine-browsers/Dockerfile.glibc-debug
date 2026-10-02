@@ -8,7 +8,7 @@
 # Not promoted, never published. Image only exists during the diagnostic
 # workflow run.
 
-ARG UBUNTU_VERSION=24.04
+ARG UBUNTU_VERSION=26.04
 
 FROM ubuntu:${UBUNTU_VERSION} AS firefox-builder-glibc
 
