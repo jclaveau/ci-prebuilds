@@ -47,6 +47,8 @@ cp "$(dirname "$0")/../webkit/scripts/strip-mesa-closure.sh" "$TMPDIR/"
 # the same libm the image ships, or it validates a build nobody runs.
 cp -r "$(dirname "$0")/../webkit/fastfmod" "$TMPDIR/"
 cp -r "$(dirname "$0")/../webkit/zlib-ng" "$TMPDIR/"
+# The string interposer the chromium launcher preloads, for the same reason.
+cp -r "$(dirname "$0")/../chromium-headless-shell/faststring" "$TMPDIR/"
 
 case "$BROWSER" in
   chromium)
@@ -134,6 +136,25 @@ COPY --from=${IMAGE_REF} \\
      /chrome-headless-shell-linux64 \\
      /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/chrome-headless-shell-linux64
 RUN touch /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/INSTALLATION_COMPLETE
+# libfaststring.so behind the same launcher Dockerfile.alpine writes, so
+# conformance runs the string routines the image ships. run-gate.sh is the
+# consumer's own build-and-check step.
+COPY faststring /tmp/faststring
+RUN apk add --no-cache gcc musl-dev binutils \\
+ && sh /tmp/faststring/run-gate.sh /tmp/faststring /tmp/faststring-gate \\
+ && cp /tmp/faststring-gate/libfaststring.so /usr/lib/libfaststring.so \\
+ && apk del gcc musl-dev binutils \\
+ && rm -rf /tmp/faststring /tmp/faststring-gate
+RUN CHS=/ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/chrome-headless-shell-linux64 \\
+ && mv "\$CHS/chrome-headless-shell" "\$CHS/chrome-headless-shell.real" \\
+ && printf '%s\\n' \\
+      '#!/bin/sh' \\
+      'DIR="\$(dirname "\$0")"' \\
+      'if [ -n "\${CHS_LD_PRELOAD:-}" ]; then export LD_PRELOAD="\$CHS_LD_PRELOAD"; else unset LD_PRELOAD; fi' \\
+      'exec "\$DIR/chrome-headless-shell.real" "\$@"' \\
+      > "\$CHS/chrome-headless-shell" \\
+ && chmod +x "\$CHS/chrome-headless-shell"
+ENV CHS_LD_PRELOAD=/usr/lib/libfaststring.so
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN npm install -g ${NPM_RETRY} playwright@${PW_VERSION}
 # browserType.executablePath() resolves to /ms-playwright/chromium-<rev>/

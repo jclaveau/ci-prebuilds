@@ -230,34 +230,23 @@ RUN sudo touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_CO
 # directly — so the final stage's container-wide LD_PRELOAD would reach it and silently
 # put mimalloc under PartitionAlloc. Every earlier decision in this file
 # deliberately left chromium's allocator alone, so the shim CLEARS that preload
-# rather than adding to it. CHS_LD_PRELOAD, empty in the image, names a preload
-# for chromium alone; local-counted-compare.sh and perf-gate set it to price one.
+# rather than adding to it. CHS_LD_PRELOAD names what chromium preloads instead
+# (libfaststring.so by default); local-counted-compare.sh and perf-gate set it
+# to price a preload, and an empty value means none.
 #
-# libfaststring.so is built and shipped but deliberately NOT loaded. Measured
-# in the published image against ITSELF via `CHS_FAST_STRING=0`, twice, with
-# the passes ordered on/off/on so a drift over the job cancels:
+# libfaststring.so is loaded by default since the faststring tail fix
+# (c7a2508). Seven perf-gate draws of the same chs-latest with vs without it
+# (37524874478, 37527624043..37527644796; EPYC 7763 x3, 9V74 x3, 9V45 x1):
 #
-#   run 34355411280, Xeon 8370C, unbracketed
-#   run 34357346361, EPYC 7763, bracketed
+#   layout   0.954-0.999 in 7/7, mean ~0.984
+#   launch   0.961-1.022, mean ~0.99 (the extra DSO no longer shows)
+#   geomean  0.985-1.010, mean ~0.997
 #
-# What holds across both is `launch`: 1.43x with the shim against 1.36x
-# without on the 7763, 1.35x against 1.28x on the 8370C. Adding a library adds
-# a DSO to the closure, and the closure is precisely what `launch` is bound by
-# here — musl resolves every symbol in every object at load, so a 66th object
-# is not free. Meanwhile `layout_text`, the row it was merged for, is flat
-# once bracketed (1.30 against 1.29, inside the spread of the two on passes).
-#
-# So it costs the row we are furthest behind on and buys nothing measurable.
-#
-# The 1.14 -> 1.09 reading that justified merging it came from preloading it
-# over the artifact at `image_ours`, which is a DIFFERENT build from the one
-# we ship — on a Xeon 8573C those two read `layout_text` 1.40x and 1.14x.
-#
-# Left in the tree rather than deleted: the kernels vectorise 32 bytes at a
-# time and finish with a byte-at-a-time tail with no size threshold, so a call
-# under 32 bytes runs that byte loop where musl would copy whole words. Fixing
-# that is worth a try, and the self-control leg in chromium-gap-probes.yml is
-# the gate any re-landing has to pass first.
+# Before the fix it was left unloaded: kernels finished with a byte loop under
+# 32 bytes, layout_text was flat once bracketed, and launch read 1.43x with it
+# against 1.36x without (runs 34355411280, 34357346361), back when the DSO
+# closure still bound launch. The conformance runner (build-runner.sh) mirrors
+# this launcher and preload.
 RUN CHS=/ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64 \
  && sudo mv "$CHS/chrome-headless-shell" "$CHS/chrome-headless-shell.real" \
  && printf '%s\n' \
@@ -506,10 +495,10 @@ COPY --from=zlibng-build /usr/lib/libz-ng-compat.so.1 /usr/lib/libz-ng-compat.so
 # container-wide one.
 COPY --from=faststring-build /usr/lib/libfaststring.so /usr/lib/libfaststring.so
 
-# Empty by default, which the launcher reads as "no preload". perf-gate's
-# candidate_build_args sets it (CHS_LD_PRELOAD=/usr/lib/libfaststring.so) to
-# price a chromium-only preload against an otherwise identical control.
-ARG CHS_LD_PRELOAD=
+# What the chromium launcher preloads. perf-gate's candidate_build_args sets it
+# (CHS_LD_PRELOAD= for none) to price a chromium-only preload against an
+# otherwise identical control.
+ARG CHS_LD_PRELOAD=/usr/lib/libfaststring.so
 ENV CHS_LD_PRELOAD=${CHS_LD_PRELOAD}
 
 # Opt-in Node driver swap, off by default: perf-gate's candidate_build_args sets
