@@ -29,6 +29,12 @@
 
   Rounds repeat forever; the driver script kills MiniBrowser when the corpus
   wall budget expires, and -fprofile-continuous has already flushed counters.
+
+  ?suite=<name> runs that one Speedometer suite per round (Speedometer's own
+  suite= parameter) and tags every report with it. The driver script launches
+  one MiniBrowser per suite, because a WebProcess that crashes takes the page
+  and its cap timer with it, and MiniBrowser --headless never relaunches it:
+  run 36242656232 crashed on the first suite and trained nothing after it.
 -->
 <body>
 <div id="status">starting</div>
@@ -38,11 +44,14 @@ const CORPUS_ENTRIES = [
     { url: '/Speedometer2.1/index.html?iterationCount=5', startFunction: 'startTest' },
 ];
 const ROUND_CAP_MS = 25 * 60 * 1000;
+const SUITE_NAME = new URLSearchParams(location.search).get('suite');
+const SUITE_QUERY = SUITE_NAME ? 'suite=' + encodeURIComponent(SUITE_NAME) : '';
 
 let roundIndex = 0;
 
 function reportRound(round, event, elapsedMs, errorText) {
-    const query = 'round=' + round + '&event=' + event
+    const query = (SUITE_QUERY ? SUITE_QUERY + '&' : '')
+        + 'round=' + round + '&event=' + event
         + (elapsedMs === undefined ? '' : '&ms=' + Math.round(elapsedMs))
         + (errorText === undefined ? '' : '&error=' + encodeURIComponent(errorText));
     fetch('/pgo-round?' + query).catch(() => {});
@@ -86,7 +95,7 @@ function runNextEntry() {
         }
     };
     setTimeout(() => endRound('cap'), ROUND_CAP_MS);
-    frame.src = entry.url + '&pgoRound=' + round;
+    frame.src = entry.url + (SUITE_QUERY ? '&' + SUITE_QUERY : '') + '&pgoRound=' + round;
 }
 
 runNextEntry();

@@ -24,6 +24,7 @@
 #   STAGE_NINJA_TIMEOUT   seconds (default 16200 = 4.5h)
 #   WK_PGO                on or off (default off) — see Phase 0
 #   PGO_CORPUS_SECONDS    seconds the corpus drives MiniBrowser (default 1800)
+#   PGO_SUITE_SECONDS     cap on one Speedometer suite's MiniBrowser (default 300)
 
 set -euo pipefail
 
@@ -53,6 +54,7 @@ echo "===== apply-and-build-port: PORT=$PORT BUILD_DIR=$BUILD_DIR DIST=$DIST ===
 export ENABLE_JIT
 : "${WK_PGO:=off}"
 : "${PGO_CORPUS_SECONDS:=1800}"
+: "${PGO_SUITE_SECONDS:=300}"
 : "${PGO_HTTP_PORT:=18080}"
 PGO_DIR="$WORK/pgo"
 PGO_RAW="$PGO_DIR/raw"
@@ -295,15 +297,117 @@ if [[ "$WK_PGO" == "on" && "$PORT" == "WPE" && ! -s "$PGO_PROFILE" ]]; then
   echo "--- Phase 0: corpus run (${PGO_CORPUS_SECONDS}s) ---"
   cp "$WORK/webkit/pgo-corpus/train.html" "$SRC/PerformanceTests/train.html"
   # http.server logs every request to stderr, and train.html reports each round
-  # as a GET of /pgo-round?round=N&event=start|done|cap|start-failed&ms=...
+  # as a GET of /pgo-round?suite=S&round=N&event=start|done|cap|start-failed&ms=...
   HTTPD_LOG="$PGO_DIR/corpus-http.log"
   python3 -m http.server --bind 127.0.0.1 --directory "$SRC/PerformanceTests" \
     "$PGO_HTTP_PORT" >/dev/null 2>"$HTTPD_LOG" &
   HTTPD_PID=$!
-  timeout -s TERM "$PGO_CORPUS_SECONDS" \
-    "$GEN_BUILD_DIR/bin/MiniBrowser" --headless \
-    "http://127.0.0.1:$PGO_HTTP_PORT/train.html" || true
+
+  # A release WebKit dies silently on a RELEASE_ASSERT, and run 36242656232's
+  # instrumented WebProcess did exactly that on the first suite: the profile
+  # showed WTFCrashWithInfo ran once, never where. crash-report.c writes the
+  # registers, stack and maps of any process that takes a fatal signal, and the
+  # reports are symbolized below while the instrumented libraries still exist.
+  PGO_CRASH_DIR="$PGO_DIR/crash"
+  mkdir -p "$PGO_CRASH_DIR"
+  "$CC" -O2 -shared -fPIC -o "$PGO_DIR/crash-report.so" \
+    "$WORK/webkit/pgo-corpus/crash-report.c"
+
+  # One MiniBrowser per suite, because MiniBrowser --headless never relaunches
+  # a WebProcess that crashed: the page and train.html's own cap timer die with
+  # it, and run 36242656232 sat silent for 30 minutes after its first suite.
+  # A suite that crashes twice is dropped, so one bad suite cannot eat the
+  # budget while the others still train.
+  mapfile -t SPEEDOMETER_SUITES < <(
+    grep -A2 '^Suites.push' "$SRC/PerformanceTests/Speedometer2.1/resources/tests.js" \
+      | sed -n "s/^ *name: '\([^']*\)',\$/\1/p")
+  if (( ${#SPEEDOMETER_SUITES[@]} == 0 )); then
+    echo "ERROR: no suite names found in Speedometer2.1/resources/tests.js" >&2
+    exit 1
+  fi
+  echo "  suites (${#SPEEDOMETER_SUITES[@]}): ${SPEEDOMETER_SUITES[*]}"
+
+  # Sets SUITE_OUTCOME to done, start-failed, crashed, exited or cap.
+  run_corpus_suite() {
+    local suite_name=$1 suite_seconds=$2
+    local done_pattern="GET /pgo-round?suite=$suite_name&round=[0-9]*&event=done"
+    local done_before crash_reports_before minibrowser_pid suite_deadline
+    done_before=$(grep -ac "$done_pattern" "$HTTPD_LOG" || true)
+    crash_reports_before=$(find "$PGO_CRASH_DIR" -name 'crash-*.txt' | wc -l)
+    LD_PRELOAD="$PGO_DIR/crash-report.so" PGO_CRASH_DIR="$PGO_CRASH_DIR" \
+      "$GEN_BUILD_DIR/bin/MiniBrowser" --headless \
+      "http://127.0.0.1:$PGO_HTTP_PORT/train.html?suite=$suite_name" &
+    minibrowser_pid=$!
+    suite_deadline=$(( $(date +%s) + suite_seconds ))
+    SUITE_OUTCOME=cap
+    while (( $(date +%s) < suite_deadline )); do
+      sleep 2
+      if (( $(grep -ac "$done_pattern" "$HTTPD_LOG" || true) > done_before )); then
+        SUITE_OUTCOME="done"; break
+      fi
+      if grep -aq "GET /pgo-round?suite=$suite_name&[^ ]*event=start-failed" "$HTTPD_LOG"; then
+        SUITE_OUTCOME=start-failed; break
+      fi
+      if (( $(find "$PGO_CRASH_DIR" -name 'crash-*.txt' | wc -l) > crash_reports_before )); then
+        SUITE_OUTCOME=crashed; break
+      fi
+      if ! kill -0 "$minibrowser_pid" 2>/dev/null; then
+        SUITE_OUTCOME=exited; break
+      fi
+    done
+    kill -TERM "$minibrowser_pid" 2>/dev/null || true
+    wait "$minibrowser_pid" 2>/dev/null || true
+  }
+
+  declare -A SUITE_CRASHES=()
+  CORPUS_DEADLINE=$(( $(date +%s) + PGO_CORPUS_SECONDS ))
+  SUITE_RAN=1
+  while (( SUITE_RAN )); do
+    SUITE_RAN=0
+    for suite_name in "${SPEEDOMETER_SUITES[@]}"; do
+      if (( ${SUITE_CRASHES[$suite_name]:-0} >= 2 )); then
+        continue
+      fi
+      suite_seconds=$(( CORPUS_DEADLINE - $(date +%s) ))
+      if (( suite_seconds > PGO_SUITE_SECONDS )); then
+        suite_seconds=$PGO_SUITE_SECONDS
+      fi
+      if (( suite_seconds < 30 )); then
+        break 2
+      fi
+      SUITE_RAN=1
+      suite_started=$(date +%s)
+      run_corpus_suite "$suite_name" "$suite_seconds"
+      echo "  suite $suite_name: $SUITE_OUTCOME after $(( $(date +%s) - suite_started ))s"
+      if [[ "$SUITE_OUTCOME" == crashed || "$SUITE_OUTCOME" == exited ]]; then
+        SUITE_CRASHES[$suite_name]=$(( ${SUITE_CRASHES[$suite_name]:-0} + 1 ))
+      fi
+      if [[ "$SUITE_OUTCOME" == start-failed ]]; then
+        break 2
+      fi
+    done
+  done
   kill "$HTTPD_PID" 2>/dev/null || true
+
+  mapfile -t CRASH_REPORTS < <(find "$PGO_CRASH_DIR" -name 'crash-*.txt' | sort)
+  if (( ${#CRASH_REPORTS[@]} > 0 )); then
+    echo "::warning::${#CRASH_REPORTS[@]} WebKit process crash(es) in the corpus run — symbolized below and kept in $PGO_CRASH_DIR"
+    LLVM_SYMBOLIZER="$(dirname "$LLVM_PROFDATA")/llvm-symbolizer"
+    if [[ ! -x "$LLVM_SYMBOLIZER" ]]; then
+      LLVM_SYMBOLIZER=$(command -v llvm-symbolizer || true)
+    fi
+    for crash_report in "${CRASH_REPORTS[@]}"; do
+      echo "--- $crash_report"
+      if [[ -n "$LLVM_SYMBOLIZER" ]]; then
+        python3 -I "$WORK/webkit/pgo-corpus/pgo-symbolize-crash.py" \
+          "$LLVM_SYMBOLIZER" "$crash_report" > "${crash_report%.txt}.symbolized" || true
+        head -n 80 "${crash_report%.txt}.symbolized"
+      else
+        echo "  no llvm-symbolizer; raw report head:"
+        head -n 60 "$crash_report"
+      fi
+    done
+  fi
 
   # A start with no matching end is the round the corpus budget cut off. Zero
   # starts means train.html never loaded, and the count checks below would
@@ -322,7 +426,7 @@ if [[ "$WK_PGO" == "on" && "$PORT" == "WPE" && ! -s "$PGO_PROFILE" ]]; then
     exit 1
   fi
   if (( ROUNDS_DONE == 0 )); then
-    echo "::warning::no Speedometer round finished inside the corpus budget — the profile trains only the suites that ran first"
+    echo "::warning::no Speedometer suite finished inside the corpus budget — the profile trains only the code they reached before the cap or a crash"
   fi
 
   # One file per (process, image) under %p-%m, so this counts instrumented
