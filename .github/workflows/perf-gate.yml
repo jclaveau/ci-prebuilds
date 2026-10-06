@@ -124,6 +124,10 @@ jobs:
               --build-arg "PLAYWRIGHT_VERSION=${PW}" \
               "${extra_args[@]}" \
               -t "gate-${arm}:${{ github.run_id }}" playwright
+            # The arms must differ by exactly what candidate_build_args says.
+            docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
+              "gate-${arm}:${{ github.run_id }}" | grep -E '^(CHS_LD_PRELOAD|LD_PRELOAD)=' \
+              | sed "s/^/${arm} env: /"
             echo "::endgroup::"
           }
           docker manifest inspect "${repo}:${CANDIDATE}" >/dev/null \

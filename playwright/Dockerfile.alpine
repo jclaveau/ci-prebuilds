@@ -230,8 +230,8 @@ RUN sudo touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_CO
 # directly — so the final stage's container-wide LD_PRELOAD would reach it and silently
 # put mimalloc under PartitionAlloc. Every earlier decision in this file
 # deliberately left chromium's allocator alone, so the shim CLEARS that preload
-# rather than adding to it. CHS_LD_PRELOAD, unset in the image, names a preload
-# for chromium alone; local-counted-compare.sh sets it to price one.
+# rather than adding to it. CHS_LD_PRELOAD, empty in the image, names a preload
+# for chromium alone; local-counted-compare.sh and perf-gate set it to price one.
 #
 # libfaststring.so is built and shipped but deliberately NOT loaded. Measured
 # in the published image against ITSELF via `CHS_FAST_STRING=0`, twice, with
@@ -505,6 +505,12 @@ COPY --from=zlibng-build /usr/lib/libz-ng-compat.so.1 /usr/lib/libz-ng-compat.so
 # webkit set their own LD_PRELOAD, and the Node driver keeps the
 # container-wide one.
 COPY --from=faststring-build /usr/lib/libfaststring.so /usr/lib/libfaststring.so
+
+# Empty by default, which the launcher reads as "no preload". perf-gate's
+# candidate_build_args sets it (CHS_LD_PRELOAD=/usr/lib/libfaststring.so) to
+# price a chromium-only preload against an otherwise identical control.
+ARG CHS_LD_PRELOAD=
+ENV CHS_LD_PRELOAD=${CHS_LD_PRELOAD}
 
 # Opt-in Node driver swap, off by default: perf-gate's candidate_build_args sets
 # both to price nodejs.org's own musl build of the same Node against Alpine's.
