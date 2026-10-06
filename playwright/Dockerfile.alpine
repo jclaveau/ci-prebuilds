@@ -167,7 +167,6 @@ RUN sudo apk add --no-cache \
         libdrm libevent libffi libjpeg-turbo libnotify libogg libtheora \
         libvorbis libvpx libwebp libwebpdemux libxcomposite libxt mesa-gl \
         nspr nss pipewire-libs libpulse libstdc++ libgcc mimalloc2-insecure \
-        mimalloc2 \
         libwpe libwpebackend-fdo gtk4.0 at-spi2-core cairo pango gdk-pixbuf \
         mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \
         gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \
