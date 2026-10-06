@@ -15,6 +15,7 @@
 # chromium vs official, one kernel per ratchet row), PERF_LOOP_SECONDS (200),
 # PW_VERSION (1.62.1), LOCAL_CPUSET (0-3), LOCAL_MEMORY (6g),
 # CANDIDATE_LD_PRELOAD (the candidate arm's LD_PRELOAD, unset by default).
+# PERF_KEEP_INSN_DATA=1 keeps each arm's instruction samples for perf-insn-mix.py.
 # Output: tmp/counted-<candidate_tag or official-browser>/ and report.md there.
 #
 # Needs the PMU open to perf: Ubuntu's perf_event_paranoid=4 refuses it even
@@ -110,6 +111,7 @@ for kernel_name in $(echo "$kernel_list" | tr ',' ' '); do
       --env "PERF_BIN=$perf_binary" \
       --env "PERF_LOOP_SECONDS=${PERF_LOOP_SECONDS:-200}" \
       --env "PERF_STRACE_STACKS=${PERF_STRACE_STACKS:-}" \
+      --env "PERF_KEEP_INSN_DATA=${PERF_KEEP_INSN_DATA:-}" \
       --env "PERF_SYMBOLS_DIR=/symbols" \
       "${preload_env[@]}" \
       -v /sys/kernel/tracing:/sys/kernel/tracing:ro \

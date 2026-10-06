@@ -504,7 +504,9 @@ else
   echo "instructions record produced no samples (no hardware PMU on this runner)" \
     | tee "${OUT}/${TARGET}-${KERNEL}-insn-unavailable"
 fi
-rm -f "$INSN_DATA"
+# PERF_KEEP_INSN_DATA keeps the samples for perf-insn-mix.py, which disassembles
+# every sampled address; the reports above only keep a symbol per address.
+[ -n "${PERF_KEEP_INSN_DATA:-}" ] || rm -f "$INSN_DATA"
 
 # Names, for our binary only, when the chain's link census is mounted. The
 # PIE shift is read from the binary: perf's unresolved address is a file
