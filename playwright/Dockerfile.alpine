@@ -478,14 +478,17 @@ ENV WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
 # image on eval_rtt: two draws against it read 0.957 and 1.022, and the n=10
 # baseline classes that row as tied. Do not quote it as a win over official.
 #
-# The secure build is used deliberately. On the driver the two are within ~2%
-# of each other (33066499518), so there is no reason to give up mimalloc's
-# hardening here — unlike the browser shims, where secure measured 10-15%
-# slower and -insecure is a paid-for choice.
+# The insecure build, as in the browser shims. A CI A/B once read the two
+# within ~2% on the driver (33066499518), but a counted local run put secure
+# at 318 ms vs 297 ms on eval_rtt (0.93x, 713 vs 694 M instructions per
+# iteration): the secure build's guard pages and encoded free lists cost the
+# driver real time. Official's node runs plain glibc malloc, which has neither,
+# so this does not drop below official's hardening. Security trade-off parked
+# for later, not dismissed.
 #
 # Scope: this is a container-wide ENV, so it reaches every process a user runs
 # here, not just the driver.
-ENV LD_PRELOAD=/usr/lib/libmimalloc.so.2
+ENV LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2
 
 # The fmod interposer the webkit launcher preloads. ~10 kB; reaches
 # MiniBrowser and every auxiliary process, and nothing else — not the Node
