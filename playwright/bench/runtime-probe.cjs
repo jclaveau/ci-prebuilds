@@ -463,6 +463,82 @@ async function main() {
     metrics[name] = { median_ms: median(samples), samples, checksum };
   }
 
+  // DIAG (branch diag/cold-nav-split only): goto_cold / context_page split per
+  // phase, so the 3-5 ms ours pays on 9V* lands on one step.
+  const phaseSamples = {};
+  for (let i = 0; i <= 10; i++) {
+    const phaseMs = {};
+    let t0 = process.hrtime.bigint();
+    const lap = (phaseName) => {
+      const t1 = process.hrtime.bigint();
+      phaseMs[phaseName] = Number(t1 - t0) / 1e6;
+      t0 = t1;
+    };
+    const splitCtx = await browser.newContext();
+    lap('split_ctx_new');
+    const splitPage = await splitCtx.newPage();
+    lap('split_page_new');
+    await splitPage.goto(url, { waitUntil: 'load' });
+    lap('split_first_goto');
+    await splitPage.goto(url, { waitUntil: 'load' });
+    lap('split_second_goto');
+    await splitCtx.close();
+    lap('split_ctx_close');
+    const blankCtx = await browser.newContext();
+    const blankPage = await blankCtx.newPage();
+    t0 = process.hrtime.bigint();
+    await blankPage.close();
+    lap('split_cp_page_close');
+    await blankCtx.close();
+    lap('split_cp_ctx_close');
+    if (i > 0) {
+      for (const [phaseName, ms] of Object.entries(phaseMs)) {
+        (phaseSamples[phaseName] ||= []).push(ms);
+      }
+    }
+  }
+  for (const [phaseName, samples] of Object.entries(phaseSamples)) {
+    metrics[phaseName] = { median_ms: median(samples), samples };
+  }
+
+  // DIAG: does either browser keep a spare renderer? Count renderer processes
+  // idle, after newContext, after newPage.
+  const countRenderers = () => {
+    let rendererCount = 0;
+    for (const pid of fs.readdirSync('/proc').filter((e) => /^\d+$/.test(e))) {
+      try {
+        if (fs.readFileSync(`/proc/${pid}/cmdline`, 'latin1').includes('--type=renderer')) {
+          rendererCount++;
+        }
+      } catch {}
+    }
+    return rendererCount;
+  };
+  const rendererCounts = { idle: countRenderers() };
+  const countCtx = await browser.newContext();
+  rendererCounts.after_new_context = countRenderers();
+  await countCtx.newPage();
+  rendererCounts.after_new_page = countRenderers();
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  rendererCounts.after_new_page_500ms = countRenderers();
+  await countCtx.close();
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  rendererCounts.after_close_500ms = countRenderers();
+
+  // DIAG: per-process fontconfig init cost, as a fresh process pays it.
+  const fcMatchMs = [];
+  for (let i = 0; i < 6; i++) {
+    try {
+      const t0 = process.hrtime.bigint();
+      execFileSync('fc-match', ['sans-serif'], { stdio: 'ignore' });
+      fcMatchMs.push(Number(process.hrtime.bigint() - t0) / 1e6);
+    } catch {
+      fcMatchMs.push(null);
+    }
+  }
+  console.log(`DIAG renderers ${JSON.stringify(rendererCounts)}`);
+  console.log(`DIAG fc-match ms ${JSON.stringify(fcMatchMs.map((ms) => ms && Number(ms.toFixed(2))))}`);
+
   await ctx.close();
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
