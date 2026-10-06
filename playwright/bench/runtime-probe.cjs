@@ -497,6 +497,40 @@ async function main() {
       }
     }
   }
+  // DIAG round 2: the gap sits in the first goto of a fresh page. Is it the
+  // renderer's first commit, or its first text (font/shaper init)?
+  const noTextUrl = 'data:text/html,<div style="width:9px;height:9px"></div>';
+  const oneWordUrl = 'data:text/html,<p>word</p>';
+  for (let i = 0; i <= 10; i++) {
+    const phaseMs = {};
+    let t0 = process.hrtime.bigint();
+    const lap = (phaseName) => {
+      const t1 = process.hrtime.bigint();
+      phaseMs[phaseName] = Number(t1 - t0) / 1e6;
+      t0 = t1;
+    };
+    const notextCtx = await browser.newContext();
+    const notextPage = await notextCtx.newPage();
+    t0 = process.hrtime.bigint();
+    await notextPage.goto(noTextUrl, { waitUntil: 'load' });
+    lap('split_first_goto_notext');
+    await notextPage.goto(oneWordUrl, { waitUntil: 'load' });
+    lap('split_then_oneword');
+    await notextPage.goto(url, { waitUntil: 'load' });
+    lap('split_then_url');
+    await notextCtx.close();
+    const wordCtx = await browser.newContext();
+    const wordPage = await wordCtx.newPage();
+    t0 = process.hrtime.bigint();
+    await wordPage.goto(oneWordUrl, { waitUntil: 'load' });
+    lap('split_first_goto_oneword');
+    await wordCtx.close();
+    if (i > 0) {
+      for (const [phaseName, ms] of Object.entries(phaseMs)) {
+        (phaseSamples[phaseName] ||= []).push(ms);
+      }
+    }
+  }
   for (const [phaseName, samples] of Object.entries(phaseSamples)) {
     metrics[phaseName] = { median_ms: median(samples), samples };
   }
