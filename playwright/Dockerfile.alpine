@@ -505,6 +505,25 @@ COPY --from=zlibng-build /usr/lib/libz-ng-compat.so.1 /usr/lib/libz-ng-compat.so
 # container-wide one.
 COPY --from=faststring-build /usr/lib/libfaststring.so /usr/lib/libfaststring.so
 
+# Opt-in Node driver swap, off by default: perf-gate's candidate_build_args sets
+# both to price nodejs.org's own musl build of the same Node against Alpine's.
+# Alpine's nodejs links openssl, ICU, brotli and c-ares from the system and is
+# LTO-built; the tarball bundles them, as the static node in official's image
+# does. A local counted run (insn mix 2026-10-06) put Alpine's node at +3%
+# driver instructions on eval_rtt and +5% on locator_click, JIT code 2x.
+ARG NODE_MUSL_TARBALL_VERSION=
+ARG NODE_MUSL_TARBALL_SHA256=
+RUN if [ -n "${NODE_MUSL_TARBALL_VERSION}" ]; then \
+      set -e; \
+      tarball="node-v${NODE_MUSL_TARBALL_VERSION}-linux-x64-musl.tar.xz"; \
+      wget -qO "/tmp/${tarball}" "https://unofficial-builds.nodejs.org/download/release/v${NODE_MUSL_TARBALL_VERSION}/${tarball}"; \
+      echo "${NODE_MUSL_TARBALL_SHA256}  /tmp/${tarball}" | sha256sum -c -; \
+      tar -xJf "/tmp/${tarball}" -C /tmp --strip-components=2 "${tarball%.tar.xz}/bin/node"; \
+      sudo install -m 0755 /tmp/node /usr/bin/node; \
+      rm -f "/tmp/${tarball}" /tmp/node; \
+      node -p 'process.version + " shared_openssl=" + process.config.variables.node_shared_openssl'; \
+    fi
+
 # npm -g, not pnpm -g: Playwright captures a stack trace on every API call
 # and regex-parses each frame, so the client pays per character of the
 # playwright-core path. pnpm's global store path is ~150 chars, npm's
