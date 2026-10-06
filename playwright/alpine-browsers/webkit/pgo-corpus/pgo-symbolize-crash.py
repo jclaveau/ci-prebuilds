@@ -23,14 +23,15 @@ def read_report(report_path):
             if line == '--- maps':
                 in_maps = True
             elif in_maps:
+                # An anonymous mapping (JIT code among them) has no path field.
                 fields = line.split(None, 5)
-                if len(fields) < 6:
+                if len(fields) < 5:
                     continue
                 start_text, end_text = fields[0].split('-')
                 mappings.append({
                     'start': int(start_text, 16), 'end': int(end_text, 16),
                     'perms': fields[1], 'offset': int(fields[2], 16),
-                    'path': fields[5],
+                    'path': fields[5] if len(fields) == 6 else '',
                 })
             elif line.startswith('signal '):
                 header = line
@@ -84,9 +85,33 @@ def main():
     header, words, mappings = read_report(report_path)
     bases = load_bases(mappings)
     print(header)
-    for _, _, line in words:
-        if ' str="' in line:
+    for label, _, line in words:
+        if label.startswith('reg ') or ' str="' in line:
             print('  ' + line)
+
+    # Run 37456486061's 18 crashes printed no frame at all: rip sat in no
+    # file-backed executable mapping, and these lines are what tells an
+    # anonymous JIT region from an unmapped jump.
+    register_values = {label: value for label, value, _ in words if label.startswith('reg ')}
+    for register_label in ('reg rip', 'reg rsp'):
+        address = register_values.get(register_label)
+        if address is None:
+            continue
+        owners = [mapping for mapping in mappings if mapping['start'] <= address < mapping['end']]
+        owner_text = ('%x-%x %s %s' % (owners[0]['start'], owners[0]['end'], owners[0]['perms'],
+                                       owners[0]['path'] or '[anon]')) if owners else 'NO MAPPING'
+        print('  %s %#x in %s' % (register_label.replace('reg ', ''), address, owner_text))
+    stack_hits = {}
+    for label, value, _ in words:
+        if not label.startswith('stack '):
+            continue
+        for mapping in mappings:
+            if mapping['start'] <= value < mapping['end'] and 'x' in mapping['perms']:
+                owner_key = mapping['path'] or '[anon %x]' % mapping['start']
+                stack_hits[owner_key] = stack_hits.get(owner_key, 0) + 1
+                break
+    for owner_key, hit_count in sorted(stack_hits.items(), key=lambda item: -item[1]):
+        print('  stack words into %s: %d' % (owner_key, hit_count))
 
     code_words = []
     for label, value, _ in words:

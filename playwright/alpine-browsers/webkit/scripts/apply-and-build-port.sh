@@ -402,6 +402,13 @@ if [[ "$WK_PGO" == "on" && "$PORT" == "WPE" && ! -s "$PGO_PROFILE" ]]; then
         python3 -I "$WORK/webkit/pgo-corpus/pgo-symbolize-crash.py" \
           "$LLVM_SYMBOLIZER" "$crash_report" > "${crash_report%.txt}.symbolized" || true
         head -n 80 "${crash_report%.txt}.symbolized"
+        # The crash files go with the build tree, so the first one's
+        # executable mappings are printed raw: enough to place a rip the
+        # symbolizer could not.
+        if [[ "$crash_report" == "${CRASH_REPORTS[0]}" ]]; then
+          echo "  executable mappings of $(basename "$crash_report"):"
+          sed -n '/^--- maps$/,$p' "$crash_report" | awk '$2 ~ /x/' | head -n 150
+        fi
       else
         echo "  no llvm-symbolizer; raw report head:"
         head -n 60 "$crash_report"
