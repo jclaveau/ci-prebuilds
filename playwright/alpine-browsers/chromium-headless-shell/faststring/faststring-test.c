@@ -129,6 +129,14 @@ int main(void) {
         if (memcmp(got + off, want + off, n) >= 0) {
           fail("memcmp-sign-neg", n, off);
         }
+        /* The last byte is the shim's partial-block path; a difference in
+         * the middle never reaches it. */
+        got[idx] = want[idx];
+        got[off + n - 1] = 0x20;
+        want[off + n - 1] = 0x10;
+        if (memcmp(got + off, want + off, n) <= 0) {
+          fail("memcmp-last-byte", n, off);
+        }
         checks++;
       }
 

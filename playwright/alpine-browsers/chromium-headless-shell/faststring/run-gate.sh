@@ -35,7 +35,11 @@ mkdir -p "$OUT"
 echo "--- building the shim and the checks ---"
 # shellcheck disable=SC2086
 $CC $SHIM_FLAGS -o "$OUT/libfaststring.so" "$SRC/faststring.c" -ldl
-$CC -O2 -o "$OUT/checks" "$SRC/faststring-test.c"
+# The checks need the same two flags plus no fortify, or the compiler inlines
+# its own memset/memcpy and the shim under test never runs: on Ubuntu's gcc
+# (fortify on by default) every memset mutant passed before this.
+$CC -O2 -fno-builtin -fno-tree-loop-distribute-patterns -U_FORTIFY_SOURCE \
+  -o "$OUT/checks" "$SRC/faststring-test.c"
 
 echo "--- AVX2 must not reach the dispatchers ---"
 # The translation unit is compiled WITHOUT -mavx2 and only the avx2_* helpers
@@ -74,10 +78,10 @@ echo "--- the shim, musl-fallback path: must pass ---"
 CHS_FAST_STRING=0 LD_PRELOAD="$OUT/libfaststring.so" "$OUT/checks"
 
 echo "--- corrupted shim: must fail, or the gate is vacuous ---"
-# Flips the last byte of every scalar tail copy. It is a one-byte error at the
-# end of a copy, which is the shape a vector loop with a wrong bound produces
-# and the shape a weak suite misses.
-sed "s|^    d\[i\] = s\[i\];|    d[i] = (unsigned char)(s[i] ^ (i + 1 == n));|" \
+# Flips a bit in every byte of the forward copy's last block. It is an error
+# confined to the end of a copy, which is the shape a vector loop with a wrong
+# bound produces and the shape a weak suite misses.
+sed "s|(d + n - 32), tail);|(d + n - 32), _mm256_xor_si256(tail, _mm256_set1_epi8(1)));|" \
     "$SRC/faststring.c" > "$OUT/broken.c"
 if diff -q "$OUT/broken.c" "$SRC/faststring.c" >/dev/null; then
   echo "the corruption sed matched nothing — the gate proves nothing" >&2

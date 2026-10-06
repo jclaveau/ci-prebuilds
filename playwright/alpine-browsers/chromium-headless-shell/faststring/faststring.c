@@ -96,41 +96,102 @@ __attribute__((constructor)) static void faststring_init(void) {
   record_load();
 }
 
-__attribute__((target("avx2"))) static void avx2_copy_fwd(
+/* Unaligned scalar views for the short paths. may_alias + aligned(1) keeps the
+ * loads legal at any address without a memcpy, which would be this file. */
+typedef uint16_t unaligned_u16 __attribute__((may_alias, aligned(1)));
+typedef uint32_t unaligned_u32 __attribute__((may_alias, aligned(1)));
+typedef uint64_t unaligned_u64 __attribute__((may_alias, aligned(1)));
+
+/* Under 32 bytes, a copy is two possibly-overlapping loads of the widest size
+ * that fits, both read before either is stored — so it is correct for memmove
+ * in either direction too. The first version finished every copy one byte at
+ * a time, which put layout_text at +10% instructions against musl's word copy. */
+__attribute__((target("avx2"))) static void avx2_copy_short(
     unsigned char *d, const unsigned char *s, size_t n) {
-  size_t i = 0;
-  for (; i + 32 <= n; i += 32) {
-    __m256i v = _mm256_loadu_si256((const __m256i *) (s + i));
-    _mm256_storeu_si256((__m256i *) (d + i), v);
-  }
-  for (; i < n; i++) {
-    d[i] = s[i];
+  if (n >= 16) {
+    __m128i head = _mm_loadu_si128((const __m128i *) s);
+    __m128i tail = _mm_loadu_si128((const __m128i *) (s + n - 16));
+    _mm_storeu_si128((__m128i *) d, head);
+    _mm_storeu_si128((__m128i *) (d + n - 16), tail);
+  } else if (n >= 8) {
+    uint64_t head = *(const unaligned_u64 *) s;
+    uint64_t tail = *(const unaligned_u64 *) (s + n - 8);
+    *(unaligned_u64 *) d = head;
+    *(unaligned_u64 *) (d + n - 8) = tail;
+  } else if (n >= 4) {
+    uint32_t head = *(const unaligned_u32 *) s;
+    uint32_t tail = *(const unaligned_u32 *) (s + n - 4);
+    *(unaligned_u32 *) d = head;
+    *(unaligned_u32 *) (d + n - 4) = tail;
+  } else if (n >= 2) {
+    uint16_t head = *(const unaligned_u16 *) s;
+    uint16_t tail = *(const unaligned_u16 *) (s + n - 2);
+    *(unaligned_u16 *) d = head;
+    *(unaligned_u16 *) (d + n - 2) = tail;
+  } else if (n == 1) {
+    d[0] = s[0];
   }
 }
 
+/* From 32 bytes up, the partial last block is one more 32-byte store ending
+ * exactly at n, loaded before the loop: when the destination sits below an
+ * overlapping source, the loop's stores reach those source bytes first. */
+__attribute__((target("avx2"))) static void avx2_copy_fwd(
+    unsigned char *d, const unsigned char *s, size_t n) {
+  if (n < 32) {
+    avx2_copy_short(d, s, n);
+    return;
+  }
+  __m256i tail = _mm256_loadu_si256((const __m256i *) (s + n - 32));
+  for (size_t i = 0; i + 32 < n; i += 32) {
+    __m256i v = _mm256_loadu_si256((const __m256i *) (s + i));
+    _mm256_storeu_si256((__m256i *) (d + i), v);
+  }
+  _mm256_storeu_si256((__m256i *) (d + n - 32), tail);
+}
+
+/* The mirror image: blocks from the end down, and the partial first block is
+ * the head, loaded before the loop overwrites it. */
 __attribute__((target("avx2"))) static void avx2_copy_bwd(
     unsigned char *d, const unsigned char *s, size_t n) {
+  if (n < 32) {
+    avx2_copy_short(d, s, n);
+    return;
+  }
+  __m256i head = _mm256_loadu_si256((const __m256i *) s);
   size_t i = n;
-  while (i >= 32) {
+  while (i > 32) {
     i -= 32;
     __m256i v = _mm256_loadu_si256((const __m256i *) (s + i));
     _mm256_storeu_si256((__m256i *) (d + i), v);
   }
-  while (i > 0) {
-    i--;
-    d[i] = s[i];
-  }
+  _mm256_storeu_si256((__m256i *) d, head);
 }
 
 __attribute__((target("avx2"))) static void avx2_set(
     unsigned char *d, int c, size_t n) {
-  __m256i v = _mm256_set1_epi8((char) c);
-  size_t i = 0;
-  for (; i + 32 <= n; i += 32) {
-    _mm256_storeu_si256((__m256i *) (d + i), v);
-  }
-  for (; i < n; i++) {
-    d[i] = (unsigned char) c;
+  uint64_t pattern = (uint64_t) (unsigned char) c * 0x0101010101010101ull;
+  if (n >= 32) {
+    __m256i v = _mm256_set1_epi8((char) c);
+    for (size_t i = 0; i + 32 < n; i += 32) {
+      _mm256_storeu_si256((__m256i *) (d + i), v);
+    }
+    _mm256_storeu_si256((__m256i *) (d + n - 32), v);
+  } else if (n >= 16) {
+    __m128i v = _mm_set1_epi8((char) c);
+    _mm_storeu_si128((__m128i *) d, v);
+    _mm_storeu_si128((__m128i *) (d + n - 16), v);
+  } else if (n >= 8) {
+    *(unaligned_u64 *) d = pattern;
+    *(unaligned_u64 *) (d + n - 8) = pattern;
+  } else if (n >= 4) {
+    *(unaligned_u32 *) d = (uint32_t) pattern;
+    *(unaligned_u32 *) (d + n - 4) = (uint32_t) pattern;
+  } else if (n >= 2) {
+    *(unaligned_u16 *) d = (uint16_t) pattern;
+    *(unaligned_u16 *) (d + n - 2) = (uint16_t) pattern;
+  } else if (n == 1) {
+    d[0] = (unsigned char) c;
   }
 }
 
@@ -147,6 +208,19 @@ __attribute__((target("avx2"))) static int avx2_cmp(
       size_t off = i + (size_t) __builtin_ctz(~mask);
       return (int) x[off] - (int) y[off];
     }
+  }
+  /* The partial last block is the 32 bytes ending at n: every byte before
+   * them already compared equal, so its first difference is the first one. */
+  if (i < n && n >= 32) {
+    size_t last = n - 32;
+    __m256i va = _mm256_loadu_si256((const __m256i *) (x + last));
+    __m256i vb = _mm256_loadu_si256((const __m256i *) (y + last));
+    unsigned mask = (unsigned) _mm256_movemask_epi8(_mm256_cmpeq_epi8(va, vb));
+    if (mask != 0xffffffffu) {
+      size_t off = last + (size_t) __builtin_ctz(~mask);
+      return (int) x[off] - (int) y[off];
+    }
+    return 0;
   }
   for (; i < n; i++) {
     if (x[i] != y[i]) {
