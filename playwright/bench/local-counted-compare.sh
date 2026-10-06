@@ -14,7 +14,9 @@
 # Env: PERF_KERNELS (default layout_reflow,screenshot_png_text,js_alloc; for
 # chromium vs official, one kernel per ratchet row), PERF_LOOP_SECONDS (200),
 # PW_VERSION (1.62.1), LOCAL_CPUSET (0-3), LOCAL_MEMORY (6g),
-# CANDIDATE_LD_PRELOAD (the candidate arm's LD_PRELOAD, unset by default).
+# CANDIDATE_LD_PRELOAD (the candidate arm's LD_PRELOAD, unset by default; the
+# chromium shim clears it), CANDIDATE_CHROMIUM_LD_PRELOAD (the candidate's
+# chromium processes only, via the shim's CHS_LD_PRELOAD).
 # PERF_KEEP_INSN_DATA=1 keeps each arm's instruction samples for perf-insn-mix.py.
 # Output: tmp/counted-<candidate_tag or official-browser>/ and report.md there.
 #
@@ -99,6 +101,10 @@ for kernel_name in $(echo "$kernel_list" | tr ',' ' '); do
     preload_env=()
     [ "$arm_name" = candidate ] && [ -n "${CANDIDATE_LD_PRELOAD:-}" ] && \
       preload_env=(--env "LD_PRELOAD=$CANDIDATE_LD_PRELOAD")
+    # The chromium shim clears LD_PRELOAD, so a preload meant for chromium
+    # itself goes through CHS_LD_PRELOAD, which the shim exports instead.
+    [ "$arm_name" = candidate ] && [ -n "${CANDIDATE_CHROMIUM_LD_PRELOAD:-}" ] && \
+      preload_env+=(--env "CHS_LD_PRELOAD=$CANDIDATE_CHROMIUM_LD_PRELOAD")
     docker run --rm --name "counted-${arm_name}-${kernel_name}" \
       --privileged --pid=host --user root \
       --cpuset-cpus "${LOCAL_CPUSET:-0-3}" --memory "${LOCAL_MEMORY:-6g}" \

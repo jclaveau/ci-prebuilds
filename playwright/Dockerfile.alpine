@@ -230,7 +230,8 @@ RUN sudo touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_CO
 # directly — so the final stage's container-wide LD_PRELOAD would reach it and silently
 # put mimalloc under PartitionAlloc. Every earlier decision in this file
 # deliberately left chromium's allocator alone, so the shim CLEARS that preload
-# rather than adding to it.
+# rather than adding to it. CHS_LD_PRELOAD, unset in the image, names a preload
+# for chromium alone; local-counted-compare.sh sets it to price one.
 #
 # libfaststring.so is built and shipped but deliberately NOT loaded. Measured
 # in the published image against ITSELF via `CHS_FAST_STRING=0`, twice, with
@@ -262,7 +263,7 @@ RUN CHS=/ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-
  && printf '%s\n' \
         '#!/bin/sh' \
         'DIR="$(dirname "$0")"' \
-        'unset LD_PRELOAD' \
+        'if [ -n "${CHS_LD_PRELOAD:-}" ]; then export LD_PRELOAD="$CHS_LD_PRELOAD"; else unset LD_PRELOAD; fi' \
         'exec "$DIR/chrome-headless-shell.real" "$@"' \
   | sudo tee "$CHS/chrome-headless-shell" >/dev/null \
  && sudo chmod +x "$CHS/chrome-headless-shell"
