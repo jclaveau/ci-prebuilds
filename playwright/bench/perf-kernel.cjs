@@ -343,6 +343,32 @@ const KERNELS = {
     },
   },
 
+  // runtime-probe.cjs's `dom_churn` row, same loop. Synchronous JS with no
+  // layout and no shaping in it, so a text-stack change cannot reach it
+  // directly; textstack read it 1.02 mean over 10 draws (1.08 on 37593198909).
+  dom_churn: {
+    page: DOM_HTML,
+    run: async (page) => {
+      const r = await page.evaluate(`(() => {
+        const root = document.createElement('div');
+        document.body.appendChild(root);
+        const t0 = performance.now();
+        for (let i = 0; i < 160000; i++) {
+          const d = document.createElement('div');
+          d.className = 'c' + (i & 7);
+          d.textContent = 'n' + i;
+          root.appendChild(d);
+          if (i & 1) { root.removeChild(d); }
+        }
+        const ms = performance.now() - t0;
+        const checksum = root.childElementCount;
+        root.remove();
+        return { ms, checksum };
+      })()`);
+      return { ms: r.ms, tag: `checksum=${r.checksum}` };
+    },
+  },
+
   layout_text: {
     page: DOM_HTML,
     run: async (page) => {
