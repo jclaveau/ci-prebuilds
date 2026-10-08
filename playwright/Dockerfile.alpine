@@ -181,6 +181,12 @@ RUN sudo apk add --no-cache \
 # - the official image symlinks /etc/localtime at UTC, so readlink answers
 RUN sudo ln -sf /usr/share/zoneinfo/UTC /etc/localtime
 
+# GStreamer's frei0r plugin registers 0 features here (no frei0r effects are
+# installed), but it declares a dependency on $HOME/.frei0r-1/lib. That makes
+# any registry baked under one HOME stale for every other user, so WebKit
+# rescans on each launch (~20 ms) instead of reading the baked registry below.
+RUN sudo rm /usr/lib/gstreamer-1.0/libgstfrei0r.so
+
 # Firefox + WebKit staging: the bundles are COPY'd in, shimmed and stripped
 # HERE, and the final image COPYs the finished trees out.
 #
@@ -395,6 +401,7 @@ RUN sudo mv /ms-playwright/webkit-${WK_REV}/pw_run.sh \
         '[ "${WK_ZLIB_NG:-1}" = 1 ] && ZNG=":/usr/lib/libz-ng-compat.so.1"' \
         'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so$ZNG' \
         'export WEBKIT_SKIA_ENABLE_CPU_RENDERING=1' \
+        'export GST_REGISTRY="${GST_REGISTRY:-$DIR/gst-registry.bin}"' \
         "${WK_LP_NUM_THREADS:+export LP_NUM_THREADS=${WK_LP_NUM_THREADS}}" \
         'exec "$DIR/pw_run.real.sh" "$@"' \
   | sudo tee /ms-playwright/webkit-${WK_REV}/pw_run.sh >/dev/null \
@@ -434,6 +441,18 @@ RUN sudo bash /usr/local/bin/strip-mesa-closure.sh /ms-playwright/webkit-${WK_RE
 COPY alpine-browsers/webkit/scripts/strip-bundled-libs.sh /usr/local/bin/strip-bundled-libs.sh
 RUN sudo bash /usr/local/bin/strip-bundled-libs.sh /ms-playwright/firefox-${FF_REV}/firefox firefox \
  && sudo bash /usr/local/bin/strip-bundled-libs.sh /ms-playwright/webkit-${WK_REV}/minibrowser-wpe webkit /ms-playwright/firefox-${FF_REV}/firefox
+
+# The first WebKit launch in a fresh container scans every GStreamer plugin
+# into ~/.cache/gstreamer-1.0 before the page opens. On an i3-4005U, that first
+# launch takes 763 ms vs 130 ms for later ones (official: 1358 vs 148 ms).
+# Baking the registry here takes it to 161 ms. The plugins come from
+# runtime-libs, the same layers the final image is built on, so the size and
+# mtime each registry entry records still match there. If they ever stop
+# matching (e.g. a user adds a plugin), gst rescans as it would without the file.
+RUN sudo apk add --no-cache --virtual .gst-tools gstreamer-tools \
+ && sudo env GST_REGISTRY=/ms-playwright/webkit-${WK_REV}/gst-registry.bin gst-inspect-1.0 >/dev/null \
+ && sudo chmod 644 /ms-playwright/webkit-${WK_REV}/gst-registry.bin \
+ && sudo apk del --no-cache .gst-tools
 
 FROM runtime-libs
 
