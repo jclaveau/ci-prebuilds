@@ -141,6 +141,8 @@ jobs:
             # runner sets it too, or conformance signs off on a raster path
             # nobody ships.
             EXTRA_ENV="$EXTRA_ENV -e WEBKIT_SKIA_ENABLE_CPU_RENDERING=1"
+            # Same wrapper: llvmpipe rasterises without its worker pool.
+            EXTRA_ENV="$EXTRA_ENV -e LP_NUM_THREADS=0"
             # webkit/probes/run-probe.sh mirrors this block so a local
             # probe measures the same browser CI does — change both together.
           fi
