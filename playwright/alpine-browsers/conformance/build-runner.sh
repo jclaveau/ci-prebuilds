@@ -149,7 +149,7 @@ RUN CHS=/ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/chrome-headless-s
  && mv "\$CHS/chrome-headless-shell" "\$CHS/chrome-headless-shell.real" \\
  && printf '%s\\n' \\
       '#!/bin/sh' \\
-      'DIR="\$(dirname "\$0")"' \\
+      'DIR="\${0%/*}"' \\
       'if [ -n "\${CHS_LD_PRELOAD:-}" ]; then export LD_PRELOAD="\$CHS_LD_PRELOAD"; else unset LD_PRELOAD; fi' \\
       'export VK_ICD_FILENAMES="\${VK_ICD_FILENAMES:-\$DIR/vk_swiftshader_icd.json}"' \\
       'exec "\$DIR/chrome-headless-shell.real" "\$@"' \\
@@ -273,7 +273,7 @@ RUN FFBIN=/ms-playwright/firefox-${ARTIFACT_REV}/firefox/firefox \\
  && mv "\$FFBIN" "\$FFBIN.real" \\
  && printf '%s\\n' \\
       '#!/bin/sh' \\
-      'D=\$(dirname "\$0")' \\
+      'D="\${0%/*}"' \\
       'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2' \\
       'case " \$* " in' \\
       '  *" --remote-debugging-port"*) exec "\$D/firefox.real" "\$@" ;;' \\
@@ -517,7 +517,7 @@ RUN WKRUN=/ms-playwright/webkit-${ARTIFACT_REV}/pw_run.sh \\
  && mv "\$WKRUN" "\$(dirname "\$WKRUN")/pw_run.real.sh" \\
  && printf '%s\\n' \\
       '#!/bin/sh' \\
-      'D=\$(dirname "\$0")' \\
+      'D="\${0%/*}"' \\
       'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so:/usr/lib/libz-ng-compat.so.1' \\
       'exec "\$D/pw_run.real.sh" "\$@"' \\
       > "\$WKRUN" \\
