@@ -122,9 +122,13 @@ window_close() {
   echo "$WIN_NAME $elapsed $WIN_BEFORE $after" >> "$WINDOWS"
 }
 
+# PERF_BROWSER_ARGS (space-separated launch switches) prices a runtime switch
+# on one image without rebuilding it.
 echo "=== ${TARGET} / ${KERNEL}: starting probe ==="
 node "$PROBE" --browser "$BROWSER" --target "$TARGET" --kernel "$KERNEL" \
-  --seconds "$LOOP" --out "$OUT" --ready "$READY" > "$PROBE_LOG" 2>&1 &
+  --seconds "$LOOP" --out "$OUT" --ready "$READY" \
+  ${PERF_BROWSER_ARGS:+--browser-args "$PERF_BROWSER_ARGS"} \
+  > "$PROBE_LOG" 2>&1 &
 PROBE_PID=$!
 
 # Poll for the probe's own steady-state marker rather than sleeping a guessed
