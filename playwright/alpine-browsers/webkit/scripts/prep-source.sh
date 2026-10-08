@@ -923,9 +923,11 @@ patch_user_media_automation_permissions() {
     return 0
   fi
 
-  # bootstrap.diff declares permissionForAutomation under `private:`, which is
-  # enough for PW's own three call sites because they are WebPageProxy members.
-  # Ours is not, so widen it to public and close the section straight after.
+  # Older bootstrap.diffs declare permissionForAutomation under `private:`,
+  # enough for PW's own call sites (WebPageProxy members) but not for ours, so
+  # widen it to public, then reopen whichever section it sat in: from PW
+  # 1e9d2b1f it already sits under `public:`, and a hardcoded `private:` there
+  # hid every member after it from the WPE port.
   local decl='  std::optional<bool> permissionForAutomation(const String& origin, const String& permission) const;'
   if [[ "$(grep -cF "$decl" "$hdr")" != 1 ]]; then
     echo "ERROR: expected exactly 1 permissionForAutomation declaration in $hdr" >&2
@@ -934,11 +936,12 @@ patch_user_media_automation_permissions() {
 
   echo "  widen WebPageProxy::permissionForAutomation to public"
   awk -v decl="$decl" -v marker="$marker" '
+    /^(public|protected|private):/ { access_label = $1 }
     index($0, decl) && !done {
       print "public:"
       print "    // " marker
       print $0
-      print "private:"
+      print access_label
       done = 1
       next
     }
