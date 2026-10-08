@@ -247,12 +247,25 @@ RUN sudo touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_CO
 # against 1.36x without (runs 34355411280, 34357346361), back when the DSO
 # closure still bound launch. The conformance runner (build-runner.sh) mirrors
 # this launcher and preload.
+#
+# The shim also points the Vulkan loader at chromium's own SwiftShader ICD.
+# mesa-vulkan-swrast (installed above for the shared Mesa closure) registers
+# lavapipe in /usr/share/vulkan/icd.d, which official's image has none of, so
+# every GPU process dlopened libvulkan_lvp.so + libLLVM.so.22 beside the
+# SwiftShader it then picks anyway. famille i3-4005U, chromium 151.0.7922.34:
+#
+#   ANGLE initializationTime  118-145 ms vs 38-59 ms (official 34 ms)
+#   launch→newPage→close      247.8 vs 240.5 ms median, p90 270.2 vs 254.6 ms
+#                             (80 rounds interleaved in one container)
+#
+# A caller's own VK_ICD_FILENAMES still wins.
 RUN CHS=/ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64 \
  && sudo mv "$CHS/chrome-headless-shell" "$CHS/chrome-headless-shell.real" \
  && printf '%s\n' \
         '#!/bin/sh' \
         'DIR="$(dirname "$0")"' \
         'if [ -n "${CHS_LD_PRELOAD:-}" ]; then export LD_PRELOAD="$CHS_LD_PRELOAD"; else unset LD_PRELOAD; fi' \
+        'export VK_ICD_FILENAMES="${VK_ICD_FILENAMES:-$DIR/vk_swiftshader_icd.json}"' \
         'exec "$DIR/chrome-headless-shell.real" "$@"' \
   | sudo tee "$CHS/chrome-headless-shell" >/dev/null \
  && sudo chmod +x "$CHS/chrome-headless-shell"

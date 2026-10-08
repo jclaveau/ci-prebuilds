@@ -151,6 +151,7 @@ RUN CHS=/ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/chrome-headless-s
       '#!/bin/sh' \\
       'DIR="\$(dirname "\$0")"' \\
       'if [ -n "\${CHS_LD_PRELOAD:-}" ]; then export LD_PRELOAD="\$CHS_LD_PRELOAD"; else unset LD_PRELOAD; fi' \\
+      'export VK_ICD_FILENAMES="\${VK_ICD_FILENAMES:-\$DIR/vk_swiftshader_icd.json}"' \\
       'exec "\$DIR/chrome-headless-shell.real" "\$@"' \\
       > "\$CHS/chrome-headless-shell" \\
  && chmod +x "\$CHS/chrome-headless-shell"
