@@ -54,7 +54,9 @@ typedef unsigned __int128 u128;
 static inline uint64_t div_hi(uint64_t hi, uint64_t den, uint64_t *rem) {
 #if defined(__x86_64__)
   uint64_t q, r;
-  __asm__("divq %4" : "=a"(q), "=d"(r) : "a"(0ULL), "d"(hi), "rm"(den));
+  /* "r", not "rm": given the choice, clang spills den and divides from the
+   * stack, a store-forward on the divide's critical path. */
+  __asm__("divq %4" : "=a"(q), "=d"(r) : "a"(0ULL), "d"(hi), "r"(den));
   *rem = r;
   return q;
 #else
@@ -203,7 +205,7 @@ double fmod(double x, double y) {
         uint64_t q_unused, r_mid;
         __asm__("divq %4"
                 : "=a"(q_unused), "=d"(r_mid)
-                : "a"(mx53 << d_fast), "d"(mx53 >> (64 - d_fast)), "rm"(my53));
+                : "a"(mx53 << d_fast), "d"(mx53 >> (64 - d_fast)), "r"(my53));
         (void)q_unused;
         if (r_mid == 0) {
           return to_double(sign_fast);
