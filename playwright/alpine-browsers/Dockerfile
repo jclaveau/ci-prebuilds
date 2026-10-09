@@ -28,6 +28,14 @@ RUN mkdir /pgo
 
 FROM ${PGO_PROFILE_IMAGE:-pgo-profile-none} AS pgo-profile-in
 
+# The fmod shared with WebKit, compiled by gcc: clang23's codegen of the same
+# source runs up to 1.17x slower and misses glibc at small exponent gaps.
+# Only the assembly crosses into the builder, which mach assembles with clang.
+FROM alpine:${ALPINE_VERSION} AS fastfmod-gcc
+RUN apk add --no-cache gcc musl-dev
+COPY webkit/fastfmod/candidates/unified.c /src/unified.c
+RUN gcc -O2 -fPIC -fvisibility=hidden -S /src/unified.c -o /src/fastfmod-unified.s
+
 FROM alpine:${ALPINE_VERSION} AS firefox-builder
 
 # Bash + tooling for our scripts; the rest matches aports' community/firefox
@@ -94,7 +102,7 @@ ARG PW_JUGGLER_INSTRUMENT=false
 ARG PGO_STAGE=
 COPY --from=pgo-profile-in /pgo /work/pgo
 # The fmod shared with WebKit, linked into libxul by apply-and-build.sh.
-COPY webkit/fastfmod/candidates/unified.c /work/firefox/fastfmod/unified.c
+COPY --from=fastfmod-gcc /src/fastfmod-unified.s /work/firefox/fastfmod/fastfmod-unified.s
 
 RUN --mount=type=cache,target=/work/firefox-src/obj,id=ffx-obj,sharing=locked \
     --mount=type=cache,target=/root/.mozbuild,id=ffx-mozbuild,sharing=locked \

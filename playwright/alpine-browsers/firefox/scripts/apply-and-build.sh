@@ -401,11 +401,11 @@ fi
 # 6a. One fmod for WebKit and Firefox. libxul's fmod (js::NumberMod, JS `%`)
 #     is compiler_builtins' weak Rust copy; a strong hidden definition linked
 #     into libxul replaces it, and the check after the build proves which won.
-cp /work/firefox/fastfmod/unified.c js/src/fastfmod-unified.c
+#     The Dockerfile hands over gcc's assembly, hidden visibility already set.
+cp /work/firefox/fastfmod/fastfmod-unified.s js/src/fastfmod-unified.s
 cat >> js/src/moz.build <<'EOF'
 
-SOURCES += ["fastfmod-unified.c"]
-SOURCES["fastfmod-unified.c"].flags += ["-fvisibility=hidden"]
+SOURCES += ["fastfmod-unified.s"]
 EOF
 
 # 7. Compose mozconfig: aports' + our overlay (or minimal default if skipping aports).
