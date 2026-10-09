@@ -30,7 +30,8 @@ FROM ${PGO_PROFILE_IMAGE:-pgo-profile-none} AS pgo-profile-in
 
 # The fmod and fmodf shared with WebKit and chromium, compiled by gcc: clang23's
 # codegen of the same sources runs up to 1.17x (fmod) and 1.33x (fmodf) slower.
-# Only the assembly crosses into the builder, which mach assembles with clang.
+# Only the assembly crosses into the builder, which mach assembles with clang;
+# fmodf's -mbranches-within-32B-boundaries is passed there, by apply-and-build.sh.
 FROM alpine:${ALPINE_VERSION} AS libm-fmod-custom-gcc
 RUN apk add --no-cache gcc musl-dev
 COPY libm-fmod-custom/libm-fmod-custom.c libm-fmod-custom/libm-fmodf-custom.c /src/

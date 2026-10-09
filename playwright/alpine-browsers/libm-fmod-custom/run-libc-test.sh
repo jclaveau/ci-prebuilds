@@ -61,7 +61,12 @@ if [ -n "${ASM_CC:-}" ]; then
   for src in $SOURCES; do
     base=$(basename "$src" .c)
     $CC -O2 -fPIC -S -o "$OUT/$base.s" "$src"
-    $ASM_CC -c -fPIC -o "$OUT/$base-asm.o" "$OUT/$base.s"
+    asm_flags=
+    if [ "$base" = libm-fmodf-custom ]; then
+      asm_flags=-mbranches-within-32B-boundaries
+    fi
+    # shellcheck disable=SC2086
+    $ASM_CC -c -fPIC $asm_flags -o "$OUT/$base-asm.o" "$OUT/$base.s"
     ASM_OBJECTS="$ASM_OBJECTS $OUT/$base-asm.o"
   done
   # shellcheck disable=SC2086
@@ -86,11 +91,16 @@ corrupt "$SRC/libm-fmod-custom.c" "$OUT/invalid-fmod.c" \
 $CC -O2 -fPIC -shared -o "$OUT/value-fmod.so" "$OUT/value-fmod.c"
 $CC -O2 -fPIC -shared -o "$OUT/invalid-fmod.so" "$OUT/invalid-fmod.c"
 if [ -f "$SRC/libm-fmodf-custom.c" ]; then
+  # The d <= 8 path alone; a second value twin breaks the 64/32 path that
+  # libc-test's cases also reach, so the control is not one path deep.
   corrupt "$SRC/libm-fmodf-custom.c" "$OUT/value-fmodf.c" \
     'r_fast = mx_fast % (my_fast >> d_fast);' 'r_fast = mx_fast % (my_fast >> (d_fast + 1));'
+  corrupt "$SRC/libm-fmodf-custom.c" "$OUT/value_mid-fmodf.c" \
+    'r_mid = narrow_rem(mx24 << d_fast, my24);' 'r_mid = narrow_rem(mx24 << d_fast, my24 + 1);'
   corrupt "$SRC/libm-fmodf-custom.c" "$OUT/invalid-fmodf.c" \
     'return (x \* y) / (x \* y);' 'return __builtin_nanf("");'
   $CC -O2 -fPIC -shared -o "$OUT/value-fmodf.so" "$OUT/value-fmodf.c"
+  $CC -O2 -fPIC -shared -o "$OUT/value_mid-fmodf.so" "$OUT/value_mid-fmodf.c"
   $CC -O2 -fPIC -shared -o "$OUT/invalid-fmodf.so" "$OUT/invalid-fmodf.c"
 fi
 
@@ -125,7 +135,11 @@ fi
 
 echo "===== 3. negative controls: libc-test must reject each corruption ====="
 for fn in $FUNCTIONS; do
-  for kind in value invalid; do
+  kinds="value invalid"
+  if [ "$fn" = fmodf ]; then
+    kinds="value value_mid invalid"
+  fi
+  for kind in $kinds; do
     if run_with "$fn" "$OUT/$kind-$fn.so" > "$OUT/$kind-$fn.txt" 2>&1; then
       echo "FAIL: libc-test passed a $kind-corrupted $fn — it checks nothing" >&2
       exit 1

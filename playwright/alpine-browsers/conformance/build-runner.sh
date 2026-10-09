@@ -144,8 +144,10 @@ COPY libm-fmod-custom /tmp/libm-fmod-custom
 RUN apk add --no-cache gcc musl-dev binutils \\
  && sh /tmp/faststring/run-gate.sh /tmp/faststring /tmp/faststring-gate \\
  && cp /tmp/faststring-gate/libfaststring.so /usr/lib/libfaststring.so \\
- && gcc -O2 -fPIC -shared -o /usr/lib/libm-fmod-custom.so /tmp/libm-fmod-custom/libm-fmod-custom.c \\
+ && gcc -O2 -fPIC -Wa,-mbranches-within-32B-boundaries -c -o /tmp/libm-fmodf-custom.o \\
       /tmp/libm-fmod-custom/libm-fmodf-custom.c \\
+ && gcc -O2 -fPIC -shared -o /usr/lib/libm-fmod-custom.so /tmp/libm-fmod-custom/libm-fmod-custom.c \\
+      /tmp/libm-fmodf-custom.o \\
  && apk del gcc musl-dev binutils \\
  && rm -rf /tmp/faststring /tmp/faststring-gate /tmp/libm-fmod-custom
 RUN CHS=/ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/chrome-headless-shell-linux64 \\
@@ -508,8 +510,10 @@ RUN bash /tmp/strip-mesa-closure.sh /ms-playwright/webkit-${ARTIFACT_REV}/minibr
 # does not care that it was renamed inside its own directory.
 COPY libm-fmod-custom /tmp/libm-fmod-custom
 RUN apk add --no-cache gcc musl-dev \\
- && gcc -O2 -fPIC -shared -o /usr/lib/libm-fmod-custom.so /tmp/libm-fmod-custom/libm-fmod-custom.c \\
+ && gcc -O2 -fPIC -Wa,-mbranches-within-32B-boundaries -c -o /tmp/libm-fmodf-custom.o \\
       /tmp/libm-fmod-custom/libm-fmodf-custom.c \\
+ && gcc -O2 -fPIC -shared -o /usr/lib/libm-fmod-custom.so /tmp/libm-fmod-custom/libm-fmod-custom.c \\
+      /tmp/libm-fmodf-custom.o \\
  && apk del gcc musl-dev
 # zlib-ng, the third preload the shipped wrapper carries. Same script the
 # consumer image runs, so conformance encodes PNGs through the encoder we

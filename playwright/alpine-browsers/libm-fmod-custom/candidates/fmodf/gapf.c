@@ -14,7 +14,7 @@
 #include <unistd.h>
 
 #define N 200000
-#define REPS 7
+#define REPS 11
 #define RANDOM_N 20000000
 
 typedef float (*fmodf_fn)(float, float);
@@ -83,8 +83,18 @@ static int cmp_double(const void *a, const void *b) {
 }
 
 int main(int argc, char **argv) {
-  int gaps[] = {0, 3, 8, 12, 16, 23, 24, 32, 40, 48, 64, 100, 150, 200, 250};
-  int ngaps = sizeof gaps / sizeof gaps[0];
+  /* gap, y-mantissa mask (0x7fffff = random, 0x700000 = few-bit y like
+   * 1.0/1.5/3.0), and kind: 0 normal pair, 1 x<y, 2 both subnormal. */
+  static const struct { int d; uint32_t ymask; int kind; } rows[] = {
+    {0,0x7fffff,1}, {0,0x7fffff,2},
+    {0,0x7fffff,0},{1,0x7fffff,0},{3,0x7fffff,0},{5,0x7fffff,0},{8,0x7fffff,0},
+    {9,0x7fffff,0},{12,0x7fffff,0},{16,0x7fffff,0},{23,0x7fffff,0},{29,0x7fffff,0},
+    {32,0x7fffff,0},{40,0x7fffff,0},{48,0x7fffff,0},{64,0x7fffff,0},{100,0x7fffff,0},
+    {150,0x7fffff,0},{200,0x7fffff,0},{250,0x7fffff,0},
+    {3,0x700000,0},{12,0x700000,0},{24,0x700000,0},{29,0x700000,0},{40,0x700000,0},
+    {64,0x700000,0},{100,0x700000,0},{250,0x700000,0},
+  };
+  int ngaps = sizeof rows / sizeof rows[0];
   int nimpl = argc;
   fmodf_fn impl[16];
   const char *name[16];
@@ -131,7 +141,9 @@ int main(int argc, char **argv) {
   printf("%-6s %-26s %9s %9s %9s %s\n", "gap", "impl", "ns/call", "insn", "cycles",
          "bits");
   for (int g = 0; g < ngaps; g++) {
-    int d = gaps[g];
+    int d = rows[g].d;
+    uint32_t ymask = rows[g].ymask;
+    int kind = rows[g].kind;
     int ey = 127 - d / 2;
     if (ey < 1) {
       ey = 1;
@@ -141,7 +153,15 @@ int main(int argc, char **argv) {
     }
     for (int k = 0; k < N; k++) {
       xs[k] = make_float(ey + d, (uint32_t)next_rand());
-      ys[k] = make_float(ey, (uint32_t)next_rand());
+      ys[k] = make_float(ey, (uint32_t)next_rand() & ymask);
+      if (kind == 1) {
+        xs[k] = make_float(ey - 1 - (int)(next_rand() % 8), (uint32_t)next_rand());
+      } else if (kind == 2) {
+        uint32_t a = (uint32_t)next_rand() & 0x7fffff, b = (uint32_t)next_rand() & 0x7fffff;
+        if (a < b) { uint32_t t = a; a = b; b = t; }
+        xs[k] = make_float(0, a);
+        ys[k] = make_float(0, b ? b : 1);
+      }
       if (k & 1) {
         xs[k] = -xs[k];
       }
@@ -164,7 +184,7 @@ int main(int argc, char **argv) {
       qsort(ns, REPS, sizeof(double), cmp_double);
       qsort(insn, REPS, sizeof(double), cmp_double);
       qsort(cyc, REPS, sizeof(double), cmp_double);
-      printf("%-6d %-26s %9.1f %9.1f %9.1f %s\n", d, name[a], ns[REPS / 2],
+      printf("%-3s%-3d %-26s %9.1f %9.1f %9.1f %s\n", kind == 1 ? "lt" : kind == 2 ? "sub" : ymask == 0x7fffff ? "g" : "c", d, name[a], ns[REPS / 2],
              insn[REPS / 2], cyc[REPS / 2], bad ? "MISMATCH" : "ok");
     }
   }

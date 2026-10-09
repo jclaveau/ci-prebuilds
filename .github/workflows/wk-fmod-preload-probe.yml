@@ -235,7 +235,7 @@ jobs:
                 || npm install -g --no-fund --no-audit "playwright@$PW_VERSION" >/dev/null 2>&1
               timeout 300 node /probe/runtime-probe.cjs \
                 --browser webkit --target alpine --out /count
-              echo "--- calls that reached libc fmod"
+              echo "--- calls that reached libc fmod and fmodf (in that order)"
               cat /count/calls* 2>/dev/null || echo "no counter output — the preload did not take"
               echo "--- kernel under the counter (it costs ~65 ns/call, so this is SLOW on purpose)"
               jq -r ".metrics.libm_fmod.median_ms" /count/alpine-webkit.json

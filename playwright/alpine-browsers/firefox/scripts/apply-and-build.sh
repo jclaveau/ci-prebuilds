@@ -409,6 +409,7 @@ cp /work/firefox/libm-fmod-custom/libm-fmodf-custom.s js/src/libm-fmodf-custom.s
 cat >> js/src/moz.build <<'EOF'
 
 SOURCES += ["libm-fmod-custom.s", "libm-fmodf-custom.s"]
+SOURCES["libm-fmodf-custom.s"].flags += ["-mbranches-within-32B-boundaries"]
 EOF
 
 # 7. Compose mozconfig: aports' + our overlay (or minimal default if skipping aports).
