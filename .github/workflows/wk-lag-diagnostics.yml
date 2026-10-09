@@ -33,6 +33,11 @@ on:
         description: 'Repetitions per kernel (median reported)'
         default: '5'
         type: string
+      fmod_bench:
+        description: 'fmod-draws: all = every fmod candidate, fmodf = only the fmodf per-gap microbench'
+        default: 'all'
+        type: choice
+        options: [all, fmodf]
 
 concurrency:
   group: wk-lag-${{ inputs.image }}-${{ github.ref }}
@@ -58,7 +63,29 @@ jobs:
       - name: Runner CPU
         run: lscpu | grep -E 'Model name|^CPU\(s\)|MHz' | tee cpu.txt
 
+      - name: fmodf per-gap microbench against each libc
+        run: |
+          set -o pipefail
+          mkdir -p fmod-out
+          cp cpu.txt fmod-out/
+          docker run --rm --user 0 \
+            -v "$PWD/playwright/alpine-browsers/libm-fmod-custom:/ff:ro" alpine:edge \
+            sh -c 'apk add --no-cache gcc clang23 musl-dev linux-headers >/dev/null 2>&1;
+                   echo "== fmodf vs musl (edge)"; sh /ff/candidates/fmodf/run-gapf.sh' \
+            2>&1 | tee fmod-out/fmodf-musl.txt
+          docker run --rm --user 0 \
+            -v "$PWD/playwright/alpine-browsers/libm-fmod-custom:/ff:ro" \
+            "mcr.microsoft.com/playwright:v${PW}-noble" \
+            sh -c 'apt-get update >/dev/null 2>&1;
+                   apt-get install -y gcc libc6-dev >/dev/null 2>&1;
+                   ldd --version | head -1;
+                   echo "== fmodf vs glibc"; sh /ff/candidates/fmodf/run-gapf.sh' \
+            2>&1 | tee fmod-out/fmodf-glibc.txt
+          { echo "### fmodf draw ${{ matrix.draw }}: $(grep 'Model name' cpu.txt | cut -d: -f2 | xargs)";
+            echo '```'; cat fmod-out/fmodf-musl.txt fmod-out/fmodf-glibc.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
       - name: fmod candidates and gap sweep against each libc
+        if: inputs.fmod_bench == 'all'
         run: |
           set -o pipefail
           mkdir -p fmod-out
