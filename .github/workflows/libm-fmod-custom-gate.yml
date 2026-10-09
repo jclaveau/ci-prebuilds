@@ -40,7 +40,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Toolchain
-        run: apk add --no-cache gcc musl-dev bash clang23
+        run: apk add --no-cache gcc musl-dev bash clang23 git
 
       - name: Report the libc under test
         # Which musl this ran against belongs in the log: the whole claim is
@@ -61,6 +61,18 @@ jobs:
         run: sh playwright/alpine-browsers/libm-fmod-custom/run-gate.sh
              playwright/alpine-browsers/libm-fmod-custom
              "$RUNNER_TEMP/libm-fmod-custom-gate"
+
+      - name: musl libc-test
+        # An oracle independent of musl's own fmod: libc-test's tables carry
+        # expected results AND expected fp exceptions (FE_INVALID on fmod(inf, y)
+        # and fmod(x, 0)), which the differential gate never checks.
+        # run-libc-test.sh fails on any case, on a test binary that does not
+        # import the function, or on a corrupted build being accepted.
+        env:
+          ASM_CC: clang-23
+        run: sh playwright/alpine-browsers/libm-fmod-custom/run-libc-test.sh
+             playwright/alpine-browsers/libm-fmod-custom
+             "$RUNNER_TEMP/libm-fmod-custom-libc-test"
 
       - name: Keep the digests
         if: always()
