@@ -39,7 +39,55 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # One job per runner draw: hosted runners hand out a different CPU per job,
+  # and fprem is microcoded on Zen, so the verdict needs several cores.
+  # reps=0 skips the full diagnosis and runs only these draws.
+  fmod-draws:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        draw: [1, 2, 3, 4, 5, 6, 7, 8]
+    env:
+      OURS: ${{ inputs.image }}
+      PW: ${{ inputs.pw_version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Runner CPU
+        run: lscpu | grep -E 'Model name|^CPU\(s\)|MHz' | tee cpu.txt
+
+      - name: fmod candidates and gap sweep against each libc
+        run: |
+          set -o pipefail
+          mkdir -p fmod-out
+          cp cpu.txt fmod-out/
+          docker run --rm --user 0 \
+            -v "$PWD/playwright/alpine-browsers/webkit/fastfmod:/ff:ro" "$OURS" \
+            sh -c 'apk add --no-cache gcc musl-dev linux-headers >/dev/null 2>&1;
+                   echo "== vs musl"; sh /ff/candidates/run-bench.sh;
+                   echo "== gap sweep vs musl"; sh /ff/candidates/gapsweep/run-sweep.sh' \
+            2>&1 | tee fmod-out/alpine.txt
+          docker run --rm --user 0 \
+            -v "$PWD/playwright/alpine-browsers/webkit/fastfmod:/ff:ro" \
+            "mcr.microsoft.com/playwright:v${PW}-noble" \
+            sh -c 'apt-get update >/dev/null 2>&1;
+                   apt-get install -y gcc libc6-dev >/dev/null 2>&1;
+                   echo "== vs glibc"; sh /ff/candidates/run-bench.sh;
+                   echo "== gap sweep vs glibc"; sh /ff/candidates/gapsweep/run-sweep.sh' \
+            2>&1 | tee fmod-out/official.txt
+          { echo "### draw ${{ matrix.draw }}: $(grep 'Model name' cpu.txt | cut -d: -f2 | xargs)";
+            echo '```'; cat fmod-out/alpine.txt fmod-out/official.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: fmod-draw-${{ matrix.draw }}
+          path: fmod-out/
+
   diagnose:
+    if: inputs.reps != '0'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
