@@ -23,9 +23,9 @@ out="${TMPDIR:-/tmp}"
 # the two candidates cannot drift apart.
 sed -e 's|uint64_t excess = mx - my;|uint64_t excess = mx % my;|' \
     -e 's|mx = (excess >> 63) ? mx : excess;|mx = excess;|' \
-    "$here/../fastfmod.c" > "$out/entry-divide.c"
+    "$here/fastfmod.c" > "$out/entry-divide.c"
 
-for src in "$here/../fastfmod.c" "$here"/*.c "$out/entry-divide.c"; do
+for src in "$here/../libm-fmod-custom.c" "$here"/*.c "$out/entry-divide.c"; do
   name="$(basename "$src" .c)"
   case "$name" in
     bench-harness) continue ;;
