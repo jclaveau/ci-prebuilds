@@ -11,7 +11,9 @@
  * instead of just saying "different", while the output stays a few hundred
  * bytes rather than a 50 MB dump.
  *
- * MUST be compiled -fno-builtin-fmod. gcc 15 expands fmod inline when the
+ * Classes 6-9 do the same for `fmodf`, which chromium imports from musl.
+ *
+ * MUST be compiled -fno-builtin-fmod -fno-builtin-fmodf. gcc 15 expands fmod inline when the
  * divisor is a compile-time power of two, and then this program verifies
  * nothing while still linking `U fmod` from an unrelated call site — which is
  * exactly how two earlier microbenchmarks of mine "measured" a libc they
@@ -50,6 +52,33 @@ static void record(double a, double b) {
   uint64_t words[3] = {to_bits(a), to_bits(b), r};
   for (int w = 0; w < 3; w++) {
     for (int byte = 0; byte < 8; byte++) {
+      h ^= (words[w] >> (byte * 8)) & 0xff;
+      h *= 0x100000001b3ULL;
+    }
+  }
+  bucket[checked % BUCKETS] = h;
+  checked++;
+}
+
+static uint32_t float_bits(float f) {
+  uint32_t u;
+  memcpy(&u, &f, sizeof u);
+  return u;
+}
+
+static float bits_float(uint32_t u) {
+  float f;
+  memcpy(&f, &u, sizeof f);
+  return f;
+}
+
+/* record() for fmodf: same buckets, same FNV-1a, 32-bit words. */
+static void record_f(float a, float b) {
+  uint32_t r = float_bits(fmodf(a, b));
+  uint64_t h = bucket[checked % BUCKETS];
+  uint32_t words[3] = {float_bits(a), float_bits(b), r};
+  for (int w = 0; w < 3; w++) {
+    for (int byte = 0; byte < 4; byte++) {
       h ^= (words[w] >> (byte * 8)) & 0xff;
       h *= 0x100000001b3ULL;
     }
@@ -128,6 +157,62 @@ int main(void) {
     double b = (double)(uint32_t)nextrand() + 1.0;
     record(a, b);
     record(-a, b);
+  }
+
+  /* 6. fmodf corners, at both signs: FLT_MIN, subnormals down to
+   *    FLT_TRUE_MIN, 2^24 and 2^-104 (ey either side of 24), exact multiples. */
+  static const float edges_f[] = {
+      0.0f,
+      1.0f,
+      0.5f,
+      2.0f,
+      3.0f,
+      360.0f,
+      1024.25f,
+      16777216.0f,
+      5.9604645e-08f,     /* 2^-24 */
+      4.9303807e-32f,     /* 2^-104, ey = 23 */
+      9.8607613e-32f,     /* 2^-103, ey = 24 */
+      3.4028235e38f,      /* FLT_MAX */
+      1.17549435e-38f,    /* FLT_MIN, smallest normal */
+      5.877472e-39f,      /* half of it: subnormal */
+      1.4e-45f,           /* FLT_TRUE_MIN */
+      INFINITY,
+      NAN,
+  };
+  const int nedges_f = (int)(sizeof edges_f / sizeof *edges_f);
+  for (int a = 0; a < nedges_f; a++) {
+    for (int b = 0; b < nedges_f; b++) {
+      for (int sa = 0; sa < 2; sa++) {
+        for (int sb = 0; sb < 2; sb++) {
+          record_f(sa ? -edges_f[a] : edges_f[a], sb ? -edges_f[b] : edges_f[b]);
+        }
+      }
+    }
+  }
+
+  /* 7. fmodf on unrestricted random bit patterns. */
+  for (long i = 0; i < 2000000; i++) {
+    uint64_t pair = nextrand();
+    record_f(bits_float((uint32_t)pair), bits_float((uint32_t)(pair >> 32)));
+  }
+
+  /* 8. fmodf, subnormal-heavy: exponent fields in [0,3] on one or both sides. */
+  for (long i = 0; i < 400000; i++) {
+    uint32_t a = ((uint32_t)nextrand() & ~0x7f800000u) | ((uint32_t)(nextrand() % 4) << 23);
+    uint32_t b = ((uint32_t)nextrand() & ~0x7f800000u) | ((uint32_t)(nextrand() % 4) << 23);
+    record_f(bits_float(a), bits_float(b));
+  }
+
+  /* 9. fmodf at every gap 0..63, divisor exponent drawn from [1,190]: every
+   *    fast-path boundary (d = 8/9, 40/41, ey = 23/24) at both signs. */
+  for (long i = 0; i < 1600000; i++) {
+    uint32_t gap = (uint32_t)(i % 64);
+    uint32_t ey = 1 + (uint32_t)(nextrand() % 190);
+    uint64_t pair = nextrand();
+    uint32_t b = ((uint32_t)pair & 0x007fffffu) | (ey << 23);
+    uint32_t a = ((uint32_t)(pair >> 32) & 0x807fffffu) | ((ey + gap) << 23);
+    record_f(bits_float(a), bits_float(b));
   }
 
   printf("checked=%ld\n", checked);

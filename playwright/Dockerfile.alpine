@@ -60,7 +60,11 @@ FROM ghcr.io/jclaveau/playwright-alpine-browsers:${WK_SOURCE_TAG} AS wk-source
 # an EPYC 7763, 7.65x on a Xeon 8370C) — both engines call libc the same
 # 3,000,000 times per kernel, so it was never JSC. See issue #126.
 #
-# The same source is linked into Firefox's libxul (alpine-browsers/Dockerfile).
+# The same .so carries libm-fmodf-custom.c's fmodf, preloaded under chromium:
+# chrome-headless-shell imports fmodf (and no fmod) from musl, from 66 call
+# sites in canvas arcs, Skia dashing, colour conversion and CSS calc.
+#
+# libm-fmod-custom.c is also linked into Firefox's libxul (alpine-browsers/Dockerfile).
 # It replaces the shipped bit-loop (now candidates/fastfmod.c), which read
 # 0.92-0.94 against official on an EPYC 7763 but 1.16 on an EPYC 9V74; its
 # kernel bench reads 0.81x (7763), 0.84x (9V74), 0.86x (9V45) against glibc.
@@ -73,6 +77,7 @@ FROM ${BASE_IMAGE} AS libm-fmod-custom-build
 COPY alpine-browsers/libm-fmod-custom /work/libm-fmod-custom
 RUN sudo apk add --no-cache gcc musl-dev \
  && sudo gcc -O2 -fPIC -shared -o /usr/lib/libm-fmod-custom.so /work/libm-fmod-custom/libm-fmod-custom.c \
+      /work/libm-fmod-custom/libm-fmodf-custom.c \
  && printf '%s\n' \
       '#include <stdio.h>' \
       '#include <math.h>' \
@@ -84,9 +89,12 @@ RUN sudo apk add --no-cache gcc musl-dev \
       '  if (fmod(-7.5, 2.0) != -1.5) return 3;' \
       '  if (!isnan(fmod(1.0, 0.0))) return 4;' \
       '  if (fmod(3.0, INFINITY) != 3.0) return 5;' \
+      '  if (fmodf(7.5f, 2.0f) != 1.5f) return 6;' \
+      '  if (fmodf(-370.0f, 360.0f) != -10.0f) return 7;' \
+      '  if (fmodf(16777215.0f, 3.0f) != 0.0f) return 8;' \
       '  puts("libm-fmod-custom smoke ok"); return 0; }' \
     > /tmp/smoke.c \
- && gcc -O2 -fno-builtin-fmod -o /tmp/smoke /tmp/smoke.c -lm \
+ && gcc -O2 -fno-builtin-fmod -fno-builtin-fmodf -o /tmp/smoke /tmp/smoke.c -lm \
  && LD_PRELOAD=/usr/lib/libm-fmod-custom.so /tmp/smoke
 
 # libfaststring.so — AVX2 memcpy/memmove/memset/memcmp/strlen for chromium.
@@ -238,8 +246,8 @@ RUN sudo touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_CO
 # put mimalloc under PartitionAlloc. Every earlier decision in this file
 # deliberately left chromium's allocator alone, so the shim CLEARS that preload
 # rather than adding to it. CHS_LD_PRELOAD names what chromium preloads instead
-# (libfaststring.so by default); local-counted-compare.sh and perf-gate set it
-# to price a preload, and an empty value means none.
+# (libfaststring.so and libm-fmod-custom.so by default); local-counted-compare.sh
+# and perf-gate set it to price a preload, and an empty value means none.
 #
 # libfaststring.so is loaded by default since the faststring tail fix
 # (c7a2508). Seven perf-gate draws of the same chs-latest with vs without it
@@ -525,9 +533,9 @@ ENV WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
 # here, not just the driver.
 ENV LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2
 
-# The fmod interposer the webkit launcher preloads. ~10 kB; reaches
-# MiniBrowser and every auxiliary process, and nothing else — not the Node
-# driver, not chromium, not firefox.
+# The fmod/fmodf interposer the webkit and chromium launchers preload. ~10 kB;
+# reaches MiniBrowser, chrome-headless-shell and their auxiliary processes,
+# and nothing else — not the Node driver, not firefox.
 COPY --from=libm-fmod-custom-build /usr/lib/libm-fmod-custom.so /usr/lib/libm-fmod-custom.so
 
 # zlib-ng in zlib-compat mode, preloaded by the same webkit launcher. Reaches
@@ -543,8 +551,11 @@ COPY --from=faststring-build /usr/lib/libfaststring.so /usr/lib/libfaststring.so
 
 # What the chromium launcher preloads. perf-gate's candidate_build_args sets it
 # (CHS_LD_PRELOAD= for none) to price a chromium-only preload against an
-# otherwise identical control.
-ARG CHS_LD_PRELOAD=/usr/lib/libfaststring.so
+# otherwise identical control. libm-fmod-custom.so answers chrome's fmodf: at
+# gaps 3-8 the integer candidate it grew from took 3.4-4.7 ns per call vs
+# musl's 19.5-51.1 ns on the CI CPUs (run 37929140939), bit-identical over the
+# gate's 4M fmodf comparisons.
+ARG CHS_LD_PRELOAD=/usr/lib/libfaststring.so:/usr/lib/libm-fmod-custom.so
 ENV CHS_LD_PRELOAD=${CHS_LD_PRELOAD}
 
 # Opt-in Node driver swap, off by default: perf-gate's candidate_build_args sets
