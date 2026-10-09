@@ -189,3 +189,28 @@ Scripts: scratchpad libctest/run/{run,neg}.sh.
 - Gate gap fixed: Firefox-form check had no fmodf, so it compared musl fmodf to itself and could not fail.
 - libm-fmodf-custom.c stays a separate file: V8 links libm-fmod-custom.c with fmod renamed; an fmodf there would hijack chrome's fmodf.
 - WebKit/FF fmodf hot-path value never profiled.
+
+## #334 deep review + fmodf trick audit (2026-10-10)
+- Review of 2a67bcf: no HIGH/MED; fmodf bit-identical to musl on 612.8M inputs (NaN bits too). Only diff: x86 denormal-operand flag (0x2) not raised when subnormal x gives ±0 (musl does `0*x`); same pattern already in fmod. Document in header, don't pay for `0*x`.
+- via-double candidate rows are SUSPECT: `candidates/fmodf/run-gapf.sh` dlopens RTLD_LOCAL without -Bsymbolic, so its fmod call hits libc's PLT fmod, not ours. "via-double loses to glibc at narrow gaps" (line ~121) measured libc fmod + widening. Shipped fmodf numbers unaffected.
+- Gate weakness: brokenf.c corrupts all 3 fmodf paths at once; libc-test fmodf control corrupts only d<=8. Wanted: one corrupted twin per path (d<=8, d<=40, general).
+- Pre-existing, parked: Dockerfile.prebuilt-base never COPYs the fmod .s (cp aborts; moot since PGO_STAGE=use forces cold); patchset-hash.sh doesn't hash libm-fmod-custom/*.c.
+- Missing vs glibc/Rust fmodf: shift y's trailing zeros into the gap; multiply-by-1/y big-gap reduction. Real chromium calls (~1,600/run) are all x<y or gap 0-8, so barely matters; only Haswell big gaps would gain.
+- Firefox build proving the libxul fmodf link: run 37988293902 on perf/fmodf-microbench (dispatched on jean's go). Post-merge main runs 37985301500/111/088 all green, ff-latest promoted with fmod linked.
+- tests-aports token fix landed 807d503 (Bearer GITHUB_TOKEN only for https://api.github.com/); proof = the run main's push triggers.
+
+## fmodf tweak round (2026-10-10, scratchpad only, NOT pushed to #334)
+- Kept: both-subnormal `ax % ay` (0.55x gcc/0.72x clang), x86 `divl` 64/32 for d 9..40 (0.54-0.78x), 64-bit reciprocal only when gap >155 (c250 0.51x). Gaps 0-8 unchanged (the only gaps chromium hits). Haswell only; CI CPUs unmeasured.
+- Dropped: ctz-shift of y (4-24% slower gaps 9-29), glibc 32-bit reciprocal (1.6-2.2x slower gap>=48), reciprocal from gap 41 (loses g48/g64), Rust special-case check (gate RED: fmodf(0x7f800001,0x7fc00000) gives 7fc00001 vs musl 7fc00000), double-precision quotient (divsd raises spurious FE_INEXACT).
+- vs glibc 2.39: ours 2-3x faster for random y gap>=9; glibc ~7% faster gaps 1-8, both-subnormal, short-significand y.
+- Shipping needs gate rewrite: old fmodf corruption seds no longer match; corrupt per path with `+ 1`: `r_mid = narrow_rem(mx24 << d_fast, my24 + 1)`, `mx32 = narrow_rem((uint64_t)mx32 << 31, my32 + 1)`, `mx64 = wide_mx - q_est * my32 + 1` (covers review findings 5,6).
+- Gotcha: cosmetic type change (mx/my to uint32) cost 4% at gaps 1-8 with identical insn count (regalloc/layout). After any cosmetic edit, objdump-compare to the benched build.
+- divl faults (#DE) if quotient >32 bits; every call site hand-checked. Portable `/`,`%` fallback off x86.
+- Proposal awaiting jean: one commit on #334 (new fmodf + gate rewrite + findings 4,7,8,9 + comment for 1); CI per-gap microbench dispatch. Files: scratchpad d4d4014d.../fmodf-tweaks/{libm-fmodf-custom.c,tw/run-gate-final.sh}.
+
+## fmodf idle bench 2026-10-10, two Intel generations (cycles/call, median)
+- Haswell i3-4005U (3 reps, cycles stable to 0.1): final vs shipped gaps 0-8 25 vs 25 (1.00), gaps 9-29 27 vs 45 (0.60), g250 166 vs 273 (0.61), sub0 22 vs 40 (0.55). vs glibc 2.39: gaps 1-8 26 vs 24 (1.08), sub0 1.10, c64-c250 1.15-1.25; gap 9+ 0.31-0.50.
+- Kaby Lake R i5-8350U (load ~2, 3 reps): gcc-musl final gaps 1-8 26 vs 23 (1.10) SLOWER, same insn count (54 vs 55). Cause: code layout. Shipped .so padded the d<=8 block to 0x1200; final's starts at 0x11d8 → Skylake-family JCC-erratum (jcc crossing a 32B line drops out of the DSB). Haswell has no erratum, hence flat there.
+- Fix measured: gcc `-Wa,-mbranches-within-32B-boundaries`. Kaby 5 reps final+flag vs shipped: gaps 0-8 0.88-0.97, gaps 9-12 0.56. Haswell 3 reps: costs +1 cycle at gaps 0-8 (26 vs 25, 1.04); elsewhere within 1 cycle.
+- 0 mismatches on every rep, both boxes, musl gcc/clang-23 and glibc.
+**How to apply:** any gcc build of libm-fmodf-custom.c (preload + Firefox .s) needs the flag if the final code ships; a hot path's speed on Skylake-family is layout luck without it. Recheck with an objdump of the d<=8 block address.
