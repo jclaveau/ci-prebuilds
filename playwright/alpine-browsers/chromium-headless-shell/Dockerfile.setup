@@ -10,6 +10,17 @@
 # See project_buildkit_cacheto_commit_semantics for why we split across JOBS
 # (each pushing a tagged intermediate image) instead of resumable RUNs.
 
+# The fmod shared with WebKit and Firefox, compiled by gcc (clang23's codegen
+# of the same source is up to 1.17x slower) and renamed so it cannot collide
+# with the fmod Rust's compiler_builtins links into chrome. Only the assembly
+# crosses into the builder; v8-libm-fmod-custom.py wires it into V8.
+FROM alpine:edge AS libm-fmod-custom-gcc
+RUN apk add --no-cache gcc musl-dev
+COPY libm-fmod-custom/libm-fmod-custom.c /src/libm-fmod-custom.c
+RUN gcc -O2 -fPIC -fvisibility=hidden -Dfmod=v8_libm_fmod_custom \
+        -S /src/libm-fmod-custom.c -o /src/libm-fmod-custom.s \
+ && grep -q '^v8_libm_fmod_custom:' /src/libm-fmod-custom.s
+
 FROM alpine:edge AS chromium-builder
 
 RUN apk add --no-cache \
@@ -172,6 +183,8 @@ RUN set -a && . /work/versions.env && set +a \
 
 RUN set -a && . /work/versions.env && . /work/derived.env && set +a \
     && bash /work/chromium-headless-shell/scripts/fetch-chromium-src.sh /work/chromium-src
+
+COPY --from=libm-fmod-custom-gcc /src/libm-fmod-custom.s /work/libm-fmod-custom/libm-fmod-custom.s
 
 ARG PW_CHROMIUM_SKIP_APORTS=false
 ARG PW_CHROMIUM_ENABLE_DEBUG=false
