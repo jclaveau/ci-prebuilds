@@ -398,6 +398,16 @@ if [[ "$PW_SKIP_APORTS" != "1" ]]; then
   done
 fi
 
+# 6a. One fmod for WebKit and Firefox. libxul's fmod (js::NumberMod, JS `%`)
+#     is compiler_builtins' weak Rust copy; a strong hidden definition linked
+#     into libxul replaces it, and the check after the build proves which won.
+cp /work/firefox/fastfmod/unified.c js/src/fastfmod-unified.c
+cat >> js/src/moz.build <<'EOF'
+
+SOURCES += ["fastfmod-unified.c"]
+SOURCES["fastfmod-unified.c"].flags += ["-fvisibility=hidden"]
+EOF
+
 # 7. Compose mozconfig: aports' + our overlay (or minimal default if skipping aports).
 if [[ "$PW_SKIP_APORTS" == "1" ]]; then
   # Minimal Mozilla-default mozconfig — no system libs, all bundled. We're
@@ -548,6 +558,9 @@ fi
 # rpath so the built firefox finds its libs at /usr/lib/firefox (matches the
 # install layout the producer image consumer expects).
 : "${LDFLAGS:=-Wl,-rpath,/usr/lib/firefox}"
+# The linker names every input that defines or references fmod, which is how
+# the check after the build tells ours from compiler_builtins'.
+LDFLAGS="$LDFLAGS -Wl,--trace-symbol=fmod"
 export CFLAGS CXXFLAGS LDFLAGS
 
 # sccache: persisted via the Dockerfile cache mount at /root/.cache/sccache.
@@ -684,7 +697,7 @@ fi
 # distro package" tradeoff. We verify success by checking the artifact instead.
 echo "===== START ./mach build ====="
 mach_rc=0
-./mach build || mach_rc=$?
+./mach build 2>&1 | tee -a /work/mach-build.log || mach_rc=$?
 echo "===== END ./mach build (rc=$mach_rc) ====="
 
 # What did configure ACTUALLY decide about hardening? The perf/firefox-no-hardening
@@ -760,7 +773,7 @@ if [[ "$mach_rc" != "0" && -f "$FFI_HDR" ]] && grep -q '\[COUNT\]' "$FFI_HDR"; t
   sed -i "s/\[COUNT\]/[$BUDGET_COUNT]/g" "$FFI_HDR"
   echo "===== Retry ./mach build after webrender FFI patch ====="
   mach_rc=0
-  ./mach build || mach_rc=$?
+  ./mach build 2>&1 | tee -a /work/mach-build.log || mach_rc=$?
   echo "===== END ./mach build retry (rc=$mach_rc) ====="
 fi
 
@@ -896,6 +909,22 @@ if [[ -r "$XUL" ]] && command -v readelf >/dev/null; then
 else
   echo "WARNING: libxul .text unreportable ($XUL / readelf)" >&2
 fi
+
+# Our fmod must be what the libxul link resolved, and must stay inside libxul:
+# an exported fmod would interpose on libc's for every library loaded after it.
+echo "===== fmod definitions seen by the linker ====="
+grep -E ': (lazy )?definition of fmod$' /work/mach-build.log | sort -u | sed 's/^/  /' || true
+echo "===== end fmod definitions ====="
+if ! grep -qE 'fastfmod-unified\.o\)?: definition of fmod$' /work/mach-build.log; then
+  echo "ERROR: no link saw fastfmod-unified.o define fmod" >&2
+  exit 1
+fi
+if readelf --dyn-syms -W "$XUL" | awk '$7 != "UND" && $8 == "fmod"' | grep -q .; then
+  echo "ERROR: libxul exports fmod" >&2
+  exit 1
+fi
+echo "  libxul links fastfmod-unified.o's fmod, not exported ✓"
+
 # `| head -20` would trigger SIGPIPE under `set -o pipefail` (ls writes ~100s
 # of lines, head closes stdin at 20, ls exits 141, pipefail propagates). Use
 # `|| true` so the diagnostic dump can't kill a build that already succeeded.

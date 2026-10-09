@@ -93,6 +93,8 @@ ARG PW_JUGGLER_INSTRUMENT=false
 # generate | use | '' — see apply-and-build.sh.
 ARG PGO_STAGE=
 COPY --from=pgo-profile-in /pgo /work/pgo
+# The fmod shared with WebKit, linked into libxul by apply-and-build.sh.
+COPY webkit/fastfmod/candidates/unified.c /work/firefox/fastfmod/unified.c
 
 RUN --mount=type=cache,target=/work/firefox-src/obj,id=ffx-obj,sharing=locked \
     --mount=type=cache,target=/root/.mozbuild,id=ffx-mozbuild,sharing=locked \
