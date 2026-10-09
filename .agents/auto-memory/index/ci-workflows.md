@@ -2,6 +2,9 @@
 
 Full hooks for this area. The routing keys live in `.agents/auto-memory/MEMORY.md`; the memories themselves in `.agents/auto-memory/<slug>.md`.
 
+- [Promote perf-gate: ratchet + parity, all 3 browsers](project_perf_gate_ratchet_and_parity.md) — PR #288 new job between conformance and promote-*, 3-arm same-runner probe (candidate/promoted/official), hard-fails on either ratio > 1.00+margin
+- [GHA run-block expression length caps at 21000 chars](project_gha_run_block_expression_length_limit.md) — any `${{ }}` in a `run:` makes the WHOLE block one expression; a large inline script silently kills dispatch at parse time
+- [perf-record symfs twin match is `.text` geometry, not build-id](project_perfrecord_symfs_geometry_guard.md) — libs here carry no build-id; PR #282 fixed official-getting-our-twin + empty launch-symbols floor bugs
 - [WebKit promote gate — RESOLVED](project_wk_promote_gate_holds_the_nightly_bench.md) — the three conformance-webkit blockers (camera/mic #112, CacheStorage #116, no-xserver #115) all landed; one dispatch off a COMBINED branch validated and promoted wk-latest, because promote-webkit fires on any dispatch with build_webkit=true
 - [Promote gates differ per browser](project_promote_gates_by_browser.md) — chromium-from-source promotes chs-latest from ANY branch on a green dispatch; read the workflow at the run's head sha, not your checkout
 - [TP paths-ignore can silently un-ship a fix](project_tp_paths_ignore_ships_nothing.md) — fastfmod/** and strip-bundled-libs.sh live under the ignored playwright/alpine-browsers/** path but the CONSUMER compiles them; also workflow_dispatch of test-and-publish never publishes, probe the run's own sha tag instead
@@ -23,3 +26,6 @@ Full hooks for this area. The routing keys live in `.agents/auto-memory/MEMORY.m
 - [On-demand prepare-failure UX](project_on_demand_prepare_failure_ux.md) — comment-close.if must be `always()`, not `prepare.result == 'success'`; separate prepare-fail step; every dispatch outcome → issue comment
 - [Prepare action versioning](project_prepare_action_versioning.md) — consumed as `prepare@v0` (moving) / `@v0.1.0` (immutable); repo's FIRST git tags (ff-*/chs-* are image tags); on compatible action change bump v0.x.y + force-move v0; v1 reserved for repo-v1
 - [Split tests by `needs:` not matrix](project_test_split_by_needs_pattern.md) — when matrix flavors pull different `build-*` deps, split into sibling jobs so the lighter side doesn't wait for the heavier (e.g., test-gha-tools-effects + test-gha-tools-hardened-effects)
+- [A carried-over run id can be the wrong workflow](project_tracked_run_id_was_conformance_not_dispatch.md) — textstack-snap's "tracked chain" was PR #277's routine conformance run, not a build dispatch; check `workflowName` before trusting a multi-session note
+- [FinalizeArtifact 403 after a successful push is a GH flake](project_gha_finalizeartifact_403_flake.md) — promote job goes red, tags already landed; no action; also saw a GH-wide runner queue stall unrelated to our concurrency groups
+- [Dispatch 404, perf-gate ad-hoc A/B, stacked-PR rebase, tests-aports 403](project_gha_dispatch_and_stacked_pr_gotchas_2026_10_09.md) — branch-only workflow cannot be dispatched; candidate_build_args A/B ratio reads without/with; `rebase --onto` after squash; unauthenticated api.github.com 403 on runners

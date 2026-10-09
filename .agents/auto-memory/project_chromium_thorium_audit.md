@@ -58,7 +58,10 @@ reproduced here — this is the actionable subset):
   `-aggressive-ext-opt`, `-enable-pre=false`**: RobRich999-lineage lore
   flags with a history of miscompiles upstream; gvn-hoist mildly shrinks
   code (fetch-friendly in principle). One bundled candidate at most, after
-  #1 and #2 are read.
+  #1 and #2 are read. **PARKED 2026-09-24** into
+  [[parked_for_testing_image_family]] — a miscompile history is the
+  same class of reason as a security trade for keeping a lever off the
+  default tag.
 - **Parked — BOLT / Polly**: both are commented OUT in Thorium's own
   `args.gn` (not actually shipped). BOLT specifically matches our
   iTLB/two-.text-band diagnosis conceptually, but Alpine ships neither

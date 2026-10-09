@@ -1,6 +1,6 @@
 ---
 name: feedback_merge_without_review_here
-description: on ci-prebuilds jean does not review — merge green PRs myself, at the moment I judge best, without asking or announcing "unless you say otherwise"
+description: on ci-prebuilds jean does not review — commit straight to main by default; open a PR ONLY when a pull_request-triggered CI job is the proof needed; merge green PRs myself, never ask "open a PR?"
 metadata:
   type: feedback
 ---
@@ -47,6 +47,13 @@ Drained 7 that evening: merged #97 #98 #105 #106 #107 #79, closed #71. Only the
 parked draft #37 was left. Parked/draft PRs stay parked
 ([[feedback_superseded_label_not_close]]).
 
+**Extended 2026-09-25 to direct commits, not only PR merges.** Asked to
+commit the `tally.py --format eta` work ([[project_tally_eta_format_and_chain_shape]]):
+*"plz commit but strait to the default branch, there is no review process
+for this repo and won't be."* No PR, no worktree detour — rebase over
+whatever moved on `main` in the meantime, push straight. The "no review"
+waiver covers the commit act itself here, not just which PR gets merged.
+
 
 **Reinforced 2026-09-11:** *"you don't need my go to merge prs in this repo,
 do it whenever you deduce it's the best moment."* Said after a tally that ended
@@ -55,3 +62,12 @@ does not want. The timing is mine too, not only the act: merge when green and
 sound, in the order the dependency chain needs (a gate fix before the run that
 should read through it, a probe before the dispatch that uses it), and report
 it as done. No "shall I", no "unless you object", no waiting a turn.
+
+**Sharpened 2026-09-28 — a PR exists only to trigger CI.** I asked "push the
+branch and open the PR?" for a report fix; jean: *"I already told you to open
+prs only when you need to trigger specific CI as I don't review prs in this
+repo, the result is only proven by gates in the ci"*. Default = rebase on
+origin/main, run the local tests, push straight to main (push-triggered
+workflows run there). Open a PR only when the proving job runs on
+`pull_request` alone (or a label gate), and then merge it on green. Never
+ask either question. Applied: 6190c90 pushed to main directly.

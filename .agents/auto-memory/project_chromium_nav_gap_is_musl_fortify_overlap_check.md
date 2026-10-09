@@ -107,6 +107,34 @@ built: the snapshot subsumes both (also drops the object-size checks and
 matches the PGO profile's compiler), so their ceiling is ≤ snap. Only worth
 a chain if the packaged Alpine clang ever has to come back.
 
+**Chained anyway (2026-09-21, later the same day):** the header-level parity
+variant went out as its own candidate so the "subsumed" claim gets a number
+instead of an inference.
+
+**Lever (issue #259 candidate 4, now with the mechanism) — SHIPPED for build,
+2026-09-21.** Jean picked the **parity variant**: keep `_FORTIFY_SOURCE=2`
+and `sed`-patch the overlap `if` out of `/usr/include/fortify/string.h` in
+the setup image (size traps fold away like glibc's; semantics == official).
+The `-U_FORTIFY_SOURCE` outright removal stays parked as #259 candidate 4.
+PR #292 off `perf/chromium-textstack-snap`, cold chain **run 35650486287**
+(dispatched 22:20 Paris, ETA ≈ 2026-09-23 ~10:00 Paris) — a setup-layer edit,
+so full cold ([[project_chromium_round_images_sha_keyed]]).
+
+Self-asserted before dispatch: the patched header no longer contains
+`__d < __s`, trap count in the header dropped 13→12, and the TU compiling a
+16-byte stack `memcpy` has no `ud2` post-patch. Mutation-checked locally
+against `alpine:edge` + clang22: 1 `ud2` emitted before the patch, 0 after —
+confirms the patch removes the trap it targets, not a no-op.
+
+Concurrency note: this ran ALONGSIDE the still-in-flight textstack-snap
+chain (35645764121) with zero contention — `pab-<ref>-chs-source` keys off
+`github.ref`, and PR #292's branch is a different ref, so it's a fresh group
+([[project_gha_concurrency_group_serializes_dispatches]] corollary).
+
+Expected to move goto_warm, input, screenshot (the Skia `from_10101010_xr`
+stage does the same copies) — layout's residual is still the frontend-fetch
+shape, a separate lever.
+
 **How to apply:** when a musl build shows more instructions at higher IPC
 than its glibc twin, disassemble one hot leaf and look for
 `cmp/setb/seta/test/jne` pairs before a `ud2`, not for `__*_chk` symbols.

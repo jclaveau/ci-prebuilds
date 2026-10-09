@@ -2,6 +2,9 @@
 
 Full hooks for this area. The routing keys live in `.agents/auto-memory/MEMORY.md`; the memories themselves in `.agents/auto-memory/<slug>.md`.
 
+- [PW bump ↔ browser rev lockstep, gated on the perf gate](project_renovate_pw_lockstep_and_perf_prereq.md) — PR #289 groups PW_VERSION with CHS/FF/WK_REV so a driver bump can't ship without matching, gate-cleared browser builds
+- [Renovate silently disables automerge on a "reappeared" pin](project_renovate_reappearing_pin_kills_automerge.md) — #236/#237 stuck forever because old pins reappeared, even inside a COMMENTED line; grep for the old version, fix is a manual bump not a config change
+- [1x/week UTC schedule starved majors of PR slots](project_renovate_schedule_starved_majors.md) — PR #286: daily weekday schedule + prHourlyLimit 0 + majors automerge:false
 - [PW release tags can pin two different firefox versions](project_pw_release_tag_pins_disagree.md) — v1.60.0 browsers.json 150.0.2 vs UPSTREAM_CONFIG 147.0.1; we built and shipped 147.0.1 as ff-150.0.2; v1.62.0 is consistent
 - [WebKit version assertions](project_webkit_version_assertions.md) — `browser.version()` is a hardcoded playwright-core constant (vacuous); real signals = `SET_PROJECT_VERSION` (2.53.1→2.53.3) at source-prep + libWPEWebKit so-version (1.10.0→1.10.2) at smoke
 - [The aports pkgver rule had drifted in two of three copies](project_aports_pkgver_rule_drift.md) — mirrors claiming to mirror apply-and-build.sh kept strict equality after it went branch-level, making any PW bump structurally red; now one sourced file + unit test

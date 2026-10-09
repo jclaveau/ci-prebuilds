@@ -261,3 +261,6 @@ headed and a WPE-only artifact has no headed binary. Handled by the
 capability probe in PR #115, see
 [[project_wk_promote_gate_holds_the_nightly_bench]].
 
+
+## 2026-10-08: the widen step broke on PW 1e9d2b1f
+From 1e9d2b1f, bootstrap.diff declares permissionForAutomation under `public:`; prep-source.sh's hardcoded trailing `private:` privatised the rest of WebPageProxy (run 37792458209: 9 "is a private member" errors in UIProcess/wpe + glib). Fixed c79ef7b: the awk restores whichever access label was in effect. On a future PW bump, check that this decl still exists exactly once.
