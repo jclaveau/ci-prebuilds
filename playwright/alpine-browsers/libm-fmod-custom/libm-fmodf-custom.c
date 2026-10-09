@@ -4,10 +4,11 @@
  *   - d <= 40: one 64/64 divide, mx << d over my;
  *   - above, subnormal y, ey < 24 and non-finite x: 40 bits per divide.
  * chrome-headless-shell imports fmodf (and no fmod) from musl, so this is the
- * only libm-fmod-custom entry a preload can reach in chromium.
+ * only libm-fmod-custom entry a preload can reach in chromium. Firefox links
+ * it into libxul, which imports fmodf from musl too.
  *
- * Kept out of libm-fmod-custom.c on purpose: that source is also linked into
- * Firefox's libxul and V8, where a new global fmodf would change those builds.
+ * Kept out of libm-fmod-custom.c on purpose: V8 links that source with fmod
+ * renamed, and an fmodf there would silently take over chrome's fmodf calls.
  */
 #include <stdint.h>
 

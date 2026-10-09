@@ -57,9 +57,15 @@ done
 
 if [ -n "${ASM_CC:-}" ]; then
   # Firefox's form, as in run-gate.sh: gcc's assembly assembled by clang.
-  $CC -O2 -fPIC -S -o "$OUT/libm-fmod-custom.s" "$SRC/libm-fmod-custom.c"
-  $ASM_CC -c -fPIC -o "$OUT/libm-fmod-custom-asm.o" "$OUT/libm-fmod-custom.s"
-  $CC -shared -o "$OUT/libm-fmod-custom-asm.so" "$OUT/libm-fmod-custom-asm.o"
+  ASM_OBJECTS=
+  for src in $SOURCES; do
+    base=$(basename "$src" .c)
+    $CC -O2 -fPIC -S -o "$OUT/$base.s" "$src"
+    $ASM_CC -c -fPIC -o "$OUT/$base-asm.o" "$OUT/$base.s"
+    ASM_OBJECTS="$ASM_OBJECTS $OUT/$base-asm.o"
+  done
+  # shellcheck disable=SC2086
+  $CC -shared -o "$OUT/libm-fmod-custom-asm.so" $ASM_OBJECTS
 fi
 
 # The corrupted twins. Coupled to the source's shape on purpose: a sed that
@@ -111,8 +117,10 @@ done
 
 if [ -n "${ASM_CC:-}" ]; then
   echo "===== 2b. Firefox form: gcc assembly assembled by $ASM_CC ====="
-  run_with fmod "$OUT/libm-fmod-custom-asm.so"
-  echo "PASS: fmod, Firefox form"
+  for fn in $FUNCTIONS; do
+    run_with "$fn" "$OUT/libm-fmod-custom-asm.so"
+    echo "PASS: $fn, Firefox form"
+  done
 fi
 
 echo "===== 3. negative controls: libc-test must reject each corruption ====="

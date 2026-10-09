@@ -43,10 +43,11 @@ if [ -n "${ASM_CC:-}" ]; then
   # Firefox's form. libxul builds it with -fvisibility=hidden, left out here
   # so the preload can still interpose; the function body is the same.
   $CC -O2 -fPIC -S -o "$OUT/libm-fmod-custom.s" "$SRC/libm-fmod-custom.c"
+  $CC -O2 -fPIC -S -o "$OUT/libm-fmodf-custom.s" "$SRC/libm-fmodf-custom.c"
   $ASM_CC -c -fPIC -o "$OUT/libm-fmod-custom-asm.o" "$OUT/libm-fmod-custom.s"
-  # chromium has no Firefox form: fmodf rides in the gcc-built preload only, so
-  # 4b's fmodf is musl's and its digests must still match.
-  $CC -shared -o "$OUT/libm-fmod-custom-asm.so" "$OUT/libm-fmod-custom-asm.o"
+  $ASM_CC -c -fPIC -o "$OUT/libm-fmodf-custom-asm.o" "$OUT/libm-fmodf-custom.s"
+  $CC -shared -o "$OUT/libm-fmod-custom-asm.so" "$OUT/libm-fmod-custom-asm.o" \
+    "$OUT/libm-fmodf-custom-asm.o"
 fi
 # The corrupted twin: every reduction divides by the wrong modulus — fmod's
 # single-divide fast path and general path, fmodf's 32-bit and 64-bit fast
@@ -115,7 +116,7 @@ if [ -n "${ASM_CC:-}" ]; then
     || { echo "FAIL: libm-fmod-custom-asm.so did not load" >&2; exit 1; }
   LD_PRELOAD="$OUT/libm-fmod-custom-asm.so" "$OUT/vectors" > "$OUT/subject-asm.txt"
   if ! diff -u "$OUT/reference.txt" "$OUT/subject-asm.txt" > "$OUT/diff-asm.txt"; then
-    echo "FAIL: the Firefox form is not bit-identical to musl's fmod" >&2
+    echo "FAIL: the Firefox form is not bit-identical to musl's fmod/fmodf" >&2
     head -40 "$OUT/diff-asm.txt" >&2
     exit 1
   fi
