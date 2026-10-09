@@ -12,9 +12,11 @@ $cc -O2 -fPIC -shared -o "$out/hybrid.so" "$here/../hybrid.c"
 $cc -O2 -fPIC -shared -o "$out/fprem126.so" "$here/../fprem126.c"
 $cc -O2 -fPIC -shared -o "$out/unified.so" "$here/../unified.c"
 set -- "$out/shipped.so" "$out/hybrid.so" "$out/fprem126.so" "$out/unified.so"
-# libxul is clang-built, so time the clang codegen of the same source too.
-if command -v clang >/dev/null; then
-  clang -O2 -fPIC -shared -o "$out/unified-clang.so" "$here/../unified.c"
+# libxul is clang-built, so time the clang codegen of the same source too,
+# with the builder's clang (CLANG=clang-23).
+clang="${CLANG:-clang}"
+if command -v "$clang" >/dev/null; then
+  "$clang" -O2 -fPIC -shared -o "$out/unified-clang.so" "$here/../unified.c"
   set -- "$@" "$out/unified-clang.so"
 fi
 # Firefox's fmod: compiler_builtins' libm fmod, pulled out of the rlib that
