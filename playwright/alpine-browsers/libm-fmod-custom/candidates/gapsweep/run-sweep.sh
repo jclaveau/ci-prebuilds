@@ -7,17 +7,17 @@ here="$(dirname "$0")"
 out="${TMPDIR:-/tmp}/gapsweep"
 mkdir -p "$out"
 cc="${CC:-gcc}"
-$cc -O2 -fPIC -shared -o "$out/shipped.so" "$here/../../fastfmod.c"
+$cc -O2 -fPIC -shared -o "$out/shipped.so" "$here/../fastfmod.c"
 $cc -O2 -fPIC -shared -o "$out/hybrid.so" "$here/../hybrid.c"
 $cc -O2 -fPIC -shared -o "$out/fprem126.so" "$here/../fprem126.c"
-$cc -O2 -fPIC -shared -o "$out/unified.so" "$here/../unified.c"
-set -- "$out/shipped.so" "$out/hybrid.so" "$out/fprem126.so" "$out/unified.so"
+$cc -O2 -fPIC -shared -o "$out/libm-fmod-custom.so" "$here/../../libm-fmod-custom.c"
+set -- "$out/shipped.so" "$out/hybrid.so" "$out/fprem126.so" "$out/libm-fmod-custom.so"
 # libxul is clang-built, so time the clang codegen of the same source too,
 # with the builder's clang (CLANG=clang-23).
 clang="${CLANG:-clang}"
 if command -v "$clang" >/dev/null; then
-  "$clang" -O2 -fPIC -shared -o "$out/unified-clang.so" "$here/../unified.c"
-  set -- "$@" "$out/unified-clang.so"
+  "$clang" -O2 -fPIC -shared -o "$out/libm-fmod-custom-clang.so" "$here/../../libm-fmod-custom.c"
+  set -- "$@" "$out/libm-fmod-custom-clang.so"
 fi
 # Firefox's fmod: compiler_builtins' libm fmod, pulled out of the rlib that
 # rustc ships (Alpine's `rust` package). The rlib's `fmod` is weak, which ld

@@ -3,7 +3,7 @@
 # image invokes it, and prints one `unwind-counter` line per process that ran.
 #
 # The preload has to be PREPENDED rather than exported: our pw_run.sh assigns
-# LD_PRELOAD outright (mimalloc + fastfmod), so an exported value would be
+# LD_PRELOAD outright (mimalloc + libm-fmod-custom), so an exported value would be
 # dropped before the browser starts. Playwright's own pw_run.sh assigns
 # nothing, so there the line is inserted instead.
 #

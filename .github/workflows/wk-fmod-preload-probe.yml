@@ -3,7 +3,7 @@ name: WebKit fmod preload probe
 # WebKit's `libm_fmod` reads 3.12x official on the SHIPPED image (run
 # 34044034800, n=5, `latest` at cc14e44) — 184 ms against official's 59 —
 # even though Dockerfile.alpine wraps pw_run.sh with
-# `LD_PRELOAD=…libmimalloc-insecure.so.2:…libfastfmod.so`, and the fastfmod
+# `LD_PRELOAD=…libmimalloc-insecure.so.2:…libm-fmod-custom.so`, and the libm-fmod-custom
 # gate proves that object is bit-identical to musl's fmod and roughly 2.4x
 # faster. Firefox, whose shim reaches its content process, reads 0.64x on the
 # same kernel in the same run.
@@ -64,8 +64,8 @@ jobs:
           set -euo pipefail
           docker pull "$OURS"
           docker run --rm --entrypoint sh "$OURS" -c '
-            echo "--- libfastfmod.so"
-            ls -l /usr/lib/libfastfmod.so /usr/lib/libmimalloc-insecure.so.2 || true
+            echo "--- libm-fmod-custom.so"
+            ls -l /usr/lib/libm-fmod-custom.so /usr/lib/libmimalloc-insecure.so.2 || true
             echo "--- pw_run.sh (the wrapper, if it shipped)"
             for f in /ms-playwright/webkit-*/pw_run.sh; do
               echo "== $f"; cat "$f"
@@ -87,7 +87,7 @@ jobs:
           for arm in as-shipped forced; do
             preload=""
             if [ "$arm" = forced ]; then
-              preload="--env LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so"
+              preload="--env LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libm-fmod-custom.so"
             fi
             echo "::group::$arm"
             # shellcheck disable=SC2086
@@ -168,8 +168,8 @@ jobs:
               for d in /proc/[0-9]*; do
                 cmd=$(tr "\0" " " < "$d/cmdline" 2>/dev/null | cut -c1-90)
                 [ -n "$cmd" ] || continue
-                if grep -q fastfmod "$d/maps" 2>/dev/null; then m=MAPPED; else m=absent; fi
-                if grep -qa fastfmod "$d/environ" 2>/dev/null; then e=in-env; else e=no-env; fi
+                if grep -q libm-fmod-custom "$d/maps" 2>/dev/null; then m=MAPPED; else m=absent; fi
+                if grep -qa libm-fmod-custom "$d/environ" 2>/dev/null; then e=in-env; else e=no-env; fi
                 echo "$m/$e  $d  $cmd"
               done
               wait
@@ -202,7 +202,7 @@ jobs:
             '#!/bin/sh' \
             'DIR="$(dirname "$0")"' \
             'export FMOD_COUNT_OUT=/count/calls' \
-            'export LD_PRELOAD=/count/libcounter.so:/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so' \
+            'export LD_PRELOAD=/count/libcounter.so:/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libm-fmod-custom.so' \
             'exec "$DIR/pw_run.real.sh" "$@"' \
             > count/pw_run.sh
           chmod +x count/pw_run.sh
@@ -211,7 +211,7 @@ jobs:
           # died with `gcc: not found`. Same musl either way, and the object
           # only dlsym()s.
           docker run --rm \
-            -v "$PWD/playwright/alpine-browsers/webkit/fastfmod:/src:ro" \
+            -v "$PWD/playwright/alpine-browsers/libm-fmod-custom:/src:ro" \
             -v "$PWD/count:/count" \
             alpine:edge sh -c '
               apk add --no-cache gcc musl-dev >/dev/null 2>&1

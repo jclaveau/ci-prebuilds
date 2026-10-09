@@ -13,12 +13,12 @@ on:
       # runner minutes.
       - 'playwright/alpine-browsers/**'
       # …except the paths under it that Dockerfile.alpine COPYs, which are
-      # therefore inputs to THIS image and not the producer's. libfastfmod.so,
+      # therefore inputs to THIS image and not the producer's. libm-fmod-custom.so,
       # libz-ng-compat.so.1 and libfaststring.so are all compiled here, and
       # strip-bundled-libs.sh runs here. Without these negations a change to
       # any of them lands on main and never reaches a published image: #167
       # rewrote the fmod shim, merged green, and published nothing.
-      - '!playwright/alpine-browsers/webkit/fastfmod/**'
+      - '!playwright/alpine-browsers/libm-fmod-custom/**'
       - '!playwright/alpine-browsers/webkit/zlib-ng/**'
       - '!playwright/alpine-browsers/webkit/scripts/strip-bundled-libs.sh'
       - '!playwright/alpine-browsers/chromium-headless-shell/faststring/**'
@@ -35,7 +35,7 @@ on:
     branches: [ main ]
     paths-ignore:
       - 'playwright/alpine-browsers/**'
-      - '!playwright/alpine-browsers/webkit/fastfmod/**'
+      - '!playwright/alpine-browsers/libm-fmod-custom/**'
       - '!playwright/alpine-browsers/webkit/zlib-ng/**'
       - '!playwright/alpine-browsers/webkit/scripts/strip-bundled-libs.sh'
       - '!playwright/alpine-browsers/chromium-headless-shell/faststring/**'

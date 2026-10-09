@@ -245,7 +245,7 @@ jobs:
               # tracepoints' pids meet the names in /proc (see the chromium
               # job for the first run that read every row as `:pid`). The
               # cgroup filter (-G /) still scopes the samples to this
-              # container. The engine's own preloads (mimalloc, fastfmod,
+              # container. The engine's own preloads (mimalloc, libm-fmod-custom,
               # zlib-ng) come from the image's launch shim, untouched: this
               # profiles the browser as shipped.
               docker run --rm --name "$cname" \

@@ -45,7 +45,7 @@ cp "$(dirname "$0")/../webkit/scripts/strip-bundled-libs.sh" "$TMPDIR/"
 cp "$(dirname "$0")/../webkit/scripts/strip-mesa-closure.sh" "$TMPDIR/"
 # The fmod interposer the webkit launcher preloads: conformance has to run
 # the same libm the image ships, or it validates a build nobody runs.
-cp -r "$(dirname "$0")/../webkit/fastfmod" "$TMPDIR/"
+cp -r "$(dirname "$0")/../libm-fmod-custom" "$TMPDIR/"
 cp -r "$(dirname "$0")/../webkit/zlib-ng" "$TMPDIR/"
 # The string interposer the chromium launcher preloads, for the same reason.
 cp -r "$(dirname "$0")/../chromium-headless-shell/faststring" "$TMPDIR/"
@@ -503,9 +503,9 @@ RUN bash /tmp/strip-mesa-closure.sh /ms-playwright/webkit-${ARTIFACT_REV}/minibr
 # through musl's mallocng, and conformance has to exercise the allocator we
 # actually ship. pw_run.sh resolves everything from \$(dirname "\$0"), so it
 # does not care that it was renamed inside its own directory.
-COPY fastfmod /tmp/fastfmod
+COPY libm-fmod-custom /tmp/libm-fmod-custom
 RUN apk add --no-cache gcc musl-dev \\
- && gcc -O2 -fPIC -shared -o /usr/lib/libfastfmod.so /tmp/fastfmod/fastfmod.c \\
+ && gcc -O2 -fPIC -shared -o /usr/lib/libm-fmod-custom.so /tmp/libm-fmod-custom/libm-fmod-custom.c \\
  && apk del gcc musl-dev
 # zlib-ng, the third preload the shipped wrapper carries. Same script the
 # consumer image runs, so conformance encodes PNGs through the encoder we
@@ -518,7 +518,7 @@ RUN WKRUN=/ms-playwright/webkit-${ARTIFACT_REV}/pw_run.sh \\
  && printf '%s\\n' \\
       '#!/bin/sh' \\
       'D="\${0%/*}"' \\
-      'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so:/usr/lib/libz-ng-compat.so.1' \\
+      'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libm-fmod-custom.so:/usr/lib/libz-ng-compat.so.1' \\
       'exec "\$D/pw_run.real.sh" "\$@"' \\
       > "\$WKRUN" \\
  && chmod +x "\$WKRUN"

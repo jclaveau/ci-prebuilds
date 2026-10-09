@@ -2,7 +2,7 @@
  * Drives a fixed, deterministic operand stream through whatever `fmod` the
  * loader bound, and prints a fingerprint of the RAW RESULT BITS.
  *
- * The gate runs this twice — once plain, once with libfastfmod.so preloaded —
+ * The gate runs this twice — once plain, once with libm-fmod-custom.so preloaded —
  * and diffs the two outputs. Comparing bits rather than values means a
  * differing signed zero or NaN payload fails; comparing two runs of the SAME
  * binary means the reference is musl's own fmod rather than anything I wrote.
@@ -139,7 +139,7 @@ int main(void) {
    * build that silently loses the speedup is still visible in the log, and
    * opt-in so the gate's two verification-only runs — the call counter and
    * the corrupted control — do not pay for 15M extra calls each. */
-  if (!getenv("FASTFMOD_TIMING")) {
+  if (!getenv("LIBM_FMOD_CUSTOM_TIMING")) {
     return 0;
   }
   double best = 1e18;

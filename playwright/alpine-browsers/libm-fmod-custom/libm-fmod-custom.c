@@ -1,29 +1,33 @@
 /*
- * fastfmod with two extra reduction paths, chosen by exponent gap d:
- *   - d <= FPREM_GAP (x86_64 only, off unless defined): the x87 `fprem` loop
- *     V8 emits for JS `%` and musl ships as src/math/x86_64/fmodl.c;
- *   - d <= WIDE_GAP: fastfmod's 11-bits-per-divide loop, unchanged;
+ * One fmod for WebKit and Firefox, path chosen by exponent gap d:
+ *   - d <= 11: one 64/64 divide on significands lifted to bit 63;
+ *   - d - min(d, tz(y)) <= 11: the same single divide, y's trailing zeros
+ *     folded out of the gap (integer divisors);
+ *   - d <= 22: two 64/64 divides, 11 then d-11 bits;
+ *   - d <= 63: one 128/64 divq (x86_64);
  *   - above: Rust libm's linear_mul_reduction, one divide then one
  *     64x64->128 multiply per 63 bits of gap.
- * Bit-exact against musl on fastfmod-vectors.c and a 15-gap sweep.
+ * Subnormal y, ey < 53 and non-finite x take candidates/hybrid.c's general path.
+ * Bit-exact against glibc 2.41 on an 18-gap sweep (i3-4005U).
  */
 #include <stdint.h>
-#include <string.h>
 
 #define MANT_MASK 0x000fffffffffffffULL
 #define IMPLICIT  0x0010000000000000ULL
 #define SIGN_BIT  0x8000000000000000ULL
 #define EXP_MASK  0x7ffULL
 
+/* __builtin_memcpy, not memcpy: under musl's fortify headers clang keeps an
+ * overlap check per call, doubling the instructions on the short paths. */
 static inline uint64_t to_bits(double d) {
   uint64_t u;
-  memcpy(&u, &d, sizeof u);
+  __builtin_memcpy(&u, &d, sizeof u);
   return u;
 }
 
 static inline double to_double(uint64_t u) {
   double d;
-  memcpy(&d, &u, sizeof u);
+  __builtin_memcpy(&d, &u, sizeof u);
   return d;
 }
 
@@ -50,7 +54,9 @@ typedef unsigned __int128 u128;
 static inline uint64_t div_hi(uint64_t hi, uint64_t den, uint64_t *rem) {
 #if defined(__x86_64__)
   uint64_t q, r;
-  __asm__("divq %4" : "=a"(q), "=d"(r) : "a"(0ULL), "d"(hi), "rm"(den));
+  /* "r", not "rm": given the choice, clang spills den and divides from the
+   * stack, a store-forward on the divide's critical path. */
+  __asm__("divq %4" : "=a"(q), "=d"(r) : "a"(0ULL), "d"(hi), "r"(den));
   *rem = r;
   return q;
 #else
@@ -137,6 +143,80 @@ static inline double fprem_mod(double x, double y) {
 double fmod(double x, double y) {
   uint64_t ux = to_bits(x);
   uint64_t uy = to_bits(y);
+  uint64_t ax = ux & ~SIGN_BIT;
+  uint64_t ay = uy & ~SIGN_BIT;
+  if (ax < ay) {
+    if (ay <= 0x7ff0000000000000ULL) {
+      return x;
+    }
+  } else {
+    uint64_t ex_fast = ax >> 52;
+    uint64_t ey_fast = ay >> 52;
+    /* y normal with ey >= 53 and at most 11 bits of gap: one divide on
+     * significands lifted to bit 63, and the result cannot be subnormal
+     * because it keeps at least 11 - gap trailing zeros of y's alignment. */
+    if (ey_fast - 53 <= 0x7be && ex_fast != 0x7ff) {
+      uint64_t sign_fast = ux & SIGN_BIT;
+      uint64_t d_fast = ex_fast - ey_fast;
+      if (d_fast <= 11) {
+        uint64_t mx_fast = (ax << 11) | SIGN_BIT;
+        uint64_t my_fast = (ay << 11) | SIGN_BIT;
+        uint64_t r_fast;
+        if (d_fast == 0) {
+          r_fast = mx_fast - my_fast;
+        } else {
+          r_fast = mx_fast % (my_fast >> d_fast);
+        }
+        if (r_fast == 0) {
+          return to_double(sign_fast);
+        }
+        int lz = __builtin_clzll(r_fast);
+        return to_double(sign_fast + ((ex_fast - lz - 1) << 52) + ((r_fast << lz) >> 11));
+      }
+      uint64_t mx53 = (ax & MANT_MASK) | IMPLICIT;
+      uint64_t my53 = (ay & MANT_MASK) | IMPLICIT;
+      /* y's trailing zeros fold into the gap: with s = min(d, tz(y)),
+       * (mx << d) % my == ((mx << (d - s)) % (my >> s)) << s, one 64/64
+       * divide while d - s <= 11. Integer divisors carry many such zeros. */
+      uint64_t tz_fast = (uint64_t)__builtin_ctzll(my53);
+      if (d_fast <= tz_fast + 11) {
+        uint64_t s_fast = d_fast < tz_fast ? d_fast : tz_fast;
+        uint64_t r_tz = ((mx53 << (d_fast - s_fast)) % (my53 >> s_fast)) << s_fast;
+        if (r_tz == 0) {
+          return to_double(sign_fast);
+        }
+        int lz = __builtin_clzll(r_tz);
+        return to_double(sign_fast + ((ey_fast - (uint64_t)(lz - 11) - 1) << 52) +
+                         (r_tz << (lz - 11)));
+      }
+      if (d_fast <= 22) {
+        /* Two 64/64 divides, 11 then d-11 bits: both dividends fit 64 bits. */
+        uint64_t r_two = ((mx53 << 11) % my53 << (d_fast - 11)) % my53;
+        if (r_two == 0) {
+          return to_double(sign_fast);
+        }
+        int lz = __builtin_clzll(r_two);
+        return to_double(sign_fast + ((ey_fast - (uint64_t)(lz - 11) - 1) << 52) +
+                         (r_two << (lz - 11)));
+      }
+      if (d_fast <= 63) {
+        /* One 128/64 divide: mx53 << d over my53. The high word is below
+         * 2^52 < my53, so the quotient fits and divq cannot fault. */
+        uint64_t q_unused, r_mid;
+        __asm__("divq %4"
+                : "=a"(q_unused), "=d"(r_mid)
+                : "a"(mx53 << d_fast), "d"(mx53 >> (64 - d_fast)), "r"(my53));
+        (void)q_unused;
+        if (r_mid == 0) {
+          return to_double(sign_fast);
+        }
+        int lz = __builtin_clzll(r_mid);
+        return to_double(sign_fast + ((ey_fast - (uint64_t)(lz - 11) - 1) << 52) +
+                         (r_mid << (lz - 11)));
+      }
+      return fmod_wide(sign_fast, (int)ey_fast, mx53, (int)d_fast, my53);
+    }
+  }
   uint64_t sign = ux & SIGN_BIT;
   int ex = (int)(ux >> 52 & EXP_MASK);
   int ey = (int)(uy >> 52 & EXP_MASK);

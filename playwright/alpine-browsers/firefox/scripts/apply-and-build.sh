@@ -402,10 +402,10 @@ fi
 #     is compiler_builtins' weak Rust copy; a strong hidden definition linked
 #     into libxul replaces it, and the check after the build proves which won.
 #     The Dockerfile hands over gcc's assembly, hidden visibility already set.
-cp /work/firefox/fastfmod/fastfmod-unified.s js/src/fastfmod-unified.s
+cp /work/firefox/libm-fmod-custom/libm-fmod-custom.s js/src/libm-fmod-custom.s
 cat >> js/src/moz.build <<'EOF'
 
-SOURCES += ["fastfmod-unified.s"]
+SOURCES += ["libm-fmod-custom.s"]
 EOF
 
 # 7. Compose mozconfig: aports' + our overlay (or minimal default if skipping aports).
@@ -915,15 +915,15 @@ fi
 echo "===== fmod definitions seen by the linker ====="
 grep -E ': (lazy )?definition of fmod$' /work/mach-build.log | sort -u | sed 's/^/  /' || true
 echo "===== end fmod definitions ====="
-if ! grep -qE 'fastfmod-unified\.o\)?: definition of fmod$' /work/mach-build.log; then
-  echo "ERROR: no link saw fastfmod-unified.o define fmod" >&2
+if ! grep -qE 'libm-fmod-custom\.o\)?: definition of fmod$' /work/mach-build.log; then
+  echo "ERROR: no link saw libm-fmod-custom.o define fmod" >&2
   exit 1
 fi
 if readelf --dyn-syms -W "$XUL" | awk '$7 != "UND" && $8 == "fmod"' | grep -q .; then
   echo "ERROR: libxul exports fmod" >&2
   exit 1
 fi
-echo "  libxul links fastfmod-unified.o's fmod, not exported ✓"
+echo "  libxul links libm-fmod-custom.o's fmod, not exported ✓"
 
 # `| head -20` would trigger SIGPIPE under `set -o pipefail` (ls writes ~100s
 # of lines, head closes stdin at 20, ls exits 141, pipefail propagates). Use
