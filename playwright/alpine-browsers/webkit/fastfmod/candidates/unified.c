@@ -1,30 +1,33 @@
 /*
  * One fmod for WebKit and Firefox, path chosen by exponent gap d:
  *   - d <= 11: one 64/64 divide on significands lifted to bit 63;
+ *   - d - min(d, tz(y)) <= 11: the same single divide, y's trailing zeros
+ *     folded out of the gap (integer divisors);
  *   - d <= 22: two 64/64 divides, 11 then d-11 bits;
  *   - d <= 63: one 128/64 divq (x86_64);
  *   - above: Rust libm's linear_mul_reduction, one divide then one
  *     64x64->128 multiply per 63 bits of gap.
  * Subnormal y, ey < 53 and non-finite x take hybrid.c's general path.
- * Bit-exact against glibc 2.41 on a 15-gap sweep (i3-4005U).
+ * Bit-exact against glibc 2.41 on an 18-gap sweep (i3-4005U).
  */
 #include <stdint.h>
-#include <string.h>
 
 #define MANT_MASK 0x000fffffffffffffULL
 #define IMPLICIT  0x0010000000000000ULL
 #define SIGN_BIT  0x8000000000000000ULL
 #define EXP_MASK  0x7ffULL
 
+/* __builtin_memcpy, not memcpy: under musl's fortify headers clang keeps an
+ * overlap check per call, doubling the instructions on the short paths. */
 static inline uint64_t to_bits(double d) {
   uint64_t u;
-  memcpy(&u, &d, sizeof u);
+  __builtin_memcpy(&u, &d, sizeof u);
   return u;
 }
 
 static inline double to_double(uint64_t u) {
   double d;
-  memcpy(&d, &u, sizeof u);
+  __builtin_memcpy(&d, &u, sizeof u);
   return d;
 }
 
@@ -170,6 +173,20 @@ double fmod(double x, double y) {
       }
       uint64_t mx53 = (ax & MANT_MASK) | IMPLICIT;
       uint64_t my53 = (ay & MANT_MASK) | IMPLICIT;
+      /* y's trailing zeros fold into the gap: with s = min(d, tz(y)),
+       * (mx << d) % my == ((mx << (d - s)) % (my >> s)) << s, one 64/64
+       * divide while d - s <= 11. Integer divisors carry many such zeros. */
+      uint64_t tz_fast = (uint64_t)__builtin_ctzll(my53);
+      if (d_fast <= tz_fast + 11) {
+        uint64_t s_fast = d_fast < tz_fast ? d_fast : tz_fast;
+        uint64_t r_tz = ((mx53 << (d_fast - s_fast)) % (my53 >> s_fast)) << s_fast;
+        if (r_tz == 0) {
+          return to_double(sign_fast);
+        }
+        int lz = __builtin_clzll(r_tz);
+        return to_double(sign_fast + ((ey_fast - (uint64_t)(lz - 11) - 1) << 52) +
+                         (r_tz << (lz - 11)));
+      }
       if (d_fast <= 22) {
         /* Two 64/64 divides, 11 then d-11 bits: both dividends fit 64 bits. */
         uint64_t r_two = ((mx53 << 11) % my53 << (d_fast - 11)) % my53;
