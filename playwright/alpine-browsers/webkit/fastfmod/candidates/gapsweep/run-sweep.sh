@@ -15,7 +15,10 @@ set -- "$out/shipped.so" "$out/hybrid.so" "$out/fprem126.so" "$out/unified.so"
 # libxul is clang-built, so time the clang codegen of the same source too.
 if command -v clang >/dev/null; then
   clang -O2 -fPIC -shared -o "$out/unified-clang.so" "$here/../unified.c"
-  set -- "$@" "$out/unified-clang.so"
+  # clang's idivq-to-divl puts a 32-bit test before every 64-bit divide.
+  clang -O2 -fPIC -shared -Xclang -target-feature -Xclang -idivq-to-divl \
+    -o "$out/unified-clang-nodivl.so" "$here/../unified.c"
+  set -- "$@" "$out/unified-clang.so" "$out/unified-clang-nodivl.so"
 fi
 # Firefox's fmod: compiler_builtins' libm fmod, pulled out of the rlib that
 # rustc ships (Alpine's `rust` package). The rlib's `fmod` is weak, which ld
