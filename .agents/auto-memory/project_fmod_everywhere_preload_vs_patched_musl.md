@@ -214,3 +214,10 @@ Scripts: scratchpad libctest/run/{run,neg}.sh.
 - Fix measured: gcc `-Wa,-mbranches-within-32B-boundaries`. Kaby 5 reps final+flag vs shipped: gaps 0-8 0.88-0.97, gaps 9-12 0.56. Haswell 3 reps: costs +1 cycle at gaps 0-8 (26 vs 25, 1.04); elsewhere within 1 cycle.
 - 0 mismatches on every rep, both boxes, musl gcc/clang-23 and glibc.
 **How to apply:** any gcc build of libm-fmodf-custom.c (preload + Firefox .s) needs the flag if the final code ships; a hot path's speed on Skylake-family is layout luck without it. Recheck with an objdump of the d<=8 block address.
+
+## fmodf CI per-gap microbench 2026-10-10, run 38003039409 (#334 head 1f2e731, ns/call median)
+- 8 draws, ALL AMD: 6x EPYC 7763 (Zen3), 1x 9V74 (Zen4), 1x 9V45 (Zen5). No Intel drawn, so the JCC flag is unverified on CI Intel; on AMD it is neutral (new vs unpadded 1.00 except single-draw blips).
+- New (divl) vs previous single-divide, gcc, 7763: gaps 1-8 4.7 vs 4.4 (1.07), gaps 9-29 1.04-1.07, g32-g150 1.33-1.41, g200 35.9 vs 12.0 (2.99), g250 1.62, sub0 1.12. Zen4 alike (g200 3.03). Zen5 near parity below g32.
+- Cause: Zen's 64-bit divide is as fast as divl, so the extra divl steps and the 40-bit reciprocal loop (d>155) only add work. The Haswell win does not carry to Zen.
+- Both versions stay 0.02-0.30x musl; vs glibc 2.39 new loses c40-c250 (1.05-1.66) on every Zen.
+**How to apply:** do not ship divl/reciprocal paths on Haswell numbers alone; CI runners are Zen. A per-CPU win needs both a Haswell/Skylake and a Zen draw before merge.
