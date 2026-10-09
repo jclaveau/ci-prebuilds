@@ -78,7 +78,7 @@ static int cmp_double(const void *a, const void *b) {
 }
 
 int main(int argc, char **argv) {
-  int gaps[] = {0, 5, 11, 21, 32, 44, 55, 64, 80, 100, 150, 250, 500, 1000, 2000};
+  int gaps[] = {0, 5, 11, 16, 21, 26, 32, 40, 44, 55, 64, 80, 100, 150, 250, 500, 1000, 2000};
   int ngaps = sizeof gaps / sizeof gaps[0];
   int nimpl = argc;
   fmod_fn impl[16];
