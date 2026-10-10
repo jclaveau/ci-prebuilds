@@ -221,3 +221,20 @@ Scripts: scratchpad libctest/run/{run,neg}.sh.
 - Cause: Zen's 64-bit divide is as fast as divl, so the extra divl steps and the 40-bit reciprocal loop (d>155) only add work. The Haswell win does not carry to Zen.
 - Both versions stay 0.02-0.30x musl; vs glibc 2.39 new loses c40-c250 (1.05-1.66) on every Zen.
 **How to apply:** do not ship divl/reciprocal paths on Haswell numbers alone; CI runners are Zen. A per-CPU win needs both a Haswell/Skylake and a Zen draw before merge.
+
+## #334 swap-back + libxul link fix (2026-10-10, head 55c8242, FF build 38033464904)
+- divl fmodf lost on Zen → single-divide body restored as shipped; divl version parked at `candidates/fmodf/fmodf-divl.c` (header says why).
+- FF build 37988293902 RED on own link check "no link saw libm-fmodf-custom.o define fmodf". Trace-symbol: every fmodf ref is Rust (libgkrust.a: webrender, style, wgpu_core, naga), linked AFTER `static:xul`/libjs_static.a → archive member never pulled. fmod worked (JS refs it first).
+- Fix: `LDFLAGS += ["-Wl,-u,fmodf"]` appended to `toolkit/library/build/moz.build` (`Libxul("xul-real")`); script fails loud if anchor missing. Unproven until 38033464904 passes (~3.5h).
+- JCC leftover: gas `-mbranches-within-32B-boundaries` pads jumps not `ret`; each shipped fmodf object keeps 1 `ret` ending on a 32B line. `-Wa,-malign-branch=jcc+fused+jmp+ret` covers it — measured 2026-10-10, see below.
+- Gate now 6 twins (2 fmod, 4 fmodf); libc-test rejects the 64/64 twin (48 lines).
+- Gotchas: busybox awk has no `strtonum` (count erratum hits via host `python3 -I` on objdump); fr locale breaks readelf column awk; zsh `echo =====` = `=cmd` lookup, quote it; a watcher querying `gh run` right after push gets an empty ID — poll until the run exists.
+
+## JCC `ret` + fmod flag measured (2026-10-10, local only, NOT shipped)
+- Static (shipped .so composition, gcc 15.2): fmodf `pad` keeps 1 `ret` (the |x|<|y| `return x` exit, fmodf+0x3f); `pad+ret` → 0. fmod unpadded = 7 jumps on a 32B line (ja, jp, je x3, jne, jmp); `pad` → 0; fmod `pad` and `pad+ret` build byte-identical.
+- Haswell i3-4005U (famille-laptop, no erratum, 2 passes, 1/184 cells disagree >=5%): fmodf `pad+ret` lt0 5.0 vs 4.4 ns (1.14), 8 vs 7 cycles; fmod `pad` gaps 16/21 47.4 vs 44.1 ns (1.07), 75 vs 70 cycles. Padding COSTS where no erratum.
+- Kaby Lake R i5-8350U (this laptop, erratum CPU): unreadable — 102/184 then 147/184 cells disagree >=5% even pinned (taskset, desktop load ~1.1-1.6; cycles vary too). Only steady signal: fmodf lt0 `pad+ret` 7 vs 8 cycles (-1), fmod gap 0 `pad` 27 vs 29-30 cycles.
+- CI fleet has no Skylake-derived CPU (EPYC 84%, 8573C, 8370C Ice Lake, 6973P) → erratum gain hits ~0% of runs.
+**Why not shipped:** +1 cycle on Kaby vs -1 on Haswell for fmodf lt0; fmod gain unproven on the erratum CPU, cost proven on Haswell.
+**How to apply:** do not add `ret` or pad fmod unless an erratum CPU becomes a target; a laptop bench needs an idle desktop (cycles counters vary under load, pinning does not help). Harness: scratchpad jccret/run.sh + agg.py (2x3 flag variants of the shipped .so, gapf + gapsweep).
+
