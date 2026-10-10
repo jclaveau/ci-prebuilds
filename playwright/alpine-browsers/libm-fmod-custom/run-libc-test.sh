@@ -91,12 +91,12 @@ corrupt "$SRC/libm-fmod-custom.c" "$OUT/invalid-fmod.c" \
 $CC -O2 -fPIC -shared -o "$OUT/value-fmod.so" "$OUT/value-fmod.c"
 $CC -O2 -fPIC -shared -o "$OUT/invalid-fmod.so" "$OUT/invalid-fmod.c"
 if [ -f "$SRC/libm-fmodf-custom.c" ]; then
-  # The d <= 8 path alone; a second value twin breaks the 64/32 path that
+  # The d <= 8 path alone; a second value twin breaks the d <= 40 path that
   # libc-test's cases also reach, so the control is not one path deep.
   corrupt "$SRC/libm-fmodf-custom.c" "$OUT/value-fmodf.c" \
     'r_fast = mx_fast % (my_fast >> d_fast);' 'r_fast = mx_fast % (my_fast >> (d_fast + 1));'
   corrupt "$SRC/libm-fmodf-custom.c" "$OUT/value_mid-fmodf.c" \
-    'r_mid = narrow_rem(mx24 << d_fast, my24);' 'r_mid = narrow_rem(mx24 << d_fast, my24 + 1);'
+    'r_mid = (uint32_t)((mx24 << d_fast) % my24);' 'r_mid = (uint32_t)((mx24 << d_fast) % (my24 + 1));'
   corrupt "$SRC/libm-fmodf-custom.c" "$OUT/invalid-fmodf.c" \
     'return (x \* y) / (x \* y);' 'return __builtin_nanf("");'
   $CC -O2 -fPIC -shared -o "$OUT/value-fmodf.so" "$OUT/value-fmodf.c"

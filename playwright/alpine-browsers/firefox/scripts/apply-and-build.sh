@@ -411,6 +411,18 @@ cat >> js/src/moz.build <<'EOF'
 SOURCES += ["libm-fmod-custom.s", "libm-fmodf-custom.s"]
 SOURCES["libm-fmodf-custom.s"].flags += ["-mbranches-within-32B-boundaries"]
 EOF
+# Every fmodf reference in libxul is a libcall that Rust's LTO codegen emits
+# (webrender, style, wgpu, naga), after lld has scanned the archives, so the
+# member defining fmodf is never fetched and the call binds to musl. -u makes
+# fmodf undefined from the start, which fetches it from libjs_static.a.
+if ! grep -qF 'Libxul("xul-real")' toolkit/library/build/moz.build; then
+  echo "ERROR: toolkit/library/build/moz.build no longer defines libxul" >&2
+  exit 1
+fi
+cat >> toolkit/library/build/moz.build <<'EOF'
+
+LDFLAGS += ["-Wl,-u,fmodf"]
+EOF
 
 # 7. Compose mozconfig: aports' + our overlay (or minimal default if skipping aports).
 if [[ "$PW_SKIP_APORTS" == "1" ]]; then

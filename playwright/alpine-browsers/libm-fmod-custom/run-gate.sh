@@ -86,17 +86,11 @@ twin broken-fmod-general libm-fmod-custom.c \
 twin broken-fmodf-fast libm-fmodf-custom.c \
   'r_fast = mx_fast % (my_fast >> d_fast);' 'r_fast = mx_fast % (my_fast >> (d_fast + 1));'
 twin broken-fmodf-mid libm-fmodf-custom.c \
-  'r_mid = narrow_rem(mx24 << d_fast, my24);' 'r_mid = narrow_rem(mx24 << d_fast, my24 + 1);'
-twin broken-fmodf-mid-high libm-fmodf-custom.c \
-  'r_mid = narrow_rem((uint64_t)r_mid << 31, my24);' 'r_mid = narrow_rem((uint64_t)r_mid << 31, my24 + 1);'
-twin broken-fmodf-subnormal libm-fmodf-custom.c \
-  'return bits_to_float(sign | (ax % ay));' 'return bits_to_float(sign | (ax % (ay + 1)));'
+  'r_mid = (uint32_t)((mx24 << d_fast) % my24);' 'r_mid = (uint32_t)((mx24 << d_fast) % (my24 + 1));'
 twin broken-fmodf-loop libm-fmodf-custom.c \
-  'mx32 = narrow_rem((uint64_t)mx32 << 31, my32);' 'mx32 = narrow_rem((uint64_t)mx32 << 31, my32 + 1);'
+  'mx = (mx << 40) % my;' 'mx = (mx << 40) % (my + 1);'
 twin broken-fmodf-tail libm-fmodf-custom.c \
-  'r = narrow_rem((uint64_t)mx32 << d, my32);' 'r = narrow_rem((uint64_t)mx32 << d, my32 + 1);'
-twin broken-fmodf-reciprocal libm-fmodf-custom.c \
-  'mx64 = wide_mx - q_est \* my32;' 'mx64 = wide_mx - q_est * my32 + 1;'
+  'uint32_t r = (uint32_t)((mx << d) % my);' 'uint32_t r = (uint32_t)((mx << d) % (my + 1));'
 
 echo "===== 1. non-vacuity: fmod must really be called ====="
 rm -f "$OUT"/count.*
