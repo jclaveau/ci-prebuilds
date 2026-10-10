@@ -402,7 +402,12 @@ RUN sudo touch /ms-playwright/webkit-${WK_REV}/INSTALLATION_COMPLETE \
 # median 1754 vs 1147 ms; official is 4058 CPU-ms there. WK_LP_NUM_THREADS
 # empty leaves llvmpipe's default (one thread per core), so perf-gate can
 # price it in one run via candidate_build_args.
+#
+# WK_MIMALLOC_PURGE_DELAY empty leaves mimalloc's default purge; -1 stops it
+# returning freed pages to the kernel (PR #311: ~36% fewer page faults on a
+# click loop). Build arg so perf-gate prices it via candidate_build_args.
 ARG WK_LP_NUM_THREADS=0
+ARG WK_MIMALLOC_PURGE_DELAY=
 RUN sudo mv /ms-playwright/webkit-${WK_REV}/pw_run.sh \
             /ms-playwright/webkit-${WK_REV}/pw_run.real.sh \
  && printf '%s\n' \
@@ -415,6 +420,7 @@ RUN sudo mv /ms-playwright/webkit-${WK_REV}/pw_run.sh \
         'REG="${XDG_CACHE_HOME:-$HOME/.cache}/gstreamer-1.0/registry.x86_64.bin"' \
         '[ -n "$GST_REGISTRY$GST_REGISTRY_1_0" ] || [ -e "$REG" ] || { mkdir -p "${REG%/*}" && cp "$DIR/gst-registry.bin" "$REG"; } 2>/dev/null' \
         "${WK_LP_NUM_THREADS:+export LP_NUM_THREADS=${WK_LP_NUM_THREADS}}" \
+        "${WK_MIMALLOC_PURGE_DELAY:+export MIMALLOC_PURGE_DELAY=${WK_MIMALLOC_PURGE_DELAY}}" \
         'exec "$DIR/pw_run.real.sh" "$@"' \
   | sudo tee /ms-playwright/webkit-${WK_REV}/pw_run.sh >/dev/null \
  && sudo chmod +x /ms-playwright/webkit-${WK_REV}/pw_run.sh

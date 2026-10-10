@@ -128,6 +128,10 @@ jobs:
             docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
               "gate-${arm}:${{ github.run_id }}" | grep -E '^(CHS_LD_PRELOAD|LD_PRELOAD)=' \
               | sed "s/^/${arm} env: /"
+            if [ "$BROWSER" = webkit ]; then
+              docker run --rm --entrypoint sh "gate-${arm}:${{ github.run_id }}" -c \
+                'cat /ms-playwright/webkit-*/pw_run.sh' | sed "s/^/${arm} pw_run.sh: /"
+            fi
             echo "::endgroup::"
           }
           docker manifest inspect "${repo}:${CANDIDATE}" >/dev/null \
@@ -187,6 +191,11 @@ jobs:
                     --browser "$PROBE_BROWSER" --target "$PROBE_TARGET" --out /out
                   mv "/out/$PROBE_TARGET-$PROBE_BROWSER.json" \
                      "/out/$PROBE_TARGET-$PROBE_BROWSER-run$PROBE_RUN.json"
+                  # The container cgroup: CPU and fault cost the wall clock can hide.
+                  { grep -E "^(usage_usec|user_usec|system_usec) " /sys/fs/cgroup/cpu.stat
+                    grep -E "^(pgfault|pgmajfault) " /sys/fs/cgroup/memory.stat
+                    echo "memory_peak $(cat /sys/fs/cgroup/memory.peak 2>/dev/null)"
+                  } > "/out/$PROBE_TARGET-$PROBE_BROWSER-run$PROBE_RUN.cgroup" 2>/dev/null || true
                 ' 2>&1 | tee "perf-out/probe-${arm}-${i}.log" || rc=1
               docker rm -f "$cname" >/dev/null 2>&1 || true
               echo "::endgroup::"
