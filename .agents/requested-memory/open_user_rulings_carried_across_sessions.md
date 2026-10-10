@@ -51,7 +51,7 @@ them entirely once the compaction chain that was carrying them ends.
   draining at last check. Webkit half still blocked on a non-skipped
   `perf-gate-webkit` run supplying CV data for webkit's own loose rows.
   See [[project_perfgate_vs_tpprobe_rules_differ]].
-- **PR #311 (`perf/wk-mimalloc-no-purge`) — close or keep?** (2026-09-24)
+- **PR #311 (`perf/wk-mimalloc-no-purge`) — MERGED 2026-10-10 (82dd714) on jean's ask**, reshaped as build arg `WK_MIMALLOC_PURGE_DELAY=-1` + conformance runner mirror; perf-gate cgroup counters landed on main 4b8eff8. Was: close or keep? (2026-09-24)
   — the mimalloc no-purge env change is green but measured a wash:
   `perf-probe.yml` n=10 on 7763+9V74 read geomean 1.00 both CPUs, no row
   moved >2%. Confirmed 36% page-fault cut, zero wall payoff. Left unmerged
