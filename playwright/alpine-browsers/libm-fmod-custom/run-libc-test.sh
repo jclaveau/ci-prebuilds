@@ -26,7 +26,17 @@ mkdir -p "$OUT"
 
 echo "===== libc-test ${LIBC_TEST_REV} ====="
 git init -q "$OUT/libc-test"
-git -C "$OUT/libc-test" fetch -q --depth 1 "$LIBC_TEST_REPO" "$LIBC_TEST_REV"
+# repo.or.cz resets connections now and then (gate runs 38045295867 and
+# 38051815857: "curl 35 Recv failure"); the rev is pinned, so a retry is safe.
+fetch_attempt=1
+until git -C "$OUT/libc-test" fetch -q --depth 1 "$LIBC_TEST_REPO" "$LIBC_TEST_REV"; do
+  if [ "$fetch_attempt" -ge 4 ]; then
+    echo "FAIL: could not fetch libc-test from $LIBC_TEST_REPO" >&2
+    exit 1
+  fi
+  sleep $((fetch_attempt * 15))
+  fetch_attempt=$((fetch_attempt + 1))
+done
 git -C "$OUT/libc-test" checkout -q FETCH_HEAD
 LT="$OUT/libc-test"
 
