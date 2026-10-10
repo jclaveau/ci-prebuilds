@@ -527,6 +527,7 @@ RUN WKRUN=/ms-playwright/webkit-${ARTIFACT_REV}/pw_run.sh \\
       '#!/bin/sh' \\
       'D="\${0%/*}"' \\
       'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libm-fmod-custom.so:/usr/lib/libz-ng-compat.so.1' \\
+      'export MIMALLOC_PURGE_DELAY=-1' \\
       'exec "\$D/pw_run.real.sh" "\$@"' \\
       > "\$WKRUN" \\
  && chmod +x "\$WKRUN"
