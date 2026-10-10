@@ -22,3 +22,4 @@ Full hooks for this area. The routing keys live in `.agents/auto-memory/MEMORY.m
 - [/loop tick scope discipline](feedback_loop_tick_scope_discipline.md) — report only the chains/PRs the standing prompt names; a red found while diagnosing a NAMED red stays in scope, an open-PR sweep does not
 - [Say "per-gap microbench", not "sweep"](feedback_say_per_gap_microbench_not_sweep.md) — the fmod gapsweep run is the per-gap microbench in talk; file names stay until asked
 - [clang23 only, never clang22](feedback_clang23_only_never_clang22.md) — every build/bench/probe uses clang23 like the browsers; bare `apk add clang` on 3.24 = clang22 = wrong
+- [Per-CPU findings go into issue #335's description](feedback_per_cpu_findings_go_in_issue_335.md) — every CPU-dependent result is edited into #335 body as knowledge the same turn it is measured; the last optimization, needed later
