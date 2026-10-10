@@ -48,7 +48,7 @@ touches an area, read that file before concluding no rule exists. Then read
 - [WebKit strip + GTK gate + promote](project_webkit_strip_gtk_gate_promote.md) — 2026-08-01: finalize strips ELF symbols (WPE-only), GTK gated off by default
 - [WK PGO multi-DSO SIGBUS needs %m](project_wk_pgo_multidso_sigbus_percent_m.md) — Phase 0 smoke SIGBUS from ~12 instrumented .so's sharing one LLVM_PROFILE_FILE; fix `%p-%m-%c`, shipped 1b1354d
 
-## firefox (16) — mozconfig, build passes, FF-side bugs
+## firefox (17) — mozconfig, build passes, FF-side bugs
 `.agents/auto-memory/index/firefox.md`
 
 - [FF's gap vs official was the ALLOCATOR — RESOLVED](project_ff_build_missing_pgo_lto_jemalloc.md) — official links mozjemalloc (`malloc` undefined 0 vs our 1); mimalloc preload in the
