@@ -1,5 +1,6 @@
 #!/bin/sh
-# Proves libm-fmod-custom.c returns bit-identical results to musl's own fmod,
+# Proves libm-fmod-custom.c and libm-fmodf-custom.c return bit-identical results
+# to musl's own fmod and fmodf,
 # in both forms the browsers ship: the .so WebKit preloads, and (when ASM_CC
 # names a clang) gcc's assembly assembled by clang, as Firefox links it.
 #
@@ -26,47 +27,81 @@ CC="${CC:-gcc}"
 # verification classes; the counter run skips the timing loop, so this
 # floor sits just under that and any inlining drops it to ~0.
 MIN_CALLS=7500000
+# Same for fmodf: classes 6-9 make 4,001,156 calls.
+MIN_FMODF_CALLS=4000000
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
 echo "===== build ====="
 # -fno-builtin-fmod on the vectors binary is load-bearing; see the file header.
-$CC -O2 -fno-builtin-fmod -o "$OUT/vectors" "$SRC/libm-fmod-custom-vectors.c" -lm
-$CC -O2 -fPIC -shared -o "$OUT/libm-fmod-custom.so" "$SRC/libm-fmod-custom.c"
+$CC -O2 -fno-builtin-fmod -fno-builtin-fmodf -o "$OUT/vectors" "$SRC/libm-fmod-custom-vectors.c" -lm
+# fmodf compiled as the consumer image compiles it, with its assembler flag.
+$CC -O2 -fPIC -Wa,-mbranches-within-32B-boundaries -c -o "$OUT/libm-fmodf-custom.o" \
+  "$SRC/libm-fmodf-custom.c"
+$CC -O2 -fPIC -shared -o "$OUT/libm-fmod-custom.so" "$SRC/libm-fmod-custom.c" \
+  "$OUT/libm-fmodf-custom.o"
 $CC -O2 -fPIC -shared -o "$OUT/libcounter.so" "$SRC/fmod-call-counter.c" -ldl
 if [ -n "${ASM_CC:-}" ]; then
   # Firefox's form. libxul builds it with -fvisibility=hidden, left out here
   # so the preload can still interpose; the function body is the same.
   $CC -O2 -fPIC -S -o "$OUT/libm-fmod-custom.s" "$SRC/libm-fmod-custom.c"
+  $CC -O2 -fPIC -S -o "$OUT/libm-fmodf-custom.s" "$SRC/libm-fmodf-custom.c"
   $ASM_CC -c -fPIC -o "$OUT/libm-fmod-custom-asm.o" "$OUT/libm-fmod-custom.s"
-  $CC -shared -o "$OUT/libm-fmod-custom-asm.so" "$OUT/libm-fmod-custom-asm.o"
+  $ASM_CC -c -fPIC -mbranches-within-32B-boundaries -o "$OUT/libm-fmodf-custom-asm.o" \
+    "$OUT/libm-fmodf-custom.s"
+  $CC -shared -o "$OUT/libm-fmod-custom-asm.so" "$OUT/libm-fmod-custom-asm.o" \
+    "$OUT/libm-fmodf-custom-asm.o"
 fi
-# The corrupted twin: both reductions, the single-divide fast path and the
-# general path, divide by the wrong modulus. Derived from the same source so it cannot
-# drift away from the real one, and it must fail step 5.
+# The corrupted twins: one per reduction path, each dividing by the wrong
+# modulus in that path alone, so step 5 proves the vectors reach every path
+# rather than only the first one a single all-paths twin happens to break.
+# Derived from the same source so they cannot drift away from the real one.
 #
 # These seds are COUPLED to the source's shape, deliberately. When a loop was
 # rewritten and a previous sed matched nothing, this gate refused to run —
 # which is the behaviour to keep. A negative control that corrupts nothing is
-# worse than none, so each corruption must be present in broken.c.
-sed -e 's|r_fast = mx_fast % (my_fast >> d_fast);|r_fast = mx_fast % (my_fast >> (d_fast + 1));|' \
-    -e 's|mx = (mx << ls) % my;|mx = (mx << (ls + 1)) % my;|' \
-  "$SRC/libm-fmod-custom.c" > "$OUT/broken.c"
-if ! grep -qF 'my_fast >> (d_fast + 1)' "$OUT/broken.c" \
-   || ! grep -qF 'mx << (ls + 1)' "$OUT/broken.c"; then
-  echo "FAIL: a corruption did not apply — the negative control would be vacuous" >&2
-  exit 1
-fi
-$CC -O2 -fPIC -shared -o "$OUT/libbroken.so" "$OUT/broken.c"
+# worse than none, so each twin must differ from its source.
+TWINS=
+twin() {
+  name="$1" src="$2" old="$3" new="$4"
+  sed -e "s#$old#$new#" "$SRC/$src" > "$OUT/$name.c"
+  if cmp -s "$SRC/$src" "$OUT/$name.c"; then
+    echo "FAIL: twin $name did not apply — the negative control would be vacuous" >&2
+    exit 1
+  fi
+  # The other source stays sound, so a sound fmod cannot hide a broken fmodf
+  # or the reverse.
+  case "$src" in
+    libm-fmod-custom.c) other="$SRC/libm-fmodf-custom.c" ;;
+    *) other="$SRC/libm-fmod-custom.c" ;;
+  esac
+  $CC -O2 -fPIC -shared -o "$OUT/$name.so" "$OUT/$name.c" "$other"
+  TWINS="$TWINS $name"
+}
+twin broken-fmod-fast libm-fmod-custom.c \
+  'r_fast = mx_fast % (my_fast >> d_fast);' 'r_fast = mx_fast % (my_fast >> (d_fast + 1));'
+twin broken-fmod-general libm-fmod-custom.c \
+  'mx = (mx << ls) % my;' 'mx = (mx << (ls + 1)) % my;'
+twin broken-fmodf-fast libm-fmodf-custom.c \
+  'r_fast = mx_fast % (my_fast >> d_fast);' 'r_fast = mx_fast % (my_fast >> (d_fast + 1));'
+twin broken-fmodf-mid libm-fmodf-custom.c \
+  'r_mid = (uint32_t)((mx24 << d_fast) % my24);' 'r_mid = (uint32_t)((mx24 << d_fast) % (my24 + 1));'
+twin broken-fmodf-loop libm-fmodf-custom.c \
+  'mx = (mx << 40) % my;' 'mx = (mx << 40) % (my + 1);'
+twin broken-fmodf-tail libm-fmodf-custom.c \
+  'uint32_t r = (uint32_t)((mx << d) % my);' 'uint32_t r = (uint32_t)((mx << d) % (my + 1));'
 
 echo "===== 1. non-vacuity: fmod must really be called ====="
 rm -f "$OUT"/count.*
 FMOD_COUNT_OUT="$OUT/count" LD_PRELOAD="$OUT/libcounter.so" "$OUT/vectors" >/dev/null 2>&1
-CALLS=$(cat "$OUT"/count.* 2>/dev/null || echo 0)
+read -r CALLS FMODF_CALLS < "$(ls "$OUT"/count.* | head -1)" || true
+CALLS=${CALLS:-0}
+FMODF_CALLS=${FMODF_CALLS:-0}
 echo "libc fmod calls observed: $CALLS (minimum $MIN_CALLS)"
-if [ "$CALLS" -lt "$MIN_CALLS" ]; then
-  echo "FAIL: fmod was inlined away — this run verifies nothing" >&2
+echo "libc fmodf calls observed: $FMODF_CALLS (minimum $MIN_FMODF_CALLS)"
+if [ "$CALLS" -lt "$MIN_CALLS" ] || [ "$FMODF_CALLS" -lt "$MIN_FMODF_CALLS" ]; then
+  echo "FAIL: fmod or fmodf was inlined away — this run verifies nothing" >&2
   exit 1
 fi
 
@@ -84,7 +119,7 @@ echo "$(head -1 "$OUT/subject.txt")  $(cat "$OUT/subject.time")"
 
 echo "===== 4. bit-exactness ====="
 if ! diff -u "$OUT/reference.txt" "$OUT/subject.txt" > "$OUT/diff.txt"; then
-  echo "FAIL: libm-fmod-custom.so is not bit-identical to musl's fmod" >&2
+  echo "FAIL: libm-fmod-custom.so is not bit-identical to musl's fmod/fmodf" >&2
   head -40 "$OUT/diff.txt" >&2
   exit 1
 fi
@@ -96,7 +131,7 @@ if [ -n "${ASM_CC:-}" ]; then
     || { echo "FAIL: libm-fmod-custom-asm.so did not load" >&2; exit 1; }
   LD_PRELOAD="$OUT/libm-fmod-custom-asm.so" "$OUT/vectors" > "$OUT/subject-asm.txt"
   if ! diff -u "$OUT/reference.txt" "$OUT/subject-asm.txt" > "$OUT/diff-asm.txt"; then
-    echo "FAIL: the Firefox form is not bit-identical to musl's fmod" >&2
+    echo "FAIL: the Firefox form is not bit-identical to musl's fmod/fmodf" >&2
     head -40 "$OUT/diff-asm.txt" >&2
     exit 1
   fi
@@ -108,20 +143,22 @@ echo "===== 5. negative control: the gate must reject a broken build ====="
 # one does — the normalisation loop shifts a zeroed significand for ever), and
 # a hang is a rejection too, just one that has to be caught rather than waited
 # on. Only byte-identical output means the comparison has no teeth.
-: > "$OUT/broken.txt"
-# `|| BROKEN_RC=$?` rather than a bare call then `$?`: under `set -e` the
-# non-zero exit aborts the script before the assignment is ever reached, and
-# the gate then fails with the control's own rc instead of judging it.
-BROKEN_RC=0
-timeout 90 env LD_PRELOAD="$OUT/libbroken.so" "$OUT/vectors" \
-  > "$OUT/broken.txt" 2>/dev/null || BROKEN_RC=$?
-if [ "$BROKEN_RC" -eq 124 ] || [ "$BROKEN_RC" -eq 137 ]; then
-  echo "PASS: corrupted build did not terminate — rejected"
-elif diff -q "$OUT/reference.txt" "$OUT/broken.txt" >/dev/null 2>&1; then
-  echo "FAIL: a deliberately corrupted fmod passed — this gate proves nothing" >&2
-  exit 1
-else
-  echo "PASS: corrupted build produced different digests — rejected"
-fi
+for twin in $TWINS; do
+  : > "$OUT/$twin.txt"
+  # `|| BROKEN_RC=$?` rather than a bare call then `$?`: under `set -e` the
+  # non-zero exit aborts the script before the assignment is ever reached, and
+  # the gate then fails with the control's own rc instead of judging it.
+  BROKEN_RC=0
+  timeout 90 env LD_PRELOAD="$OUT/$twin.so" "$OUT/vectors" \
+    > "$OUT/$twin.txt" 2>/dev/null || BROKEN_RC=$?
+  if [ "$BROKEN_RC" -eq 124 ] || [ "$BROKEN_RC" -eq 137 ]; then
+    echo "PASS: $twin did not terminate — rejected"
+  elif diff -q "$OUT/reference.txt" "$OUT/$twin.txt" >/dev/null 2>&1; then
+    echo "FAIL: $twin, a deliberately corrupted build, passed — this gate proves nothing" >&2
+    exit 1
+  else
+    echo "PASS: $twin produced different digests — rejected"
+  fi
+done
 
 echo "===== gate green ====="

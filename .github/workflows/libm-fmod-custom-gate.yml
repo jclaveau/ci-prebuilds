@@ -1,8 +1,9 @@
 name: libm-fmod-custom gate
 
-# Proves that libm-fmod-custom.c — the `fmod` we preload under WebKit and link
-# into Firefox's libxul — returns bit-identical results to musl's own fmod, in
-# both shipped forms, before it can ship.
+# Proves that libm-fmod-custom.c and libm-fmodf-custom.c — the `fmod` and
+# `fmodf` we preload under WebKit and chromium and link into Firefox's libxul —
+# return bit-identical results to musl's own, in both shipped forms, before
+# they can ship.
 #
 # This is a real gate rather than a smoke test because the object interposes a
 # libm function underneath a browser. The differential run is the load-bearing

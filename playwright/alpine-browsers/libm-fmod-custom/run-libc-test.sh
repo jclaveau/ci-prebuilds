@@ -57,9 +57,20 @@ done
 
 if [ -n "${ASM_CC:-}" ]; then
   # Firefox's form, as in run-gate.sh: gcc's assembly assembled by clang.
-  $CC -O2 -fPIC -S -o "$OUT/libm-fmod-custom.s" "$SRC/libm-fmod-custom.c"
-  $ASM_CC -c -fPIC -o "$OUT/libm-fmod-custom-asm.o" "$OUT/libm-fmod-custom.s"
-  $CC -shared -o "$OUT/libm-fmod-custom-asm.so" "$OUT/libm-fmod-custom-asm.o"
+  ASM_OBJECTS=
+  for src in $SOURCES; do
+    base=$(basename "$src" .c)
+    $CC -O2 -fPIC -S -o "$OUT/$base.s" "$src"
+    asm_flags=
+    if [ "$base" = libm-fmodf-custom ]; then
+      asm_flags=-mbranches-within-32B-boundaries
+    fi
+    # shellcheck disable=SC2086
+    $ASM_CC -c -fPIC $asm_flags -o "$OUT/$base-asm.o" "$OUT/$base.s"
+    ASM_OBJECTS="$ASM_OBJECTS $OUT/$base-asm.o"
+  done
+  # shellcheck disable=SC2086
+  $CC -shared -o "$OUT/libm-fmod-custom-asm.so" $ASM_OBJECTS
 fi
 
 # The corrupted twins. Coupled to the source's shape on purpose: a sed that
@@ -80,11 +91,16 @@ corrupt "$SRC/libm-fmod-custom.c" "$OUT/invalid-fmod.c" \
 $CC -O2 -fPIC -shared -o "$OUT/value-fmod.so" "$OUT/value-fmod.c"
 $CC -O2 -fPIC -shared -o "$OUT/invalid-fmod.so" "$OUT/invalid-fmod.c"
 if [ -f "$SRC/libm-fmodf-custom.c" ]; then
+  # The d <= 8 path alone; a second value twin breaks the d <= 40 path that
+  # libc-test's cases also reach, so the control is not one path deep.
   corrupt "$SRC/libm-fmodf-custom.c" "$OUT/value-fmodf.c" \
     'r_fast = mx_fast % (my_fast >> d_fast);' 'r_fast = mx_fast % (my_fast >> (d_fast + 1));'
+  corrupt "$SRC/libm-fmodf-custom.c" "$OUT/value_mid-fmodf.c" \
+    'r_mid = (uint32_t)((mx24 << d_fast) % my24);' 'r_mid = (uint32_t)((mx24 << d_fast) % (my24 + 1));'
   corrupt "$SRC/libm-fmodf-custom.c" "$OUT/invalid-fmodf.c" \
     'return (x \* y) / (x \* y);' 'return __builtin_nanf("");'
   $CC -O2 -fPIC -shared -o "$OUT/value-fmodf.so" "$OUT/value-fmodf.c"
+  $CC -O2 -fPIC -shared -o "$OUT/value_mid-fmodf.so" "$OUT/value_mid-fmodf.c"
   $CC -O2 -fPIC -shared -o "$OUT/invalid-fmodf.so" "$OUT/invalid-fmodf.c"
 fi
 
@@ -111,13 +127,19 @@ done
 
 if [ -n "${ASM_CC:-}" ]; then
   echo "===== 2b. Firefox form: gcc assembly assembled by $ASM_CC ====="
-  run_with fmod "$OUT/libm-fmod-custom-asm.so"
-  echo "PASS: fmod, Firefox form"
+  for fn in $FUNCTIONS; do
+    run_with "$fn" "$OUT/libm-fmod-custom-asm.so"
+    echo "PASS: $fn, Firefox form"
+  done
 fi
 
 echo "===== 3. negative controls: libc-test must reject each corruption ====="
 for fn in $FUNCTIONS; do
-  for kind in value invalid; do
+  kinds="value invalid"
+  if [ "$fn" = fmodf ]; then
+    kinds="value value_mid invalid"
+  fi
+  for kind in $kinds; do
     if run_with "$fn" "$OUT/$kind-$fn.so" > "$OUT/$kind-$fn.txt" 2>&1; then
       echo "FAIL: libc-test passed a $kind-corrupted $fn — it checks nothing" >&2
       exit 1

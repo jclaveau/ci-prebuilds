@@ -28,13 +28,15 @@ RUN mkdir /pgo
 
 FROM ${PGO_PROFILE_IMAGE:-pgo-profile-none} AS pgo-profile-in
 
-# The fmod shared with WebKit, compiled by gcc: clang23's codegen of the same
-# source runs up to 1.17x slower and misses glibc at small exponent gaps.
-# Only the assembly crosses into the builder, which mach assembles with clang.
+# The fmod and fmodf shared with WebKit and chromium, compiled by gcc: clang23's
+# codegen of the same sources runs up to 1.17x (fmod) and 1.33x (fmodf) slower.
+# Only the assembly crosses into the builder, which mach assembles with clang;
+# fmodf's -mbranches-within-32B-boundaries is passed there, by apply-and-build.sh.
 FROM alpine:${ALPINE_VERSION} AS libm-fmod-custom-gcc
 RUN apk add --no-cache gcc musl-dev
-COPY libm-fmod-custom/libm-fmod-custom.c /src/libm-fmod-custom.c
-RUN gcc -O2 -fPIC -fvisibility=hidden -S /src/libm-fmod-custom.c -o /src/libm-fmod-custom.s
+COPY libm-fmod-custom/libm-fmod-custom.c libm-fmod-custom/libm-fmodf-custom.c /src/
+RUN gcc -O2 -fPIC -fvisibility=hidden -S /src/libm-fmod-custom.c -o /src/libm-fmod-custom.s \
+ && gcc -O2 -fPIC -fvisibility=hidden -S /src/libm-fmodf-custom.c -o /src/libm-fmodf-custom.s
 
 FROM alpine:${ALPINE_VERSION} AS firefox-builder
 
@@ -101,8 +103,8 @@ ARG PW_JUGGLER_INSTRUMENT=false
 # generate | use | '' — see apply-and-build.sh.
 ARG PGO_STAGE=
 COPY --from=pgo-profile-in /pgo /work/pgo
-# The fmod shared with WebKit, linked into libxul by apply-and-build.sh.
-COPY --from=libm-fmod-custom-gcc /src/libm-fmod-custom.s /work/firefox/libm-fmod-custom/libm-fmod-custom.s
+# The fmod and fmodf shared with WebKit, linked into libxul by apply-and-build.sh.
+COPY --from=libm-fmod-custom-gcc /src/libm-fmod-custom.s /src/libm-fmodf-custom.s /work/firefox/libm-fmod-custom/
 
 RUN --mount=type=cache,target=/work/firefox-src/obj,id=ffx-obj,sharing=locked \
     --mount=type=cache,target=/root/.mozbuild,id=ffx-mozbuild,sharing=locked \
