@@ -10,10 +10,19 @@ on:
     branches: [main]
     paths:
       - 'playwright/alpine-browsers/**'
+      # Only the two fmod sources cross into this build (the Dockerfile's
+      # libm-fmod-custom-gcc stage); the rest of the directory is the gate's
+      # tests and benches, and a change there rebuilds no browser.
+      - '!playwright/alpine-browsers/libm-fmod-custom/**'
+      - 'playwright/alpine-browsers/libm-fmod-custom/libm-fmod-custom.c'
+      - 'playwright/alpine-browsers/libm-fmod-custom/libm-fmodf-custom.c'
       - '.github/workflows/playwright-alpine-browsers.yml'
   pull_request:
     paths:
       - 'playwright/alpine-browsers/**'
+      - '!playwright/alpine-browsers/libm-fmod-custom/**'
+      - 'playwright/alpine-browsers/libm-fmod-custom/libm-fmod-custom.c'
+      - 'playwright/alpine-browsers/libm-fmod-custom/libm-fmodf-custom.c'
       - '.github/workflows/playwright-alpine-browsers.yml'
   # Catalog accumulator: weekly cron grabs whatever alpine:edge currently
   # ships as chromium-headless-shell and publishes it as chs-${rev} where

@@ -17,6 +17,9 @@
 #      against musl and pass);
 #   3. itself, unless a deliberately corrupted build makes it fail.
 #
+# The reference is whatever libc runs it: musl in the alpine job, glibc in
+# the glibc job, which sets LIBM_FMOD_CUSTOM_FOLD_NAN=1 (see the vectors file).
+#
 # Usage: [ASM_CC=clang-23] run-gate.sh [srcdir] [outdir]
 set -eu
 
@@ -105,7 +108,7 @@ if [ "$CALLS" -lt "$MIN_CALLS" ] || [ "$FMODF_CALLS" -lt "$MIN_FMODF_CALLS" ]; t
   exit 1
 fi
 
-echo "===== 2. reference run (musl) ====="
+echo "===== 2. reference run (the libc's own) ====="
 LIBM_FMOD_CUSTOM_TIMING=1 "$OUT/vectors" > "$OUT/reference.txt" 2> "$OUT/reference.time"
 echo "$(head -1 "$OUT/reference.txt")  $(cat "$OUT/reference.time")"
 
@@ -119,7 +122,7 @@ echo "$(head -1 "$OUT/subject.txt")  $(cat "$OUT/subject.time")"
 
 echo "===== 4. bit-exactness ====="
 if ! diff -u "$OUT/reference.txt" "$OUT/subject.txt" > "$OUT/diff.txt"; then
-  echo "FAIL: libm-fmod-custom.so is not bit-identical to musl's fmod/fmodf" >&2
+  echo "FAIL: libm-fmod-custom.so is not bit-identical to the libc's fmod/fmodf" >&2
   head -40 "$OUT/diff.txt" >&2
   exit 1
 fi
@@ -131,7 +134,7 @@ if [ -n "${ASM_CC:-}" ]; then
     || { echo "FAIL: libm-fmod-custom-asm.so did not load" >&2; exit 1; }
   LD_PRELOAD="$OUT/libm-fmod-custom-asm.so" "$OUT/vectors" > "$OUT/subject-asm.txt"
   if ! diff -u "$OUT/reference.txt" "$OUT/subject-asm.txt" > "$OUT/diff-asm.txt"; then
-    echo "FAIL: the Firefox form is not bit-identical to musl's fmod/fmodf" >&2
+    echo "FAIL: the Firefox form is not bit-identical to the libc's fmod/fmodf" >&2
     head -40 "$OUT/diff-asm.txt" >&2
     exit 1
   fi

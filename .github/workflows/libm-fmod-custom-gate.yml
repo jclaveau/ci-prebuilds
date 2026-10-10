@@ -10,8 +10,10 @@ name: libm-fmod-custom gate
 # artifact, so it lives here and re-runs on every change rather than sitting in
 # a transcript somewhere.
 #
-# It runs inside the same alpine base the consumer image is built from, so the
-# musl it verifies against is the musl it will ship against.
+# The gate job runs inside the same alpine base the consumer image is built
+# from, so the musl it verifies against is the musl it will ship against. The
+# gate-glibc job reruns the same checks against glibc on the bare runner: a
+# second libc, so a bug musl shares with this code cannot pass both.
 
 on:
   pull_request:
@@ -34,7 +36,7 @@ concurrency:
 jobs:
   gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 75
     container:
       image: alpine:edge
     steps:
@@ -75,6 +77,13 @@ jobs:
              playwright/alpine-browsers/libm-fmod-custom
              "$RUNNER_TEMP/libm-fmod-custom-libc-test"
 
+      - name: fmodf on every x
+        # Each listed divisor against all 2^32 float x, bit for bit against
+        # musl's fmodf, then one corrupted twin per path must mismatch.
+        run: sh playwright/alpine-browsers/libm-fmod-custom/run-fmodf-exhaustive.sh
+             playwright/alpine-browsers/libm-fmod-custom
+             "$RUNNER_TEMP/libm-fmodf-exhaustive"
+
       - name: Keep the digests
         if: always()
         uses: actions/upload-artifact@v7
@@ -82,3 +91,30 @@ jobs:
           name: libm-fmod-custom-gate
           path: ${{ runner.temp }}/libm-fmod-custom-gate/*.txt
           if-no-files-found: warn
+
+  gate-glibc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      # IEEE 754 leaves open which input's NaN payload a result carries, and
+      # glibc picks x's where musl and this code pick y's; every other bit
+      # must still match.
+      LIBM_FMOD_CUSTOM_FOLD_NAN: '1'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Report the libc under test
+        run: |
+          set -eu
+          ldd --version | head -1
+          gcc --version | head -1
+
+      - name: Differential gate
+        run: sh playwright/alpine-browsers/libm-fmod-custom/run-gate.sh
+             playwright/alpine-browsers/libm-fmod-custom
+             "$RUNNER_TEMP/libm-fmod-custom-gate"
+
+      - name: fmodf on every x
+        run: sh playwright/alpine-browsers/libm-fmod-custom/run-fmodf-exhaustive.sh
+             playwright/alpine-browsers/libm-fmod-custom
+             "$RUNNER_TEMP/libm-fmodf-exhaustive"

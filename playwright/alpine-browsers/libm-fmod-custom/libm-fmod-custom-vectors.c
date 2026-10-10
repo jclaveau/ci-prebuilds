@@ -13,6 +13,11 @@
  *
  * Classes 6-9 do the same for `fmodf`, which chromium imports from musl.
  *
+ * LIBM_FMOD_CUSTOM_FOLD_NAN=1 hashes every NaN result as one canonical NaN.
+ * IEEE 754 leaves open which input's payload a NaN result carries; for two
+ * NaN inputs glibc returns x's and musl (and libm-fmod-custom) y's. Only the
+ * glibc job sets it; against musl even the payload must match.
+ *
  * MUST be compiled -fno-builtin-fmod -fno-builtin-fmodf. gcc 15 expands fmod inline when the
  * divisor is a compile-time power of two, and then this program verifies
  * nothing while still linking `U fmod` from an unrelated call site — which is
@@ -31,6 +36,7 @@
 
 static uint64_t bucket[BUCKETS];
 static long checked;
+static int fold_nan;
 
 static uint64_t to_bits(double d) {
   uint64_t u;
@@ -48,6 +54,9 @@ static double to_double(uint64_t u) {
  * cancelled out by a different pairing landing in the same bucket. */
 static void record(double a, double b) {
   uint64_t r = to_bits(fmod(a, b));
+  if (fold_nan && (r & ~(1ULL << 63)) > EXP_FIELD) {
+    r = 0x7ff8000000000000ULL;
+  }
   uint64_t h = bucket[checked % BUCKETS];
   uint64_t words[3] = {to_bits(a), to_bits(b), r};
   for (int w = 0; w < 3; w++) {
@@ -75,6 +84,9 @@ static float bits_float(uint32_t u) {
 /* record() for fmodf: same buckets, same FNV-1a, 32-bit words. */
 static void record_f(float a, float b) {
   uint32_t r = float_bits(fmodf(a, b));
+  if (fold_nan && (r & 0x7fffffffu) > 0x7f800000u) {
+    r = 0x7fc00000u;
+  }
   uint64_t h = bucket[checked % BUCKETS];
   uint32_t words[3] = {float_bits(a), float_bits(b), r};
   for (int w = 0; w < 3; w++) {
@@ -96,6 +108,7 @@ static uint64_t nextrand(void) {
 }
 
 int main(void) {
+  fold_nan = getenv("LIBM_FMOD_CUSTOM_FOLD_NAN") != NULL;
   for (int i = 0; i < BUCKETS; i++) {
     bucket[i] = 0xcbf29ce484222325ULL;
   }
