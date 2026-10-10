@@ -424,6 +424,22 @@ cat >> toolkit/library/build/moz.build <<'EOF'
 LDFLAGS += ["-Wl,-u,fmodf"]
 EOF
 
+# 6b. js::NumberMod, the JIT's call into fmod for every JS `%` on doubles, is a
+#     47-byte function whose place in libxul follows whatever else gets
+#     linked. Linking the fmodf object moved it from 0 to 48 mod 64, across a
+#     64-byte line, and the gate's libm_fmod ratchet read 1.056 (9V74) and
+#     1.041 (7763) with byte-identical code. Pin it to a line start.
+NUMBER_MOD_DEF='inline double NumberMod(double a, double b) {'
+if ! grep -qxF "$NUMBER_MOD_DEF" js/src/util/PortableMath.h; then
+  echo "ERROR: js/src/util/PortableMath.h no longer defines NumberMod as expected" >&2
+  exit 1
+fi
+sed -i "s/^${NUMBER_MOD_DEF}\$/__attribute__((aligned(64))) &/" js/src/util/PortableMath.h
+if ! grep -qxF "__attribute__((aligned(64))) $NUMBER_MOD_DEF" js/src/util/PortableMath.h; then
+  echo "ERROR: the NumberMod alignment did not apply" >&2
+  exit 1
+fi
+
 # 7. Compose mozconfig: aports' + our overlay (or minimal default if skipping aports).
 if [[ "$PW_SKIP_APORTS" == "1" ]]; then
   # Minimal Mozilla-default mozconfig — no system libs, all bundled. We're
@@ -956,6 +972,19 @@ if readelf --dyn-syms -W "$XUL" | awk '$8 == "fmodf"' | grep -q .; then
   exit 1
 fi
 echo "  libxul links libm-fmodf-custom.o's fmodf, neither imported nor exported ✓"
+
+# Step 6b must have reached the link: ThinLTO or PGO dropping the attribute
+# would put NumberMod back wherever the link order lands it.
+NUMBER_MOD_ADDR=$(nm "$XUL" | awk '$3 == "_ZN2js9NumberModEdd" { print $1 }')
+if [[ -z "$NUMBER_MOD_ADDR" ]]; then
+  echo "ERROR: libxul has no js::NumberMod symbol to check" >&2
+  exit 1
+fi
+if (( 0x$NUMBER_MOD_ADDR % 64 != 0 )); then
+  echo "ERROR: js::NumberMod at 0x$NUMBER_MOD_ADDR, not 64-byte aligned" >&2
+  exit 1
+fi
+echo "  js::NumberMod at 0x$NUMBER_MOD_ADDR, 64-byte aligned ✓"
 
 # `| head -20` would trigger SIGPIPE under `set -o pipefail` (ls writes ~100s
 # of lines, head closes stdin at 20, ls exits 141, pipefail propagates). Use
