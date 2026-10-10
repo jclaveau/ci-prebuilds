@@ -308,7 +308,7 @@ jobs:
         if: always()
         run: sudo rm -rf perf-out/symfs-* || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: wk-perf-record-${{ inputs.kernel }}

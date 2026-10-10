@@ -1,5 +1,5 @@
 /*
- * Counts calls that actually reach libc's `fmod`. This exists because a
+ * Counts calls that actually reach libc's `fmod` and `fmodf`. This exists because a
  * verification run that never calls fmod passes trivially, and looks exactly
  * like a run that passed for real.
  *
@@ -24,10 +24,13 @@
 #include <unistd.h>
 
 static double (*real_fmod)(double, double);
+static float (*real_fmodf)(float, float);
 static unsigned long long calls;
+static unsigned long long fmodf_calls;
 
 __attribute__((constructor)) static void init(void) {
   real_fmod = (double (*)(double, double))dlsym(RTLD_NEXT, "fmod");
+  real_fmodf = (float (*)(float, float))dlsym(RTLD_NEXT, "fmodf");
 }
 
 __attribute__((destructor)) static void dump(void) {
@@ -41,7 +44,7 @@ __attribute__((destructor)) static void dump(void) {
   if (!f) {
     return;
   }
-  fprintf(f, "%llu\n", calls);
+  fprintf(f, "%llu %llu\n", calls, fmodf_calls);
   fclose(f);
 }
 
@@ -51,4 +54,12 @@ double fmod(double x, double y) {
   }
   calls++;
   return real_fmod(x, y);
+}
+
+float fmodf(float x, float y) {
+  if (!real_fmodf) {
+    real_fmodf = (float (*)(float, float))dlsym(RTLD_NEXT, "fmodf");
+  }
+  fmodf_calls++;
+  return real_fmodf(x, y);
 }

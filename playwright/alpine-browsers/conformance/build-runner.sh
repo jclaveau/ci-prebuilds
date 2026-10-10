@@ -45,8 +45,10 @@ cp "$(dirname "$0")/../webkit/scripts/strip-bundled-libs.sh" "$TMPDIR/"
 cp "$(dirname "$0")/../webkit/scripts/strip-mesa-closure.sh" "$TMPDIR/"
 # The fmod interposer the webkit launcher preloads: conformance has to run
 # the same libm the image ships, or it validates a build nobody runs.
-cp -r "$(dirname "$0")/../webkit/fastfmod" "$TMPDIR/"
+cp -r "$(dirname "$0")/../libm-fmod-custom" "$TMPDIR/"
 cp -r "$(dirname "$0")/../webkit/zlib-ng" "$TMPDIR/"
+# The string interposer the chromium launcher preloads, for the same reason.
+cp -r "$(dirname "$0")/../chromium-headless-shell/faststring" "$TMPDIR/"
 
 case "$BROWSER" in
   chromium)
@@ -134,6 +136,31 @@ COPY --from=${IMAGE_REF} \\
      /chrome-headless-shell-linux64 \\
      /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/chrome-headless-shell-linux64
 RUN touch /ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/INSTALLATION_COMPLETE
+# libfaststring.so and libm-fmod-custom.so behind the same launcher
+# Dockerfile.alpine writes, so conformance runs the string routines and the
+# fmodf the image ships. run-gate.sh is the consumer's own build-and-check step.
+COPY faststring /tmp/faststring
+COPY libm-fmod-custom /tmp/libm-fmod-custom
+RUN apk add --no-cache gcc musl-dev binutils \\
+ && sh /tmp/faststring/run-gate.sh /tmp/faststring /tmp/faststring-gate \\
+ && cp /tmp/faststring-gate/libfaststring.so /usr/lib/libfaststring.so \\
+ && gcc -O2 -fPIC -Wa,-mbranches-within-32B-boundaries -c -o /tmp/libm-fmodf-custom.o \\
+      /tmp/libm-fmod-custom/libm-fmodf-custom.c \\
+ && gcc -O2 -fPIC -shared -o /usr/lib/libm-fmod-custom.so /tmp/libm-fmod-custom/libm-fmod-custom.c \\
+      /tmp/libm-fmodf-custom.o \\
+ && apk del gcc musl-dev binutils \\
+ && rm -rf /tmp/faststring /tmp/faststring-gate /tmp/libm-fmod-custom
+RUN CHS=/ms-playwright/chromium_headless_shell-${ARTIFACT_REV}/chrome-headless-shell-linux64 \\
+ && mv "\$CHS/chrome-headless-shell" "\$CHS/chrome-headless-shell.real" \\
+ && printf '%s\\n' \\
+      '#!/bin/sh' \\
+      'DIR="\${0%/*}"' \\
+      'if [ -n "\${CHS_LD_PRELOAD:-}" ]; then export LD_PRELOAD="\$CHS_LD_PRELOAD"; else unset LD_PRELOAD; fi' \\
+      'export VK_ICD_FILENAMES="\${VK_ICD_FILENAMES:-\$DIR/vk_swiftshader_icd.json}"' \\
+      'exec "\$DIR/chrome-headless-shell.real" "\$@"' \\
+      > "\$CHS/chrome-headless-shell" \\
+ && chmod +x "\$CHS/chrome-headless-shell"
+ENV CHS_LD_PRELOAD=/usr/lib/libfaststring.so:/usr/lib/libm-fmod-custom.so
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN npm install -g ${NPM_RETRY} playwright@${PW_VERSION}
 # browserType.executablePath() resolves to /ms-playwright/chromium-<rev>/
@@ -251,7 +278,7 @@ RUN FFBIN=/ms-playwright/firefox-${ARTIFACT_REV}/firefox/firefox \\
  && mv "\$FFBIN" "\$FFBIN.real" \\
  && printf '%s\\n' \\
       '#!/bin/sh' \\
-      'D=\$(dirname "\$0")' \\
+      'D="\${0%/*}"' \\
       'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2' \\
       'case " \$* " in' \\
       '  *" --remote-debugging-port"*) exec "\$D/firefox.real" "\$@" ;;' \\
@@ -481,9 +508,12 @@ RUN bash /tmp/strip-mesa-closure.sh /ms-playwright/webkit-${ARTIFACT_REV}/minibr
 # through musl's mallocng, and conformance has to exercise the allocator we
 # actually ship. pw_run.sh resolves everything from \$(dirname "\$0"), so it
 # does not care that it was renamed inside its own directory.
-COPY fastfmod /tmp/fastfmod
+COPY libm-fmod-custom /tmp/libm-fmod-custom
 RUN apk add --no-cache gcc musl-dev \\
- && gcc -O2 -fPIC -shared -o /usr/lib/libfastfmod.so /tmp/fastfmod/fastfmod.c \\
+ && gcc -O2 -fPIC -Wa,-mbranches-within-32B-boundaries -c -o /tmp/libm-fmodf-custom.o \\
+      /tmp/libm-fmod-custom/libm-fmodf-custom.c \\
+ && gcc -O2 -fPIC -shared -o /usr/lib/libm-fmod-custom.so /tmp/libm-fmod-custom/libm-fmod-custom.c \\
+      /tmp/libm-fmodf-custom.o \\
  && apk del gcc musl-dev
 # zlib-ng, the third preload the shipped wrapper carries. Same script the
 # consumer image runs, so conformance encodes PNGs through the encoder we
@@ -495,8 +525,9 @@ RUN WKRUN=/ms-playwright/webkit-${ARTIFACT_REV}/pw_run.sh \\
  && mv "\$WKRUN" "\$(dirname "\$WKRUN")/pw_run.real.sh" \\
  && printf '%s\\n' \\
       '#!/bin/sh' \\
-      'D=\$(dirname "\$0")' \\
-      'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so:/usr/lib/libz-ng-compat.so.1' \\
+      'D="\${0%/*}"' \\
+      'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libm-fmod-custom.so:/usr/lib/libz-ng-compat.so.1' \\
+      'export MIMALLOC_PURGE_DELAY=-1' \\
       'exec "\$D/pw_run.real.sh" "\$@"' \\
       > "\$WKRUN" \\
  && chmod +x "\$WKRUN"

@@ -89,9 +89,9 @@ async function clickAll(page, options) {
 
 const PAGE_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>probe</title><style>
-  body { margin: 0; font: 12px/1.2 sans-serif; }
+  body { margin: 0; font: 12px/1.2 FreeSans, sans-serif; }
   #pad div { padding: 1px 2px; border-bottom: 1px solid #eee; }
-  #btns button { width: 58px; height: 18px; font-size: 9px; padding: 0; margin: 1px; }
+  #btns button { width: 58px; height: 18px; font: 9px FreeSans, sans-serif; padding: 0; margin: 1px; }
   #layout { height: 20px; background: #ccc; }
 </style></head><body>
 <div id="btns"></div>
@@ -120,6 +120,19 @@ const PAGE_HTML = `<!doctype html>
 /*
  * In-page kernels. Each returns the milliseconds IT measured, so the number never
  * includes the evaluate() round trip. Keys are the metric names in the report.
+ *
+ * SIZING RULE: every kernel here must run long enough that 1 ms is under ~0.5%
+ * of it. These times come from the PAGE's clock, and WebKit clamps
+ * performance.now() to 1 ms as a timing-attack mitigation (chromium grants
+ * 5 us, firefox clamps to 1 ms too but the probe never hits its floor). So on
+ * WebKit every row below reads a whole integer, and the gate's ratio can only
+ * land on multiples of one tick over the reference. libm_fmod sat at 62 ms,
+ * where a tick is 1.6% and its 1.03 ceiling fell BETWEEN the reachable 1.000
+ * and 1.044 -- the row could read clean or overshoot by 2x, never in between,
+ * and its cv read 0.008 only because every shot repeated the same integer.
+ * Rows timed from node instead (launch, goto, screenshot: hrtime.bigint at
+ * probe() above) carry decimals and are exempt. assert-perf-gate.py prints the
+ * observed tick per row and says so when a margin is thinner than two of them.
  */
 const KERNELS = {
   // Forced synchronous reflow: write a style, then read a layout-dependent
@@ -190,10 +203,16 @@ const KERNELS = {
   // reading webkit's 2.65 is the live question: our JSC runs this loop 2.65x
   // slower than Playwright's on builds the probe calls the same 26.5, with no
   // libc involved on either side.
+  //
+  // 36M, not the 9M it shipped with: at 9M the row read 45-62 ms, where the
+  // page clock's 1 ms tick is 1.6-2.2% and the 1.03 tight ceiling was
+  // unlandable (see the SIZING RULE above). 36M puts it near 250 ms, one tick
+  // under 0.5%, at ~0.6 s more per shot. Numbers taken before 2026-09-25 are
+  // not comparable with ones taken after, on ANY browser.
   libm_fmod: `() => {
     const t0 = performance.now();
     let x = 0;
-    for (let i = 1; i < 9000000; i++) {
+    for (let i = 1; i < 36000000; i++) {
       x += (i * 2654435761) % 4294967291;
     }
     return { ms: performance.now() - t0, checksum: x };

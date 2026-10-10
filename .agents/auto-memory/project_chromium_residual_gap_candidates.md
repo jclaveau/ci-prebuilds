@@ -1,6 +1,6 @@
 ---
 name: project_chromium_residual_gap_candidates
-description: CAMPAIGN REOPENED 2026-09-19 — 5-run/cpu sample (18 draws, 4 fleet CPUs) proved startup's 1.05x IS noise (tz fix from PR #266 holds, that row stays closed) but nav 1.06-1.14x, layout 1.11x on EPYC 7763, input 1.02-1.06x, and screenshot 1.24-1.50x on Intel are real on 18/18 draws; per jean's rule the bar is now ≤1.00 not ≤1.05; new perf-record counter-table instrument (PR #268, kernels goto_warm/goto_cold) shows nav is the OPPOSITE of the old layout finding — +50% instructions but BETTER icache/iTLB than official, so not code-layout/orderfile, something executes more code per navigation; chromium residual was 12% after both knobs — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (parity arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (same calls per iteration and same sizes as official to 0.5%/bucket, all interposable); clang 22-vs-23 is LIVE — layout 0.87x vs the shipped build on the slow runner (0.96 fast), vs official 1.40 (was 1.61), geomean 1.10; official codegen flags (aports' compiler.patch) DEAD at 1.01~; CFI SHIPPED 2026-09-17 (PR #260) — geo 0.94 vs prior shipped build, layout 0.74; CFI+snapshot-clang chain UN-DEAD 2026-09-21 — 5 draws snap/cfi geo 0.96-0.99 all <1, nav 0.95-0.99, SHIPPED via PR #273 (chs-1234 = ccc8534); 2026-09-21 perf-record on it (run 35590487107, 8573C): layout_reflow at PARITY (0.99x), goto_warm residual is the renderer main thread ONLY and its one differing DSO is system libharfbuzz (+trace: ShapeText the only slower Blink phase, 1.14x) — text stack UN-DEAD for nav, PR #277 rebuilds it in-tree on the snapshot chain; issue #259's hardening-removal ladder is further optimization, not gap-closing
+description: CAMPAIGN REOPENED 2026-09-19 — 5-run/cpu sample (18 draws, 4 fleet CPUs) proved startup's 1.05x IS noise (tz fix from PR #266 holds, that row stays closed) but nav 1.06-1.14x, layout 1.11x on EPYC 7763, input 1.02-1.06x, and screenshot 1.24-1.50x on Intel are real on 18/18 draws; per jean's rule the bar is now ≤1.00 not ≤1.05; new perf-record counter-table instrument (PR #268, kernels goto_warm/goto_cold) shows nav is the OPPOSITE of the old layout finding — +50% instructions but BETTER icache/iTLB than official, so not code-layout/orderfile, something executes more code per navigation; chromium residual was 12% after both knobs — dead: allocator, fonts, musl string routines, libc++ hardening, orderfile, CFI (parity arm SIGILLs), TLS, under-inlining, text stack (layout 0.99x), memset (same calls per iteration and same sizes as official to 0.5%/bucket, all interposable); clang 22-vs-23 is LIVE — layout 0.87x vs the shipped build on the slow runner (0.96 fast), vs official 1.40 (was 1.61), geomean 1.10; official codegen flags (aports' compiler.patch) DEAD at 1.01~; CFI SHIPPED 2026-09-17 (PR #260) — geo 0.94 vs prior shipped build, layout 0.74; CFI+snapshot-clang chain UN-DEAD 2026-09-21 — 5 draws snap/cfi geo 0.96-0.99 all <1, nav 0.95-0.99, SHIPPED via PR #273 (chs-1234 = ccc8534); 2026-09-21 perf-record on it (run 35590487107, 8573C): layout_reflow at PARITY (0.99x), goto_warm residual is the renderer main thread ONLY and its one differing DSO is system libharfbuzz (+trace: ShapeText the only slower Blink phase, 1.14x) — text stack UN-DEAD for nav, PR #277 rebuilds it in-tree on the snapshot chain; issue #259's hardening-removal ladder is further optimization, not gap-closing; 2026-09-24 jean overrode one-at-a-time to "attack them all in parallel" — 4 candidates DISPATCHED as parallel cold chains (march-v3, libcxx-FAST, cfi-icall-off, init_stack_vars-off), BRP-off blocked by the classifier and PARKED into the *-for-testing family instead
 metadata:
   type: project
 ---
@@ -439,3 +439,94 @@ not `-Os`, so the lever is the profile + cross-DSO inlining, which only the
 in-tree build tests → PR #277 `perf/chromium-textstack-snap` (cold chain,
 ~30 h). Read it with `chs-perf-ab` textstack-snap vs snap, nav + goto_cold
 rows first. Step-summary fix for the 4.3 MB report: PR #278.
+
+**2026-09-23 — PR #277's textstack chain (sha `6e56156`) finished green and
+read through `perf-gate.yml`, cross-comparable against a second candidate
+(fortify header-variant, sha `31da628`, run 35650486287) because both gates
+drew the same runner, EPYC 7763.** Textstack's `layout` breached parity at
+**1.031** (candidate 151.9 ms, official 147.4 ms, ceiling 1.03); fortify's
+candidate hit `layout` **1.000** (148.2 vs official 148.2) on the same
+silicon — so textstack is measurably ~2.5% worse on layout than a build
+without the in-tree text stack, the first sign the in-tree rebuild costs
+something layout does not want, not the nav-only win PR #277 was chasing.
+Both candidates' per-shot spread on this row was tight (CV ≈0.014 candidate,
+≈0.013 official) — not a noisy draw, a real difference. Diagnosis method and
+the fortify side's two (noise) breaches on this same run pair in
+[[project_perfgate_reference_arm_noise]]. Textstack NOT promoted; parity
+breach stands.
+
+**RETRACTED, same day.** A second textstack draw (different runner, EPYC
+9V45) read `layout` **0.994** — the breach did not survive an independent
+draw. Fortify's own layout also moved between its two 7763 draws (1.000 →
+1.020). Across 4 draws total, every perf-gate breach landed on a different
+row with elevated per-shot cv on one arm, none repeated — single-draw
+verdicts here are runner-draw lottery, not a build property. Also corrected:
+fortify (#292, `31da628`) is not a rival candidate to textstack (#277,
+`6e56156`) — its branch *contains* textstack's commit, so promoting fortify
+ships textstack too. Fortify's own second draw PASSED (parity geomean 1.003,
+ratchet geomean 0.994, better than shipped on every row that matters) but is
+still held back by jean's ≤1.00-every-row bar. Full writeup, the 4-draw
+breach table, and the fix (per-CPU-binned tally aggregation, PR #303):
+[[project_chromium_fortify_textstack_draw_lottery]].
+
+**2026-09-24 — ranked inventory of untried build levers, asked by jean
+("no build more tweak to try to reach chr parity?").** Chromium self-PGO has
+now lost both its rationales (foreign-hash + workload-fit, see
+[[project_chromium_three_levers_dispatched_parallel]]), so it drops off this
+list. What's left, ranked:
+
+1. **`-march=x86-64-v3` (AVX2+FMA baseline) — the one untried lever that
+   targets a *profiled* cause.** Run `35869661523`
+   ([[project_chromium_click_force_never_profiled]]) isolated both live
+   residual rows — `nav` and `click_force` — to musl's scalar
+   `memset`/`memcpy` vs glibc's AVX2 IFUNCs (+1.55pp nav, +0.76pp
+   click_force; everything else ±0.1pp on both arms). Two attempts to fix
+   this via `LD_PRELOAD` shim failed (PR #201 unloaded it, PR #306's 3-arm
+   redo drowned in a ≥10% noise floor,
+   [[project_chromium_faststring_moves_layout_text]]) — a preload swaps the
+   dynamically-bound symbol, not what clang inlines at the call site.
+   `-march=x86-64-v3` moves it at the source: fixed-size copies get inlined
+   as AVX2 instead of calling out to musl at all. Cost ~38h cold chain +
+   gate. Two prerequisites before dispatch: (a) check aports'
+   `compiler.patch` doesn't strip it — precedent, it already strips three
+   official codegen flags ([[project_chromium_libc_ladder]]); (b) the
+   shipping question — a v3 image needs a 2015+-era CPU from every consumer,
+   jean's call, not a technical one. Measurement caveat: `nav` sits at 1.04
+   with per-row cv 3-5%, and four draws already gave four different
+   breaching rows ([[project_chromium_fortify_textstack_draw_lottery]]) — a
+   1-2% lever needs n≥3 per candidate on the per-CPU binning
+   ([[project_tally_candidates_percpu_aggregation]]) to read at all, not one
+   gate draw. Independently named a reusable lever by the Thorium audit
+   ([[project_chromium_thorium_audit]]).
+2. **Issue #259's hardening-removal ladder** (cfi-icall off, BackupRefPtr,
+   libc++ hardening FAST, SSP, fortify, init_stack_vars, ubsan traps) — each
+   its own A/B, gated behind #249, jean said ask-don't-decide
+   ([[project_chromium_hardening_removal_candidates]]).
+
+**DISPATCHED 2026-09-24 — jean: "attack them all in parallel in a loop".**
+Four one-variable branches, all cold off `origin/main` d2f0ff9, all free
+(public repo, separate `pab-${ref}-chs-source` concurrency groups so no
+serialization), chain cost ~36.7h each (measured on the fortify chain),
+ETA ~09-25 20:00Z:
+
+| run | branch | variable |
+|---|---|---|
+| 35969194229 | `perf/chromium-march-v3` | `-march=x86-64-v3` via CFLAGS/CXXFLAGS + ninja read-back assert |
+| 35969209912 | `perf/chromium-libcxx-fast` | `_LIBCPP_HARDENING_MODE` EXTENSIVE→FAST (guarded sed) |
+| 35969225761 | `perf/chromium-cfi-icall-off` | `use_cfi_icall = false`, `is_cfi` stays true |
+| 35969241368 | `perf/chromium-init-stack-vars-off` | `init_stack_vars = false` |
+
+A fifth candidate, BackupRefPtr off, was prepared but the auto-mode
+classifier refused the edit twice (`[Security Weaken]`) — asked jean, who
+ruled it PARKED rather than forced: see
+[[parked_for_testing_image_family]] for the full below-official ladder
+(BRP off, libc++ hardening NONE, SSP/fortify/ubsan off, Thorium `-mllvm`
+lore) that now has a shipping home distinct from these four.
+3. **Orderfile relink** — the original layout candidate (two `.text` bands
+   vs official's one), lower value now that `layout_reflow` reads at parity
+   on most CPUs (8573C: 0.99x).
+4. **Not levers, for the record:** screenshot's Skia XR 10-bit decodes need
+   a surface-format change, not a flag, and `--disable-gpu` is unshippable
+   ([[project_chromium_screenshot_is_skia_highp]]); stack-clash emits 0
+   probes both sides; the libc ladder died at r5, parked
+   ([[project_chromium_libc_ladder]]).

@@ -398,6 +398,32 @@ if [[ "$PW_SKIP_APORTS" != "1" ]]; then
   done
 fi
 
+# 6a. One fmod and fmodf for WebKit and Firefox. libxul's fmod (js::NumberMod,
+#     JS `%`) is compiler_builtins' weak Rust copy; a strong hidden definition
+#     linked into libxul replaces it. libxul imports fmodf from musl; a hidden
+#     definition binds every call site inside libxul instead. The checks after
+#     the build prove both. The Dockerfile hands over gcc's assembly, hidden
+#     visibility already set.
+cp /work/firefox/libm-fmod-custom/libm-fmod-custom.s js/src/libm-fmod-custom.s
+cp /work/firefox/libm-fmod-custom/libm-fmodf-custom.s js/src/libm-fmodf-custom.s
+cat >> js/src/moz.build <<'EOF'
+
+SOURCES += ["libm-fmod-custom.s", "libm-fmodf-custom.s"]
+SOURCES["libm-fmodf-custom.s"].flags += ["-mbranches-within-32B-boundaries"]
+EOF
+# Every fmodf reference in libxul is a libcall that Rust's LTO codegen emits
+# (webrender, style, wgpu, naga), after lld has scanned the archives, so the
+# member defining fmodf is never fetched and the call binds to musl. -u makes
+# fmodf undefined from the start, which fetches it from libjs_static.a.
+if ! grep -qF 'Libxul("xul-real")' toolkit/library/build/moz.build; then
+  echo "ERROR: toolkit/library/build/moz.build no longer defines libxul" >&2
+  exit 1
+fi
+cat >> toolkit/library/build/moz.build <<'EOF'
+
+LDFLAGS += ["-Wl,-u,fmodf"]
+EOF
+
 # 7. Compose mozconfig: aports' + our overlay (or minimal default if skipping aports).
 if [[ "$PW_SKIP_APORTS" == "1" ]]; then
   # Minimal Mozilla-default mozconfig — no system libs, all bundled. We're
@@ -548,6 +574,9 @@ fi
 # rpath so the built firefox finds its libs at /usr/lib/firefox (matches the
 # install layout the producer image consumer expects).
 : "${LDFLAGS:=-Wl,-rpath,/usr/lib/firefox}"
+# The linker names every input that defines or references fmod and fmodf, which
+# is how the checks after the build tell ours from compiler_builtins' and musl's.
+LDFLAGS="$LDFLAGS -Wl,--trace-symbol=fmod -Wl,--trace-symbol=fmodf"
 export CFLAGS CXXFLAGS LDFLAGS
 
 # sccache: persisted via the Dockerfile cache mount at /root/.cache/sccache.
@@ -684,7 +713,7 @@ fi
 # distro package" tradeoff. We verify success by checking the artifact instead.
 echo "===== START ./mach build ====="
 mach_rc=0
-./mach build || mach_rc=$?
+./mach build 2>&1 | tee -a /work/mach-build.log || mach_rc=$?
 echo "===== END ./mach build (rc=$mach_rc) ====="
 
 # What did configure ACTUALLY decide about hardening? The perf/firefox-no-hardening
@@ -760,7 +789,7 @@ if [[ "$mach_rc" != "0" && -f "$FFI_HDR" ]] && grep -q '\[COUNT\]' "$FFI_HDR"; t
   sed -i "s/\[COUNT\]/[$BUDGET_COUNT]/g" "$FFI_HDR"
   echo "===== Retry ./mach build after webrender FFI patch ====="
   mach_rc=0
-  ./mach build || mach_rc=$?
+  ./mach build 2>&1 | tee -a /work/mach-build.log || mach_rc=$?
   echo "===== END ./mach build retry (rc=$mach_rc) ====="
 fi
 
@@ -896,6 +925,38 @@ if [[ -r "$XUL" ]] && command -v readelf >/dev/null; then
 else
   echo "WARNING: libxul .text unreportable ($XUL / readelf)" >&2
 fi
+
+# Our fmod must be what the libxul link resolved, and must stay inside libxul:
+# an exported fmod would interpose on libc's for every library loaded after it.
+echo "===== fmod definitions seen by the linker ====="
+grep -E ': (lazy )?definition of fmod$' /work/mach-build.log | sort -u | sed 's/^/  /' || true
+echo "===== end fmod definitions ====="
+if ! grep -qE 'libm-fmod-custom\.o\)?: definition of fmod$' /work/mach-build.log; then
+  echo "ERROR: no link saw libm-fmod-custom.o define fmod" >&2
+  exit 1
+fi
+if readelf --dyn-syms -W "$XUL" | awk '$7 != "UND" && $8 == "fmod"' | grep -q .; then
+  echo "ERROR: libxul exports fmod" >&2
+  exit 1
+fi
+echo "  libxul links libm-fmod-custom.o's fmod, not exported ✓"
+
+# Same for fmodf, plus: libxul must no longer import it, or some call site
+# still binds to musl's.
+echo "===== fmodf definitions seen by the linker ====="
+grep -E ': (lazy )?definition of fmodf$' /work/mach-build.log | sort -u | sed 's/^/  /' || true
+echo "===== end fmodf definitions ====="
+if ! grep -qE 'libm-fmodf-custom\.o\)?: definition of fmodf$' /work/mach-build.log; then
+  echo "ERROR: no link saw libm-fmodf-custom.o define fmodf" >&2
+  exit 1
+fi
+if readelf --dyn-syms -W "$XUL" | awk '$8 == "fmodf"' | grep -q .; then
+  echo "ERROR: libxul still imports or exports fmodf" >&2
+  readelf --dyn-syms -W "$XUL" | awk '$8 == "fmodf"' >&2
+  exit 1
+fi
+echo "  libxul links libm-fmodf-custom.o's fmodf, neither imported nor exported ✓"
+
 # `| head -20` would trigger SIGPIPE under `set -o pipefail` (ls writes ~100s
 # of lines, head closes stdin at 20, ls exits 141, pipefail propagates). Use
 # `|| true` so the diagnostic dump can't kill a build that already succeeded.

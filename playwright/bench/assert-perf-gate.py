@@ -22,6 +22,12 @@ row is a tie, not a win. The summary prints the observed shot-to-shot CV per
 row beside the margin so an over- or under-sized margin is visible from a
 passing run.
 
+It prints the observed clock TICK per row too, because a CV cannot tell a
+precise row from a quantized one -- it reads low either way, and a row whose
+every shot repeats the same integer reads lowest of all. That is how libm_fmod
+reached the 0.03 `tight` margin its own 1.6%-per-tick clock could never land
+on. A margin thinner than two ticks is flagged under the table.
+
 Structural checks first, as in assert-perf-budgets.py: every arm that ran must
 have every row, with `runs` shots, and no median may be zero or NaN. A gate
 that can go green on an empty directory measures nothing.
@@ -82,8 +88,49 @@ def check_structure(arms, expected_arms, runs):
     return problems
 
 
+RowVerdict = collections.namedtuple(
+    "RowVerdict", "row ratio margin cv_candidate cv_reference tick_fraction breach"
+)
+
+# runtime-probe.cjs writes median_ms with toFixed(3), so no row can reveal a
+# clock finer than this however stable it reads.
+WRITE_GRID_MS = 0.001
+
+# A ceiling is landable only if the margin spans at least this many ticks:
+# below it the reachable ratios straddle the ceiling and the row reads clean or
+# overshoots, never near.
+TICKS_PER_MARGIN_FLOOR = 2
+
+# No clock on the fleet ticks coarser than this: 1 ms is WebKit's and firefox's
+# clamp, chromium grants 5 us. It bounds what a handful of shots may claim.
+COARSEST_TICK_MS = 1.0
+
+
+def observed_tick(*shot_lists):
+    """The coarsest decimal step every shot is written on: the clock's
+    resolution as these shots reveal it.
+
+    WebKit clamps performance.now() to 1 ms, so its in-page rows come back as
+    whole integers and this reads 1.0; a row timed from node carries three
+    decimals and reads the 0.001 write grid.
+
+    Read off the decimal grid rather than the shots' greatest common step,
+    which over-claims when they barely differ and over-claims worst when they
+    do not differ at all: int_math read 188.0 on all ten shots of both arms,
+    whose common step is 188, and the row reported a 188 ms clock and flagged
+    itself (run 36126861080). Nothing ticks every 188 ms, or every 1.5 ms --
+    real steps are decimal, so a decimal grid can only under-claim.
+    """
+    units = [round(value / WRITE_GRID_MS) for shots in shot_lists for value in shots]
+    coarsest = round(COARSEST_TICK_MS / WRITE_GRID_MS)
+    grid = 1
+    while grid * 10 <= coarsest and all(unit % (grid * 10) == 0 for unit in units):
+        grid *= 10
+    return grid * WRITE_GRID_MS
+
+
 def compare(arms, candidate, reference, browser, margins):
-    """[(row, ratio, margin, cv_candidate, cv_reference, breach)], geomean, geo_breach."""
+    """[RowVerdict], geomean, geo_breach."""
     rows = sorted(set(arms[candidate]) & set(arms[reference]))
     table, logs = [], []
     for row in rows:
@@ -92,18 +139,60 @@ def compare(arms, candidate, reference, browser, margins):
         ratio = c / r
         margin = margin_for(margins, browser, row)
         cv = lambda shots: statistics.pstdev(shots) / statistics.mean(shots)
-        table.append((row, ratio, margin, cv(c_shots), cv(r_shots), ratio > 1 + margin))
+        # Against the REFERENCE: adjacent reachable ratios are one tick of the
+        # denominator apart, so that is the resolution of this row's verdict.
+        table.append(RowVerdict(row, ratio, margin, cv(c_shots), cv(r_shots),
+                                observed_tick(c_shots, r_shots) / r,
+                                ratio > 1 + margin))
         logs.append(math.log(ratio))
     geomean = math.exp(sum(logs) / len(logs)) if logs else float("nan")
     return table, geomean, geomean > 1 + margins["geomean"]
 
 
+def unresolvable(table):
+    """Rows whose ceiling falls between two reachable ratios.
+
+    A quantized row hides as a PRECISE one: libm_fmod read cv 0.008 while every
+    shot repeated the same integer, and that low cv is what argued it onto the
+    `tight` margin the row could never land on (run 35848464161 passed at 1.022
+    and 35972784207 breached at 1.044, with nothing reachable in between).
+    """
+    return [item for item in table
+            if item.margin < TICKS_PER_MARGIN_FLOOR * item.tick_fraction]
+
+
 def render(title, table, geomean, geo_breach, geo_margin):
-    out = [f"### {title}", "", "| row | ratio | ceiling | cv cand | cv ref | |", "|---|---:|---:|---:|---:|---|"]
-    for row, ratio, margin, cv_c, cv_r, breach in table:
-        flag = "❌" if breach else ("≈" if ratio > 1 else "✅")
-        out.append(f"| {row} | {ratio:.3f} | {1 + margin:.2f} | {cv_c:.3f} | {cv_r:.3f} | {flag} |")
-    out.append(f"| **geomean** | **{geomean:.3f}** | {1 + geo_margin:.2f} | | | {'❌' if geo_breach else '✅'} |")
+    out = [f"### {title}", "",
+           "| row | ratio | ceiling | cv cand | cv ref | tick | |",
+           "|---|---:|---:|---:|---:|---:|---|"]
+    coarse_rows = {item.row for item in unresolvable(table)}
+    for item in table:
+        flag = "❌" if item.breach else ("≈" if item.ratio > 1 else "✅")
+        coarse = " ⚠" if item.row in coarse_rows else ""
+        out.append(f"| {item.row} | {item.ratio:.3f} | {1 + item.margin:.2f} "
+                   f"| {item.cv_candidate:.3f} | {item.cv_reference:.3f} "
+                   f"| {item.tick_fraction:.1%}{coarse} | {flag} |")
+    out.append(f"| **geomean** | **{geomean:.3f}** | {1 + geo_margin:.2f} | | | | {'❌' if geo_breach else '✅'} |")
+    out.append("")
+    return "\n".join(out)
+
+
+def render_unresolvable(table):
+    """Named under the table, because a quantized row's verdict is not evidence
+    either way -- neither its red nor its green."""
+    coarse_rows = unresolvable(table)
+    if not coarse_rows:
+        return ""
+    out = ["### ⚠ Rows the clock cannot resolve", "",
+           "One tick of the page clock is a larger share of these rows than half",
+           "their margin, so the reachable ratios straddle the ceiling: the row",
+           "reads clean or overshoots, never near. Read neither verdict as a",
+           "measurement. Fix by sizing the kernel so one tick is under ~0.5% of",
+           "it (runtime-probe.cjs, SIZING RULE), not by widening the margin.", ""]
+    for item in coarse_rows:
+        ticks = item.margin / item.tick_fraction
+        out.append(f"- `{item.row}` — tick {item.tick_fraction:.2%} of the reference, "
+                   f"margin {item.margin:.2f} spans {ticks:.1f} ticks")
     out.append("")
     return "\n".join(out)
 
@@ -139,17 +228,27 @@ def main():
     failed = False
 
     table, geomean, geo_breach = compare(arms, args.candidate, args.control, args.browser, margins)
-    failed |= geo_breach or any(item[-1] for item in table)
+    failed |= geo_breach or any(item.breach for item in table)
     print(render(f"parity — {args.candidate} / {args.control}", table, geomean, geo_breach, margins["geomean"]))
+    parity_table = table
 
     if has_promoted:
         table, geomean, geo_breach = compare(arms, args.candidate, args.promoted, args.browser, margins)
-        failed |= geo_breach or any(item[-1] for item in table)
+        failed |= geo_breach or any(item.breach for item in table)
         print(render(f"ratchet — {args.candidate} / {args.promoted}", table, geomean, geo_breach, margins["geomean"]))
     else:
         print(f"### ratchet — skipped: no `{args.promoted}` arm (first promotion of this channel)\n")
 
-    print("≈ = over 1.00 but inside the row's noise margin: a tie, not a win.\n")
+    # Parity's alone: both comparisons share the candidate's clock, so a row
+    # coarse against official is coarse against promoted, and saying it twice
+    # reads as two findings.
+    coarse_note = render_unresolvable(parity_table)
+    if coarse_note:
+        print(coarse_note)
+
+    print("≈ = over 1.00 but inside the row's noise margin: a tie, not a win.")
+    print("tick = one step of the clock that timed the row, as a share of the")
+    print("reference; ⚠ marks a margin thinner than two of them.\n")
     print("**BREACH — not promoting.**" if failed else "**PASS — faster than official, no slower than promoted.**")
     return 1 if failed else 0
 

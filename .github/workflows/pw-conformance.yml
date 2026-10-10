@@ -141,6 +141,8 @@ jobs:
             # runner sets it too, or conformance signs off on a raster path
             # nobody ships.
             EXTRA_ENV="$EXTRA_ENV -e WEBKIT_SKIA_ENABLE_CPU_RENDERING=1"
+            # Same wrapper: llvmpipe rasterises without its worker pool.
+            EXTRA_ENV="$EXTRA_ENV -e LP_NUM_THREADS=0"
             # webkit/probes/run-probe.sh mirrors this block so a local
             # probe measures the same browser CI does — change both together.
           fi
@@ -171,7 +173,7 @@ jobs:
 
       - name: Upload shard report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pw-conformance-${{ inputs.browser }}-shard-${{ matrix.shard }}
           path: playwright/alpine-browsers/conformance/report-*
@@ -186,7 +188,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Download all shard reports
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: pw-conformance-${{ inputs.browser }}-shard-*
           merge-multiple: true

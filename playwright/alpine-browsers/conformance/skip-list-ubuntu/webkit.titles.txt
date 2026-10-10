@@ -6,3 +6,13 @@
 # Seeded from run 28830225815 (2026-07-06):
 should ignore page.pause when headed$
 should capture navigation$
+
+# Not a PW-known fail — a capability difference. Our WebKit artifact is
+# WPE-only, so run.sh's MiniBrowser probe sets HEADED_ENABLED=0 and
+# `skip-list/webkit.needs-headed.titles.txt` excludes this title from the
+# Alpine library leg. The baseline runs a headed-capable webkit and executed
+# it, which put `conformance-runtime-parity` at -1 on a test Alpine has no
+# binary to run (run 35972784207). Skipping it on both sides compares the
+# headless coverage both sides actually have; a future GTK build runs it on
+# Alpine and lands +1, which the gate reads as a pass.
+should throw a friendly error if its headed and there is no xserver on linux running$

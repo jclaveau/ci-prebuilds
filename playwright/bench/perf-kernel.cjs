@@ -85,7 +85,7 @@ window.__ready = true;
  */
 const TEXT_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>perf-kernel</title><style>
-  body { margin: 0; font: 12px/1.2 sans-serif; }
+  body { margin: 0; font: 12px/1.2 FreeSans, sans-serif; }
   #pad div { padding: 1px 2px; border-bottom: 1px solid #eee; }
 </style></head><body><div id="pad"></div>
 <script>
@@ -98,14 +98,26 @@ const TEXT_HTML = `<!doctype html>
   }
 </script></body></html>`;
 
+// The layout kernels shape text from one font file shipped beside this script,
+// so their checksums agree across arms. Asking fontconfig for FreeSans gets
+// FreeSans.otf on Alpine and FreeSans.ttf on Ubuntu, whose metrics differ, and
+// layout_text then measured two different documents. The nav and screenshot
+// pages keep fontconfig on purpose: first-text init through it is a cost the
+// consumer pays.
+const PROBE_FONT_FACE = `@font-face { font-family: ProbeSans; src: url(data:font/ttf;base64,${
+  fs.readFileSync(path.join(__dirname, 'fonts', 'probe-sans.ttf')).toString('base64')
+}); }`;
+
 const DOM_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>perf-kernel</title><style>
-  body { margin: 0; font: 12px/1.2 sans-serif; }
+  ${PROBE_FONT_FACE}
+  body { margin: 0; font: 12px/1.2 ProbeSans; }
 </style></head><body><div id="host"></div></body></html>`;
 
 const REFLOW_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>perf-kernel</title><style>
-  body { margin: 0; font: 12px/1.2 sans-serif; }
+  ${PROBE_FONT_FACE}
+  body { margin: 0; font: 12px/1.2 ProbeSans; }
   #pad div { padding: 1px 2px; border-bottom: 1px solid #eee; }
   #layout { height: 20px; background: #ccc; }
 </style></head><body>
@@ -127,7 +139,7 @@ const REFLOW_HTML = `<!doctype html>
 const BUTTONS = 100;
 const PROBE_HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>probe</title><style>
-  body { margin: 0; font: 12px/1.2 sans-serif; }
+  body { margin: 0; font: 12px/1.2 FreeSans, sans-serif; }
   #pad div { padding: 1px 2px; border-bottom: 1px solid #eee; }
   #btns button { width: 58px; height: 18px; font-size: 9px; padding: 0; margin: 1px; }
   #layout { height: 20px; background: #ccc; }
@@ -338,6 +350,32 @@ const KERNELS = {
           acc += el.offsetHeight;
         }
         return { ms: performance.now() - t0, checksum: acc };
+      })()`);
+      return { ms: r.ms, tag: `checksum=${r.checksum}` };
+    },
+  },
+
+  // runtime-probe.cjs's `dom_churn` row, same loop. Synchronous JS with no
+  // layout and no shaping in it, so a text-stack change cannot reach it
+  // directly; textstack read it 1.02 mean over 10 draws (1.08 on 37593198909).
+  dom_churn: {
+    page: DOM_HTML,
+    run: async (page) => {
+      const r = await page.evaluate(`(() => {
+        const root = document.createElement('div');
+        document.body.appendChild(root);
+        const t0 = performance.now();
+        for (let i = 0; i < 160000; i++) {
+          const d = document.createElement('div');
+          d.className = 'c' + (i & 7);
+          d.textContent = 'n' + i;
+          root.appendChild(d);
+          if (i & 1) { root.removeChild(d); }
+        }
+        const ms = performance.now() - t0;
+        const checksum = root.childElementCount;
+        root.remove();
+        return { ms, checksum };
       })()`);
       return { ms: r.ms, tag: `checksum=${r.checksum}` };
     },
@@ -557,6 +595,9 @@ async function main() {
   }
   // The text page builds its rows in an inline script, so the shot has to wait
   // for layout to settle or the first frames capture a half-built document.
+  if (kernel.page === DOM_HTML || kernel.page === REFLOW_HTML) {
+    await page.evaluate('document.fonts.load("12px ProbeSans")');
+  }
   if (kernel.page === TEXT_HTML) {
     await page.waitForFunction('document.querySelectorAll("#pad div").length'
       + ' === 800');

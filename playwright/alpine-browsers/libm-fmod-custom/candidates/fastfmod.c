@@ -70,7 +70,7 @@
  * narrowed reduction and the branchless tail are one change.
  *
  * Three explanations are dead, by measurement, so do not spend a round on
- * them again: the preload failing to reach the WebProcess (libfastfmod.so is
+ * them again: the preload failing to reach the WebProcess (libm-fmod-custom.so is
  * 17-20% of the profile window), a transfer gap between the isolated bench and
  * the browser (the isolated result transfers exactly on Zen 3), and the JS
  * loop hiding the difference (the kernel is ~70% fmod). What is still NOT
@@ -85,7 +85,7 @@
  * here and recurses forever. There is deliberately no dlsym, no RTLD_NEXT and
  * no fallback path — every case is handled below.
  *
- * Correctness is not asserted, it is gated: fastfmod-vectors.c runs the same
+ * Correctness is not asserted, it is gated: libm-fmod-custom-vectors.c runs the same
  * operand stream with and without this object preloaded and compares the raw
  * result BITS, so a differing signed zero or NaN payload fails the build.
  * See run-gate.sh.

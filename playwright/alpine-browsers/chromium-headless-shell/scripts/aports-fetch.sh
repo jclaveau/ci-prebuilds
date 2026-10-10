@@ -50,7 +50,7 @@ aports_preferred_host() { cat "$APORTS_STATE" 2>/dev/null || echo gitlab; }
 aports_fetch() {
   local what="$1" primary="$2" fallback="$3"
   shift 3
-  local n=1 url host backoff order
+  local n=1 url host backoff order auth_args
   local preferred; preferred="$(aports_preferred_host)"
   if [[ "$preferred" == github ]]; then order="github gitlab"; else order="gitlab github"; fi
   while (( n <= APORTS_ATTEMPTS )); do
@@ -60,8 +60,15 @@ aports_fetch() {
       else
         url="$fallback"
       fi
+      # GitHub's API answers 403 to unauthenticated calls from shared runner
+      # IPs once their rate limit is spent. Send the token there only: never
+      # to gitlab, nor to a base a test has overridden.
+      auth_args=()
+      if [[ -n "${GITHUB_TOKEN:-}" && "$url" == https://api.github.com/* ]]; then
+        auth_args=(-H "Authorization: Bearer $GITHUB_TOKEN")
+      fi
       if curl -fsSL --connect-timeout "$APORTS_CONNECT_TIMEOUT" \
-              --max-time "$APORTS_MAX_TIME" "$url" "$@"; then
+              --max-time "$APORTS_MAX_TIME" "${auth_args[@]}" "$url" "$@"; then
         echo "$host" >"$APORTS_STATE" 2>/dev/null || true
         # Say so whenever the host CHANGED, not only after a sleep: a build
         # quietly running entirely off the mirror is worth seeing in the log

@@ -178,14 +178,14 @@ jobs:
           done
       - name: Upload install download size
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: install-dl-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}
           path: /tmp/install-dl-mb.txt
           if-no-files-found: ignore
       - name: Upload runtime probe rows
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: perf-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}
           path: playwright/perf-out/*.json
@@ -259,14 +259,14 @@ jobs:
           done
       - name: Upload install download size
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: install-dl-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}
           path: /tmp/install-dl-mb.txt
           if-no-files-found: ignore
       - name: Upload runtime probe rows
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: perf-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}
           path: playwright/perf-out/*.json
@@ -369,7 +369,7 @@ jobs:
           test "$rc" -eq 0 && test -n "$TEST_START"
       - name: Upload act result + log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: act-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}
           # JSON is consumed by the summary; .log is for human diagnosis (full tee of act --verbose).
@@ -394,14 +394,14 @@ jobs:
           sparse-checkout: playwright/bench/bench-summary.py
           sparse-checkout-cone-mode: false
       - name: Download act results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           pattern: act-*
           path: act-results
           merge-multiple: true
       - name: Download install-dl artifacts (hosted)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           pattern: install-dl-*

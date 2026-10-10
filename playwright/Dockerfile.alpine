@@ -52,7 +52,7 @@ FROM ghcr.io/jclaveau/playwright-alpine-browsers:${CHS_SOURCE_TAG} AS chs-source
 FROM ghcr.io/jclaveau/playwright-alpine-browsers:${FF_SOURCE_TAG} AS ff-source
 FROM ghcr.io/jclaveau/playwright-alpine-browsers:${WK_SOURCE_TAG} AS wk-source
 
-# libfastfmod.so — a drop-in `fmod` for musl, preloaded under WebKit alongside
+# libm-fmod-custom.so — a drop-in `fmod` for musl, preloaded under WebKit alongside
 # mimalloc. musl's fmod walks the exponent difference one bit per iteration
 # with a data-dependent branch, so for large dividends every call eats ~21
 # unpredictable branches: 163.8 ms per 3M calls against glibc's 54.0. That is
@@ -60,18 +60,26 @@ FROM ghcr.io/jclaveau/playwright-alpine-browsers:${WK_SOURCE_TAG} AS wk-source
 # an EPYC 7763, 7.65x on a Xeon 8370C) — both engines call libc the same
 # 3,000,000 times per kernel, so it was never JSC. See issue #126.
 #
-# The win is not uniform across silicon: profiled per round, this is 0.92-0.94
-# against official on an EPYC 7763 and 1.16 on an EPYC 9V74, because glibc's
-# fmod gains more from Zen 4's divider than ours does. See the file header.
+# The same .so carries libm-fmodf-custom.c's fmodf, preloaded under chromium:
+# chrome-headless-shell imports fmodf (and no fmod) from musl, from 66 call
+# sites in canvas arcs, Skia dashing, colour conversion and CSS calc.
 #
-# Compiled here and gated in .github/workflows/wk-fastfmod-gate.yml, which runs
+# libm-fmod-custom.c is also linked into Firefox's libxul (alpine-browsers/Dockerfile).
+# It replaces the shipped bit-loop (now candidates/fastfmod.c), which read
+# 0.92-0.94 against official on an EPYC 7763 but 1.16 on an EPYC 9V74; its
+# kernel bench reads 0.81x (7763), 0.84x (9V74), 0.86x (9V45) against glibc.
+#
+# Compiled here and gated in .github/workflows/libm-fmod-custom-gate.yml, which runs
 # the same operand stream with and without it and compares raw result bits.
 # The smoke below is only a build-time sanity check that the object loads and
 # answers; bit-exactness is the workflow's job, over 7.5M comparisons.
-FROM ${BASE_IMAGE} AS fastfmod-build
-COPY alpine-browsers/webkit/fastfmod /work/fastfmod
+FROM ${BASE_IMAGE} AS libm-fmod-custom-build
+COPY alpine-browsers/libm-fmod-custom /work/libm-fmod-custom
 RUN sudo apk add --no-cache gcc musl-dev \
- && sudo gcc -O2 -fPIC -shared -o /usr/lib/libfastfmod.so /work/fastfmod/fastfmod.c \
+ && sudo gcc -O2 -fPIC -Wa,-mbranches-within-32B-boundaries -c -o /tmp/libm-fmodf-custom.o \
+      /work/libm-fmod-custom/libm-fmodf-custom.c \
+ && sudo gcc -O2 -fPIC -shared -o /usr/lib/libm-fmod-custom.so /work/libm-fmod-custom/libm-fmod-custom.c \
+      /tmp/libm-fmodf-custom.o \
  && printf '%s\n' \
       '#include <stdio.h>' \
       '#include <math.h>' \
@@ -83,10 +91,13 @@ RUN sudo apk add --no-cache gcc musl-dev \
       '  if (fmod(-7.5, 2.0) != -1.5) return 3;' \
       '  if (!isnan(fmod(1.0, 0.0))) return 4;' \
       '  if (fmod(3.0, INFINITY) != 3.0) return 5;' \
-      '  puts("fastfmod smoke ok"); return 0; }' \
+      '  if (fmodf(7.5f, 2.0f) != 1.5f) return 6;' \
+      '  if (fmodf(-370.0f, 360.0f) != -10.0f) return 7;' \
+      '  if (fmodf(16777215.0f, 3.0f) != 0.0f) return 8;' \
+      '  puts("libm-fmod-custom smoke ok"); return 0; }' \
     > /tmp/smoke.c \
- && gcc -O2 -fno-builtin-fmod -o /tmp/smoke /tmp/smoke.c -lm \
- && LD_PRELOAD=/usr/lib/libfastfmod.so /tmp/smoke
+ && gcc -O2 -fno-builtin-fmod -fno-builtin-fmodf -o /tmp/smoke /tmp/smoke.c -lm \
+ && LD_PRELOAD=/usr/lib/libm-fmod-custom.so /tmp/smoke
 
 # libfaststring.so — AVX2 memcpy/memmove/memset/memcmp/strlen for chromium.
 # Alpine has no IFUNC, so musl links ONE implementation of each where glibc
@@ -167,7 +178,6 @@ RUN sudo apk add --no-cache \
         libdrm libevent libffi libjpeg-turbo libnotify libogg libtheora \
         libvorbis libvpx libwebp libwebpdemux libxcomposite libxt mesa-gl \
         nspr nss pipewire-libs libpulse libstdc++ libgcc mimalloc2-insecure \
-        mimalloc2 \
         libwpe libwpebackend-fdo gtk4.0 at-spi2-core cairo pango gdk-pixbuf \
         mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \
         gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \
@@ -181,6 +191,12 @@ RUN sudo apk add --no-cache \
 #   /etc/localtime — 1,245 failed opens per process, 9,300 per chromium launch
 # - the official image symlinks /etc/localtime at UTC, so readlink answers
 RUN sudo ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+
+# GStreamer's frei0r plugin registers 0 features here (no frei0r effects are
+# installed), but it declares a dependency on $HOME/.frei0r-1/lib. That makes
+# any registry baked under one HOME stale for every other user, so WebKit
+# rescans on each launch (~20 ms) instead of reading the baked registry below.
+RUN sudo rm /usr/lib/gstreamer-1.0/libgstfrei0r.so
 
 # Firefox + WebKit staging: the bundles are COPY'd in, shimmed and stripped
 # HERE, and the final image COPYs the finished trees out.
@@ -231,39 +247,42 @@ RUN sudo touch /ms-playwright/chromium_headless_shell-${CHS_REV}/INSTALLATION_CO
 # directly — so the final stage's container-wide LD_PRELOAD would reach it and silently
 # put mimalloc under PartitionAlloc. Every earlier decision in this file
 # deliberately left chromium's allocator alone, so the shim CLEARS that preload
-# rather than adding to it.
+# rather than adding to it. CHS_LD_PRELOAD names what chromium preloads instead
+# (libfaststring.so and libm-fmod-custom.so by default); local-counted-compare.sh
+# and perf-gate set it to price a preload, and an empty value means none.
 #
-# libfaststring.so is built and shipped but deliberately NOT loaded. Measured
-# in the published image against ITSELF via `CHS_FAST_STRING=0`, twice, with
-# the passes ordered on/off/on so a drift over the job cancels:
+# libfaststring.so is loaded by default since the faststring tail fix
+# (c7a2508). Seven perf-gate draws of the same chs-latest with vs without it
+# (37524874478, 37527624043..37527644796; EPYC 7763 x3, 9V74 x3, 9V45 x1):
 #
-#   run 34355411280, Xeon 8370C, unbracketed
-#   run 34357346361, EPYC 7763, bracketed
+#   layout   0.954-0.999 in 7/7, mean ~0.984
+#   launch   0.961-1.022, mean ~0.99 (the extra DSO no longer shows)
+#   geomean  0.985-1.010, mean ~0.997
 #
-# What holds across both is `launch`: 1.43x with the shim against 1.36x
-# without on the 7763, 1.35x against 1.28x on the 8370C. Adding a library adds
-# a DSO to the closure, and the closure is precisely what `launch` is bound by
-# here — musl resolves every symbol in every object at load, so a 66th object
-# is not free. Meanwhile `layout_text`, the row it was merged for, is flat
-# once bracketed (1.30 against 1.29, inside the spread of the two on passes).
+# Before the fix it was left unloaded: kernels finished with a byte loop under
+# 32 bytes, layout_text was flat once bracketed, and launch read 1.43x with it
+# against 1.36x without (runs 34355411280, 34357346361), back when the DSO
+# closure still bound launch. The conformance runner (build-runner.sh) mirrors
+# this launcher and preload.
 #
-# So it costs the row we are furthest behind on and buys nothing measurable.
+# The shim also points the Vulkan loader at chromium's own SwiftShader ICD.
+# mesa-vulkan-swrast (installed above for the shared Mesa closure) registers
+# lavapipe in /usr/share/vulkan/icd.d, which official's image has none of, so
+# every GPU process dlopened libvulkan_lvp.so + libLLVM.so.22 beside the
+# SwiftShader it then picks anyway. famille i3-4005U, chromium 151.0.7922.34:
 #
-# The 1.14 -> 1.09 reading that justified merging it came from preloading it
-# over the artifact at `image_ours`, which is a DIFFERENT build from the one
-# we ship — on a Xeon 8573C those two read `layout_text` 1.40x and 1.14x.
+#   ANGLE initializationTime  118-145 ms vs 38-59 ms (official 34 ms)
+#   launch→newPage→close      247.8 vs 240.5 ms median, p90 270.2 vs 254.6 ms
+#                             (80 rounds interleaved in one container)
 #
-# Left in the tree rather than deleted: the kernels vectorise 32 bytes at a
-# time and finish with a byte-at-a-time tail with no size threshold, so a call
-# under 32 bytes runs that byte loop where musl would copy whole words. Fixing
-# that is worth a try, and the self-control leg in chromium-gap-probes.yml is
-# the gate any re-landing has to pass first.
+# A caller's own VK_ICD_FILENAMES still wins.
 RUN CHS=/ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64 \
  && sudo mv "$CHS/chrome-headless-shell" "$CHS/chrome-headless-shell.real" \
  && printf '%s\n' \
         '#!/bin/sh' \
-        'DIR="$(dirname "$0")"' \
-        'unset LD_PRELOAD' \
+        'DIR="${0%/*}"' \
+        'if [ -n "${CHS_LD_PRELOAD:-}" ]; then export LD_PRELOAD="$CHS_LD_PRELOAD"; else unset LD_PRELOAD; fi' \
+        'export VK_ICD_FILENAMES="${VK_ICD_FILENAMES:-$DIR/vk_swiftshader_icd.json}"' \
         'exec "$DIR/chrome-headless-shell.real" "$@"' \
   | sudo tee "$CHS/chrome-headless-shell" >/dev/null \
  && sudo chmod +x "$CHS/chrome-headless-shell"
@@ -313,7 +332,7 @@ RUN sudo mv /ms-playwright/firefox-${FF_REV}/firefox/firefox \
             /ms-playwright/firefox-${FF_REV}/firefox/firefox.real \
  && printf '%s\n' \
         '#!/bin/sh' \
-        'DIR="$(dirname "$0")"' \
+        'DIR="${0%/*}"' \
         'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2' \
         'ICU_DATA="$DIR" exec "$DIR/firefox.real" --remote-debugging-port=0 "$@"' \
   | sudo tee /ms-playwright/firefox-${FF_REV}/firefox/firefox >/dev/null \
@@ -365,8 +384,8 @@ RUN sudo touch /ms-playwright/webkit-${WK_REV}/INSTALLATION_COMPLETE \
 # passes the same variable so the browser conformance tests is the browser we
 # ship.
 #
-# The same wrapper carries libfastfmod.so and libz-ng-compat.so.1 (built in the
-# fastfmod-build and zlibng-build stages above). All three are plain
+# The same wrapper carries libm-fmod-custom.so and libz-ng-compat.so.1 (built in the
+# libm-fmod-custom-build and zlibng-build stages above). All three are plain
 # interpositions of disjoint symbols, so the order between them does not
 # matter. If any object fails to load, ld.so warns on stderr and continues:
 # WebKit still runs and still returns correct results, just at musl's
@@ -377,30 +396,38 @@ RUN sudo touch /ms-playwright/webkit-${WK_REV}/INSTALLATION_COMPLETE \
 # probe can put both arms on ONE runner: the ratio is CPU-model dependent, and
 # two runs on two runners cannot be differenced.
 #
-# MIMALLOC_PURGE_DELAY=-1 stops mimalloc returning freed pages to the kernel.
-# Profiling a steady-state click loop against Playwright's official image
-# (browser-perf-record runs 35615190100 and 35625723200, one job per arm)
-# showed our arm at parity on total CPU and BELOW official on kernel cycles,
-# yet paying 2.7-3.3x the madvise calls and ~5x the page faults, with every
-# thread's scheduler delay 1.1-2.3x and cpu-migrations 1.3-1.6x higher at an
-# identical thread count. The purge is what generates that churn: disabling it
-# removes 36% of the container's page faults (240319/248300/234858 ->
-# 157680/152647/156949 over three interleaved 45s pairs) and does not cost
-# memory (peak 470/472 MB -> 372/461 MB).
+# LP_NUM_THREADS=0 makes llvmpipe rasterise on the thread that submits the
+# draw instead of handing tiles to its worker pool. Counted on an i3-4005U
+# (2c/4t), click_force: 4609 vs 3108 CPU-ms/iter, 4.92 vs 3.39 G instructions,
+# median 1754 vs 1147 ms; official is 4058 CPU-ms there. WK_LP_NUM_THREADS
+# empty leaves llvmpipe's default (one thread per core), so perf-gate can
+# price it in one run via candidate_build_args.
 #
-# WK_MIMALLOC_PURGE=1 restores mimalloc's own default, same reason WK_ZLIB_NG
-# exists: an arm that cannot be switched inside one container cannot be probed
-# against its control on one runner.
+# MIMALLOC_PURGE_DELAY=-1 stops mimalloc returning freed pages to the kernel.
+# A steady-state click loop profiled against Playwright's official image
+# (browser-perf-record 35615190100, 35625723200) paid ~5x the page faults and
+# 2.7-3.3x the madvise calls at parity on total CPU; the purge is what
+# generates that churn. perf-gate A/B, n=10, whole container across every
+# row: page faults 0.935 / 0.937 (EPYC 7763) and 0.950 (9V45), sys time
+# 0.972 / 0.966 on the 7763, flat on the 9V45, peak memory and wall flat
+# (runs 38044341427, 38044342985, 38044344421). WK_MIMALLOC_PURGE_DELAY
+# empty restores mimalloc's default, so perf-gate can price it via
+# candidate_build_args.
+ARG WK_LP_NUM_THREADS=0
+ARG WK_MIMALLOC_PURGE_DELAY=-1
 RUN sudo mv /ms-playwright/webkit-${WK_REV}/pw_run.sh \
             /ms-playwright/webkit-${WK_REV}/pw_run.real.sh \
  && printf '%s\n' \
         '#!/bin/sh' \
-        'DIR="$(dirname "$0")"' \
+        'DIR="${0%/*}"' \
         'ZNG=""' \
         '[ "${WK_ZLIB_NG:-1}" = 1 ] && ZNG=":/usr/lib/libz-ng-compat.so.1"' \
-        'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libfastfmod.so$ZNG' \
-        '[ "${WK_MIMALLOC_PURGE:-0}" = 1 ] || export MIMALLOC_PURGE_DELAY=-1' \
+        'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libm-fmod-custom.so$ZNG' \
         'export WEBKIT_SKIA_ENABLE_CPU_RENDERING=1' \
+        'REG="${XDG_CACHE_HOME:-$HOME/.cache}/gstreamer-1.0/registry.x86_64.bin"' \
+        '[ -n "$GST_REGISTRY$GST_REGISTRY_1_0" ] || [ -e "$REG" ] || { mkdir -p "${REG%/*}" && cp "$DIR/gst-registry.bin" "$REG"; } 2>/dev/null' \
+        "${WK_LP_NUM_THREADS:+export LP_NUM_THREADS=${WK_LP_NUM_THREADS}}" \
+        "${WK_MIMALLOC_PURGE_DELAY:+export MIMALLOC_PURGE_DELAY=${WK_MIMALLOC_PURGE_DELAY}}" \
         'exec "$DIR/pw_run.real.sh" "$@"' \
   | sudo tee /ms-playwright/webkit-${WK_REV}/pw_run.sh >/dev/null \
  && sudo chmod +x /ms-playwright/webkit-${WK_REV}/pw_run.sh
@@ -439,6 +466,21 @@ RUN sudo bash /usr/local/bin/strip-mesa-closure.sh /ms-playwright/webkit-${WK_RE
 COPY alpine-browsers/webkit/scripts/strip-bundled-libs.sh /usr/local/bin/strip-bundled-libs.sh
 RUN sudo bash /usr/local/bin/strip-bundled-libs.sh /ms-playwright/firefox-${FF_REV}/firefox firefox \
  && sudo bash /usr/local/bin/strip-bundled-libs.sh /ms-playwright/webkit-${WK_REV}/minibrowser-wpe webkit /ms-playwright/firefox-${FF_REV}/firefox
+
+# The first WebKit launch in a fresh container scans every GStreamer plugin
+# into ~/.cache/gstreamer-1.0 before the page opens. On an i3-4005U, that first
+# launch takes 763 ms vs 130 ms for later ones (official: 1358 vs 148 ms).
+# Baking the registry here takes it to 161 ms. The shim copies it to the
+# user's default registry path on first launch rather than pointing
+# GST_REGISTRY at it: this file is read-only, so a registry gst finds stale
+# could never be rewritten, and gst rescanned on every launch. The one built
+# here does go stale in the final image (gio's entry, cause not pinned down),
+# and pointing at it cost every warm launch 145.7 vs 123.5 ms. A writable copy
+# is rescanned once (first launch 216 ms) and is fresh from then on.
+RUN sudo apk add --no-cache --virtual .gst-tools gstreamer-tools \
+ && sudo env GST_REGISTRY=/ms-playwright/webkit-${WK_REV}/gst-registry.bin gst-inspect-1.0 >/dev/null \
+ && sudo chmod 644 /ms-playwright/webkit-${WK_REV}/gst-registry.bin \
+ && sudo apk del --no-cache .gst-tools
 
 FROM runtime-libs
 
@@ -494,19 +536,22 @@ ENV WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
 # image on eval_rtt: two draws against it read 0.957 and 1.022, and the n=10
 # baseline classes that row as tied. Do not quote it as a win over official.
 #
-# The secure build is used deliberately. On the driver the two are within ~2%
-# of each other (33066499518), so there is no reason to give up mimalloc's
-# hardening here — unlike the browser shims, where secure measured 10-15%
-# slower and -insecure is a paid-for choice.
+# The insecure build, as in the browser shims. A CI A/B once read the two
+# within ~2% on the driver (33066499518), but a counted local run put secure
+# at 318 ms vs 297 ms on eval_rtt (0.93x, 713 vs 694 M instructions per
+# iteration): the secure build's guard pages and encoded free lists cost the
+# driver real time. Official's node runs plain glibc malloc, which has neither,
+# so this does not drop below official's hardening. Security trade-off parked
+# for later, not dismissed.
 #
 # Scope: this is a container-wide ENV, so it reaches every process a user runs
 # here, not just the driver.
-ENV LD_PRELOAD=/usr/lib/libmimalloc.so.2
+ENV LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2
 
-# The fmod interposer the webkit launcher preloads. ~10 kB; reaches
-# MiniBrowser and every auxiliary process, and nothing else — not the Node
-# driver, not chromium, not firefox.
-COPY --from=fastfmod-build /usr/lib/libfastfmod.so /usr/lib/libfastfmod.so
+# The fmod/fmodf interposer the webkit and chromium launchers preload. ~10 kB;
+# reaches MiniBrowser, chrome-headless-shell and their auxiliary processes,
+# and nothing else — not the Node driver, not firefox.
+COPY --from=libm-fmod-custom-build /usr/lib/libm-fmod-custom.so /usr/lib/libm-fmod-custom.so
 
 # zlib-ng in zlib-compat mode, preloaded by the same webkit launcher. Reaches
 # MiniBrowser and its auxiliary processes only — chromium and firefox bundle
@@ -519,7 +564,42 @@ COPY --from=zlibng-build /usr/lib/libz-ng-compat.so.1 /usr/lib/libz-ng-compat.so
 # container-wide one.
 COPY --from=faststring-build /usr/lib/libfaststring.so /usr/lib/libfaststring.so
 
-RUN pnpm install -g playwright@${PLAYWRIGHT_VERSION}
+# What the chromium launcher preloads. perf-gate's candidate_build_args sets it
+# (CHS_LD_PRELOAD= for none) to price a chromium-only preload against an
+# otherwise identical control. libm-fmod-custom.so answers chrome's fmodf: at
+# gaps 3-8 the integer candidate it grew from took 3.4-4.7 ns per call vs
+# musl's 19.5-51.1 ns on the CI CPUs (run 37929140939), bit-identical over the
+# gate's 4M fmodf comparisons.
+ARG CHS_LD_PRELOAD=/usr/lib/libfaststring.so:/usr/lib/libm-fmod-custom.so
+ENV CHS_LD_PRELOAD=${CHS_LD_PRELOAD}
+
+# Opt-in Node driver swap, off by default: perf-gate's candidate_build_args sets
+# both to price nodejs.org's own musl build of the same Node against Alpine's.
+# Alpine's nodejs links openssl, ICU, brotli and c-ares from the system and is
+# LTO-built; the tarball bundles them, as the static node in official's image
+# does. A local counted run (insn mix 2026-10-06) put Alpine's node at +3%
+# driver instructions on eval_rtt and +5% on locator_click, JIT code 2x.
+ARG NODE_MUSL_TARBALL_VERSION=
+ARG NODE_MUSL_TARBALL_SHA256=
+RUN if [ -n "${NODE_MUSL_TARBALL_VERSION}" ]; then \
+      set -e; \
+      tarball="node-v${NODE_MUSL_TARBALL_VERSION}-linux-x64-musl.tar.xz"; \
+      wget -qO "/tmp/${tarball}" "https://unofficial-builds.nodejs.org/download/release/v${NODE_MUSL_TARBALL_VERSION}/${tarball}"; \
+      echo "${NODE_MUSL_TARBALL_SHA256}  /tmp/${tarball}" | sha256sum -c -; \
+      tar -xJf "/tmp/${tarball}" -C /tmp --strip-components=2 "${tarball%.tar.xz}/bin/node"; \
+      sudo install -m 0755 /tmp/node /usr/bin/node; \
+      rm -f "/tmp/${tarball}" /tmp/node; \
+      node -p 'process.version + " shared_openssl=" + process.config.variables.node_shared_openssl'; \
+    fi
+
+# npm -g, not pnpm -g: Playwright captures a stack trace on every API call
+# and regex-parses each frame, so the client pays per character of the
+# playwright-core path. pnpm's global store path is ~150 chars, npm's
+# /usr/local/lib/node_modules one ~80, as official's /usr/lib. Local
+# 500x page.evaluate, node CPU ms: pnpm 164-175, npm 161-167, official
+# 154-162. global-node-path.sh already resolves `npm root -g`.
+RUN sudo npm install -g --no-fund --no-audit playwright@${PLAYWRIGHT_VERSION} \
+    && sudo share-dir-with-runner-group "${PNPM_HOME}"
 
 COPY --from=browsers-staged /ms-playwright/chromium_headless_shell-${CHS_REV} /ms-playwright/chromium_headless_shell-${CHS_REV}
 # Firefox first: webkit's ICU libs are relative symlinks into the firefox tree,

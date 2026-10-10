@@ -20,24 +20,26 @@ checks=0
 workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
 
-# One shard's worth of stats.txt, in the format conformance/run.sh writes.
+# One suite's worth of stats.txt, in the format conformance/run.sh writes.
+# Appends, so several suites can accumulate under one browser.
 seed() {
-  local dir="$1" browser="$2" passed="$3" flaky="${4:-0}"
+  local dir="$1" browser="$2" passed="$3" flaky="${4:-0}" suite="${5:-library}"
   mkdir -p "$dir/report-$browser-1"
-  printf 'browser=%s shard=1 suite=library passed=%s failed=0 skipped=0 flaky=%s\n' \
-    "$browser" "$passed" "$flaky" > "$dir/report-$browser-1/stats.txt"
+  printf 'browser=%s shard=1 suite=%s passed=%s failed=0 skipped=0 flaky=%s\n' \
+    "$browser" "$suite" "$passed" "$flaky" >> "$dir/report-$browser-1/stats.txt"
 }
 
 # $1 label, $2 expected rc, $3 expected status substring, rest: seed specs
-# as `side:browser:passed[:flaky]` where side is alp or ubu.
+# as `side:browser:passed[:flaky[:suite]]` where side is alp or ubu and suite
+# defaults to library.
 expect() {
   local label="$1" want_rc="$2" want_text="$3"; shift 3
   local case_dir="$workdir/$checks"
   mkdir -p "$case_dir/alp" "$case_dir/ubu"
-  local spec side browser passed flaky
+  local spec side browser passed flaky suite
   for spec in "$@"; do
-    IFS=: read -r side browser passed flaky <<< "$spec"
-    seed "$case_dir/$side" "$browser" "$passed" "${flaky:-0}"
+    IFS=: read -r side browser passed flaky suite <<< "$spec"
+    seed "$case_dir/$side" "$browser" "$passed" "${flaky:-0}" "${suite:-library}"
   done
 
   local out got=0
@@ -89,6 +91,26 @@ expect "a flaky pass on Alpine is not a regression" 0 "| chromium | 111 /" \
 # genuine Alpine shortfall.
 expect "a flaky pass on Ubuntu still counts against Alpine" 1 "FAIL" \
   alp:chromium:110 ubu:chromium:110:1
+
+# Run 35972784207: Ubuntu's webkit reports `suite=headed passed=14`, Alpine's
+# WPE-only artifact reports no headed row at all, and the gate read the whole
+# leg as a -14 regression. Coverage never built is not coverage lost.
+expect "a suite only Ubuntu ran is not compared" 0 "Alpine ran no \`headed\`" \
+  alp:webkit:100 ubu:webkit:100 ubu:webkit:14:0:headed
+
+# ...and symmetrically, so the rule reads the same from either side.
+expect "a suite only Alpine ran is not compared" 0 "Ubuntu ran no \`headed\`" \
+  alp:webkit:100 alp:webkit:14:0:headed ubu:webkit:100
+
+# The exclusion must not become a hiding place: a shortfall inside a suite
+# both sides ran still fails even while another suite is being dropped.
+expect "a regression inside a shared suite survives a dropped suite" 1 "FAIL" \
+  alp:webkit:99 ubu:webkit:100 ubu:webkit:14:0:headed
+
+# A dropped suite cannot pay for one either — Alpine's surplus there must not
+# offset a shortfall in the suite that is actually compared.
+expect "a dropped suite cannot offset a shared-suite shortfall" 1 "FAIL" \
+  alp:webkit:99 alp:webkit:500:0:headed ubu:webkit:100
 
 echo "check-runtime-parity: $((checks - failures))/$checks checks passed"
 [ "$failures" -eq 0 ]

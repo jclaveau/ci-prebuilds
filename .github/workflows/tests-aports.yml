@@ -52,6 +52,8 @@ jobs:
       # github.com/alpinelinux/aports still mirrors gitlab byte-for-byte at our
       # pinned sha, and a mocked version of that would assert nothing.
       - name: aports fetch failover (both hosts)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -a; . playwright/alpine-browsers/versions.env; set +a
           bash playwright/alpine-browsers/chromium-headless-shell/tests/fetch-aports-fallback.sh

@@ -36,7 +36,7 @@ on:
         type: string
       runs:
         description: shots per arm
-        default: 5
+        default: 10
         type: number
   workflow_dispatch:
     inputs:
@@ -62,8 +62,12 @@ on:
         type: string
       runs:
         description: shots per arm
-        default: 5
+        default: 10
         type: number
+      candidate_build_args:
+        description: 'extra docker build args for the candidate arm only, space-separated KEY=VALUE (e.g. NODE_MUSL_TARBALL_VERSION=24.18.1 NODE_MUSL_TARBALL_SHA256=<sha>); with candidate_tag == promoted_tag the ratchet ratio prices just these'
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -91,6 +95,7 @@ jobs:
           PROMOTED: ${{ inputs.promoted_tag }}
           REV: ${{ inputs.rev }}
           PW: ${{ inputs.pw_version }}
+          CANDIDATE_BUILD_ARGS: ${{ inputs.candidate_build_args }}
         run: |
           set -o pipefail
           case "$BROWSER" in
@@ -102,6 +107,12 @@ jobs:
           repo=ghcr.io/jclaveau/playwright-alpine-browsers
           stage() {
             local arm="$1" tag="$2"
+            local extra_args=()
+            if [ "$arm" = candidate ]; then
+              for build_arg in $CANDIDATE_BUILD_ARGS; do
+                extra_args+=(--build-arg "$build_arg")
+              done
+            fi
             echo "::group::stage ${arm} (${repo}:${tag})"
             # Dockerfile.alpine's BASE_IMAGE default is the Docker Hub `latest`,
             # which TP never builds from (build-layer passes the ghcr sha tag) and
@@ -111,7 +122,16 @@ jobs:
               --build-arg "${prefix}_SOURCE_TAG=${tag}" \
               --build-arg "${prefix}_REV=${REV}" \
               --build-arg "PLAYWRIGHT_VERSION=${PW}" \
+              "${extra_args[@]}" \
               -t "gate-${arm}:${{ github.run_id }}" playwright
+            # The arms must differ by exactly what candidate_build_args says.
+            docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
+              "gate-${arm}:${{ github.run_id }}" | grep -E '^(CHS_LD_PRELOAD|LD_PRELOAD)=' \
+              | sed "s/^/${arm} env: /"
+            if [ "$BROWSER" = webkit ]; then
+              docker run --rm --entrypoint sh "gate-${arm}:${{ github.run_id }}" -c \
+                'cat /ms-playwright/webkit-*/pw_run.sh' | sed "s/^/${arm} pw_run.sh: /"
+            fi
             echo "::endgroup::"
           }
           docker manifest inspect "${repo}:${CANDIDATE}" >/dev/null \
@@ -171,6 +191,11 @@ jobs:
                     --browser "$PROBE_BROWSER" --target "$PROBE_TARGET" --out /out
                   mv "/out/$PROBE_TARGET-$PROBE_BROWSER.json" \
                      "/out/$PROBE_TARGET-$PROBE_BROWSER-run$PROBE_RUN.json"
+                  # The container cgroup: CPU and fault cost the wall clock can hide.
+                  { grep -E "^(usage_usec|user_usec|system_usec) " /sys/fs/cgroup/cpu.stat
+                    grep -E "^(pgfault|pgmajfault) " /sys/fs/cgroup/memory.stat
+                    echo "memory_peak $(cat /sys/fs/cgroup/memory.peak 2>/dev/null)"
+                  } > "/out/$PROBE_TARGET-$PROBE_BROWSER-run$PROBE_RUN.cgroup" 2>/dev/null || true
                 ' 2>&1 | tee "perf-out/probe-${arm}-${i}.log" || rc=1
               docker rm -f "$cname" >/dev/null 2>&1 || true
               echo "::endgroup::"
@@ -188,7 +213,7 @@ jobs:
           python3 playwright/bench/assert-perf-gate.py perf-out \
             --browser "$BROWSER" --runs "$RUNS" | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: perf-gate-${{ inputs.browser }}

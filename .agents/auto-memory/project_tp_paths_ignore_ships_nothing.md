@@ -44,3 +44,7 @@ input, so they should never occupy the ref's build slot. General rule: any
 path that changes on every session but never changes what ships belongs in
 `paths-ignore`, even if — especially if — nothing currently depends on that
 exact path being watched.
+
+Renamed 2026-10-09 (3323d08, branch `perf/fmod-fprem126`): the negation is now
+`'!playwright/alpine-browsers/libm-fmod-custom/**'` on both push and
+pull_request; any future move of that dir must move both negations.

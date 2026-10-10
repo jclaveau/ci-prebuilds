@@ -14,7 +14,11 @@
 #
 # python3 runs perf-symbolize.py against the link census; strace is the
 # syscall pass. Both in this layer for the same reason as gcc.
+#
+# musl-dbg: Alpine's libc carries no unwind tables, so `strace -k` stops at
+# `mremap+0x2a` without it; with it the stack walks out through realloc to
+# the library that asked.
 ARG BASE
 FROM ${BASE}
 USER root
-RUN apk add --no-cache perf binutils gcc musl-dev python3 strace
+RUN apk add --no-cache perf binutils gcc musl-dev musl-dbg python3 strace

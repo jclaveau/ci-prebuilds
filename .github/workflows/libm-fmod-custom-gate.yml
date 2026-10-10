@@ -1,0 +1,120 @@
+name: libm-fmod-custom gate
+
+# Proves that libm-fmod-custom.c and libm-fmodf-custom.c — the `fmod` and
+# `fmodf` we preload under WebKit and chromium and link into Firefox's libxul —
+# return bit-identical results to musl's own, in both shipped forms, before
+# they can ship.
+#
+# This is a real gate rather than a smoke test because the object interposes a
+# libm function underneath a browser. The differential run is the load-bearing
+# artifact, so it lives here and re-runs on every change rather than sitting in
+# a transcript somewhere.
+#
+# The gate job runs inside the same alpine base the consumer image is built
+# from, so the musl it verifies against is the musl it will ship against. The
+# gate-glibc job reruns the same checks against glibc on the bare runner: a
+# second libc, so a bug musl shares with this code cannot pass both.
+
+on:
+  pull_request:
+    paths:
+      - 'playwright/alpine-browsers/libm-fmod-custom/**'
+      - 'playwright/Dockerfile.alpine'
+      - 'playwright/alpine-browsers/Dockerfile'
+      - '.github/workflows/libm-fmod-custom-gate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'playwright/alpine-browsers/libm-fmod-custom/**'
+      - '.github/workflows/libm-fmod-custom-gate.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: libm-fmod-custom-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    container:
+      image: alpine:edge
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Toolchain
+        run: apk add --no-cache gcc musl-dev bash clang23 git
+
+      - name: Report the libc under test
+        # Which musl this ran against belongs in the log: the whole claim is
+        # "bit-identical to THIS libc's fmod".
+        run: |
+          set -eu
+          apk info musl | head -2
+          ls -l /lib/ld-musl-x86_64.so.1
+
+      - name: Differential gate
+        # run-gate.sh fails the job on: fmod being inlined away (which would
+        # make the comparison vacuous), the preload not loading (ld.so only
+        # warns), any bucket digest differing, or a deliberately corrupted
+        # build being accepted. ASM_CC adds Firefox's form: gcc's assembly
+        # assembled by the clang the Firefox builder uses.
+        env:
+          ASM_CC: clang-23
+        run: sh playwright/alpine-browsers/libm-fmod-custom/run-gate.sh
+             playwright/alpine-browsers/libm-fmod-custom
+             "$RUNNER_TEMP/libm-fmod-custom-gate"
+
+      - name: musl libc-test
+        # An oracle independent of musl's own fmod: libc-test's tables carry
+        # expected results AND expected fp exceptions (FE_INVALID on fmod(inf, y)
+        # and fmod(x, 0)), which the differential gate never checks.
+        # run-libc-test.sh fails on any case, on a test binary that does not
+        # import the function, or on a corrupted build being accepted.
+        env:
+          ASM_CC: clang-23
+        run: sh playwright/alpine-browsers/libm-fmod-custom/run-libc-test.sh
+             playwright/alpine-browsers/libm-fmod-custom
+             "$RUNNER_TEMP/libm-fmod-custom-libc-test"
+
+      - name: fmodf on every x
+        # Each listed divisor against all 2^32 float x, bit for bit against
+        # musl's fmodf, then one corrupted twin per path must mismatch.
+        run: sh playwright/alpine-browsers/libm-fmod-custom/run-fmodf-exhaustive.sh
+             playwright/alpine-browsers/libm-fmod-custom
+             "$RUNNER_TEMP/libm-fmodf-exhaustive"
+
+      - name: Keep the digests
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: libm-fmod-custom-gate
+          path: ${{ runner.temp }}/libm-fmod-custom-gate/*.txt
+          if-no-files-found: warn
+
+  gate-glibc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      # IEEE 754 leaves open which input's NaN payload a result carries, and
+      # glibc picks x's where musl and this code pick y's; every other bit
+      # must still match.
+      LIBM_FMOD_CUSTOM_FOLD_NAN: '1'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Report the libc under test
+        run: |
+          set -eu
+          ldd --version | head -1
+          gcc --version | head -1
+
+      - name: Differential gate
+        run: sh playwright/alpine-browsers/libm-fmod-custom/run-gate.sh
+             playwright/alpine-browsers/libm-fmod-custom
+             "$RUNNER_TEMP/libm-fmod-custom-gate"
+
+      - name: fmodf on every x
+        run: sh playwright/alpine-browsers/libm-fmod-custom/run-fmodf-exhaustive.sh
+             playwright/alpine-browsers/libm-fmod-custom
+             "$RUNNER_TEMP/libm-fmodf-exhaustive"

@@ -35,6 +35,14 @@ name: webkit / firefox perf record
 #   no trace    trace-probe.cjs is CDP tracing; neither engine has it.
 #   no memset   the counting-memset shim rewrites chromium's launch wrapper.
 #
+# With `candidate_tag` set, the two arms are two of OUR builds instead —
+# candidate vs promoted, both staged through playwright/Dockerfile.alpine the
+# way perf-gate.yml stages them — and perf_image is ignored. That is the
+# counted second opinion on a ratchet row: the gate reads wall-clock medians,
+# and a 1.05 on one draw cannot tell a slower build from a noisy shot; CPU-ms
+# per iteration (cpu-clock, no PMU needed) and instructions per iteration
+# (PMU: none on hosted runners so far, see bench/local-counted-compare.sh) can.
+#
 # Informational, dispatch-only, gates nothing.
 
 on:
@@ -69,6 +77,18 @@ on:
         description: 'Directory inside symbols_image holding the unstripped dist'
         default: '/work/minibrowser-wpe-dist'
         type: string
+      candidate_tag:
+        description: 'ghcr.io/jclaveau/playwright-alpine-browsers tag of a build under test (sha-<sha>, wk-sha-<sha>); set = candidate vs promoted instead of perf_image vs official'
+        default: ''
+        type: string
+      promoted_tag:
+        description: 'candidate mode: the tag it is priced against; empty = ff-latest / wk-latest'
+        default: ''
+        type: string
+      rev:
+        description: 'candidate mode: browser revision both builds carry (consumer FF_REV / WK_REV, e.g. 1538)'
+        default: ''
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.browser }}-${{ github.ref }}
@@ -89,6 +109,12 @@ jobs:
       BROWSER: ${{ inputs.browser }}
       OURS: ${{ inputs.perf_image }}
       PW: ${{ inputs.pw_version }}
+      CANDIDATE: ${{ inputs.candidate_tag }}
+      PROMOTED: ${{ inputs.promoted_tag || (inputs.browser == 'firefox' && 'ff-latest' || 'wk-latest') }}
+      REV: ${{ inputs.rev }}
+      # Ours first, its reference second; perf-record-report.py reads the
+      # same pair back as PERF_RECORD_ARMS.
+      ARMS: ${{ inputs.candidate_tag != '' && 'candidate promoted' || 'alpine official' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -105,17 +131,33 @@ jobs:
           # sampling outright. The runner is disposable and we are root on it.
           sudo sysctl -w kernel.perf_event_paranoid=-1
           sudo sysctl -w kernel.kptr_restrict=0
-          # Which silicon this landed on decides how to read the result: a
-          # hosted 8573C has no PMU (instructions/topdown absent), an EPYC has.
+          # Logged for the record only: no hosted runner passes a PMU through
+          # (run 36242651767: 8/8 attempts, EPYC 9V74 and 7763, Xeon 8370C,
+          # 8573C and 6973P-C, all ENOENT on the instructions counter).
           grep -m1 'model name' /proc/cpuinfo || true
+
+      # Instructions per iteration need a PMU, which no hosted runner has had
+      # so far; the run still gives CPU-ms per iteration without one. Count
+      # instructions on a box with a PMU (bench/local-counted-compare.sh).
+      - name: Check for a PMU
+        run: |
+          python3 playwright/bench/pmu-check.py \
+            || echo "::warning::no PMU on this runner: CPU-ms only, no instruction counts"
 
       - name: Resolve every image ref before spending the run
         env:
           SYMBOLS: ${{ inputs.symbols_image }}
         run: |
           set -euo pipefail
-          docker manifest inspect "$OURS" > /dev/null
-          docker manifest inspect "mcr.microsoft.com/playwright:v${PW}-noble" > /dev/null
+          if [ -n "$CANDIDATE" ]; then
+            repo=ghcr.io/jclaveau/playwright-alpine-browsers
+            test -n "$REV" || { echo "::error::candidate mode needs rev"; exit 1; }
+            docker manifest inspect "${repo}:${CANDIDATE}" > /dev/null
+            docker manifest inspect "${repo}:${PROMOTED}" > /dev/null
+          else
+            docker manifest inspect "$OURS" > /dev/null
+            docker manifest inspect "mcr.microsoft.com/playwright:v${PW}-noble" > /dev/null
+          fi
           [ -z "$SYMBOLS" ] || docker manifest inspect "$SYMBOLS" > /dev/null
           echo "refs resolve"
 
@@ -123,6 +165,30 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p perf-out symbols && chmod 777 perf-out symbols
+          if [ -n "$CANDIDATE" ]; then
+            case "$BROWSER" in
+              firefox) prefix=FF ;;
+              webkit)  prefix=WK ;;
+            esac
+            # The same staging as perf-gate.yml, so the arms are the consumer
+            # images the gate measured: real shims, real preloads.
+            for arm in candidate promoted; do
+              tag=$CANDIDATE
+              [ "$arm" = promoted ] && tag=$PROMOTED
+              echo "::group::stage ${arm} (${tag})"
+              docker build -f playwright/Dockerfile.alpine \
+                --build-arg "BASE_IMAGE=ghcr.io/jclaveau/alpine-dood-pnpm:edge" \
+                --build-arg "${prefix}_SOURCE_TAG=${tag}" \
+                --build-arg "${prefix}_REV=${REV}" \
+                --build-arg "PLAYWRIGHT_VERSION=${PW}" \
+                -t "stage-${arm}:${{ github.run_id }}" playwright
+              docker build --build-arg "BASE=stage-${arm}:${{ github.run_id }}" \
+                -t "perf-${arm}:${{ github.run_id }}" \
+                -f playwright/bench/Dockerfile.perf-alpine playwright/bench
+              echo "::endgroup::"
+            done
+            exit 0
+          fi
           docker build --build-arg "BASE=$OURS" \
             -t perf-alpine:${{ github.run_id }} \
             -f playwright/bench/Dockerfile.perf-alpine playwright/bench
@@ -165,14 +231,10 @@ jobs:
             # Arms interleaved per kernel rather than run in blocks: a runner
             # that slows down partway through would otherwise land entirely
             # on whichever arm went second.
-            for target in alpine official; do
-              if [ "$target" = official ]; then
-                image="perf-official:${{ github.run_id }}"
-                perfbin=/usr/local/bin/perf-real
-              else
-                image="perf-alpine:${{ github.run_id }}"
-                perfbin=perf
-              fi
+            for target in $ARMS; do
+              image="perf-${target}:${{ github.run_id }}"
+              perfbin=perf
+              [ "$target" = official ] && perfbin=/usr/local/bin/perf-real
               echo "::group::${target} / ${kernel}"
               cname="perfrec-${target}-${kernel}"
               docker rm -f "$cname" >/dev/null 2>&1 || true
@@ -183,7 +245,7 @@ jobs:
               # tracepoints' pids meet the names in /proc (see the chromium
               # job for the first run that read every row as `:pid`). The
               # cgroup filter (-G /) still scopes the samples to this
-              # container. The engine's own preloads (mimalloc, fastfmod,
+              # container. The engine's own preloads (mimalloc, libm-fmod-custom,
               # zlib-ng) come from the image's launch shim, untouched: this
               # profiles the browser as shipped.
               docker run --rm --name "$cname" \
@@ -232,12 +294,18 @@ jobs:
       - name: Report
         if: always()
         run: |
+          if [ -n "$CANDIDATE" ]; then
+            heading="\`$CANDIDATE\` vs \`$PROMOTED\`"
+          else
+            heading="\`$OURS\` vs official"
+          fi
           {
-            echo "### ${BROWSER} perf record — \`$OURS\` vs official"
-            python3 playwright/bench/perf-record-report.py perf-out
+            echo "### ${BROWSER} perf record — ${heading}"
+            PERF_RECORD_ARMS=$(echo "$ARMS" | tr ' ' ',') \
+              python3 playwright/bench/perf-record-report.py perf-out
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: ${{ inputs.browser }}-perf-record
