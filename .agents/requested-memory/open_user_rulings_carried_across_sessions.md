@@ -57,6 +57,15 @@ them entirely once the compaction chain that was carrying them ends.
   moved >2%. Confirmed 36% page-fault cut, zero wall payoff. Left unmerged
   on purpose (measuring before merging was the point of the PR); jean has
   not yet said whether to close it or merge anyway for the fault-cut alone.
+  **Re-measured 2026-10-10** (the 09-24 in-page rows predated the 1 ms clock
+  fix e029382): perf-gate env-only A/B, branch `ab/wk-mimalloc-no-purge`
+  1d32154 (build arg WK_MIMALLOC_PURGE_DELAY + per-shot container cgroup
+  counters), runs 38044341427 + 38044342985 (EPYC 7763), 38044344421 (9V45),
+  n=10. Wrapper diff confirmed in the log. Ratchet wall geomean 0.999 / 0.999
+  / 0.997, no row outside its noise; container CPU 0.998 / 0.998 / 0.993;
+  sys 0.972 / 0.966 / 1.011; pgfault 0.935 / 0.937 / 0.950 (whole container,
+  all rows); peak memory 0.999 / 0.987 / 1.001. Same on Zen 3 and Zen 5, so
+  not a per-CPU split. Verdict: no wall, no CPU payoff; recommend close.
   See [[project_wk_mimalloc_purge_delay_finding]].
 - **fastfmod rename — DONE 2026-10-09** (3323d08 on `perf/fmod-fprem126`,
   branch only). Now `playwright/alpine-browsers/libm-fmod-custom/`,
