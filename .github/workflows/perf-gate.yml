@@ -101,7 +101,7 @@ jobs:
           if [ -n "$WANT" ]; then
             keep=false
             for want in $(tr ',' ' ' <<< "$WANT"); do
-              case "$model" in *"$want"*) keep=true ;; esac
+              case "${model,,}" in *"${want,,}"*) keep=true ;; esac
             done
             [ "$keep" = true ] \
               || echo "::notice::skipping this draw — $model matches none of $WANT"
