@@ -78,3 +78,10 @@ them entirely once the compaction chain that was carrying them ends.
 explicitly jean's call, not a default. Worth a one-line mention next time
 there's idle capacity (e.g. between long CI chains) rather than raising them
 mid-task.
+
+**2026-10-11, jean ruled the table ("go table"), applied:**
+- settled before the table: tmp/perf-run gone, #312 merged, #311 merged, rename shipped with #332
+- `tools/gha-contention` cherry-picked onto main (4cee30d)
+- deleted: old `tmp/.mem-auto-*` scratch (>1 day; hook live state kept), branches `perf/wk-pgo-corpus`, `perf/chr-libm-fmod-custom` (+ worktree ci-prebuilds-fprem), `perf/fmod-fprem126`, `perf/ff-gate-margins`, local and remote
+- `from_stage=playwright` dropped
+- still open: `fix140` + stashes (no keep/delete pick), #259 ladder (behind #249), WebKit half of the gate-margin fix (needs a webkit perf-gate run's CV data)
