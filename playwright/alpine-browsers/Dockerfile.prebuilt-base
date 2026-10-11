@@ -14,17 +14,24 @@
 
 ARG ALPINE_VERSION=edge
 
+# Same libm-fmod-custom-gcc stage as the regular Dockerfile. Keep this in sync.
+FROM alpine:${ALPINE_VERSION} AS libm-fmod-custom-gcc
+RUN apk add --no-cache gcc musl-dev
+COPY libm-fmod-custom/libm-fmod-custom.c libm-fmod-custom/libm-fmodf-custom.c /src/
+RUN gcc -O2 -fPIC -fvisibility=hidden -S /src/libm-fmod-custom.c -o /src/libm-fmod-custom.s \
+ && gcc -O2 -fPIC -fvisibility=hidden -S /src/libm-fmodf-custom.c -o /src/libm-fmodf-custom.s
+
 FROM alpine:${ALPINE_VERSION} AS firefox-builder
 
 # Same tool deps as the regular Dockerfile. Keep this in sync.
 RUN apk add --no-cache \
         bash curl git patch patchutils tar xz gzip jq gettext-envsubst make sccache \
         alsa-lib-dev automake binutils bsd-compat-headers cargo cbindgen \
-        clang22 clang22-libclang clang22-dev compiler-rt \
+        clang23 clang23-libclang clang23-dev compiler-rt \
         dbus dbus-dev gettext gtk+3.0-dev hunspell-dev icu-dev \
         libevent-dev libffi-dev libjpeg-turbo-dev libnotify-dev libogg-dev \
         libtheora-dev libtool libvorbis-dev libvpx-dev libwebp-dev \
-        libxcomposite-dev libxt-dev lld22 llvm22-dev m4 mesa-dev \
+        libxcomposite-dev libxt-dev lld23 llvm23-dev m4 mesa-dev \
         mesa-dri-gallium mimalloc2-insecure nasm nodejs nspr-dev nss-dev \
         patchelf pciutils pipewire-dev pulseaudio-dev py3-mozshellutil \
         python3 perl scudo-malloc sed wasi-sdk wireless-tools-dev \
@@ -35,6 +42,7 @@ WORKDIR /work
 COPY versions.env /work/versions.env
 COPY firefox/scripts /work/firefox/scripts
 COPY firefox/mozconfig.overlay /work/firefox/mozconfig.overlay
+COPY --from=libm-fmod-custom-gcc /src/libm-fmod-custom.s /src/libm-fmodf-custom.s /work/firefox/libm-fmod-custom/
 
 # Fetch aports + PW patches into the image filesystem (NOT a cache mount). They
 # need to persist into derivative images so apply-and-build-iter.sh can read

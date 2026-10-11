@@ -11,6 +11,8 @@
 #   COPY versions.env              /work/versions.env
 #   COPY firefox/scripts           /work/firefox/scripts
 #   COPY firefox/mozconfig.overlay /work/firefox/mozconfig.overlay
+#   COPY libm-fmod-custom/libm-fmod-custom.c libm-fmod-custom/libm-fmodf-custom.c
+#        (compiled to assembly by the gcc stage, linked into libxul)
 #
 # It is derived from the directory rather than hand-listed. The hand-listed
 # version silently omitted bundle-dist.sh, which is baked in and does affect
@@ -35,7 +37,9 @@ BROWSERS="$ROOT/playwright/alpine-browsers"
 # already-seeded base, so changing it must not force a cold reseed.
 mapfile -t FILES < <(
   {
-    printf '%s\n' "$BROWSERS/versions.env" "$BROWSERS/firefox/mozconfig.overlay"
+    printf '%s\n' "$BROWSERS/versions.env" "$BROWSERS/firefox/mozconfig.overlay" \
+      "$BROWSERS/libm-fmod-custom/libm-fmod-custom.c" \
+      "$BROWSERS/libm-fmod-custom/libm-fmodf-custom.c"
     find "$BROWSERS/firefox/scripts" -type f ! -name 'apply-and-build-iter.sh'
   } | LC_ALL=C sort
 )

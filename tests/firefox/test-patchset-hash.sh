@@ -26,6 +26,7 @@ mkdir -p "$scratch/playwright/alpine-browsers"
 cp -a "$ROOT/playwright/alpine-browsers/versions.env" \
       "$scratch/playwright/alpine-browsers/"
 cp -a "$ROOT/playwright/alpine-browsers/firefox" \
+      "$ROOT/playwright/alpine-browsers/libm-fmod-custom" \
       "$scratch/playwright/alpine-browsers/"
 
 baseline=$(bash "$HASHER" "$scratch")
@@ -46,6 +47,16 @@ git -C "$ROOT" show HEAD:playwright/alpine-browsers/firefox/scripts/bundle-dist.
   || cp -a "$ROOT/playwright/alpine-browsers/firefox/scripts/bundle-dist.sh" \
            "$scratch/playwright/alpine-browsers/firefox/scripts/bundle-dist.sh"
 
+# The fmod sources are baked in too, as gcc's assembly linked into libxul.
+for src in libm-fmod-custom.c libm-fmodf-custom.c; do
+  check
+  restored=$(bash "$HASHER" "$scratch")
+  echo '/* mutation */' >> "$scratch/playwright/alpine-browsers/libm-fmod-custom/$src"
+  if [ "$(bash "$HASHER" "$scratch")" = "$restored" ]; then
+    fail "editing $src did not change the hash — a stale base would be reused"
+  fi
+done
+
 # ...and the iter script must stay outside it: it runs against an already-seeded
 # base, so touching it must not force a ~5h cold reseed.
 check
@@ -59,8 +70,9 @@ fi
 # Dockerfile.prebuilt-base, this fails and the hasher has to be revisited.
 check
 copies=$(grep -E '^COPY ' "$ROOT/playwright/alpine-browsers/Dockerfile.prebuilt-base" \
-         | awk '{print $2}' | LC_ALL=C sort | paste -sd,)
-expected="firefox/mozconfig.overlay,firefox/scripts,versions.env"
+         | grep -v -- '--from=' \
+         | awk '{for (i = 2; i < NF; i++) print $i}' | LC_ALL=C sort | paste -sd,)
+expected="firefox/mozconfig.overlay,firefox/scripts,libm-fmod-custom/libm-fmod-custom.c,libm-fmod-custom/libm-fmodf-custom.c,versions.env"
 if [ "$copies" != "$expected" ]; then
   fail "Dockerfile.prebuilt-base COPY set changed: '$copies' != '$expected' — patchset-hash.sh may now miss a baked-in file"
 fi
