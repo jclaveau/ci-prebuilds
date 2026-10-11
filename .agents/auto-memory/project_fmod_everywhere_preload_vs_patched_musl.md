@@ -172,6 +172,15 @@ perf-gate-firefox, EPYC 7763, 10 shots: libm_fmod new 271.0 vs shipped
 925.5 ms (0.293x), vs official 1252.5 ms (0.216x). Ratchet geomean 0.910
 (only libm_fmod moved; goto_cold 0.950, rest 0.99-1.02 inside cv);
 parity geomean 0.706. Only one CPU draw (Zen 3); Intel not yet seen.
+**Intel, 2026-10-11:** perf-gate 38131950280, Xeon 8573C, ff-latest a214d8e
+vs d956f38 (pre-#332): libm_fmod 233 vs 1097 ms (0.212x), vs official
+1757.5 ms (0.133x), so Intel gains more than Zen 3. BUT ratchet layout 252 vs
+238 ms (1.059x), separated on 10/10 shots, AMD never moved it. Only fmod
+commits lie between the images → suspect libxul code placement (cf. the
+NumberMod line straddle). Unbisected; the next step is an Intel draw of the
+#332 image vs d956f38 (needs a dispatch go). Gotcha: 8573C reports `XEON` in
+upper case, so want_cpus=Xeon skipped it until da17f20 made the match
+case-insensitive.
 
 **musl libc-test on libm-fmod-custom, 2026-10-09 — PASS** (local alpine:edge,
 libc-test 7b95dfa, src/math/fmod.c + fmodf.c: sanity 10 + special 66 + ucb
