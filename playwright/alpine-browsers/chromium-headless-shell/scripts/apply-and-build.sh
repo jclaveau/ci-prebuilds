@@ -377,6 +377,12 @@ else
   echo "  WARN: build/linux/unbundle/replace_gn_files.py missing — skipping" >&2
 fi
 
+# 4d. libm-fmod-custom in V8: x64 JS `%` on doubles calls it instead of the
+#     inline x87 fprem loop, as arm64 already calls Modulo(). See the script.
+echo "===== V8: libm-fmod-custom ====="
+python3 /work/chromium-headless-shell/scripts/v8-libm-fmod-custom.py \
+  "$SRC/v8" /work/libm-fmod-custom/libm-fmod-custom.s
+
 # 5. Configure GN. Compose: aports' default args (if its APKBUILD exports any
 #    via a gn_args block) + our overlay (args.gn.overlay) + diagnostic overrides.
 echo "===== Configure GN ====="
