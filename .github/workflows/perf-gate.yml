@@ -38,6 +38,10 @@ on:
         description: shots per arm
         default: 10
         type: number
+      want_cpus:
+        description: 'CPU-model substrings to keep; empty keeps every draw (promote callers leave it empty)'
+        default: ''
+        type: string
   workflow_dispatch:
     inputs:
       browser:
@@ -68,6 +72,10 @@ on:
         description: 'extra docker build args for the candidate arm only, space-separated KEY=VALUE (e.g. NODE_MUSL_TARBALL_VERSION=24.18.1 NODE_MUSL_TARBALL_SHA256=<sha>); with candidate_tag == promoted_tag the ratchet ratio prices just these'
         default: ''
         type: string
+      want_cpus:
+        description: 'CPU-model substrings to keep, `,` between them (as perf-probe). A draw matching none ends in ~20s without staging or probing, and asserts nothing. Empty keeps every draw.'
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -79,15 +87,40 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
+      # First step on purpose, as in perf-probe: the model is drawn when the job
+      # starts and cannot be asked for, so an unwanted draw is only cheap if it
+      # is discovered before staging two multi-gigabyte images.
+      - id: cpu
+        env:
+          WANT: ${{ inputs.want_cpus }}
+        run: |
+          set -euo pipefail
+          model=$(awk -F': ' '/^model name/ { print $2; exit }' /proc/cpuinfo)
+          echo "runner CPU: $model"
+          keep=true
+          if [ -n "$WANT" ]; then
+            keep=false
+            for want in $(tr ',' ' ' <<< "$WANT"); do
+              case "$model" in *"$want"*) keep=true ;; esac
+            done
+            [ "$keep" = true ] \
+              || echo "::notice::skipping this draw — $model matches none of $WANT"
+          fi
+          echo "keep=$keep" >> "$GITHUB_OUTPUT"
+
+      - if: steps.cpu.outputs.keep == 'true'
+        uses: actions/checkout@v7
+      - if: steps.cpu.outputs.keep == 'true'
+        uses: docker/setup-buildx-action@v4
+      - if: steps.cpu.outputs.keep == 'true'
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Stage candidate and promoted through the consumer Dockerfile
+        if: steps.cpu.outputs.keep == 'true'
         id: stage
         env:
           BROWSER: ${{ inputs.browser }}
@@ -146,6 +179,7 @@ jobs:
           fi
 
       - name: Probe every arm, ${{ inputs.runs }}x each, interleaved
+        if: steps.cpu.outputs.keep == 'true'
         env:
           BROWSER: ${{ inputs.browser }}
           ARMS: ${{ steps.stage.outputs.arms }}
@@ -204,7 +238,7 @@ jobs:
           exit "$rc"
 
       - name: Assert parity and ratchet
-        if: always()
+        if: always() && steps.cpu.outputs.keep == 'true'
         env:
           BROWSER: ${{ inputs.browser }}
           RUNS: ${{ inputs.runs }}
@@ -214,7 +248,7 @@ jobs:
             --browser "$BROWSER" --runs "$RUNS" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v7
-        if: always()
+        if: always() && steps.cpu.outputs.keep == 'true'
         with:
           name: perf-gate-${{ inputs.browser }}
           path: perf-out/
