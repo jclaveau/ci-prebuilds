@@ -118,7 +118,7 @@ Not yet known whether any chrome fmodf call site is hot.
   - fmodf-custom-gcc vs musl: 0.58-0.70x at gap 0, then 0.02-0.19x
     (7763, gap 40: 4.9 vs 154.4 ns).
   - fmodf-custom-gcc vs glibc 2.39: 0.98-1.11x at gaps 0-8 (about 0.4 ns), then 0.13-0.51x.
-  - via-double LOSES to glibc at narrow gaps: 1.5-3.9x (7763, gap 8: 15.2 vs 4.4 ns).
+  - ~~via-double LOSES to glibc at narrow gaps~~ INVALID: run-gapf.sh lacked `-Bsymbolic`, so via-double called libc's fmod, not ours (see the 2026-10-10 review below). Via-double vs glibc at narrow gaps is unmeasured; moot, fmodf-custom shipped.
   - clang23 build of fmodf-custom vs the gcc build: 1.03-1.33x → ship the gcc build.
   - On Haswell (i3-4005U) the slow divide makes custom 28 ns vs glibc 15 ns at gaps 3-8.
 
@@ -193,8 +193,8 @@ Scripts: scratchpad libctest/run/{run,neg}.sh.
 ## #334 deep review + fmodf trick audit (2026-10-10)
 - Review of 2a67bcf: no HIGH/MED; fmodf bit-identical to musl on 612.8M inputs (NaN bits too). Only diff: x86 denormal-operand flag (0x2) not raised when subnormal x gives ±0 (musl does `0*x`); same pattern already in fmod. Document in header, don't pay for `0*x`.
 - via-double candidate rows are SUSPECT: `candidates/fmodf/run-gapf.sh` dlopens RTLD_LOCAL without -Bsymbolic, so its fmod call hits libc's PLT fmod, not ours. "via-double loses to glibc at narrow gaps" (line ~121) measured libc fmod + widening. Shipped fmodf numbers unaffected.
-- Gate weakness: brokenf.c corrupts all 3 fmodf paths at once; libc-test fmodf control corrupts only d<=8. Wanted: one corrupted twin per path (d<=8, d<=40, general).
-- Pre-existing, parked: Dockerfile.prebuilt-base never COPYs the fmod .s (cp aborts; moot since PGO_STAGE=use forces cold); patchset-hash.sh doesn't hash libm-fmod-custom/*.c.
+- Gate weakness (DONE since: run-gate.sh has per-path twins broken-fmod-fast/general, broken-fmodf-fast/mid/loop/tail): brokenf.c corrupted all 3 fmodf paths at once.
+- FIXED 2026-10-11 (91f722e): Dockerfile.prebuilt-base gets the gcc stage + .s COPY (and clang23), patchset-hash.sh hashes libm-fmod{,f}-custom.c, test red without it.
 - Missing vs glibc/Rust fmodf: shift y's trailing zeros into the gap; multiply-by-1/y big-gap reduction. Real chromium calls (~1,600/run) are all x<y or gap 0-8, so barely matters; only Haswell big gaps would gain.
 - Firefox build proving the libxul fmodf link: run 37988293902 on perf/fmodf-microbench (dispatched on jean's go). Post-merge main runs 37985301500/111/088 all green, ff-latest promoted with fmod linked.
 - tests-aports token fix landed 807d503 (Bearer GITHUB_TOKEN only for https://api.github.com/); proof = the run main's push triggers.
@@ -251,3 +251,8 @@ Scripts: scratchpad libctest/run/{run,neg}.sh.
 - 9 draws, ALL AMD (no Intel; ~13% odds at 20% Intel). The standing go asked for one Intel draw; Intel A/B (fprem may win there; i5-8350U microbench had our code 2.8x slower than fprem) still open. `sample-cpu-models.sh` guarantees Intel but compares vs official only, needs a separate go. Merge of #333 needs an explicit ask.
 - 2026-10-11: draws 10-12 also AMD 7763 (0.370, geomean 0.930/0.922/0.933, PASS), 12 straight AMD while a perf-probe presence check on the same label drew 4/10 Intel. Added `want_cpus` to perf-gate (0e9f87e, as perf-probe: unwanted draw ends ~20 s); Intel-only draws dispatched from main (same probe files, measures the chs-fs-sha image).
 - 2026-10-11 Intel: 8370C (run 38125053316) libm_fmod 0.806, geomean ratchet 0.985, BREACH js_alloc 1.042 (cv 0.023); 6973P-C (run 38126059962) libm_fmod 0.591, js_alloc 0.993, geomean 0.967, BREACH context_page ratchet 1.107 (cv 0.073). Single, different, `%`-free row per draw, not reproduced = noise. #333 squash-merged da27a88 on jean's go ("4 points"); Dockerfile.setup touched, so next chromium round is cold (25-30h). Intel gain smaller than Zen (0.59-0.81 vs 0.31-0.47).
+
+## fmodf call counts, WebKit + Firefox (2026-10-11, famille, points 5-7 closed)
+- Same 5-load canvas/CSS workload as chromium's count (`~/fmodf/count/workload.mjs`, browser swapped; scratch `~/fmodf/count-wkff`), laptop consumer image predating #332/#334 so libxul still imported musl fmodf and the RTLD_NEXT counter saw every call. Gotcha: out/ must be chmod 777, container runs as uid 1001 `runner`; no dump file at all = unwritable, not zero calls.
+- WebKit 2,015 calls (x<y 830, gap 0-8 1,185); Firefox 320 (gap 0-8 all). Nothing at gap ≥9. Chromium ~1,600.
+- So: fmodf has no hot path in any browser (2,000 × ~0.4 ns gap-0-8 delta vs glibc < 1 µs per run). The two missing tricks (trailing-zero shift, 1/y big-gap reduction) serve gaps no call reaches → DEAD. fmod narrow-gap 0-11 vs glibc 1.01-1.10x was the clang23 build; shipped gcc build does not miss, and WebKit libm_fmod reads 0.81-0.87x official since #332 → DEAD.

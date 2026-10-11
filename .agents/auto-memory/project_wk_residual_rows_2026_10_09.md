@@ -1,6 +1,6 @@
 ---
 name: project_wk_residual_rows_2026_10_09
-description: WebKit rows still >1.00 after LP0 (6 TP runs 37793559783..37886691206) — libm_fmod 1.057 (Zen4/5/Intel only, famille Haswell 0.96 = no local gap), js_alloc 9V45-only bimodal GC outliers (famille parity), launch 1.15 = pre-3254ba3 GST registry; click_force 0.937 closed by LP0
+description: WebKit rows still >1.00 after LP0 (6 TP runs 37793559783..37886691206) — libm_fmod 1.057 CLOSED by #332 (0.81-0.87x on 7763/9V74/9V45 since), js_alloc 9V45-only bimodal GC outliers (famille parity), launch 1.15 = pre-3254ba3 GST registry; click_force 0.937 closed by LP0
 metadata:
   type: project
 ---
@@ -36,3 +36,5 @@ libm_fmod 1.057 (6/6 >1), js_alloc 1.000 (2/6: 1.23, 1.24), int_math/locator_cli
 Data: famille ~/ci-prebuilds/tmp/counted-official-webkit/ (libm_fmod, js_alloc files
 dated 10-09 08:2x; click_force/eval_rtt/int_math files there are from 10-08).
 Related: [[project_wk_fastfmod_ships]], [[project_wk_click_force_is_llvmpipe]].
+
+**2026-10-11: libm_fmod CLOSED by #332** (libm-fmod-custom preload, 3f06490). Main TP ours vs official: 7763 219 vs 270 ms (0.81x, 5 runs to 38124971637), 9V74 151.5 vs 176.5 (0.86x, 38041969497), 9V45 129.5 vs 149.5 (0.87x, 37985301111). No Intel TP draw yet.
