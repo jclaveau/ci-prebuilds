@@ -84,4 +84,7 @@ mid-task.
 - `tools/gha-contention` cherry-picked onto main (4cee30d)
 - deleted: old `tmp/.mem-auto-*` scratch (>1 day; hook live state kept), branches `perf/wk-pgo-corpus`, `perf/chr-libm-fmod-custom` (+ worktree ci-prebuilds-fprem), `perf/fmod-fprem126`, `perf/ff-gate-margins`, local and remote
 - `from_stage=playwright` dropped
-- still open: `fix140` + stashes (no keep/delete pick), #259 ladder (behind #249), WebKit half of the gate-margin fix (needs a webkit perf-gate run's CV data)
+- `fix140` branch (local + remote) and all 4 stashes deleted on jean's go
+- #259 closed, carried into #249 as a comment (results + unpriced `init_stack_vars` off), on jean's "close 259 to investigate it in 249"
+- WebKit gate-margin half was already done 2026-09-25 (rows left `loose`); the `eval_rtt`→tight follow-up is answered by the #311 runs: cv 0.044 on 9V45, so it stays at 0.06, no dispatch
+- this list has no open item left
