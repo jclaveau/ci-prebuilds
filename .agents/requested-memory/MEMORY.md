@@ -11,4 +11,4 @@ memory itself.
 - [Parked: node driver on mimalloc-insecure — security note](parked_node_driver_mimalloc_insecure_security.md) — 2026-10-06 container-wide LD_PRELOAD secure→insecure for speed (eval_rtt 0.93x); hardening trade-off parked, revisit with #259 / for-testing split
 - [Parked: chromium residual tracks 2026-10-08](parked_chromium_residual_tracks_2026_10_08.md) — A2-A9, B3-B5, C2-C7 parked while A1/B1/B2/C1 ran; resume on ask
 - [Parked: WebKit PW 1.64 series for the next upgrade](parked_wk_pw_1_64_series.md) — branch parked/wk-pw-1.64-series (1e9d2b1f pin + auth both-shapes shim), reverted d956f38; tag→base→rev map; resume only when PW_VERSION moves
-- [Chromium fmod via libm-fmod-custom — RESUMED](parked_chromium_fmod_beyond_parity.md) — 2026-10-09 V8 x64 % → C call, PR #333 stacked on #332, run 37927026157; A/B on Intel+Zen needs a go
+- [Chromium fmod via libm-fmod-custom — MERGED](parked_chromium_fmod_beyond_parity.md) — V8 x64 % → C call, PR #333 squash da27a88 2026-10-11 after 12 AMD + 2 Intel perf-gate draws (libm_fmod 0.31-0.81 vs chs-latest)

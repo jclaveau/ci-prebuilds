@@ -49,3 +49,5 @@ a build of a patched chr using libm-fmod-custom".
    perf-gate dispatch, browser=firefox, candidate=its sha tag,
    promoted=ff-latest, rev=1538, runs=10.
 3. Second fmodf preload A/B: perf-gate 37936829426 (same args as 37933876301).
+
+**MERGED 2026-10-11**: #333 squash da27a88 (rebased onto main after #332). libm_fmod vs chs-latest: AMD 0.31-0.47 (12 draws), Intel 8370C 0.806, 6973P-C 0.591; lone %-free breaches on the Intel draws judged noise.
