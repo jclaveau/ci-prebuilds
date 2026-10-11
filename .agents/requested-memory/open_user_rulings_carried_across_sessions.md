@@ -59,7 +59,7 @@ them entirely once the compaction chain that was carrying them ends.
   not yet said whether to close it or merge anyway for the fault-cut alone.
   **Re-measured 2026-10-10** (the 09-24 in-page rows predated the 1 ms clock
   fix e029382): perf-gate env-only A/B, branch `ab/wk-mimalloc-no-purge`
-  1d32154 (build arg WK_MIMALLOC_PURGE_DELAY + per-shot container cgroup
+  (deleted 2026-10-11 on jean's go, with worktree ci-prebuilds-ab311) 1d32154 (build arg WK_MIMALLOC_PURGE_DELAY + per-shot container cgroup
   counters), runs 38044341427 + 38044342985 (EPYC 7763), 38044344421 (9V45),
   n=10. Wrapper diff confirmed in the log. Ratchet wall geomean 0.999 / 0.999
   / 0.997, no row outside its noise; container CPU 0.998 / 0.998 / 0.993;

@@ -23,7 +23,7 @@ Why FF/CHR don't move:
 - libxul imports no `fmod` (only fmodf, remainder). It has a LOCAL `t fmod` → `compiler_builtins::math::libm_math::fmod` (Rust libm's generic fmod: `div` fast path + `linear_mul_reduction`, NOT musl's bit loop); `js::NumberMod` calls it at insn 2; 57 call sites. Official FF also imports none → parity. Only lever = relink libxul with fastfmod.o (beyond parity, untested). Newer SpiderMonkey has an int64 fast path in NumberMod; our build lacks it.
 - V8 15.1 x64 lowers double `%` to inline x87 `fprem` (kSSEFloat64Mod) in every tier; int32 path only when both operands are int32. Chromium kernel is ~24 cycles/iter (perf-kernel.cjs = 9M iterations, the old "~6" divided by 36M) = fprem. Chromium also links a static Rust fmod (95 sites). Parked beyond parity: [[parked_chromium_fmod_beyond_parity]].
 
-Other libc-fmod users in the image (scanelf, 34): WebKit, node, FF's bundled ICU/sqlite/avutil, gtk/cairo/xml/python/perl/sqlite… none on a measured hot path. List: tmp/fmod-everywhere/bins/fmod-users.txt.
+Other libc-fmod users in the image (scanelf, 34): WebKit, node, FF's bundled ICU/sqlite/avutil, gtk/cairo/xml/python/perl/sqlite… none on a measured hot path. (The list file under tmp/fmod-everywhere was deleted 2026-10-11; rerun scanelf to rebuild it.)
 
 FF's Rust fmod vs ours (2026-10-09, famille, same `vectors` binary, preload each). Alpine 3.24 rustc 1.96.1 compiler_builtins fmod disassembles IDENTICAL (164 insn) to libxul's (built with 1.98.1); extracted from the rlib into tmp/rustfmod/librustfmod.so on famille. Cycles per call, bit-exact everywhere:
 - narrow exponent gap (kernel `i*2654435761 % 4294967291`, 15M calls): musl 164 / ours 51 / Rust 79 cycles; insn 252 / 79 / 219 → ours 1.53x faster (96.5 vs 147.7 ms)
@@ -238,3 +238,15 @@ Scripts: scratchpad libctest/run/{run,neg}.sh.
 **Why not shipped:** +1 cycle on Kaby vs -1 on Haswell for fmodf lt0; fmod gain unproven on the erratum CPU, cost proven on Haswell.
 **How to apply:** do not add `ret` or pad fmod unless an erratum CPU becomes a target; a laptop bench needs an idle desktop (cycles counters vary under load, pinning does not help). Harness: scratchpad jccret/run.sh + agg.py (2x3 flag variants of the shipped .so, gapf + gapsweep).
 
+
+## fmodf gate vs glibc + exhaustive (2026-10-10, e66fbb5, 07b6b77; gate run 38054010674 green)
+- libm-fmod-custom-gate.yml gained a `gate-glibc` job (ubuntu-latest) beside the musl one; vectors binary has `LIBM_FMOD_CUSTOM_FOLD_NAN=1` (glibc returns x's payload on NaN/NaN, musl and ours return y's). Both jobs run `run-fmodf-exhaustive.sh`: all 2^32 x against 19 divisors (one per path), 0 mismatches vs musl AND glibc 2.42, plus 4 sed twins (fast, mid, loop, tail) that must each exit rc 1.
+- Gotcha: twin control divisor must have a FULL mantissa (`5f490fdb`, pi*2^62). With 2^63 (`5f000000`) the loop leaves mx=0 and the tail twin passes unseen: a power-of-two divisor cannot exercise the final step.
+- Gotcha: repo.or.cz resets libc-test fetches ("curl 35 Recv failure") on some runs; the rev is pinned so run-libc-test.sh retries 4x (15/30/45 s).
+- fmod (double) is checked vs both libcs on ~11.5M sampled comparisons only; too big for exhaustive.
+- Narrowing PAB's path filter to the two .c files is itself a workflow edit → one Firefox rebuild queues on that push.
+
+## V8 `%` A/B, PR #333 (chromium 37927026157 green; perf-gate vs chs-latest, rev 1234, 10 runs)
+- libm_fmod candidate vs chs-latest: 9V74 0.307, 9V45 0.459/0.466/0.463, 7763 0.370 x4 (identical to 3 digits). Ratchet geomean 0.896-0.950, no row regresses; only breach = parity goto_cold 1.064-1.066 on 9V74/9V45 (known residual, 1.025 vs chs-latest).
+- 9 draws, ALL AMD (no Intel; ~13% odds at 20% Intel). The standing go asked for one Intel draw; Intel A/B (fprem may win there; i5-8350U microbench had our code 2.8x slower than fprem) still open. `sample-cpu-models.sh` guarantees Intel but compares vs official only, needs a separate go. Merge of #333 needs an explicit ask.
+- 2026-10-11: draws 10-12 also AMD 7763 (0.370, geomean 0.930/0.922/0.933, PASS), 12 straight AMD while a perf-probe presence check on the same label drew 4/10 Intel. Added `want_cpus` to perf-gate (0e9f87e, as perf-probe: unwanted draw ends ~20 s); Intel-only draws dispatched from main (same probe files, measures the chs-fs-sha image).
