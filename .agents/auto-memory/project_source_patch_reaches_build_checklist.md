@@ -32,3 +32,10 @@ which then reads as "the patch didn't work".
 also dry-run the patch function against reconstructed sources first
 ([[feedback_extract_file_content_from_diff]]) so anchor misses surface locally
 instead of 40 minutes into source-prep.
+
+**Also parse every Dockerfile the chain touches, finalize included:**
+`docker buildx build --check -f <Dockerfile> .` (a blank-BASE_IMAGE error =
+parsed fine). 2da5f63 (perf/chr-static-fmod) put an awk `END` clause on its
+own line without `\`, so finalize died on "unknown instruction: END" AFTER
+setup + r1..r12 (run 38129823565, ~24 h). Recovery without a cold rebuild:
+redispatch with `resume_from=ghcr.io/…:chs-build-r12-sha-<old sha>`.
