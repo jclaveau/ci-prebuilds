@@ -179,8 +179,10 @@ vs d956f38 (pre-#332): libm_fmod 233 vs 1097 ms (0.212x), vs official
 commits lie between the images → suspect libxul code placement (cf. the
 NumberMod line straddle). Bisect step 1 (run 38378399622, 8573C): #332 image
 3f06490 vs d956f38 layout 226 vs 222 ms (1.018x, shots overlap) = CLEAN; so
-the slowdown is 79f0a79 (fmodf link) or a214d8e (64 B pin). Next split:
-sha-79f0a79 vs d956f38 on 8573C (image exists; needs a dispatch go). 8573C is
+the slowdown is 79f0a79 (fmodf link) or a214d8e (64 B pin). Bisect step 2
+(run 38431058682, 8573C): 79f0a79 vs d956f38 layout 215.5 vs 205.5 ms (1.049x,
+shots separated 213-218 vs 203-209) = CULPRIT is the fmodf link; a214d8e's pin
+neither causes nor cures it. Open: which libxul code moved. 8573C is
 rare for perf-gate: 28 straight AMD draws before this one. Gotcha: 8573C reports `XEON` in
 upper case, so want_cpus=Xeon skipped it until da17f20 made the match
 case-insensitive.
