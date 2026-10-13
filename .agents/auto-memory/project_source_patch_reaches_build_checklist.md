@@ -39,3 +39,7 @@ parsed fine). 2da5f63 (perf/chr-static-fmod) put an awk `END` clause on its
 own line without `\`, so finalize died on "unknown instruction: END" AFTER
 setup + r1..r12 (run 38129823565, ~24 h). Recovery without a cold rebuild:
 redispatch with `resume_from=ghcr.io/…:chs-build-r12-sha-<old sha>`.
+Second miss on the same RUN: `CHROMIUM_HEADLESS_SHELL_VERSION` lives in
+`/work/derived.env` (fetch-pw-browsers-json), NOT versions.env; a new finalize
+RUN must source both, as link-census.sh does (run 38365506930, exit 2 on cd).
+Copy the env preamble of a sibling step that already works.
