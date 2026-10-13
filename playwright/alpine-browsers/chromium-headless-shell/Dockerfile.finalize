@@ -43,16 +43,16 @@ RUN --mount=type=cache,target=/root/.cache/sccache,id=chr-sccache,sharing=locked
 COPY chromium-headless-shell/probes/link-census.sh chromium-headless-shell/probes/chs-hot.txt /work/chromium-headless-shell/probes/
 RUN bash /work/chromium-headless-shell/probes/link-census.sh /work /work/census || true
 
-# chrome's fmod must be libm-fmod-custom (same source, same size as
-# v8_libm_fmod_custom), not compiler_builtins' weak one, or the bench measures
+# chrome's fmod must be libm-fmod-custom (an alias of v8_libm_fmod_custom: same
+# address, same size), not compiler_builtins' weak one, or the bench measures
 # nothing. Fails the build: a silent fallback would read as "no effect".
 RUN set -a && . /work/versions.env && . /work/derived.env && set +a \
  && cd /work/chromium-src/chromium-$CHROMIUM_HEADLESS_SHELL_VERSION/out/${VARIANT:-headless} \
  && bin=headless_shell && { [ "${VARIANT:-headless}" != headed ] || bin=chrome; } \
  && llvm_bin=$(ls -d /usr/lib/llvm2*/bin | sort | tail -1) \
  && "$llvm_bin/llvm-nm" --defined-only -S "$bin" \
-    | awk '$4 == "fmod" || $4 == "v8_libm_fmod_custom" {print; size[$4] = $2}; \
-           END {exit !(size["fmod"] != "" && size["fmod"] == size["v8_libm_fmod_custom"])}'
+    | awk '$4 == "fmod" || $4 == "v8_libm_fmod_custom" {print; at[$4] = $1 " " $2}; \
+           END {exit !(at["fmod"] != "" && at["fmod"] == at["v8_libm_fmod_custom"])}'
 
 # Same overlay rationale as ninja-resume.sh above: stage-cache-layout.sh is baked
 # into BASE_IMAGE at setup time, so a branch edit (e.g. the ELF strip pass) only

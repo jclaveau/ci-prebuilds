@@ -8,21 +8,24 @@ gives x64 the arm64 shape, and makes Modulo() call the gcc-built
 libm-fmod-custom (renamed v8_libm_fmod_custom, so it never collides with the
 fmod Rust's compiler_builtins links into chrome).
 
-The optional second assembly file is the same source built under its own name,
-fmod. It goes into v8_libbase too, only because that target is already linked
-into chrome: there it replaces compiler_builtins' weak fmod, which every other
-fmod call in the binary (C, C++ and Rust) binds to.
+--alias-fmod also names the same code fmod, hidden, which replaces the weak
+fmod compiler_builtins links into chrome, the one every other fmod call in the
+binary (C, C++ and Rust) binds to. It has to be an alias inside this object:
+v8_libbase is a static library, and a member that only defines fmod is never
+fetched, because compiler_builtins' weak fmod already resolves every
+reference. V8's call to v8_libm_fmod_custom fetches this member, and its
+strong fmod then overrides the weak one whatever the link order.
 
 Every replacement must match exactly once, or the build stops here rather
 than hours later.
 
-Usage: v8-libm-fmod-custom.py <v8-dir> <libm-fmod-custom.s> [<libm-fmod-custom-fmod.s>]
+Usage: v8-libm-fmod-custom.py <v8-dir> <libm-fmod-custom.s> [--alias-fmod]
 """
 import shutil
 import sys
 
 v8_dir, asm_path = sys.argv[1], sys.argv[2]
-fmod_asm_path = sys.argv[3] if len(sys.argv) > 3 else None
+alias_fmod = sys.argv[3:] == ["--alias-fmod"]
 
 
 def replace_once(rel_path, old, new):
@@ -49,15 +52,23 @@ def replace_block(rel_path, start, end, new):
 
 
 shutil.copy(asm_path, f"{v8_dir}/src/base/libm-fmod-custom.S")
-libbase_sources = '    "src/base/libm-fmod-custom.S",\n'
-if fmod_asm_path:
-    shutil.copy(fmod_asm_path, f"{v8_dir}/src/base/libm-fmod-custom-fmod.S")
-    libbase_sources += '    "src/base/libm-fmod-custom-fmod.S",\n'
+if alias_fmod:
+    replace_once(
+        "src/base/libm-fmod-custom.S",
+        "\t.size\tv8_libm_fmod_custom, .-v8_libm_fmod_custom\n",
+        "\t.size\tv8_libm_fmod_custom, .-v8_libm_fmod_custom\n"
+        "\t.globl\tfmod\n"
+        "\t.hidden\tfmod\n"
+        "\t.type\tfmod, @function\n"
+        "\t.set\tfmod, v8_libm_fmod_custom\n"
+        "\t.size\tfmod, .-v8_libm_fmod_custom\n",
+    )
 
 replace_once(
     "BUILD.gn",
     'v8_component("v8_libbase") {\n  sources = [\n',
-    'v8_component("v8_libbase") {\n  sources = [\n' + libbase_sources,
+    'v8_component("v8_libbase") {\n  sources = [\n'
+    '    "src/base/libm-fmod-custom.S",\n',
 )
 
 replace_once(

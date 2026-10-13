@@ -14,18 +14,12 @@
 # of the same source is up to 1.17x slower) and renamed so it cannot collide
 # with the fmod Rust's compiler_builtins links into chrome. Only the assembly
 # crosses into the builder; v8-libm-fmod-custom.py wires it into V8.
-# The second copy keeps the name fmod: linked into chrome, it replaces the weak
-# fmod compiler_builtins defines, which every C, C++ and Rust fmod call in the
-# binary binds to (chrome imports no fmod from musl).
 FROM alpine:edge AS libm-fmod-custom-gcc
 RUN apk add --no-cache gcc musl-dev
 COPY libm-fmod-custom/libm-fmod-custom.c /src/libm-fmod-custom.c
 RUN gcc -O2 -fPIC -fvisibility=hidden -Dfmod=v8_libm_fmod_custom \
         -S /src/libm-fmod-custom.c -o /src/libm-fmod-custom.s \
- && grep -q '^v8_libm_fmod_custom:' /src/libm-fmod-custom.s \
- && gcc -O2 -fPIC -fvisibility=hidden \
-        -S /src/libm-fmod-custom.c -o /src/libm-fmod-custom-fmod.s \
- && grep -q '^fmod:' /src/libm-fmod-custom-fmod.s
+ && grep -q '^v8_libm_fmod_custom:' /src/libm-fmod-custom.s
 
 FROM alpine:edge AS chromium-builder
 
@@ -190,7 +184,7 @@ RUN set -a && . /work/versions.env && set +a \
 RUN set -a && . /work/versions.env && . /work/derived.env && set +a \
     && bash /work/chromium-headless-shell/scripts/fetch-chromium-src.sh /work/chromium-src
 
-COPY --from=libm-fmod-custom-gcc /src/libm-fmod-custom.s /src/libm-fmod-custom-fmod.s /work/libm-fmod-custom/
+COPY --from=libm-fmod-custom-gcc /src/libm-fmod-custom.s /work/libm-fmod-custom/libm-fmod-custom.s
 
 ARG PW_CHROMIUM_SKIP_APORTS=false
 ARG PW_CHROMIUM_ENABLE_DEBUG=false
