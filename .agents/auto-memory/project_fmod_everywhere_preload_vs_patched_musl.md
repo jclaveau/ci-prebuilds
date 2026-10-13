@@ -177,8 +177,11 @@ vs d956f38 (pre-#332): libm_fmod 233 vs 1097 ms (0.212x), vs official
 1757.5 ms (0.133x), so Intel gains more than Zen 3. BUT ratchet layout 252 vs
 238 ms (1.059x), separated on 10/10 shots, AMD never moved it. Only fmod
 commits lie between the images → suspect libxul code placement (cf. the
-NumberMod line straddle). Unbisected; the next step is an Intel draw of the
-#332 image vs d956f38 (needs a dispatch go). Gotcha: 8573C reports `XEON` in
+NumberMod line straddle). Bisect step 1 (run 38378399622, 8573C): #332 image
+3f06490 vs d956f38 layout 226 vs 222 ms (1.018x, shots overlap) = CLEAN; so
+the slowdown is 79f0a79 (fmodf link) or a214d8e (64 B pin). Next split:
+sha-79f0a79 vs d956f38 on 8573C (image exists; needs a dispatch go). 8573C is
+rare for perf-gate: 28 straight AMD draws before this one. Gotcha: 8573C reports `XEON` in
 upper case, so want_cpus=Xeon skipped it until da17f20 made the match
 case-insensitive.
 
