@@ -46,7 +46,7 @@ RUN bash /work/chromium-headless-shell/probes/link-census.sh /work /work/census 
 # chrome's fmod must be libm-fmod-custom (same source, same size as
 # v8_libm_fmod_custom), not compiler_builtins' weak one, or the bench measures
 # nothing. Fails the build: a silent fallback would read as "no effect".
-RUN set -a && . /work/versions.env && set +a \
+RUN set -a && . /work/versions.env && . /work/derived.env && set +a \
  && cd /work/chromium-src/chromium-$CHROMIUM_HEADLESS_SHELL_VERSION/out/${VARIANT:-headless} \
  && bin=headless_shell && { [ "${VARIANT:-headless}" != headed ] || bin=chrome; } \
  && llvm_bin=$(ls -d /usr/lib/llvm2*/bin | sort | tail -1) \
