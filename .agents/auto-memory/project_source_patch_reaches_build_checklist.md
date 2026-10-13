@@ -43,3 +43,13 @@ Second miss on the same RUN: `CHROMIUM_HEADLESS_SHELL_VERSION` lives in
 `/work/derived.env` (fetch-pw-browsers-json), NOT versions.env; a new finalize
 RUN must source both, as link-census.sh does (run 38365506930, exit 2 on cd).
 Copy the env preamble of a sibling step that already works.
+
+**A symbol override must ride in a member something already fetches.** Third
+miss on 2da5f63: the strong `fmod` sat in its own `.S` in `v8_libbase`, which
+is a static library in a non-component build, so lld never fetched that
+member: compiler_builtins' weak fmod already resolved every reference (finalize
+nm: fmod 0xd stub, run 38406866796, ~5 h resume). A toy lld link reproduces it
+(builtins archive first → weak wins). Fix a86f9a5: hidden `.set fmod,
+v8_libm_fmod_custom` alias inside the member V8 references. Before dispatching
+an override, link a 3-file toy (main + archive with weak + archive with yours)
+in BOTH orders; Firefox's fmodf needed `-u fmodf` for the same reason.
