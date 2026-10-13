@@ -182,7 +182,14 @@ NumberMod line straddle). Bisect step 1 (run 38378399622, 8573C): #332 image
 the slowdown is 79f0a79 (fmodf link) or a214d8e (64 B pin). Bisect step 2
 (run 38431058682, 8573C): 79f0a79 vs d956f38 layout 215.5 vs 205.5 ms (1.049x,
 shots separated 213-218 vs 203-209) = CULPRIT is the fmodf link; a214d8e's pin
-neither causes nor cures it. Open: which libxul code moved. 8573C is
+neither causes nor cures it. NOT the fmodf call: local counter on 3f06490
+sees 0 fmodf calls in content over 11x16000 reflows (canvas control >=21504).
+perf stat content procs, i5-8350U: insn 33.94 vs 33.96 G (1.000x), cycles
+20.50 vs 18.36 G (0.896x, 79f0a79 FASTER) → same work, CPU-dependent code
+placement; each FF image has its own PGO training, .text -45 KB, so any
+rebuild may move it. Gotchas: FF wrapper overwrites LD_PRELOAD (use own
+executablePath wrapper); content procs _exit, dump on first call; host
+perf -p needs docker --user 1000. 8573C is
 rare for perf-gate: 28 straight AMD draws before this one. Gotcha: 8573C reports `XEON` in
 upper case, so want_cpus=Xeon skipped it until da17f20 made the match
 case-insensitive.
