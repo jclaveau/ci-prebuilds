@@ -63,6 +63,16 @@ differ, dispatch directly with `gh workflow run` and confirm a NEW run id
 appeared by hand (`gh run list`, filter on created-at) instead of routing
 through the guard.
 
+**`--jobs` only scopes the guard; it selects nothing.** 2026-10-14:
+`dispatch-once.sh playwright-alpine-browsers.yml perf/chr-static-fmod --jobs
+build-chromium-headless-shell-from-source` with no `-f` dispatched run
+38481021717 where every chromium job was `skipped` (they are gated on
+`inputs.build_chromium_headless_shell_from_source == 'true'`, default off).
+Cancelled, redispatched with `-f build_chromium_headless_shell_from_source=true`
+(run 38481289533). Each pipeline in that workflow needs its own `build_*=true`
+input; after any dispatch, check the first target job reads `in_progress`, not
+`completed skipped`, before reporting the chain as started.
+
 **`gh pr checks`-style watchers: an in-progress check has an EMPTY
 conclusion, not `null`/`PENDING`.** A hand-rolled poll that pattern-matches
 conclusion strings for "still running" can declare victory on its first poll
