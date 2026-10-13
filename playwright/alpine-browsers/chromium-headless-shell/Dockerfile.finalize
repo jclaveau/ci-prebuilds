@@ -51,7 +51,7 @@ RUN set -a && . /work/versions.env && set +a \
  && bin=headless_shell && { [ "${VARIANT:-headless}" != headed ] || bin=chrome; } \
  && llvm_bin=$(ls -d /usr/lib/llvm2*/bin | sort | tail -1) \
  && "$llvm_bin/llvm-nm" --defined-only -S "$bin" \
-    | awk '$4 == "fmod" || $4 == "v8_libm_fmod_custom" {print; size[$4] = $2}
+    | awk '$4 == "fmod" || $4 == "v8_libm_fmod_custom" {print; size[$4] = $2}; \
            END {exit !(size["fmod"] != "" && size["fmod"] == size["v8_libm_fmod_custom"])}'
 
 # Same overlay rationale as ninja-resume.sh above: stage-cache-layout.sh is baked
