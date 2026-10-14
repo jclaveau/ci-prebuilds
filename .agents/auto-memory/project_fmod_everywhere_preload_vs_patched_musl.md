@@ -277,3 +277,8 @@ Scripts: scratchpad libctest/run/{run,neg}.sh.
 - Same 5-load canvas/CSS workload as chromium's count (`~/fmodf/count/workload.mjs`, browser swapped; scratch `~/fmodf/count-wkff`), laptop consumer image predating #332/#334 so libxul still imported musl fmodf and the RTLD_NEXT counter saw every call. Gotcha: out/ must be chmod 777, container runs as uid 1001 `runner`; no dump file at all = unwritable, not zero calls.
 - WebKit 2,015 calls (x<y 830, gap 0-8 1,185); Firefox 320 (gap 0-8 all). Nothing at gap ≥9. Chromium ~1,600.
 - So: fmodf has no hot path in any browser (2,000 × ~0.4 ns gap-0-8 delta vs glibc < 1 µs per run). The two missing tricks (trailing-zero shift, 1/y big-gap reduction) serve gaps no call reaches → DEAD. fmod narrow-gap 0-11 vs glibc 1.01-1.10x was the clang23 build; shipped gcc build does not miss, and WebKit libm_fmod reads 0.81-0.87x official since #332 → DEAD.
+
+## Node driver fmod: zero calls (2026-10-14, local, gate-ff-79f0a79 image, node v24.18.1)
+- node + libicuuc/libicui18n import `fmod` (scanelf), no `fmodf`; container LD_PRELOAD is mimalloc only, so they bind musl's.
+- RTLD_NEXT counter preloaded into node (dump files written = loaded): JS double `%` loop 3e7 iters 0 calls (V8 fprem, no libc); PW firefox driver over the canvas control + 3 layout reps 0 calls.
+- So no driver-side lever: adding libm-fmod-custom.so to the container-wide preload would change nothing measured. Not worth a CI draw.
