@@ -282,3 +282,9 @@ Scripts: scratchpad libctest/run/{run,neg}.sh.
 - node + libicuuc/libicui18n import `fmod` (scanelf), no `fmodf`; container LD_PRELOAD is mimalloc only, so they bind musl's.
 - RTLD_NEXT counter preloaded into node (dump files written = loaded): JS double `%` loop 3e7 iters 0 calls (V8 fprem, no libc); PW firefox driver over the canvas control + 3 layout reps 0 calls.
 - So no driver-side lever: adding libm-fmod-custom.so to the container-wide preload would change nothing measured. Not worth a CI draw.
+
+## Image-wide default, 2026-10-14 (dfb7e66, jean: "if ours is as tested as musl's, make it default")
+- Test parity check: ours runs musl's own libc-test (sanity/special/ucb, FE_INVALID checked) + bit-exact gate vs musl + exhaustive fmodf + corrupted twins, in libm-fmod-custom-gate.yml; musl's fmod has libc-test only → ours >= musl, no test added.
+- Container ENV LD_PRELOAD = mimalloc:libm-fmod-custom; FF wrapper same (libxul keeps its linked copy, the .so covers bundled ICU/avutil/sqlite + cairo/gtk); conformance runner FF section builds the .so + mirrors the wrapper.
+- Gotcha: musl IGNORES a missing LD_PRELOAD (rc 0), so COPY must precede the ENV or later RUNs silently go without it.
+- Local count (79f0a79 gate image, counter ahead of ours): FF non-libxul libs 0 fmod / 0 fmodf over canvas + 3 layout; node 0. Expect no perf row to move.
