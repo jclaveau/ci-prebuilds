@@ -43,7 +43,7 @@ trap 'rm -rf "$TMPDIR"' EXIT
 # combined image's Dockerfile.alpine context COPY).
 cp "$(dirname "$0")/../webkit/scripts/strip-bundled-libs.sh" "$TMPDIR/"
 cp "$(dirname "$0")/../webkit/scripts/strip-mesa-closure.sh" "$TMPDIR/"
-# The fmod interposer the webkit launcher preloads: conformance has to run
+# The fmod interposer the browser launchers preload: conformance has to run
 # the same libm the image ships, or it validates a build nobody runs.
 cp -r "$(dirname "$0")/../libm-fmod-custom" "$TMPDIR/"
 cp -r "$(dirname "$0")/../webkit/zlib-ng" "$TMPDIR/"
@@ -271,15 +271,23 @@ RUN bash /tmp/strip-bundled-libs.sh /ms-playwright/firefox-${ARTIFACT_REV}/firef
 # browsertype-connect run-server tests launch FF without it → 38min hang. Wrap the
 # binary so the arg is always present regardless of PW's filtering — the security
 # filter stays fully intact. Dedup guard avoids double-passing on paths that add it.
-# The LD_PRELOAD mirrors playwright/Dockerfile.alpine's shim (quirk 3 there):
-# conformance has to exercise the allocator we actually ship, or the suite
-# validates a build nobody runs.
+# The LD_PRELOAD mirrors playwright/Dockerfile.alpine's shim (quirks 3 and 4
+# there): conformance has to exercise the allocator and the fmod we actually
+# ship, or the suite validates a build nobody runs.
+COPY libm-fmod-custom /tmp/libm-fmod-custom
+RUN apk add --no-cache gcc musl-dev \\
+ && gcc -O2 -fPIC -Wa,-mbranches-within-32B-boundaries -c -o /tmp/libm-fmodf-custom.o \\
+      /tmp/libm-fmod-custom/libm-fmodf-custom.c \\
+ && gcc -O2 -fPIC -shared -o /usr/lib/libm-fmod-custom.so /tmp/libm-fmod-custom/libm-fmod-custom.c \\
+      /tmp/libm-fmodf-custom.o \\
+ && apk del gcc musl-dev \\
+ && rm -rf /tmp/libm-fmod-custom /tmp/libm-fmodf-custom.o
 RUN FFBIN=/ms-playwright/firefox-${ARTIFACT_REV}/firefox/firefox \\
  && mv "\$FFBIN" "\$FFBIN.real" \\
  && printf '%s\\n' \\
       '#!/bin/sh' \\
       'D="\${0%/*}"' \\
-      'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2' \\
+      'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libm-fmod-custom.so' \\
       'case " \$* " in' \\
       '  *" --remote-debugging-port"*) exec "\$D/firefox.real" "\$@" ;;' \\
       '  *) exec "\$D/firefox.real" --remote-debugging-port=0 "\$@" ;;' \\

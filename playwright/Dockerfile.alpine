@@ -52,7 +52,7 @@ FROM ghcr.io/jclaveau/playwright-alpine-browsers:${CHS_SOURCE_TAG} AS chs-source
 FROM ghcr.io/jclaveau/playwright-alpine-browsers:${FF_SOURCE_TAG} AS ff-source
 FROM ghcr.io/jclaveau/playwright-alpine-browsers:${WK_SOURCE_TAG} AS wk-source
 
-# libm-fmod-custom.so — a drop-in `fmod` for musl, preloaded under WebKit alongside
+# libm-fmod-custom.so — a drop-in `fmod` for musl, preloaded image-wide alongside
 # mimalloc. musl's fmod walks the exponent difference one bit per iteration
 # with a data-dependent branch, so for large dividends every call eats ~21
 # unpredictable branches: 163.8 ms per 3M calls against glibc's 54.0. That is
@@ -328,12 +328,16 @@ RUN sudo touch /ms-playwright/firefox-${FF_REV}/INSTALLATION_COMPLETE \
 #    children and not the Node.js driving them, and so chromium's
 #    PartitionAlloc is left alone. WebKit gets the same preload from its
 #    own pw_run.sh wrapper below — bmalloc covers only fastMalloc there.
+#
+# 4. libm-fmod-custom.so. libxul links its own fmod and fmodf, but the
+#    libraries beside it (bundled ICU, avutil, sqlite, system cairo/gtk)
+#    still import musl's; the preload answers those too.
 RUN sudo mv /ms-playwright/firefox-${FF_REV}/firefox/firefox \
             /ms-playwright/firefox-${FF_REV}/firefox/firefox.real \
  && printf '%s\n' \
         '#!/bin/sh' \
         'DIR="${0%/*}"' \
-        'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2' \
+        'export LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libm-fmod-custom.so' \
         'ICU_DATA="$DIR" exec "$DIR/firefox.real" --remote-debugging-port=0 "$@"' \
   | sudo tee /ms-playwright/firefox-${FF_REV}/firefox/firefox >/dev/null \
  && sudo chmod +x /ms-playwright/firefox-${FF_REV}/firefox/firefox
@@ -546,12 +550,14 @@ ENV WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
 #
 # Scope: this is a container-wide ENV, so it reaches every process a user runs
 # here, not just the driver.
-ENV LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2
-
-# The fmod/fmodf interposer the webkit and chromium launchers preload. ~10 kB;
-# reaches MiniBrowser, chrome-headless-shell and their auxiliary processes,
-# and nothing else — not the Node driver, not firefox.
+#
+# libm-fmod-custom.so rides the same ENV, so every process gets its fmod and
+# fmodf instead of musl's bit loops. It passes musl's own libc-test cases plus
+# the bit-exact gate against musl and the exhaustive fmodf sweep. Copied
+# before the ENV because musl skips a missing preload silently, so a later
+# RUN would quietly run without it.
 COPY --from=libm-fmod-custom-build /usr/lib/libm-fmod-custom.so /usr/lib/libm-fmod-custom.so
+ENV LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2:/usr/lib/libm-fmod-custom.so
 
 # zlib-ng in zlib-compat mode, preloaded by the same webkit launcher. Reaches
 # MiniBrowser and its auxiliary processes only — chromium and firefox bundle
