@@ -225,7 +225,7 @@ ARG WK_REV
 # mutate before the final COPY, never after.
 ARG CHS_REV
 
-# chromium-headless-shell — apk-extracted, self-contained via RPATH=$ORIGIN.
+# chromium-headless-shell — built from source, self-contained via RPATH=$ORIGIN.
 # Smaller artifact than full chromium; deterministic timing for tests. Copied
 # straight from the producer, no strip pass: it bundles no apk-provided libs.
 COPY --from=chs-source /chrome-headless-shell-linux64 /ms-playwright/chromium_headless_shell-${CHS_REV}/chrome-headless-shell-linux64

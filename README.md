@@ -65,6 +65,14 @@ Image names follow `<os>-<mode>[-<layer>][-sudoer]`. Pick one of each axis:
 | **Layer** | none · `-node` · `-pnpm` · `-pnpm-gyp` · `-playwright` · `-playwright-gyp` | your needs |
 | **Flavor** | default (no runtime sudo) · `-sudoer` | hardened |
 
+- **`dood` and published ports:** a `dood` job container is a sibling of the containers it starts,
+  so a port that `docker compose` publishes is on the runner host, not on the job container's
+  `localhost`, and GitHub Actions rejects `--network` in `container.options`. Reach them through
+  `$HOST_ADDRESS` (baked per mode), or use `dind`, where published ports land on the job
+  container's `localhost`. Job-level `services:` are reached by service name in both modes.
+- **`-gyp` or slim:** pick `-gyp` only when a dependency has no prebuilt binary for your libc and
+  Node ABI and must compile on install. Many native addons ship musl and glibc prebuilds,
+  so slim is often enough; `-gyp` adds about 100 MB to the compressed pull.
 - Playwright on Alpine carries **all three browsers** — chromium, firefox and webkit, built from source against musl rather than taken from the system packages.
 
 | Image | What it adds | Docs |
@@ -81,18 +89,38 @@ Image names follow `<os>-<mode>[-<layer>][-sudoer]`. Pick one of each axis:
 
 
 ### Tags
-Every combination is published with a `:latest` tag plus a version-pinned tag. Examples on the
-current chain (Ubuntu 24.04 / Node 22.12 / pnpm 9.15 / Playwright 1.50):
+Every combination is published with a `:latest` tag plus a version-pinned tag
+`<os><version>[-node<x.y>][-pnpm<x.y>][-pw<x.y>][-gyp][-sudoer]`. The versions move with every
+release, so the table shows the shape, not a promise. Examples as of 2026-10-12:
 
-| Image | `:latest` example | Version-pinned tag example |
-| --- | --- | --- |
-| `jclaveau/ubuntu-gha-tools` | `:latest` | `:ubuntu24.04` |
-| `jclaveau/ubuntu-dood` · `jclaveau/ubuntu-dind` | `:latest` | `:ubuntu24.04` |
-| `jclaveau/ubuntu-dood-node` | `:latest` | `:ubuntu24.04-node22.12` |
-| `jclaveau/ubuntu-dood-pnpm` | `:latest` | `:ubuntu24.04-node22.12-pnpm9.15` |
-| `jclaveau/ubuntu-dood-playwright` | `:latest` | `:ubuntu24.04-node22.12-pnpm9.15-pw1.50` |
-| `jclaveau/ubuntu-dood-playwright-gyp` | `:latest` | `:ubuntu24.04-node22.12-pnpm9.15-pw1.50-gyp` |
+| Image | Version-pinned tag example |
+| --- | --- |
+| `jclaveau/ubuntu-gha-tools` · `jclaveau/ubuntu-dood` · `jclaveau/ubuntu-dind` | `:ubuntu26.04` |
+| `jclaveau/ubuntu-dood-node` | `:ubuntu26.04-node24.21` |
+| `jclaveau/ubuntu-dood-pnpm` | `:ubuntu26.04-node24.21-pnpm12.11` |
+| `jclaveau/ubuntu-dood-playwright` | `:ubuntu26.04-node24.21-pnpm12.11-pw1.62` |
+| `jclaveau/ubuntu-dood-playwright-gyp` | `:ubuntu26.04-node24.21-pnpm12.11-pw1.62-gyp` |
+| `jclaveau/alpine-dood-playwright` | `:alpine3.24-node24.18-pnpm12.11-pw1.62` |
 
+To see what `:latest` is right now, read the image's tags on Docker Hub
+(`https://hub.docker.com/r/jclaveau/<image>/tags`: the pinned tag pushed with `:latest` shares
+its digest) or ask the image itself:
+
+```sh
+docker run --rm jclaveau/alpine-dood-playwright:latest playwright --version
+```
+
+#### Playwright version must match exactly
+Playwright finds its browsers by revision, so your `@playwright/test` must be the same version as
+the image's `playwright` (`pw1.62` = 1.62.x); otherwise it fails with `Executable doesn't exist`.
+Older Playwright versions are **not** rebuilt on the current Node/pnpm chain. To get one, file a
+[build request](https://github.com/jclaveau/ci-prebuilds/issues/new?template=build-request.yml)
+with the Node, pnpm and Playwright versions you need:
+
+- **Ubuntu**: any Playwright version; the build installs that version's own browsers.
+- **Alpine**: only Playwright versions whose musl browsers were built here. The request derives
+  the chromium revision from the requested version, but firefox and webkit stay at the current
+  revisions, so pin to the current `pw` minor on Alpine if you need all three browsers.
 
 > `ghcr.io/jclaveau/…:sha-<commit>`, `:edge` and `:buildcache` tags also exist but are **build
 > intermediates** — the consumer contract is `:latest` and the version-pinned tags above, on either
@@ -107,7 +135,23 @@ current chain (Ubuntu 24.04 / Node 22.12 / pnpm 9.15 / Playwright 1.50):
 
 ## Gains
 
-See [The last benchmarks](https://github.com/jclaveau/ci-prebuilds/actions/workflows/benchmark-playwright.yml).
+Median job wall-clock on GitHub-hosted runners, last 4 nightly
+[benchmarks](https://github.com/jclaveau/ci-prebuilds/actions/workflows/benchmark-playwright.yml)
+(2026-10-10 to 2026-10-14). Baseline = plain `ubuntu-latest` with
+`playwright install --with-deps`; official = `mcr.microsoft.com/playwright`:
+
+| Job | chromium only, image vs baseline | all three browsers, image vs baseline |
+| --- | --- | --- |
+| baseline (VM + install) | 76 s | 202 s |
+| official image | 98 vs 76 s (1.29x) | 174 vs 202 s (0.86x) |
+| `alpine-dood-playwright` | 76 vs 76 s (1.00x) | 153 vs 202 s (0.76x) |
+| `alpine-dind-playwright` | 82 vs 76 s (1.08x) | 149 vs 202 s (0.74x) |
+| `ubuntu-dood-playwright` | 78 vs 76 s (1.03x) | 162 vs 202 s (0.80x) |
+| `ubuntu-dind-playwright` | 70 vs 76 s (0.92x) | 166 vs 202 s (0.82x) |
+
+With one browser, pulling the image costs about what installing that browser
+saves, so there is no gain. The image pays off when the suite runs all three browsers: the Alpine
+images bake all three, the Ubuntu images bake chromium only and install firefox and webkit in the job.
 
 
 ## Full control usage

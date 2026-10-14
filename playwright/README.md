@@ -57,10 +57,16 @@ Upstream PW publishes those compiled against **glibc** only — no musl artifact
 
 The `playwright-alpine-browsers` sub-project produces musl-native equivalents:
 
-- **chromium-headless-shell**: extracted from Alpine community's
-  `chromium-headless-shell` apk subpackage (aports already builds it for
-  musl as part of `community/chromium`). Bundled `.so` deps + `RPATH=$ORIGIN`
-  so the artifact is self-contained.
+- **chromium-headless-shell**: built from source at the exact
+  `browserVersion` PW pins (151.0.7922.34 for PW 1.62.1, revision 1234), on
+  top of Alpine `aports/community/chromium`'s musl patches, with PGO +
+  ThinLTO. A build is promoted to `chs-{revision}` only after it passes the
+  Playwright conformance suite and the perf gate. What still differs from
+  PW's own build: it links musl, it preloads `libfaststring.so` and
+  `libm-fmod-custom.so` (faster `memcpy`-family and `fmod` than musl's), and
+  `--version` reports `Chromium 151.0.7922.34` where PW's reports
+  `Google Chrome for Testing`. The old path, which took Alpine's
+  `chromium-headless-shell` apk, is retired.
 - **Firefox**: built from PW's pinned Mozilla source with PW's `bootstrap.diff` +
   `juggler/` overlay, on top of Alpine `aports/community/firefox`'s musl
   patches. Staged here as `ff-{revision}`. A launch shim points `ICU_DATA` at
@@ -99,9 +105,8 @@ Useful upstream references:
   [`pnpm-gyp`](../pnpm-gyp/README.md)); its tag carries a `-gyp` suffix.
 - Inherits the [pnpm `install -g` under `act --bind` limit](../pnpm/README.md#known-limit-pnpm-install--g-under-act---bind---user-non-1001).
   Acute here: any `pnpm add -g <pkg>` during the job re-`chmod`s the pre-baked `playwright` bin → EPERM.
-- The **heaviest** layer (browsers + runtime deps); Alpine now switches from
-  the full Alpine Chromium apk to musl-native `chromium-headless-shell`
-  (deterministic timing for tests).
+- The **heaviest** layer (browsers + runtime deps). On Alpine, chromium is
+  the from-source `chromium-headless-shell` above, not Alpine's chromium apk.
 - The version-pinned tag carries the Playwright minor (`…-pwX.Y`).
 - This directory also holds the **Playwright test project** (`tests/`,
   `playwright.config.ts`) that CI runs against the built image. The config
