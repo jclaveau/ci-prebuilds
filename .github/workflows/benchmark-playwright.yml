@@ -61,6 +61,8 @@ jobs:
       tag: ${{ steps.c.outputs.tag }}
       runs: ${{ steps.c.outputs.runs }}
       pw: ${{ steps.c.outputs.pw }}
+      fingerprint: ${{ steps.fp.outputs.key }}
+      skip: ${{ github.event_name == 'schedule' && steps.seen.outputs.cache-hit == 'true' }}
     steps:
       - uses: actions/checkout@v7
       - id: c
@@ -102,16 +104,49 @@ jobs:
             ) as $base
             | {include: [ $base[] as $b | range(1; $n + 1) as $r | $b + {run:$r} ]}')"
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+      # A scheduled run whose inputs match the last good run would re-measure the same images, and its
+      # 142 jobs hold every free-plan concurrent slot (20, shared by all public repos) for up to an hour.
+      # The key covers everything the bench measures: each image digest, the Playwright version, the
+      # bench code, and the runner image the `baseline` scenario installs onto. A digest lookup that
+      # fails yields a run-unique key, so an unreadable registry never causes a skip. The cache entry
+      # expires after 7 days unused, so an unchanged series still gets a point about once a week.
+      - id: fp
+        env:
+          PW: ${{ steps.c.outputs.pw }}
+          TAG: ${{ steps.c.outputs.tag }}
+          RUNS: ${{ steps.c.outputs.runs }}
+        run: |
+          {
+            echo "pw=$PW tag=$TAG runs=$RUNS runner=$ImageOS-$ImageVersion"
+            echo "bench=$(git rev-parse HEAD:.github/workflows/benchmark-playwright.yml)"
+            for ref in "mcr.microsoft.com/playwright:v${PW}-noble" \
+              jclaveau/{ubuntu,alpine}-{dood,dind}-playwright{,-gyp}:"$TAG"; do
+              digest="$(docker buildx imagetools inspect --raw "$ref" | sha256sum | cut -d' ' -f1)" \
+                && [ "$digest" != "$(printf '' | sha256sum | cut -d' ' -f1)" ] \
+                || digest="unreadable-$GITHUB_RUN_ID"
+              echo "$ref $digest"
+            done
+          } | tee bench-fingerprint.txt
+          echo "key=bench-inputs-$(sha256sum bench-fingerprint.txt | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - id: seen
+        uses: actions/cache/restore@v6
+        with:
+          path: bench-fingerprint.txt
+          key: ${{ steps.fp.outputs.key }}
+          lookup-only: true
 
   # The thing we're beating: a bare runner installing Playwright + browsers + system deps from scratch.
   # `baseline-gyp` adds an explicit `apt install build-essential` so the with-gyp tables have an honest
   # manual reference (cost ≈ 0 because ubuntu-latest already ships gcc/g++/make).
   baseline:
     name: bench-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}
+    needs: config
+    if: needs.config.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         scenario: [baseline, baseline-gyp]
         browsers: [chromium, all]
@@ -195,10 +230,12 @@ jobs:
   container:
     name: bench-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}
     needs: config
+    if: needs.config.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix: ${{ fromJSON(needs.config.outputs.matrix) }}
     container:
       image: ${{ matrix.image }}
@@ -279,10 +316,12 @@ jobs:
   act:
     name: bench-act-${{ matrix.scenario }}-${{ matrix.browsers }}-${{ matrix.run }}
     needs: config
+    if: needs.config.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         scenario: [official, official-gyp, ubuntu-dood, ubuntu-dood-gyp, ubuntu-dind, ubuntu-dind-gyp, alpine-dood, alpine-dood-gyp, alpine-dind, alpine-dind-gyp]
         browsers: [chromium, all]
@@ -383,7 +422,7 @@ jobs:
   # Read GitHub's own per-step timings (hosted scenarios) + the act artifacts, and render the summary.
   summary:
     needs: [config, baseline, container, act]
-    if: always()
+    if: always() && needs.config.outputs.skip != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -447,3 +486,13 @@ jobs:
         run: |
           gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" --jq '.jobs[]' > jobs.ndjson
           python3 playwright/bench/bench-summary.py
+      # Remember these inputs only after every cell measured them; a red cell leaves the key unsaved so the
+      # next scheduled run retries.
+      - name: Record the benched inputs
+        if: needs.baseline.result == 'success' && needs.container.result == 'success' && needs.act.result == 'success'
+        run: echo "${{ needs.config.outputs.fingerprint }}" > bench-fingerprint.txt
+      - if: needs.baseline.result == 'success' && needs.container.result == 'success' && needs.act.result == 'success'
+        uses: actions/cache/save@v6
+        with:
+          path: bench-fingerprint.txt
+          key: ${{ needs.config.outputs.fingerprint }}
