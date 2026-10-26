@@ -1180,6 +1180,40 @@ jobs:
       - name: node-gyp compiler is intentionally absent (use the -gyp variant for native addons)
         run: for t in g++ make; do ! command -v "$t" >/dev/null || { echo "unexpectedly present $t"; exit 1; }; done
 
+      # The node layer registers its node in the tool-cache layout `actions/setup-node` reads
+      # before it downloads one. A container job cannot exercise that resolution: GitHub injects
+      # its own $RUNNER_TOOL_CACHE, the host cache bind-mounted on /__t
+      # (`ubuntu-gha-tools/README.md`), which no image can populate — test-node-act drives it
+      # through act instead, with the image as the runner. What is left here is the baked tree.
+      - id: image_node
+        run: |
+          {
+            echo "version=$(node -p process.versions.node)"
+            echo "arch=$(node -p process.arch)"
+          } >> "$GITHUB_OUTPUT"
+      - name: node is registered in the tool-cache layout
+        run: |
+          arch_dir="/opt/hostedtoolcache/node/${{ steps.image_node.outputs.version }}/${{ steps.image_node.outputs.arch }}"
+          [ -L "$arch_dir/bin/node" ] || { echo "$arch_dir/bin/node is not the symlink the image registered"; exit 1; }
+          # `tc.find` validates the arch dir through this sibling marker, so a tree without it
+          # is invisible however complete it looks.
+          [ -f "$arch_dir.complete" ] || { echo "$arch_dir.complete is missing, so tc.find skips the tree"; exit 1; }
+          [ "$("$arch_dir/bin/node" -p process.versions.node)" = "${{ steps.image_node.outputs.version }}" ] \
+            || { echo "$arch_dir/bin/node is not node ${{ steps.image_node.outputs.version }}"; exit 1; }
+      # The cache root is 2775 so a job started under a host uid of its own can still cache a
+      # tool there (`tests/act/smoke-dood-bind.yml`); registering node must not plant an
+      # owner-only-writable node/ in front of it.
+      - name: the registered tree keeps the cache root's group-writable mode
+        run: |
+          version_dir="/opt/hostedtoolcache/node/${{ steps.image_node.outputs.version }}"
+          arch_dir="$version_dir/${{ steps.image_node.outputs.arch }}"
+          for dir in /opt/hostedtoolcache/node "$version_dir" "$arch_dir" "$arch_dir/bin"; do
+            mode=$(stat -c %a "$dir")
+            [ "$mode" = 2775 ] || { echo "$dir is $mode, not 2775: another uid could not cache a tool under it"; exit 1; }
+          done
+          marker_mode=$(stat -c %a "$arch_dir.complete")
+          [ "$marker_mode" = 664 ] || { echo "$arch_dir.complete is $marker_mode, not 664"; exit 1; }
+
 
   test-pnpm-usage:
     runs-on: ubuntu-latest
@@ -1692,6 +1726,45 @@ jobs:
           popd
           sudo rm -rf "$TESTDIR"
 
+
+  # ----------------------------------------------------------------------------
+  # act: drive `actions/setup-node` against each freshly-built node image used AS
+  # the runner — the one path where the tool cache is the image's own, so the node
+  # the image registered is what setup-node can find. A container job cannot test
+  # this (GitHub mounts the host cache on /__t), which is why it lives here.
+  # ----------------------------------------------------------------------------
+
+  test-node-act:
+    runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).node
+    needs: [github-context, build-node-dood, build-node-dind]
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+        mode: [dood, dind]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install act
+        run: bash scripts/install-act.sh
+      - name: Pre-pull the container image
+        run: docker pull "ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.mode }}-node:${{ needs.github-context.outputs.build_tag }}"
+      - name: setup-node resolves the registered node (image as the act runner)
+        env:
+          IMG: ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.mode }}-node:${{ needs.github-context.outputs.build_tag }}
+        # `-P ubuntu-latest=$IMG` makes the image the runner, not a job container: act then
+        # mounts its `act-toolcache` volume on /opt/hostedtoolcache, which Docker seeds from the
+        # image on first use — so the registered tree is what setup-node reads. A runner is fresh
+        # here; locally a leftover act-toolcache keeps an earlier download and shadows it.
+        run: |
+          act push -W tests/act/smoke-node-setup-node.yml \
+            -P ubuntu-latest="$IMG"
 
   # ----------------------------------------------------------------------------
   # act: exercise the `prepare` composite action against each freshly-built
