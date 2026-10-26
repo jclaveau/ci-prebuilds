@@ -1,0 +1,41 @@
+# Smoke workflow run through `act` with a node image used AS the runner (NOT as a job
+# container) — the one path where the tool cache really is the image's own, so the node the
+# image registered is what `actions/setup-node` can find. A GHA container job instead gets
+# the HOST tool cache bind-mounted on /__t (`ubuntu-gha-tools/README.md`), which no image
+# can populate. Wired by test-node-act in .github/workflows/test-and-publish.yml.
+# Locally: `-P ubuntu-latest=<image> --pull=false`, after dropping the act job container and
+# `docker volume rm -f act-toolcache` — Docker seeds that volume from the image only while it
+# is empty, so a leftover one keeps an earlier download and shadows the registered tree.
+name: act smoke (node, setup-node resolves the registered node)
+on: [push]
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      # Read before setup-node prepends its own bin dir, so `path` is the node the image
+      # installed and `version` the one it registered under.
+      - id: image_node
+        run: |
+          {
+            echo "version=$(node -p process.versions.node)"
+            echo "major=$(node -p process.versions.node | cut -d. -f1)"
+            echo "arch=$(node -p process.arch)"
+            echo "path=$(command -v node)"
+          } >> "$GITHUB_OUTPUT"
+      # A range, not the exact version: `tc.find` only semver-matches a non-explicit spec, and
+      # the installed minor floats with the image's own node bump.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.image_node.outputs.major }}.x
+      - name: setup-node resolved the registered symlink instead of downloading a node
+        run: |
+          registered="$RUNNER_TOOL_CACHE/node/${{ steps.image_node.outputs.version }}/${{ steps.image_node.outputs.arch }}/bin/node"
+          resolved=$(command -v node)
+          [ "$resolved" = "$registered" ] || { echo "node resolved to $resolved, not $registered"; exit 1; }
+          # A downloaded tarball's bin/node is a regular ELF, so only a symlink back to the
+          # image's own node proves nothing was fetched over it.
+          target=$(readlink "$registered") || { echo "$registered is a copy, not a symlink"; exit 1; }
+          [ "$target" = "${{ steps.image_node.outputs.path }}" ] \
+            || { echo "$registered points at $target, not the image's ${{ steps.image_node.outputs.path }}"; exit 1; }
+          [ "$(node -p process.versions.node)" = "${{ steps.image_node.outputs.version }}" ] \
+            || { echo "node is $(node -p process.versions.node), not ${{ steps.image_node.outputs.version }}"; exit 1; }

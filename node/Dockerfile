@@ -17,7 +17,7 @@ RUN echo "Install Node.js (NodeSource)" \
     && sudo rm -rf /var/lib/apt/lists/*
 
 # A node in /usr/bin is invisible to `actions/setup-node`, which would download another one over it
-# (~56 MiB per job). Symlinks only, so the image carries one node. The consumer must point
-# RUNNER_TOOL_CACHE here, as a container job's default /__t is the host's own cache — see README.
+# (~56 MiB per job). Symlinks only, so the image carries one node. Read where the lookup hits
+# before relying on it: a GHA container job reads the HOST cache on /__t, not this one — see README.
 COPY --chmod=755 register-node-in-tool-cache.sh /usr/local/bin/register-node-in-tool-cache
 RUN register-node-in-tool-cache

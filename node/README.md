@@ -28,16 +28,12 @@ For `pnpm` use [`-pnpm`](../pnpm/README.md); for native-addon builds use
 ## Keeping `actions/setup-node`
 
 The installed node is registered in the runner tool-cache layout
-(`$RUNNER_TOOL_CACHE/node/<version>/<arch>`, symlinks into `/usr/bin` — no second node in the
-image), which is the only place `actions/setup-node` looks before it downloads one. Two things a
-workflow must do for that lookup to hit:
+(`/opt/hostedtoolcache/node/<version>/<arch>`, symlinks into `/usr/bin` — no second node in the
+image), which is the only place `actions/setup-node` looks before it downloads one. Ask for a
+range, as `tc.find` only semver-matches a non-explicit spec and the installed minor floats with
+the image's node:
 
 ```yaml
-    container: jclaveau/alpine-dood-node:latest
-    env:
-      # a container job's default /__t is the HOST runner's glibc tool cache, not the image's
-      RUNNER_TOOL_CACHE: /opt/hostedtoolcache
-    steps:
       - uses: actions/setup-node@v4
         with:
           node-version: 24.x   # a range: the installed minor floats, so an exact version misses
@@ -48,8 +44,20 @@ on Ubuntu a redundant ~56 MiB download per job, on Alpine a node that cannot run
 itself still exits 0, so the failure surfaces one step later as
 `cannot execute: required file not found`.
 
+**The lookup hits where the tool cache is the image's own**: `act` with the image as the runner
+(`-P ubuntu-latest=<image>`, asserted by `tests/act/smoke-node-setup-node.yml`), a plain
+`docker run`, or a self-hosted runner whose process lives in the image.
+
+**It cannot hit in a GitHub Actions container job.** GitHub injects its own `RUNNER_TOOL_CACHE`
+([`gha-tools`](../ubuntu-gha-tools/README.md#what-it-implies)) — the *host* runner's cache,
+bind-mounted on `/__t` — and overwrites every `RUNNER_*` the workflow sets, per step. So an
+Alpine container job still resolves the host's glibc node, and no image-side registration can
+change that; registering from a job step would instead write container paths into the host cache
+every later job on that runner would read.
+
 `register-node-in-tool-cache` stays on the image, so a job that upgrades node in place can
-re-register it.
+re-register it — on a `-sudoer` tag, since replacing node needs root and the published tags are
+hardened without `sudo`.
 
 ## What it adds
 - **Node.js + npm** — on Ubuntu from NodeSource (the major comes from the `NODE_VERSION` build-arg); on
