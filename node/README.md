@@ -44,7 +44,7 @@ workflow must do for that lookup to hit:
 ```
 
 Miss the lookup and `setup-node` installs the `actions/node-versions` build, which is glibc-only:
-on Ubuntu a redundant ~126 MB download per job, on Alpine a node that cannot run — and the step
+on Ubuntu a redundant ~56 MiB download per job, on Alpine a node that cannot run — and the step
 itself still exits 0, so the failure surfaces one step later as
 `cannot execute: required file not found`.
 
