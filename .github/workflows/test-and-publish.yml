@@ -1190,9 +1190,11 @@ jobs:
       # would be a second node, and on Alpine a glibc build that cannot run at all.
       - id: image_node
         run: |
-          echo "version=$(node -p process.versions.node)" >> "$GITHUB_OUTPUT"
-          echo "major=$(node -p process.versions.node | cut -d. -f1)" >> "$GITHUB_OUTPUT"
-          echo "arch=$(node -p process.arch)" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$(node -p process.versions.node)"
+            echo "major=$(node -p process.versions.node | cut -d. -f1)"
+            echo "arch=$(node -p process.arch)"
+          } >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ steps.image_node.outputs.major }}.x
