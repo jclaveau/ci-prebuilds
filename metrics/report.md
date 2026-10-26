@@ -1,7 +1,7 @@
 # CI + registry metrics
 
-- runs: **6052** (2025-10-17 -> 2026-10-19)
-- jobs: **243746**, **6344** runner-hours total
+- runs: **6082** (2025-10-17 -> 2026-10-26)
+- jobs: **244368**, **6352** runner-hours total
 - tagged image versions priced: **5051**, deduped GHCR footprint **905.4 GB** (sum of per-image pull sizes: 5222.8 GB)
 - agent requests: **9626**, **$2,760** API-equivalent (subscription work — not money spent)
 - artifacts on record: **62078**, **15.4 GB**, **15554** already expired
@@ -33,7 +33,8 @@
 | 2026-09-28 | 141.7 | Test and Publish | 0.0 GB | 905.4 GB |
 | 2026-10-05 | 400.6 | Playwright Alpine Browsers | 0.0 GB | 905.4 GB |
 | 2026-10-12 | 141.2 | Playwright Alpine Browsers | 0.0 GB | 905.4 GB |
-| 2026-10-19 | 7.1 | Test and Publish | 0.0 GB | 905.4 GB |
+| 2026-10-19 | 15.2 | Test and Publish | 0.0 GB | 905.4 GB |
+| 2026-10-26 | 0.1 | Test and Publish | 0.0 GB | 905.4 GB |
 
 ## What this would cost as a private repo
 
@@ -47,8 +48,8 @@ Standard runners are free on public repos, so today this is all $0. Privately it
 | 2026-07 | 59,876 | $359 | $2,098 | 3.61 |
 | 2026-08 | 114,865 | $689 | $197 | 1.09 |
 | 2026-09 | 159,065 | $954 | $0 | 0.00 |
-| 2026-10 | 47,621 | $286 | $0 | 0.00 |
-| **total** | **475,927** | **$2,856** | **$2,760** | **5.22** |
+| 2026-10 | 48,243 | $289 | $0 | 0.00 |
+| **total** | **476,549** | **$2,859** | **$2,760** | **5.22** |
 
 Artifact storage: **11.7 GB-months** = **$3** at $0.25/GB/month.
 
@@ -56,10 +57,10 @@ Net of each plan's included minutes, per month averaged over the 7 month(s) on r
 
 | plan | included | billed over | $/month |
 |---|---:|---:|---:|
-| Free | 2,000 | 65,990 | $396 |
-| Pro | 3,000 | 64,990 | $390 |
-| Team | 3,000 | 64,990 | $390 |
-| Enterprise | 50,000 | 17,990 | $108 |
+| Free | 2,000 | 66,078 | $396 |
+| Pro | 3,000 | 65,078 | $390 |
+| Team | 3,000 | 65,078 | $390 |
+| Enterprise | 50,000 | 18,078 | $108 |
 
 Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/month**, which would roughly double the bill. GitHub commits to one month's notice, so it is a watch item rather than a plan.
 
@@ -95,6 +96,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-alpine-dind-gyp/all | 2026-09-28 | - | 139 |
 | bench act-alpine-dind-gyp/all | 2026-10-05 | - | 135 |
 | bench act-alpine-dind-gyp/all | 2026-10-12 | - | 135 |
+| bench act-alpine-dind-gyp/all | 2026-10-19 | - | 134 |
 | bench act-alpine-dind-gyp/chromium | 2026-05-25 | - | 21 |
 | bench act-alpine-dind-gyp/chromium | 2026-07-27 | - | 36 |
 | bench act-alpine-dind-gyp/chromium | 2026-08-03 | - | 34 |
@@ -108,6 +110,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-alpine-dind-gyp/chromium | 2026-09-28 | - | 55 |
 | bench act-alpine-dind-gyp/chromium | 2026-10-05 | - | 55 |
 | bench act-alpine-dind-gyp/chromium | 2026-10-12 | - | 54 |
+| bench act-alpine-dind-gyp/chromium | 2026-10-19 | - | 59 |
 | bench act-alpine-dind/all | 2026-07-27 | - | 43 |
 | bench act-alpine-dind/all | 2026-08-03 | - | 41 |
 | bench act-alpine-dind/all | 2026-08-10 | - | 42 |
@@ -120,6 +123,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-alpine-dind/all | 2026-09-28 | - | 135 |
 | bench act-alpine-dind/all | 2026-10-05 | - | 136 |
 | bench act-alpine-dind/all | 2026-10-12 | - | 133 |
+| bench act-alpine-dind/all | 2026-10-19 | - | 130 |
 | bench act-alpine-dind/chromium | 2026-05-25 | - | 19 |
 | bench act-alpine-dind/chromium | 2026-07-27 | - | 33 |
 | bench act-alpine-dind/chromium | 2026-08-03 | - | 30 |
@@ -133,6 +137,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-alpine-dind/chromium | 2026-09-28 | - | 52 |
 | bench act-alpine-dind/chromium | 2026-10-05 | - | 53 |
 | bench act-alpine-dind/chromium | 2026-10-12 | - | 52 |
+| bench act-alpine-dind/chromium | 2026-10-19 | - | 52 |
 | bench act-alpine-dood-gyp/all | 2026-07-27 | - | 48 |
 | bench act-alpine-dood-gyp/all | 2026-08-03 | - | 45 |
 | bench act-alpine-dood-gyp/all | 2026-08-10 | - | 44 |
@@ -145,6 +150,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-alpine-dood-gyp/all | 2026-09-28 | - | 137 |
 | bench act-alpine-dood-gyp/all | 2026-10-05 | - | 137 |
 | bench act-alpine-dood-gyp/all | 2026-10-12 | - | 133 |
+| bench act-alpine-dood-gyp/all | 2026-10-19 | - | 131 |
 | bench act-alpine-dood-gyp/chromium | 2026-05-25 | - | 21 |
 | bench act-alpine-dood-gyp/chromium | 2026-07-27 | - | 35 |
 | bench act-alpine-dood-gyp/chromium | 2026-08-03 | - | 34 |
@@ -158,6 +164,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-alpine-dood-gyp/chromium | 2026-09-28 | - | 55 |
 | bench act-alpine-dood-gyp/chromium | 2026-10-05 | - | 53 |
 | bench act-alpine-dood-gyp/chromium | 2026-10-12 | - | 54 |
+| bench act-alpine-dood-gyp/chromium | 2026-10-19 | - | 52 |
 | bench act-alpine-dood/all | 2026-07-27 | - | 43 |
 | bench act-alpine-dood/all | 2026-08-03 | - | 41 |
 | bench act-alpine-dood/all | 2026-08-10 | - | 40 |
@@ -170,6 +177,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-alpine-dood/all | 2026-09-28 | - | 135 |
 | bench act-alpine-dood/all | 2026-10-05 | - | 134 |
 | bench act-alpine-dood/all | 2026-10-12 | - | 131 |
+| bench act-alpine-dood/all | 2026-10-19 | - | 132 |
 | bench act-alpine-dood/chromium | 2026-05-25 | - | 19 |
 | bench act-alpine-dood/chromium | 2026-07-27 | - | 33 |
 | bench act-alpine-dood/chromium | 2026-08-03 | - | 30 |
@@ -183,6 +191,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-alpine-dood/chromium | 2026-09-28 | - | 51 |
 | bench act-alpine-dood/chromium | 2026-10-05 | - | 51 |
 | bench act-alpine-dood/chromium | 2026-10-12 | - | 51 |
+| bench act-alpine-dood/chromium | 2026-10-19 | - | 55 |
 | bench act-baseline/all | 2026-05-25 | - | 72 |
 | bench act-baseline/chromium | 2026-05-25 | - | 46 |
 | bench act-official-gyp/all | 2026-05-25 | - | 58 |
@@ -198,6 +207,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-official-gyp/all | 2026-09-28 | - | 177 |
 | bench act-official-gyp/all | 2026-10-05 | - | 177 |
 | bench act-official-gyp/all | 2026-10-12 | - | 178 |
+| bench act-official-gyp/all | 2026-10-19 | - | 178 |
 | bench act-official-gyp/chromium | 2026-05-25 | - | 51 |
 | bench act-official-gyp/chromium | 2026-07-27 | - | 54 |
 | bench act-official-gyp/chromium | 2026-08-03 | - | 49 |
@@ -211,6 +221,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-official-gyp/chromium | 2026-09-28 | - | 85 |
 | bench act-official-gyp/chromium | 2026-10-05 | - | 83 |
 | bench act-official-gyp/chromium | 2026-10-12 | - | 84 |
+| bench act-official-gyp/chromium | 2026-10-19 | - | 81 |
 | bench act-official/all | 2026-05-25 | - | 39 |
 | bench act-official/all | 2026-07-27 | - | 52 |
 | bench act-official/all | 2026-08-03 | - | 47 |
@@ -224,6 +235,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-official/all | 2026-09-28 | - | 164 |
 | bench act-official/all | 2026-10-05 | - | 166 |
 | bench act-official/all | 2026-10-12 | - | 166 |
+| bench act-official/all | 2026-10-19 | - | 160 |
 | bench act-official/chromium | 2026-05-25 | - | 31 |
 | bench act-official/chromium | 2026-07-27 | - | 45 |
 | bench act-official/chromium | 2026-08-03 | - | 41 |
@@ -237,6 +249,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-official/chromium | 2026-09-28 | - | 72 |
 | bench act-official/chromium | 2026-10-05 | - | 72 |
 | bench act-official/chromium | 2026-10-12 | - | 73 |
+| bench act-official/chromium | 2026-10-19 | - | 69 |
 | bench act-ours-alpine/chromium | 2026-05-25 | - | 21 |
 | bench act-ours-ubuntu/all | 2026-05-25 | - | 43 |
 | bench act-ours-ubuntu/chromium | 2026-05-25 | - | 34 |
@@ -253,6 +266,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-ubuntu-dind-gyp/all | 2026-09-28 | - | 159 |
 | bench act-ubuntu-dind-gyp/all | 2026-10-05 | - | 160 |
 | bench act-ubuntu-dind-gyp/all | 2026-10-12 | - | 160 |
+| bench act-ubuntu-dind-gyp/all | 2026-10-19 | - | 161 |
 | bench act-ubuntu-dind-gyp/chromium | 2026-05-25 | - | 35 |
 | bench act-ubuntu-dind-gyp/chromium | 2026-07-27 | - | 38 |
 | bench act-ubuntu-dind-gyp/chromium | 2026-08-03 | - | 36 |
@@ -266,6 +280,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-ubuntu-dind-gyp/chromium | 2026-09-28 | - | 64 |
 | bench act-ubuntu-dind-gyp/chromium | 2026-10-05 | - | 66 |
 | bench act-ubuntu-dind-gyp/chromium | 2026-10-12 | - | 65 |
+| bench act-ubuntu-dind-gyp/chromium | 2026-10-19 | - | 64 |
 | bench act-ubuntu-dind/all | 2026-05-25 | - | 40 |
 | bench act-ubuntu-dind/all | 2026-07-27 | - | 41 |
 | bench act-ubuntu-dind/all | 2026-08-03 | - | 42 |
@@ -279,6 +294,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-ubuntu-dind/all | 2026-09-28 | - | 155 |
 | bench act-ubuntu-dind/all | 2026-10-05 | - | 156 |
 | bench act-ubuntu-dind/all | 2026-10-12 | - | 157 |
+| bench act-ubuntu-dind/all | 2026-10-19 | - | 155 |
 | bench act-ubuntu-dind/chromium | 2026-05-25 | - | 33 |
 | bench act-ubuntu-dind/chromium | 2026-07-27 | - | 34 |
 | bench act-ubuntu-dind/chromium | 2026-08-03 | - | 34 |
@@ -292,6 +308,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-ubuntu-dind/chromium | 2026-09-28 | - | 60 |
 | bench act-ubuntu-dind/chromium | 2026-10-05 | - | 62 |
 | bench act-ubuntu-dind/chromium | 2026-10-12 | - | 62 |
+| bench act-ubuntu-dind/chromium | 2026-10-19 | - | 70 |
 | bench act-ubuntu-dood-gyp/all | 2026-05-25 | - | 43 |
 | bench act-ubuntu-dood-gyp/all | 2026-07-27 | - | 45 |
 | bench act-ubuntu-dood-gyp/all | 2026-08-03 | - | 43 |
@@ -305,6 +322,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-ubuntu-dood-gyp/all | 2026-09-28 | - | 156 |
 | bench act-ubuntu-dood-gyp/all | 2026-10-05 | - | 156 |
 | bench act-ubuntu-dood-gyp/all | 2026-10-12 | - | 157 |
+| bench act-ubuntu-dood-gyp/all | 2026-10-19 | - | 153 |
 | bench act-ubuntu-dood-gyp/chromium | 2026-05-25 | - | 35 |
 | bench act-ubuntu-dood-gyp/chromium | 2026-07-27 | - | 37 |
 | bench act-ubuntu-dood-gyp/chromium | 2026-08-03 | - | 36 |
@@ -318,6 +336,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-ubuntu-dood-gyp/chromium | 2026-09-28 | - | 63 |
 | bench act-ubuntu-dood-gyp/chromium | 2026-10-05 | - | 63 |
 | bench act-ubuntu-dood-gyp/chromium | 2026-10-12 | - | 63 |
+| bench act-ubuntu-dood-gyp/chromium | 2026-10-19 | - | 69 |
 | bench act-ubuntu-dood/all | 2026-05-25 | - | 40 |
 | bench act-ubuntu-dood/all | 2026-07-27 | - | 42 |
 | bench act-ubuntu-dood/all | 2026-08-03 | - | 41 |
@@ -331,6 +350,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-ubuntu-dood/all | 2026-09-28 | - | 152 |
 | bench act-ubuntu-dood/all | 2026-10-05 | - | 155 |
 | bench act-ubuntu-dood/all | 2026-10-12 | - | 154 |
+| bench act-ubuntu-dood/all | 2026-10-19 | - | 155 |
 | bench act-ubuntu-dood/chromium | 2026-05-25 | - | 32 |
 | bench act-ubuntu-dood/chromium | 2026-07-27 | - | 34 |
 | bench act-ubuntu-dood/chromium | 2026-08-03 | - | 33 |
@@ -344,6 +364,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench act-ubuntu-dood/chromium | 2026-09-28 | - | 59 |
 | bench act-ubuntu-dood/chromium | 2026-10-05 | - | 64 |
 | bench act-ubuntu-dood/chromium | 2026-10-12 | - | 61 |
+| bench act-ubuntu-dood/chromium | 2026-10-19 | - | 62 |
 | bench alpine-dind-gyp/all | 2026-07-27 | 35 | 15 |
 | bench alpine-dind-gyp/all | 2026-08-03 | 41 | 11 |
 | bench alpine-dind-gyp/all | 2026-08-10 | 31 | 15 |
@@ -356,6 +377,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench alpine-dind-gyp/all | 2026-09-28 | 29 | 5 |
 | bench alpine-dind-gyp/all | 2026-10-05 | 34 | 5 |
 | bench alpine-dind-gyp/all | 2026-10-12 | 36 | 6 |
+| bench alpine-dind-gyp/all | 2026-10-19 | 29 | 5 |
 | bench alpine-dind-gyp/chromium | 2026-05-25 | 20 | 3 |
 | bench alpine-dind-gyp/chromium | 2026-07-27 | 32 | 4 |
 | bench alpine-dind-gyp/chromium | 2026-08-03 | 31 | 5 |
@@ -369,6 +391,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench alpine-dind-gyp/chromium | 2026-09-28 | 40 | 2 |
 | bench alpine-dind-gyp/chromium | 2026-10-05 | 42 | 1 |
 | bench alpine-dind-gyp/chromium | 2026-10-12 | 42 | 2 |
+| bench alpine-dind-gyp/chromium | 2026-10-19 | 28 | 2 |
 | bench alpine-dind/all | 2026-07-27 | 33 | 14 |
 | bench alpine-dind/all | 2026-08-03 | 28 | 14 |
 | bench alpine-dind/all | 2026-08-10 | 28 | 16 |
@@ -381,6 +404,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench alpine-dind/all | 2026-09-28 | 33 | 6 |
 | bench alpine-dind/all | 2026-10-05 | 27 | 6 |
 | bench alpine-dind/all | 2026-10-12 | 38 | 5 |
+| bench alpine-dind/all | 2026-10-19 | 25 | 5 |
 | bench alpine-dind/chromium | 2026-05-25 | 18 | 3 |
 | bench alpine-dind/chromium | 2026-07-27 | 35 | 4 |
 | bench alpine-dind/chromium | 2026-08-03 | 31 | 5 |
@@ -394,6 +418,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench alpine-dind/chromium | 2026-09-28 | 37 | 2 |
 | bench alpine-dind/chromium | 2026-10-05 | 33 | 2 |
 | bench alpine-dind/chromium | 2026-10-12 | 37 | 2 |
+| bench alpine-dind/chromium | 2026-10-19 | 35 | 2 |
 | bench alpine-dood-gyp/all | 2026-07-27 | 35 | 15 |
 | bench alpine-dood-gyp/all | 2026-08-03 | 33 | 16 |
 | bench alpine-dood-gyp/all | 2026-08-10 | 29 | 16 |
@@ -406,6 +431,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench alpine-dood-gyp/all | 2026-09-28 | 40 | 6 |
 | bench alpine-dood-gyp/all | 2026-10-05 | 26 | 6 |
 | bench alpine-dood-gyp/all | 2026-10-12 | 42 | 5 |
+| bench alpine-dood-gyp/all | 2026-10-19 | 48 | 6 |
 | bench alpine-dood-gyp/chromium | 2026-05-25 | 20 | 3 |
 | bench alpine-dood-gyp/chromium | 2026-07-27 | 37 | 4 |
 | bench alpine-dood-gyp/chromium | 2026-08-03 | 32 | 4 |
@@ -419,6 +445,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench alpine-dood-gyp/chromium | 2026-09-28 | 37 | 2 |
 | bench alpine-dood-gyp/chromium | 2026-10-05 | 37 | 2 |
 | bench alpine-dood-gyp/chromium | 2026-10-12 | 41 | 2 |
+| bench alpine-dood-gyp/chromium | 2026-10-19 | 29 | 2 |
 | bench alpine-dood/all | 2026-07-27 | 34 | 15 |
 | bench alpine-dood/all | 2026-08-03 | 29 | 15 |
 | bench alpine-dood/all | 2026-08-10 | 28 | 15 |
@@ -431,6 +458,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench alpine-dood/all | 2026-09-28 | 38 | 6 |
 | bench alpine-dood/all | 2026-10-05 | 30 | 5 |
 | bench alpine-dood/all | 2026-10-12 | 42 | 5 |
+| bench alpine-dood/all | 2026-10-19 | 44 | 5 |
 | bench alpine-dood/chromium | 2026-05-25 | 18 | 3 |
 | bench alpine-dood/chromium | 2026-07-27 | 31 | 4 |
 | bench alpine-dood/chromium | 2026-08-03 | 35 | 4 |
@@ -444,6 +472,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench alpine-dood/chromium | 2026-09-28 | 27 | 2 |
 | bench alpine-dood/chromium | 2026-10-05 | 27 | 2 |
 | bench alpine-dood/chromium | 2026-10-12 | 40 | 2 |
+| bench alpine-dood/chromium | 2026-10-19 | 30 | 1 |
 | bench baseline-gyp/all | 2026-05-25 | 46 | 15 |
 | bench baseline-gyp/all | 2026-07-27 | 58 | 13 |
 | bench baseline-gyp/all | 2026-08-03 | 64 | 10 |
@@ -457,6 +486,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench baseline-gyp/all | 2026-09-28 | 73 | 10 |
 | bench baseline-gyp/all | 2026-10-05 | 74 | 9 |
 | bench baseline-gyp/all | 2026-10-12 | 76 | 10 |
+| bench baseline-gyp/all | 2026-10-19 | 51 | 11 |
 | bench baseline-gyp/chromium | 2026-05-25 | 26 | 3 |
 | bench baseline-gyp/chromium | 2026-07-27 | 29 | 3 |
 | bench baseline-gyp/chromium | 2026-08-03 | 25 | 3 |
@@ -470,6 +500,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench baseline-gyp/chromium | 2026-09-28 | 44 | 2 |
 | bench baseline-gyp/chromium | 2026-10-05 | 43 | 2 |
 | bench baseline-gyp/chromium | 2026-10-12 | 44 | 2 |
+| bench baseline-gyp/chromium | 2026-10-19 | 27 | 2 |
 | bench baseline/all | 2026-05-25 | 50 | 15 |
 | bench baseline/all | 2026-07-27 | 50 | 15 |
 | bench baseline/all | 2026-08-03 | 53 | 15 |
@@ -483,6 +514,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench baseline/all | 2026-09-28 | 66 | 10 |
 | bench baseline/all | 2026-10-05 | 70 | 10 |
 | bench baseline/all | 2026-10-12 | 75 | 10 |
+| bench baseline/all | 2026-10-19 | 69 | 12 |
 | bench baseline/chromium | 2026-05-25 | 26 | 3 |
 | bench baseline/chromium | 2026-07-27 | 28 | 3 |
 | bench baseline/chromium | 2026-08-03 | 24 | 3 |
@@ -496,6 +528,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench baseline/chromium | 2026-09-28 | 42 | 2 |
 | bench baseline/chromium | 2026-10-05 | 41 | 2 |
 | bench baseline/chromium | 2026-10-12 | 43 | 2 |
+| bench baseline/chromium | 2026-10-19 | 42 | 3 |
 | bench official-gyp/all | 2026-05-25 | 48 | 10 |
 | bench official-gyp/all | 2026-07-27 | 62 | 10 |
 | bench official-gyp/all | 2026-08-03 | 46 | 11 |
@@ -509,6 +542,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench official-gyp/all | 2026-09-28 | 70 | 7 |
 | bench official-gyp/all | 2026-10-05 | 70 | 7 |
 | bench official-gyp/all | 2026-10-12 | 70 | 7 |
+| bench official-gyp/all | 2026-10-19 | 72 | 7 |
 | bench official-gyp/chromium | 2026-05-25 | 44 | 3 |
 | bench official-gyp/chromium | 2026-07-27 | 57 | 2 |
 | bench official-gyp/chromium | 2026-08-03 | 54 | 3 |
@@ -522,6 +556,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench official-gyp/chromium | 2026-09-28 | 62 | 2 |
 | bench official-gyp/chromium | 2026-10-05 | 56 | 2 |
 | bench official-gyp/chromium | 2026-10-12 | 70 | 2 |
+| bench official-gyp/chromium | 2026-10-19 | 71 | 2 |
 | bench official/all | 2026-05-25 | 30 | 10 |
 | bench official/all | 2026-07-27 | 54 | 9 |
 | bench official/all | 2026-08-03 | 38 | 10 |
@@ -535,6 +570,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench official/all | 2026-09-28 | 54 | 7 |
 | bench official/all | 2026-10-05 | 50 | 5 |
 | bench official/all | 2026-10-12 | 46 | 7 |
+| bench official/all | 2026-10-19 | 72 | 6 |
 | bench official/chromium | 2026-05-25 | 30 | 3 |
 | bench official/chromium | 2026-07-27 | 50 | 3 |
 | bench official/chromium | 2026-08-03 | 39 | 3 |
@@ -548,6 +584,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench official/chromium | 2026-09-28 | 51 | 2 |
 | bench official/chromium | 2026-10-05 | 59 | 2 |
 | bench official/chromium | 2026-10-12 | 58 | 2 |
+| bench official/chromium | 2026-10-19 | 47 | 2 |
 | bench ours-alpine/chromium | 2026-05-25 | 20 | 3 |
 | bench ours-ubuntu/all | 2026-05-25 | 34 | 10 |
 | bench ours-ubuntu/chromium | 2026-05-25 | 34 | 2 |
@@ -566,6 +603,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench ubuntu-dind-gyp/all | 2026-09-28 | 40 | 6 |
 | bench ubuntu-dind-gyp/all | 2026-10-05 | 43 | 5 |
 | bench ubuntu-dind-gyp/all | 2026-10-12 | 47 | 6 |
+| bench ubuntu-dind-gyp/all | 2026-10-19 | 40 | 7 |
 | bench ubuntu-dind-gyp/chromium | 2026-05-25 | 34 | 2 |
 | bench ubuntu-dind-gyp/chromium | 2026-07-27 | 37 | 3 |
 | bench ubuntu-dind-gyp/chromium | 2026-08-03 | 35 | 2 |
@@ -579,6 +617,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench ubuntu-dind-gyp/chromium | 2026-09-28 | 48 | 2 |
 | bench ubuntu-dind-gyp/chromium | 2026-10-05 | 39 | 2 |
 | bench ubuntu-dind-gyp/chromium | 2026-10-12 | 54 | 2 |
+| bench ubuntu-dind-gyp/chromium | 2026-10-19 | 40 | 2 |
 | bench ubuntu-dind/all | 2026-05-25 | 32 | 10 |
 | bench ubuntu-dind/all | 2026-07-27 | 45 | 8 |
 | bench ubuntu-dind/all | 2026-08-03 | 39 | 11 |
@@ -592,6 +631,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench ubuntu-dind/all | 2026-09-28 | 35 | 6 |
 | bench ubuntu-dind/all | 2026-10-05 | 50 | 6 |
 | bench ubuntu-dind/all | 2026-10-12 | 38 | 6 |
+| bench ubuntu-dind/all | 2026-10-19 | 58 | 4 |
 | bench ubuntu-dind/chromium | 2026-05-25 | 32 | 2 |
 | bench ubuntu-dind/chromium | 2026-07-27 | 35 | 3 |
 | bench ubuntu-dind/chromium | 2026-08-03 | 33 | 3 |
@@ -605,6 +645,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench ubuntu-dind/chromium | 2026-09-28 | 44 | 2 |
 | bench ubuntu-dind/chromium | 2026-10-05 | 48 | 2 |
 | bench ubuntu-dind/chromium | 2026-10-12 | 42 | 2 |
+| bench ubuntu-dind/chromium | 2026-10-19 | 55 | 1 |
 | bench ubuntu-dood-gyp/all | 2026-05-25 | 34 | 10 |
 | bench ubuntu-dood-gyp/all | 2026-07-27 | 40 | 10 |
 | bench ubuntu-dood-gyp/all | 2026-08-03 | 32 | 10 |
@@ -618,6 +659,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench ubuntu-dood-gyp/all | 2026-09-28 | 39 | 6 |
 | bench ubuntu-dood-gyp/all | 2026-10-05 | 45 | 6 |
 | bench ubuntu-dood-gyp/all | 2026-10-12 | 50 | 6 |
+| bench ubuntu-dood-gyp/all | 2026-10-19 | 56 | 6 |
 | bench ubuntu-dood-gyp/chromium | 2026-05-25 | 34 | 2 |
 | bench ubuntu-dood-gyp/chromium | 2026-07-27 | 38 | 3 |
 | bench ubuntu-dood-gyp/chromium | 2026-08-03 | 46 | 2 |
@@ -631,6 +673,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench ubuntu-dood-gyp/chromium | 2026-09-28 | 45 | 2 |
 | bench ubuntu-dood-gyp/chromium | 2026-10-05 | 37 | 1 |
 | bench ubuntu-dood-gyp/chromium | 2026-10-12 | 39 | 2 |
+| bench ubuntu-dood-gyp/chromium | 2026-10-19 | 54 | 2 |
 | bench ubuntu-dood/all | 2026-05-25 | 32 | 10 |
 | bench ubuntu-dood/all | 2026-07-27 | 36 | 10 |
 | bench ubuntu-dood/all | 2026-08-03 | 32 | 10 |
@@ -644,6 +687,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench ubuntu-dood/all | 2026-09-28 | 37 | 6 |
 | bench ubuntu-dood/all | 2026-10-05 | 34 | 6 |
 | bench ubuntu-dood/all | 2026-10-12 | 39 | 6 |
+| bench ubuntu-dood/all | 2026-10-19 | 49 | 6 |
 | bench ubuntu-dood/chromium | 2026-05-25 | 32 | 2 |
 | bench ubuntu-dood/chromium | 2026-07-27 | 36 | 3 |
 | bench ubuntu-dood/chromium | 2026-08-03 | 35 | 3 |
@@ -657,6 +701,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | bench ubuntu-dood/chromium | 2026-09-28 | 36 | 2 |
 | bench ubuntu-dood/chromium | 2026-10-05 | 48 | 1 |
 | bench ubuntu-dood/chromium | 2026-10-12 | 36 | 2 |
+| bench ubuntu-dood/chromium | 2026-10-19 | 34 | 2 |
 | conformance chromium-headless-shell | 2026-06-22 | 15 | 100 |
 | conformance chromium-headless-shell | 2026-06-29 | 16 | 81 |
 | conformance chromium-headless-shell | 2026-07-06 | 23 | 81 |
@@ -700,7 +745,7 @@ Registry exposure if the exemption ends: **905 GB** at $0.25/GB/month = **$226/m
 | conformance ubuntu-chromium | 2026-09-28 | 16 | 121 |
 | conformance ubuntu-chromium | 2026-10-05 | 20 | 119 |
 | conformance ubuntu-chromium | 2026-10-12 | 20 | 119 |
-| conformance ubuntu-chromium | 2026-10-19 | 20 | 122 |
+| conformance ubuntu-chromium | 2026-10-19 | 21 | 120 |
 | conformance ubuntu-firefox | 2026-07-06 | 2 | 167 |
 | conformance ubuntu-firefox | 2026-07-13 | 2 | 161 |
 | conformance ubuntu-firefox | 2026-07-20 | 2 | 163 |
