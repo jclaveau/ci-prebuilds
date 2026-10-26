@@ -1173,12 +1173,36 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
       options: >-
         --env "HOME=/home/runner"
+    env:
+      # A container job gets the HOST tool cache on /__t, so a consumer that wants the node this
+      # image registered points RUNNER_TOOL_CACHE back at the image's own — the README recipe.
+      RUNNER_TOOL_CACHE: /opt/hostedtoolcache
     steps:
       - run: node --version
       - run: npm --version
       # node is slim now: the node-gyp toolchain lives in the -gyp variant, not here — lock that contract.
       - name: node-gyp compiler is intentionally absent (use the -gyp variant for native addons)
         run: for t in g++ make; do ! command -v "$t" >/dev/null || { echo "unexpectedly present $t"; exit 1; }; done
+
+      # The node layer registers its node in the tool-cache layout, which is the only place
+      # `actions/setup-node` looks before downloading one. Asked for a range (the installed minor
+      # floats, so an exact version would miss), it must resolve the registered symlink: a download
+      # would be a second node, and on Alpine a glibc build that cannot run at all.
+      - id: image_node
+        run: |
+          echo "version=$(node -p process.versions.node)" >> "$GITHUB_OUTPUT"
+          echo "major=$(node -p process.versions.node | cut -d. -f1)" >> "$GITHUB_OUTPUT"
+          echo "arch=$(node -p process.arch)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.image_node.outputs.major }}.x
+      - name: setup-node resolves the image's own node instead of downloading one
+        run: |
+          registered="$RUNNER_TOOL_CACHE/node/${{ steps.image_node.outputs.version }}/${{ steps.image_node.outputs.arch }}/bin/node"
+          resolved=$(command -v node)
+          [ "$resolved" = "$registered" ] || { echo "node resolved to $resolved, not $registered"; exit 1; }
+          [ -L "$registered" ] || { echo "$registered is a copy, not the symlink the image registered"; exit 1; }
+          [ "$(node -p process.versions.node)" = "${{ steps.image_node.outputs.version }}" ]
 
 
   test-pnpm-usage:
