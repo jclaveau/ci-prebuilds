@@ -1195,6 +1195,22 @@ jobs:
             echo "major=$(node -p process.versions.node | cut -d. -f1)"
             echo "arch=$(node -p process.arch)"
           } >> "$GITHUB_OUTPUT"
+      # The cache root is 2775 so a job started under a host uid of its own can still cache a
+      # tool there (`tests/act/smoke-dood-bind.yml`); registering node must not plant an
+      # owner-only-writable node/ in front of it.
+      # The baked path, not $RUNNER_TOOL_CACHE: GitHub injects its own inside a container job
+      # (`ubuntu-gha-tools/README.md`), while what is asserted here is the image's own tree.
+      - name: the registered tree keeps the cache root's group-writable mode
+        run: |
+          image_tool_cache=/opt/hostedtoolcache
+          version_dir="$image_tool_cache/node/${{ steps.image_node.outputs.version }}"
+          arch_dir="$version_dir/${{ steps.image_node.outputs.arch }}"
+          for dir in "$image_tool_cache/node" "$version_dir" "$arch_dir" "$arch_dir/bin"; do
+            mode=$(stat -c %a "$dir")
+            [ "$mode" = 2775 ] || { echo "$dir is $mode, not 2775: another uid could not cache a tool under it"; exit 1; }
+          done
+          marker_mode=$(stat -c %a "$arch_dir.complete")
+          [ "$marker_mode" = 664 ] || { echo "$arch_dir.complete is $marker_mode, not 664"; exit 1; }
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ steps.image_node.outputs.major }}.x
