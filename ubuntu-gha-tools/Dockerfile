@@ -1,10 +1,13 @@
 # syntax=mirror.gcr.io/docker/dockerfile:1
-# Canonical's official Ubuntu from AWS ECR Public (NOT Docker Hub) to avoid Docker Hub's pull rate
-# limit in CI: the rest of the pipeline builds/pulls via GHCR, so CI does zero Docker Hub pulls.
+# Docker Hub's official Ubuntu through Google's pull-through mirror, the registry the syntax line
+# above already pulls from. It dodges both anonymous quotas that have broken this build: Docker Hub's
+# pull rate limit, and AWS ECR Public's data limit, which 429'd every run on 2026-10-26
+# (`toomanyrequests: Data limit exceeded`) and no rerun can clear. The rest of the pipeline
+# builds/pulls via GHCR, so CI still does zero Docker Hub pulls.
 # Renovate keeps the default pinned; the workflow_call path overrides OS_VERSION for on-demand
 # requests targeting a different Ubuntu (e.g. 22.04). Default = current consumer pin.
 ARG OS_VERSION=26.04
-FROM public.ecr.aws/ubuntu/ubuntu:${OS_VERSION}
+FROM mirror.gcr.io/library/ubuntu:${OS_VERSION}
 
 # Mimics GitHub's ubuntu-latest VM environment (accounts, env, OS-level tooling) per issue #5.
 # Deliberately NO docker and NO language runtimes — those live in the docker/ overlay and the
