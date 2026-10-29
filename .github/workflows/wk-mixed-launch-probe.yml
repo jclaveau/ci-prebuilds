@@ -1,0 +1,264 @@
+name: WebKit mixed-build launch probe
+
+# Does running Ubuntu 24.04's WebKit build on the Ubuntu 26.04 image make NODE
+# burn CPU at launch, and why?
+#
+# Laptop smoke (2026-10-29, not evidence): the 26.04 image with the 24.04
+# webkit-2336 bind-mounted over its own launched at 1792-1830 vs ~200 ms CPU,
+# and the extra sat in the node process (204.8 vs 9.5 ms per launch), not in
+# MiniBrowser. This asks CI whether it reproduces, and if so where node's time
+# goes.
+#
+# Arms, all on one runner, interleaved round by round (order rotates):
+#   u26own      the 26.04 consumer image as shipped
+#   u26mix      u26own + the 24.04 image's webkit-2336 bind-mounted (laptop setup)
+#   u26mixcopy  u26own with that webkit-2336 COPYed in (rules out the mount)
+#   u24own      the 24.04 image as shipped
+#   u24mix      u24own + u26own's webkit-2336 bind-mounted (the reverse)
+#   official    mcr.microsoft.com/playwright:v<pw>-noble
+# Every arm runs the SAME playwright npm package (installed on the host).
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_u26:
+        description: 'Ubuntu 26.04 consumer image'
+        default: 'ghcr.io/jclaveau/ubuntu-dood-playwright:latest'
+        type: string
+      image_u24:
+        description: 'Ubuntu 24.04 image whose webkit-2336 is mixed in'
+        default: 'ghcr.io/jclaveau/ubuntu-dood-playwright-gyp-sudoer:ubuntu24.04-node24.21-pnpm12.6-pw1.62-gyp-sudoer'
+        type: string
+      pw:
+        description: 'Playwright version (npm package and official image)'
+        default: '1.62.1'
+        type: string
+      rounds:
+        description: 'Interleaved rounds per runner'
+        default: '10'
+        type: string
+      launches:
+        description: 'Measured launches per arm per round'
+        default: '10'
+        type: string
+      replicates:
+        description: 'Runners (one job each)'
+        default: '3'
+        type: string
+
+concurrency:
+  group: wk-mixed-launch-probe-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      replicate_list: ${{ steps.list.outputs.replicate_list }}
+    steps:
+      - id: list
+        run: |
+          python3 -c "import json; print('replicate_list=' + json.dumps(list(range(1, int('${{ inputs.replicates }}') + 1))))" >> "$GITHUB_OUTPUT"
+
+  probe:
+    needs: matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        replicate: ${{ fromJSON(needs.matrix.outputs.replicate_list) }}
+    env:
+      U26: ${{ inputs.image_u26 }}
+      U24: ${{ inputs.image_u24 }}
+      OFFICIAL: mcr.microsoft.com/playwright:v${{ inputs.pw }}-noble
+      PW: ${{ inputs.pw }}
+      ROUNDS: ${{ inputs.rounds }}
+      LAUNCH_COUNT: ${{ inputs.launches }}
+      WARM_COUNT: '3'
+      ARMS_DIR: ${{ github.workspace }}/arms
+      OUT: ${{ github.workspace }}/out
+      WK_DIR: /home/runner/playwright-browsers/webkit-2336
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Runner CPU, perf, PMU
+        run: |
+          set -euo pipefail
+          model=$(awk -F': ' '/^model name/ { print $2; exit }' /proc/cpuinfo)
+          echo "runner CPU: $model"
+          echo "CPU_MODEL=$model" >> "$GITHUB_ENV"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq linux-tools-common linux-tools-generic >/dev/null
+          if perf --version >/dev/null 2>&1; then PERF=$(command -v perf)
+          else PERF="$(find /usr/lib/linux-tools -name perf -type f | head -1)"; fi
+          [ -n "$PERF" ] || { echo "no usable perf binary" >&2; exit 1; }
+          "$PERF" --version
+          echo "PERF=$PERF" >> "$GITHUB_ENV"
+          sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
+          if python3 playwright/bench/pmu-check.py; then echo HAS_PMU=1 >> "$GITHUB_ENV"
+          else
+            echo "::warning::no PMU on $model: CPU-ms only, no instruction counts"
+            echo HAS_PMU=0 >> "$GITHUB_ENV"
+          fi
+
+      - name: Pull images, extract both webkit-2336 builds, install playwright
+        run: |
+          set -euo pipefail
+          mkdir -p "$ARMS_DIR" "$OUT/raw" "$OUT/diag"
+          for image in "$U26" "$U24" "$OFFICIAL"; do docker pull -q "$image"; done
+          for source_name in u26 u24; do
+            image_var=$(echo "$source_name" | tr a-z A-Z)
+            docker create --name "src-$source_name" "${!image_var}" >/dev/null
+            docker cp "src-$source_name:$WK_DIR" "$ARMS_DIR/wk-$source_name"
+            docker rm "src-$source_name" >/dev/null
+          done
+          chmod -R a+rX "$ARMS_DIR"
+          npm install --silent --prefix "$ARMS_DIR/pwmod" "playwright@$PW"
+          printf 'ARG BASE\nFROM ${BASE}\nUSER root\nRUN rm -rf %s\nCOPY --chown=runner:runner wk-u24 %s\nUSER runner\n' \
+            "$WK_DIR" "$WK_DIR" > "$ARMS_DIR/Dockerfile.mixcopy"
+          docker build -q --build-arg "BASE=$U26" -f "$ARMS_DIR/Dockerfile.mixcopy" \
+            -t wk-u26mixcopy "$ARMS_DIR"
+
+      - name: Start one container per arm
+        run: |
+          set -euo pipefail
+          start_arm() {
+            local arm=$1 image=$2; shift 2
+            docker run -d --name "$arm" --user 0 --cpus=4 --memory=4g \
+              --security-opt seccomp=unconfined --cap-add SYS_PTRACE \
+              --tmpfs /tmp:size=1g,mode=1777 \
+              --tmpfs /home/runner/.cache:size=256m,uid=1001,mode=0777 \
+              --tmpfs /root/.cache:size=256m \
+              -v "$GITHUB_WORKSPACE/playwright/bench:/s:ro" \
+              -v "$ARMS_DIR/pwmod/node_modules:/nm:ro" \
+              -v "$OUT:/out" "$@" --entrypoint sleep "$image" infinity >/dev/null
+            docker exec "$arm" sh -c 'apt-get update -qq >/dev/null && apt-get install -y -qq strace >/dev/null'
+          }
+          chmod 0777 "$OUT" "$OUT/raw" "$OUT/diag"
+          start_arm u26own "$U26"
+          start_arm u26mix "$U26" -v "$ARMS_DIR/wk-u24:$WK_DIR:ro"
+          start_arm u26mixcopy wk-u26mixcopy
+          start_arm u24own "$U24"
+          start_arm u24mix "$U24" -v "$ARMS_DIR/wk-u26:$WK_DIR:ro"
+          start_arm official "$OFFICIAL"
+
+      - name: Assert the arms differ where they should
+        run: |
+          set -euo pipefail
+          declare -A browser_md5
+          for arm in u26own u26mix u26mixcopy u24own u24mix official; do
+            browser_md5[$arm]=$(docker exec "$arm" sh -c \
+              'md5sum ${PLAYWRIGHT_BROWSERS_PATH:-/home/runner/playwright-browsers}/webkit-2336/minibrowser-wpe/bin/MiniBrowser | cut -c1-12')
+            os_version=$(docker exec "$arm" sh -c '. /etc/os-release; echo $VERSION_ID')
+            echo "$arm os=$os_version MiniBrowser=${browser_md5[$arm]}" | tee -a "$OUT/arms.txt"
+          done
+          [ "${browser_md5[u26own]}" != "${browser_md5[u24own]}" ] \
+            || { echo "u26 and u24 ship the same webkit build: nothing to mix" >&2; exit 1; }
+          for arm in u26mix u26mixcopy; do
+            [ "${browser_md5[$arm]}" = "${browser_md5[u24own]}" ] \
+              || { echo "$arm does not carry the 24.04 build" >&2; exit 1; }
+          done
+          [ "${browser_md5[u24mix]}" = "${browser_md5[u26own]}" ] \
+            || { echo "u24mix does not carry the 26.04 build" >&2; exit 1; }
+
+      - name: Smoke every arm
+        run: |
+          set -euo pipefail
+          for arm in u26own u26mix u26mixcopy u24own u24mix official; do
+            LAUNCH_COUNT=1 WARM_COUNT=0 bash playwright/bench/wk-mixed-launch-run.sh measure "$arm" 0
+          done
+          rm -f "$OUT"/*.jsonl
+
+      - name: Interleaved rounds
+        run: |
+          set -euo pipefail
+          arm_list=(u26own u26mix u26mixcopy u24own u24mix official)
+          for round_index in $(seq 1 "$ROUNDS"); do
+            shift_count=$(( (round_index - 1) % ${#arm_list[@]} ))
+            round_order=("${arm_list[@]:$shift_count}" "${arm_list[@]:0:$shift_count}")
+            echo "round $round_index: ${round_order[*]}"
+            for arm in "${round_order[@]}"; do
+              bash playwright/bench/wk-mixed-launch-run.sh measure "$arm" "$round_index"
+            done
+          done
+
+      - name: Diagnostics (strace, DEBUG, cpu-prof)
+        run: |
+          set -euo pipefail
+          for arm in u26own u26mix u26mixcopy u24own u24mix official; do
+            bash playwright/bench/wk-mixed-launch-run.sh diag "$arm"
+          done
+
+      - name: perf record of node (u26own vs u26mix)
+        run: |
+          set -euo pipefail
+          for arm in u26own u26mix; do
+            bash playwright/bench/wk-mixed-launch-run.sh record "$arm"
+          done
+
+      - name: Report
+        if: '!cancelled()'
+        # No -e/pipefail here: `sort | head` SIGPIPEs, and a missing file
+        # from a failed earlier step should still leave the rest of the report.
+        run: |
+          set -u
+          sudo chown -R "$(id -u):$(id -g)" "$OUT"
+          report_file="$OUT/report.md"
+          {
+            echo "## WebKit mixed-build launch — $CPU_MODEL (replicate ${{ matrix.replicate }}, PMU=$HAS_PMU)"
+            echo
+            echo '```'; cat "$OUT/arms.txt"; echo '```'
+            echo
+            echo "### Medians per launch vs u26own"
+            python3 playwright/bench/wk-mixed-launch-report.py u26own "$OUT"/*.jsonl
+            echo
+            echo "### Medians per launch vs official"
+            python3 playwright/bench/wk-mixed-launch-report.py official "$OUT"/*.jsonl
+            echo
+            echo "### perf stat, round 1 (node --no-inherit / container cgroup)"
+            for arm in u26own u26mix u26mixcopy u24own u24mix official; do
+              echo "- $arm node: $(grep -v '^#' "$OUT/raw/$arm-r1.node.perfstat" | grep . | cut -d, -f1,3 | tr '\n' ' ')"
+              echo "- $arm cgroup: $(grep -v '^#' "$OUT/raw/$arm-r1.cgroup.perfstat" | grep . | cut -d, -f1,3 | tr '\n' ' ')"
+            done
+            for arm in u26own u26mix u26mixcopy u24own u24mix official; do
+              echo
+              echo "### $arm diagnostics"
+              echo '```'
+              echo "-- execve count by program (3 launches + 1 warm)"
+              sed -n 's/.*execve("\([^"]*\)".*/\1/p' "$OUT/diag/$arm.execve.txt" | sort | uniq -c | sort -rn | head -15
+              echo "-- strace -c, node alone (no -f)"
+              head -18 "$OUT/diag/$arm.strace-c-node.txt"
+              echo "-- strace -f -c, whole tree"
+              head -14 "$OUT/diag/$arm.strace-fc.txt"
+              echo "-- DEBUG lines by category / top browser lines"
+              grep -oE 'pw:[a-z:]+' "$OUT/diag/$arm.debug.txt" | sort | uniq -c | sort -rn | head
+              grep -E 'pw:browser' "$OUT/diag/$arm.debug.txt" | sed -E 's/^.*pw:browser[^ ]* //; s/[0-9]+/N/g' \
+                | sort | uniq -c | sort -rn | head -15
+              echo "-- protocol messages by method"
+              grep -oE '"method":"[A-Za-z.]+"' "$OUT/diag/$arm.debug.txt" | sort | uniq -c | sort -rn | head -10
+              echo "-- node --cpu-prof top self time (13 launches)"
+              python3 playwright/bench/cpuprofile-top.py "$(ls "$OUT/diag/cpuprof-$arm"/*.cpuprofile | head -1)" 20
+              echo '```'
+            done
+            for arm in u26own u26mix; do
+              echo
+              echo "### perf record, node of $arm"
+              echo '```'
+              cat "$OUT/diag/$arm.perf-dso.txt" "$OUT/diag/$arm.perf-report.txt" || true
+              echo '```'
+            done
+          } > "$report_file"
+          cat "$report_file" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: '!cancelled()'
+        with:
+          name: wk-mixed-launch-${{ matrix.replicate }}
+          path: |
+            out/report.md
+            out/arms.txt
+            out/*.jsonl
+            out/raw/*.perfstat
+            out/diag/*.txt
+            out/diag/cpuprof-*/
