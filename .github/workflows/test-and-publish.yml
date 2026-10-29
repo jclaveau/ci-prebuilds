@@ -893,6 +893,20 @@ jobs:
         run: for t in git jq zip unzip rsync python3 sudo; do command -v "$t" >/dev/null || { echo "missing $t"; exit 1; }; done
       - name: Build toolchain + shellcheck are intentionally absent (slim base; see README)
         run: for t in g++ make shellcheck; do ! command -v "$t" >/dev/null || { echo "unexpectedly present $t"; exit 1; }; done
+      # `tar` must be GNU tar on BOTH OSes: actions/cache shells out to this exact invocation, and
+      # busybox's applet answers "unrecognized option: posix" and exits 1 on the save and the restore
+      # side alike. The action downgrades both to warnings, so without this assertion a container job
+      # stays green while it caches nothing at all.
+      - name: tar runs the actions/cache invocation (GNU tar, not the busybox applet)
+        run: |
+          tar --version | head -1
+          tar --version | head -1 | grep -q 'GNU tar' || { echo "tar is not GNU tar"; exit 1; }
+          probe=$(mktemp -d) && mkdir -p "$probe/src" "$probe/out" && echo payload > "$probe/src/file"
+          echo ./file > "$probe/manifest.txt"
+          tar --posix -cf "$probe/cache.tzst" -P -C "$probe/src" --files-from "$probe/manifest.txt" \
+              --use-compress-program zstdmt
+          tar -xf "$probe/cache.tzst" -P -C "$probe/out" --use-compress-program 'zstd -d --long=30'
+          test "$(cat "$probe/out/file")" = payload || { echo "round-trip lost the payload"; exit 1; }
       # The dev env must be identical across ubuntu/alpine: assert each alias resolves to the *exact*
       # same definition (not just that it exists) as the `runner` user (steps run as root, so su to
       # runner via a login+interactive shell — the real `docker run` / `act` experience). `grep -qx`
