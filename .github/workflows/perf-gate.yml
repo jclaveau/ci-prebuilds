@@ -69,7 +69,7 @@ on:
         default: 10
         type: number
       candidate_build_args:
-        description: 'extra docker build args for the candidate arm only, space-separated KEY=VALUE (e.g. NODE_MUSL_TARBALL_VERSION=24.18.1 NODE_MUSL_TARBALL_SHA256=<sha>); with candidate_tag == promoted_tag the ratchet ratio prices just these'
+        description: 'extra docker build args for the candidate arm only, space-separated KEY=VALUE (e.g. CHS_LD_PRELOAD= to price chromium without its preload); with candidate_tag == promoted_tag the ratchet ratio prices just these'
         default: ''
         type: string
       want_cpus:

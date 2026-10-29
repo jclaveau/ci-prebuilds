@@ -28,8 +28,8 @@ For `pnpm` use [`-pnpm`](../pnpm/README.md); for native-addon builds use
 ## Keeping `actions/setup-node`
 
 The installed node is registered in the runner tool-cache layout
-(`/opt/hostedtoolcache/node/<version>/<arch>`, symlinks into `/usr/bin` — no second node in the
-image), which is the only place `actions/setup-node` looks before it downloads one. Ask for a
+(`/opt/hostedtoolcache/node/<version>/<arch>`, symlinks to the installed node — no second node in
+the image), which is the only place `actions/setup-node` looks before it downloads one. Ask for a
 range, as `tc.find` only semver-matches a non-explicit spec and the installed minor floats with
 the image's node:
 
@@ -61,14 +61,28 @@ hardened without `sudo`.
 
 ## What it adds
 - **Node.js + npm** — on Ubuntu from NodeSource (the major comes from the `NODE_VERSION` build-arg); on
-  Alpine from `apk` (`nodejs npm`, the version Alpine ships for that release).
+  Alpine nodejs.org's musl build of exactly `NODE_VERSION`, from
+  [unofficial-builds](https://unofficial-builds.nodejs.org/), in `/usr/local` (#351). Not Alpine's
+  `nodejs` package: that one is built without node's code cache and against 10 system libraries,
+  and paid for it on every start (`node -e 0` 82 vs 52 ms CPU, #350).
+- **Alpine: a pinned checksum per node version** — unofficial-builds signs nothing, so the sha256
+  the build checks comes from `node-musl-sha256.txt`, not from the host serving the tarball. A
+  version with no line fails the build; `scripts/pin-node-musl-sha.sh <version>` adds it (it
+  refuses unless the host's SHASUMS256.txt and the downloaded tarball agree).
+- **Alpine: mimalloc-insecure preloaded container-wide** (`LD_PRELOAD`), as in the browser
+  images — musl's malloc maps and unmaps every large buffer; Buffer.alloc churn 7747 → 2877 ms CPU
+  (ubuntu 3234). Every process here inherits it.
 - **That node, registered in the tool cache** — so `actions/setup-node` resolves it instead of
   downloading another one (see [Keeping `actions/setup-node`](#keeping-actionssetup-node)).
 
 ## What it implies
 - Built for **both modes and both OSes**: `ubuntu-dood-node`, `alpine-dind-node`, etc.
-- The installed Node **minor floats** (NodeSource/apk serve the latest in that line); the version-pinned
-  tag (`…-nodeXX.YY`) reflects what's actually installed.
+- The installed Node **minor floats** on Ubuntu (NodeSource serves the latest in that line); Alpine
+  installs exactly `NODE_VERSION`. The version-pinned tag (`…-nodeXX.YY`) reflects what's actually
+  installed.
+- **`node-perf-gate`** (in `test-and-publish.yml`) times `bench/node-perf-kernel.cjs` on the alpine
+  node against the ubuntu node, `node:<version>-bookworm-slim` and the alpine node it replaces, on
+  one runner. Report-only until its margins are sized.
 - **No node-gyp toolchain here** — inherits the [`gha-tools` compiler omission](../ubuntu-gha-tools/README.md#whats-deliberately-omitted-and-why).
   For `npm`/`pnpm install` runs that compile native modules, use the
   [`-gyp` variant](../pnpm-gyp/README.md) (`{os}-{mode}-pnpm-gyp`).

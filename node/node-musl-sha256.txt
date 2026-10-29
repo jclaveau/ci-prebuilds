@@ -1,0 +1,5 @@
+# <node version> <sha256 of node-v<version>-linux-x64-musl.tar.xz from unofficial-builds.nodejs.org>
+# Pinned here because unofficial-builds publishes no signature. scripts/pin-node-musl-sha.sh adds a line.
+24.22.1 c9c0685740bbb89e836ff81af64d8582db53916cdf09131db482d1dc20f59c70
+22.22.2 c58109c8da448196f0d811df7a6079748678132067e3b53d01c8c8a4bcd86992
+24.22.2 dfee3453f0557e77dfbd8f8b1c981cd7320dd6bf4e799abe007c12e8c1ab3b54

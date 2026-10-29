@@ -33,8 +33,10 @@ have every row, with `runs` shots, and no median may be zero or NaN. A gate
 that can go green on an empty directory measures nothing.
 
 usage: assert-perf-gate.py <dir-of-probe-json> --browser B
-           [--candidate candidate] [--promoted promoted] [--control official]
+           [--candidate candidate] [--promoted promoted] [--control official]...
            [--runs 5] [--margins perf-gate-margins.json]
+`--control` repeats: node-perf-gate holds parity against both the ubuntu node
+and nodejs.org's own build, so a slow NodeSource build cannot lower the bar.
 Prints a markdown summary on stdout, exits 1 on any breach.
 """
 
@@ -203,7 +205,7 @@ def main():
     parser.add_argument("--browser", required=True)
     parser.add_argument("--candidate", default="candidate")
     parser.add_argument("--promoted", default="promoted")
-    parser.add_argument("--control", default="official")
+    parser.add_argument("--control", action="append", dest="controls")
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument(
         "--margins",
@@ -214,9 +216,10 @@ def main():
     with open(args.margins) as fh:
         margins = json.load(fh)
     arms = load(args.directory, args.browser)
+    controls = args.controls or ["official"]
 
     has_promoted = args.promoted in arms
-    expected = [args.candidate, args.control] + ([args.promoted] if has_promoted else [])
+    expected = [args.candidate, *controls] + ([args.promoted] if has_promoted else [])
     problems = check_structure(arms, expected, args.runs)
     if problems:
         print(f"## {args.browser} promote gate — INVALID\n")
@@ -227,10 +230,12 @@ def main():
     print(f"## {args.browser} promote gate — {args.runs} shots per arm, one runner\n")
     failed = False
 
-    table, geomean, geo_breach = compare(arms, args.candidate, args.control, args.browser, margins)
-    failed |= geo_breach or any(item.breach for item in table)
-    print(render(f"parity — {args.candidate} / {args.control}", table, geomean, geo_breach, margins["geomean"]))
-    parity_table = table
+    parity_tables = []
+    for control in controls:
+        table, geomean, geo_breach = compare(arms, args.candidate, control, args.browser, margins)
+        failed |= geo_breach or any(item.breach for item in table)
+        print(render(f"parity — {args.candidate} / {control}", table, geomean, geo_breach, margins["geomean"]))
+        parity_tables.append(table)
 
     if has_promoted:
         table, geomean, geo_breach = compare(arms, args.candidate, args.promoted, args.browser, margins)
@@ -239,17 +244,19 @@ def main():
     else:
         print(f"### ratchet — skipped: no `{args.promoted}` arm (first promotion of this channel)\n")
 
-    # Parity's alone: both comparisons share the candidate's clock, so a row
-    # coarse against official is coarse against promoted, and saying it twice
-    # reads as two findings.
-    coarse_note = render_unresolvable(parity_table)
+    # The first parity table's alone: every comparison shares the candidate's
+    # clock, so a row coarse against official is coarse against promoted, and
+    # saying it twice reads as two findings.
+    coarse_note = render_unresolvable(parity_tables[0])
     if coarse_note:
         print(coarse_note)
 
     print("≈ = over 1.00 but inside the row's noise margin: a tie, not a win.")
     print("tick = one step of the clock that timed the row, as a share of the")
     print("reference; ⚠ marks a margin thinner than two of them.\n")
-    print("**BREACH — not promoting.**" if failed else "**PASS — faster than official, no slower than promoted.**")
+    references = " and ".join(controls)
+    print("**BREACH — not promoting.**" if failed
+          else f"**PASS — faster than {references}, no slower than promoted.**")
     return 1 if failed else 0
 
 

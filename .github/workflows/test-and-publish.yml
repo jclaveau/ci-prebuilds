@@ -1229,6 +1229,115 @@ jobs:
           [ "$marker_mode" = 664 ] || { echo "$arch_dir.complete is $marker_mode, not 664"; exit 1; }
 
 
+  # ----------------------------------------------------------------------------
+  # node-perf-gate (#351): the alpine node must be no slower than the ubuntu one
+  # (NodeSource) nor than nodejs.org's own glibc build, and no slower than the
+  # alpine node it replaces. Same shape as perf-gate.yml: every arm on one
+  # runner in one job, interleaved, assert-perf-gate.py holding the rules and
+  # the `default` margin of perf-gate-margins.json the noise.
+  #
+  #   candidate  alpine-dood-node:<build_tag>   under test
+  #   promoted   alpine-dood-node:latest        ratchet
+  #   ubuntu     ubuntu-dood-node:<build_tag>   parity, same NODE_VERSION
+  #   official   node:<version>-bookworm-slim   parity, so a slow NodeSource
+  #                                             build cannot lower the bar
+  #
+  # REPORT-ONLY for now (continue-on-error, absent from `promote`'s needs:):
+  # its margins are borrowed from the browsers until a null pair on a few CPU
+  # models sizes them, as #351 plans. Flip it hard by dropping
+  # continue-on-error and listing it in `promote`'s needs.
+  # ----------------------------------------------------------------------------
+
+  node-perf-gate:
+    runs-on: ubuntu-latest
+    if: >-
+      fromJSON(needs.github-context.outputs.test_filters).node
+      && contains(needs.github-context.outputs.os_matrix, 'alpine')
+      && contains(needs.github-context.outputs.os_matrix, 'ubuntu')
+    needs: [github-context, build-node-dood]
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve the arms
+        id: arms
+        env:
+          TAG: ${{ needs.github-context.outputs.build_tag }}
+        run: |
+          set -euo pipefail
+          candidate="ghcr.io/jclaveau/alpine-dood-node:${TAG}"
+          version=$(docker run --rm --entrypoint node "$candidate" -p process.versions.node)
+          echo "candidate node $version"
+          arms="candidate ubuntu official"
+          # The first publish of the channel has nothing to ratchet against;
+          # the gate says so under its tables rather than going quiet.
+          if docker manifest inspect ghcr.io/jclaveau/alpine-dood-node:latest >/dev/null 2>&1; then
+            arms="candidate promoted ubuntu official"
+          fi
+          {
+            echo "arms=$arms"
+            echo "official=node:${version}-bookworm-slim"
+            # main measures for the record; a PR gets a smoke that still asserts structure.
+            echo "runs=${{ github.ref == 'refs/heads/main' && 10 || 3 }}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Probe every arm, interleaved
+        env:
+          TAG: ${{ needs.github-context.outputs.build_tag }}
+          ARMS: ${{ steps.arms.outputs.arms }}
+          OFFICIAL: ${{ steps.arms.outputs.official }}
+          RUNS: ${{ steps.arms.outputs.runs }}
+        run: |
+          set -o pipefail
+          mkdir -p perf-out && chmod 777 perf-out   # the container writes as its own uid
+          grep -m1 'model name' /proc/cpuinfo || true
+          rc=0
+          for i in $(seq 1 "$RUNS"); do
+            for arm in $ARMS; do
+              case "$arm" in
+                candidate) image="ghcr.io/jclaveau/alpine-dood-node:${TAG}"; home=/home/runner ;;
+                promoted)  image="ghcr.io/jclaveau/alpine-dood-node:latest"; home=/home/runner ;;
+                ubuntu)    image="ghcr.io/jclaveau/ubuntu-dood-node:${TAG}"; home=/home/runner ;;
+                official)  image="$OFFICIAL"; home=/root ;;   # runs as root
+              esac
+              echo "::group::run $i/$RUNS — $arm ($image)"
+              # --entrypoint: the dood images start through an init script; the
+              # kernel must be the only thing the cgroup counts.
+              docker run --rm --entrypoint node \
+                --env "HOME=$home" \
+                -v "$PWD/node/bench:/bench:ro" \
+                -v "$PWD/perf-out:/out" \
+                "$image" /bench/node-perf-kernel.cjs --target "$arm" --run "$i" --out /out \
+                2>&1 | tee "perf-out/kernel-${arm}-${i}.log" || rc=1
+              echo "::endgroup::"
+            done
+          done
+          exit "$rc"
+
+      - name: Assert parity and ratchet
+        if: always()
+        env:
+          RUNS: ${{ steps.arms.outputs.runs }}
+        run: |
+          set -o pipefail
+          python3 playwright/bench/assert-perf-gate.py perf-out --browser node --runs "$RUNS" \
+            --control ubuntu --control official | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: node-perf-gate
+          path: perf-out/
+          if-no-files-found: warn
+          retention-days: 90
+
   test-pnpm-usage:
     runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).pnpm

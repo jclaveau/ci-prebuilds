@@ -37,6 +37,12 @@ Need Docker / Node / pnpm / Playwright? Pick a downstream layer — see
 - **Bash sugar** — `bash` + `coreutils` + the same interactive aliases as Ubuntu's default shell
   (`ll`/`la`/`l`, colored `ls`/`grep`), installed via `/etc/skel` so `runner` gets them on `docker run`
   / `act`. CI asserts these are identical to ubuntu-gha-tools.
+- **GNU coreutils as one binary per program** (#350), built from the same release Alpine packages and
+  laid over the apk package's paths. Alpine ships a single multicall `coreutils` that links
+  libcrypto, acl, attr and utmps, so every `true`/`cat`/`ls` exec loaded all of them: 1000 execs of
+  `true` 2700 → 856 CPU-ms. Only the hash tools (`*sum`, `cksum`) link openssl, which they use:
+  `--without-openssl` made `sha256sum` 2.4x slower. `who`/`pinky`/`users` read musl's utmp, which
+  is a stub that always reads empty (utmps was dropped).
 
 ## What's deliberately omitted (and why)
 Mirrors [`ubuntu-gha-tools`](../ubuntu-gha-tools/README.md): the **C/C++ toolchain** (`build-base`) and

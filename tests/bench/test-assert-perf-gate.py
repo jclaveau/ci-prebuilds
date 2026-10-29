@@ -266,5 +266,25 @@ rc, out = run_gate({"libm_fmod": {"candidate": [61.0] * 5,
 check("a real breach still fails the gate", rc, 1)
 check("and says so", "**BREACH" in out, True)
 
+# node-perf-gate's shape: parity against two references. A candidate level
+# with the ubuntu node but behind nodejs.org's build must still breach, or the
+# second reference measures nothing.
+with tempfile.TemporaryDirectory() as directory:
+    medians = {"candidate": 52.0, "ubuntu": 52.0, "official": 44.0}
+    for arm, median in medians.items():
+        for shot in (1, 2, 3):
+            path = pathlib.Path(directory) / f"{arm}-node-run{shot}.json"
+            path.write_text(json.dumps({"metrics": {"boot_e0": {"median_ms": median}}}))
+    margins_path = pathlib.Path(directory) / "margins.json"
+    margins_path.write_text(json.dumps(MARGINS))
+    done = subprocess.run(
+        [sys.executable, str(GATE_PATH), directory, "--browser", "node", "--runs", "3",
+         "--control", "ubuntu", "--control", "official", "--margins", str(margins_path)],
+        capture_output=True, text=True)
+check("a breach against the second control fails the gate", done.returncode, 1)
+check("both parity tables are printed",
+      [line for line in done.stdout.splitlines() if line.startswith("### parity")],
+      ["### parity — candidate / ubuntu", "### parity — candidate / official"])
+
 print(f"assert-perf-gate: {checks - failures}/{checks} checks passed")
 sys.exit(1 if failures else 0)

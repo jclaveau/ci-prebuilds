@@ -68,7 +68,7 @@ touches an area, read that file before concluding no rule exists. Then read
 - [PW annotations decide a conformance red](project_pw_test_annotations_shape_conformance.md) — test.fail / host-gated isFrozenWebkit skips; PW 1.62.1 ships wk r2336 off base
 - [Headed chromium DCHECK/SYS_NICE fix](project_chromium_headed_dcheck_sys_nice.md) — chr-fs browser-deaths = DCHECK_ALWAYS_ON + setpriority-EPERM; fix `--cap-add
 
-## measurement (20) — probes, ratios, controls, and what a number does NOT mean
+## measurement (21) — probes, ratios, controls, and what a number does NOT mean
 `.agents/auto-memory/index/measurement.md`
 
 - [musl is not why alpine browsers are slower](project_alpine_browser_perf_vs_glibc.md) — FF and WK at parity or FASTER than official glibc; only chromium regressed (build

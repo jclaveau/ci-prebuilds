@@ -33,7 +33,9 @@
     {
       "matchDatasources": ["node-version"],
       "matchPackageNames": ["node"],
-      "groupName": "Node.js"
+      "groupName": "Node.js",
+      "minimumReleaseAge": "3 days",
+      "description": "node/Dockerfile.alpine installs nodejs.org's musl build from unofficial-builds, which publishes about a day after nodejs.org; the wait means the tarball exists when the PR opens. Its sha256 is pinned in node/node-musl-sha256.txt, so the PR also needs `scripts/pin-node-musl-sha.sh <version>` committed on its branch: the alpine build fails naming that command until it is."
     },
     {
       "matchDatasources": ["github-releases"],
@@ -61,7 +63,7 @@
     },
     {
       "customType": "regex",
-      "fileMatch": ["^node/Dockerfile$"],
+      "fileMatch": ["^node/Dockerfile(\\.alpine)?$"],
       "matchStrings": [
         "ARG NODE_VERSION=(?<currentValue>.*?)\\n"
       ],

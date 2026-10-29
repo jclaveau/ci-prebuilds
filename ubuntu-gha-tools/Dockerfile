@@ -106,8 +106,10 @@ NSS_WRAPPER_GROUP=${NSS_WRAPPER_GROUP:-/tmp/.nss-group}
 cp -f /etc/passwd "$NSS_WRAPPER_PASSWD"
 cp -f /etc/group  "$NSS_WRAPPER_GROUP"
 printf 'runner:x:%s:%s:CI host user:/home/runner:/bin/bash\n' "$uid" "$gid" >> "$NSS_WRAPPER_PASSWD"
+# Prepended, not assigned: the alpine node layers preload mimalloc image-wide, and replacing
+# LD_PRELOAD would drop it for every later step.
 for cand in /usr/lib/x86_64-linux-gnu/libnss_wrapper.so /usr/lib/libnss_wrapper.so; do
-  [ -e "$cand" ] && LD_PRELOAD=$cand && break
+  [ -e "$cand" ] && LD_PRELOAD=$cand${LD_PRELOAD:+:$LD_PRELOAD} && break
 done
 export NSS_WRAPPER_PASSWD NSS_WRAPPER_GROUP LD_PRELOAD
 SCRIPT
