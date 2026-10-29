@@ -184,11 +184,14 @@ if [ -n "$PERF_CMD" ]; then
       container_pid=$(docker inspect -f '{{.State.Pid}}' "$container_name")
       cgroup_path=$(sed -n 's/^0:://p' "/proc/$container_pid/cgroup")
       remove_node_modules "$container_name"
-      $PERF_CMD stat -a -G "${cgroup_path#/}" \
-        -e task-clock,page-faults,minor-faults,major-faults,context-switches,cpu-migrations \
+      # perf wants every -e before -G, and -G once per event.
+      perf_events=task-clock,page-faults,minor-faults,major-faults,context-switches,cpu-migrations
+      cgroup_list=$(printf "${cgroup_path#/},%.0s" 1 2 3 4 5 6)
+      $PERF_CMD stat -a -e "$perf_events" -G "${cgroup_list%,}" \
         -o "$OUT/perf-$arm_name.txt" -- \
         docker exec -u 1001 -w /w/fx "$container_name" "/bins/${pnpm_version}-${libc_name}/pnpm" install \
-        --frozen-lockfile --offline --store-dir=/w/store >"$OUT/perf-install-$arm_name.log" 2>&1
+        --frozen-lockfile --offline --store-dir=/w/store >"$OUT/perf-install-$arm_name.log" 2>&1 \
+        || echo "perf stat failed for $arm_name: see perf-install-$arm_name.log" | tee -a "$OUT/host.txt"
     done
   else
     echo "perf unavailable: '$PERF_CMD stat -e page-faults -- true' failed" | tee -a "$OUT/host.txt"

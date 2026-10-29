@@ -30,6 +30,9 @@ for line in (out_dir / 'runs.txt').read_text().splitlines():
 if not arm_samples:
     sys.exit(f'no round= lines in {out_dir / "runs.txt"}')
 
+# The warm lines list the arms in ARM_SPECS order; the first is the reference.
+spec_order = re.findall(r'^warm (\S+) ', host_text, re.M)
+arm_samples = {arm: arm_samples[arm] for arm in spec_order if arm in arm_samples}
 reference_arm = next(iter(arm_samples))
 
 
