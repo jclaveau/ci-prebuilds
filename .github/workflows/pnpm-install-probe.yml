@@ -21,6 +21,10 @@ name: pnpm install CPU probe
 # mode null_pair sizes pnpm-perf-gate's margins instead: the promoted alpine
 # image as both candidate and promoted (plus ubuntu), so every ratio it prints
 # is noise.
+#
+# mode versions bisects a pnpm release range: one arm per listed version and
+# libc, all on the ubuntu image so only the binary varies, with repeated
+# `strace -f -c` passes and a stat-family path trace for the path_arms.
 
 on:
   workflow_dispatch:
@@ -29,7 +33,24 @@ on:
         description: 'binaries: the five arms above; null_pair: the gate arms, one image twice'
         default: 'binaries'
         type: choice
-        options: [binaries, null_pair]
+        options: [binaries, null_pair, versions]
+      versions:
+        description: 'versions mode: space-separated pnpm versions'
+        default: '12.6.0 12.16.1'
+        type: string
+      libcs:
+        description: 'versions mode: glibc, musl, or both'
+        default: 'glibc'
+        type: choice
+        options: [glibc, musl, both]
+      strace_rounds:
+        description: 'strace -f -c passes per arm'
+        default: '1'
+        type: string
+      path_arms:
+        description: 'arms (e.g. glibc-12.6.0) whose stat-family calls are traced per path'
+        default: ''
+        type: string
       pnpm_old:
         description: 'pnpm version without the embedded mimalloc'
         default: '12.6.0'
@@ -81,6 +102,8 @@ jobs:
       WORK: ${{ github.workspace }}/work
       OUT: ${{ github.workspace }}/out
       ROUNDS: ${{ inputs.rounds }}
+      STRACE_ROUNDS: ${{ inputs.strace_rounds }}
+      STRACE_PATH_ARMS: ${{ inputs.path_arms }}
       PNPM_OLD: ${{ inputs.pnpm_old }}
       PNPM_NEW: ${{ inputs.pnpm_new }}
       FIXTURE_SHA: ${{ inputs.fixture_sha }}
@@ -114,6 +137,31 @@ jobs:
             promoted_image=ghcr.io/jclaveau/alpine-dood-pnpm:latest
             echo "ARMS=candidate=$promoted_image|image promoted=$promoted_image|image ubuntu=ghcr.io/jclaveau/ubuntu-dood-pnpm:latest|image" >> "$GITHUB_ENV"
           fi
+          if [ "${{ inputs.mode }}" = versions ]; then
+            ubuntu_image=ghcr.io/jclaveau/ubuntu-dood-pnpm-gyp:latest
+            case "$LIBCS" in
+              both) libc_list="glibc musl" ;;
+              glibc|musl) libc_list=$LIBCS ;;
+              *) echo "unknown libcs '$LIBCS'" >&2; exit 1 ;;
+            esac
+            arm_list=""
+            for pnpm_version in $VERSIONS; do
+              for libc_name in $libc_list; do
+                arm_list="$arm_list $libc_name-$pnpm_version=$ubuntu_image|$pnpm_version-$libc_name"
+              done
+            done
+            echo "ARMS=${arm_list# }" >> "$GITHUB_ENV"
+          fi
+        env:
+          VERSIONS: ${{ inputs.versions }}
+          LIBCS: ${{ inputs.libcs }}
+
+      - name: Free disk for one store per arm
+        if: inputs.mode == 'versions'
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
 
       - name: Probe
         run: bash node/bench/pnpm-install-probe.sh

@@ -11,15 +11,20 @@
 # pgfault) around the install alone; the node_modules removal before it is a
 # separate exec. The container is off the network for every counted install,
 # so the store filled by the warm install is all pnpm can read. Writes
-# runs.txt, and gate/<arm>-pnpm-run<N>.json for assert-perf-gate.py. Then one
-# `strace -f -c` pass per arm, and a host `perf stat` pass when PERF_CMD is set.
+# runs.txt, and gate/<arm>-pnpm-run<N>.json for assert-perf-gate.py. Then
+# STRACE_ROUNDS interleaved `strace -f -c` passes per arm, a stat-family path
+# trace for each arm named in STRACE_PATH_ARMS, and a host `perf stat` pass when
+# PERF_CMD is set.
 #
-# Env: WORK and OUT (required, absolute), ARMS, ROUNDS, CPUS, MEMORY, PNPM_OLD,
-# PNPM_NEW, IMG_UBUNTU, IMG_ALPINE, FIXTURE_REPO, FIXTURE_SHA, PERF_CMD.
+# Env: WORK and OUT (required, absolute), ARMS, ROUNDS, STRACE_ROUNDS,
+# STRACE_PATH_ARMS, CPUS, MEMORY, PNPM_OLD, PNPM_NEW, IMG_UBUNTU, IMG_ALPINE,
+# FIXTURE_REPO, FIXTURE_SHA, PERF_CMD.
 set -euo pipefail
 
 : "${WORK:?WORK must name an empty scratch dir}" "${OUT:?OUT must name the results dir}"
 ROUNDS=${ROUNDS:-5}
+STRACE_ROUNDS=${STRACE_ROUNDS:-1}
+STRACE_PATH_ARMS=${STRACE_PATH_ARMS:-}
 CPUS=${CPUS:-4}
 MEMORY=${MEMORY:-6g}
 PNPM_OLD=${PNPM_OLD:-12.6.0}
@@ -65,7 +70,7 @@ cleanup_containers() {
     container_name=$(container_of "$arm_name")
     if docker inspect "$container_name" >/dev/null 2>&1; then
       # The work tree is owned by the containers' uid 1001: remove it from inside.
-      docker exec -u root "$container_name" sh -c 'rm -rf /w/fx /w/store /w/strace-*'
+      docker exec -u root "$container_name" sh -c 'rm -rf /w/fx /w/store /w/strace-* /w/paths-*'
       docker rm -f "$container_name" >/dev/null
     fi
   done
@@ -224,11 +229,29 @@ for round in $(seq 1 "$ROUNDS"); do
   done
 done
 
-for arm_name in "${arm_names[@]}"; do
+for strace_round in $(seq 1 "$STRACE_ROUNDS"); do
+  for offset in $(seq 0 $((arm_count - 1))); do
+    arm_name=${arm_names[$(((strace_round + offset) % arm_count))]}
+    container_name=$(container_of "$arm_name")
+    strace_name=strace-$arm_name-r$strace_round
+    remove_node_modules "$arm_name"
+    run_install "$arm_name" "$OUT/$strace_name.log" strace -f -c -o "/w/$strace_name.txt" \
+      || { echo "strace install failed: $arm_name round $strace_round" >&2; tail -30 "$OUT/$strace_name.log" >&2; exit 1; }
+    docker cp -q "$container_name:/w/$strace_name.txt" "$OUT/$strace_name.txt"
+  done
+done
+
+# Which paths each stat-family call names, to see what a version stats twice.
+for arm_name in $STRACE_PATH_ARMS; do
+  [ -n "${arm_image[$arm_name]:-}" ] || { echo "STRACE_PATH_ARMS names unknown arm $arm_name" >&2; exit 1; }
   container_name=$(container_of "$arm_name")
   remove_node_modules "$arm_name"
-  run_install "$arm_name" "$OUT/strace-install-$arm_name.log" strace -f -c -o "/w/strace-$arm_name.txt"
-  docker cp -q "$container_name:/w/strace-$arm_name.txt" "$OUT/strace-$arm_name.txt"
+  run_install "$arm_name" "$OUT/paths-install-$arm_name.log" \
+    strace -f -qq -e trace=%stat,%lstat,%fstat -o "/w/paths-$arm_name.txt" \
+    || { echo "path trace failed: $arm_name" >&2; tail -30 "$OUT/paths-install-$arm_name.log" >&2; exit 1; }
+  docker cp -q "$container_name:/w/paths-$arm_name.txt" "$OUT/paths-$arm_name.txt"
+  python3 "$(dirname "$0")/pnpm-stat-paths.py" "$OUT/paths-$arm_name.txt" >"$OUT/paths-$arm_name.summary.txt"
+  gzip -9 "$OUT/paths-$arm_name.txt"
 done
 
 if [ -n "$PERF_CMD" ]; then

@@ -56,27 +56,44 @@ for arm_name, samples in arm_samples.items():
           f'| {cell(arm_name, "system_usec", 1e6, "s")} | {cell(arm_name, "pgfault", 1e3, "k")} |')
 
 watched_syscalls = ('futex', 'mmap', 'munmap', 'madvise', 'brk', 'mprotect', 'sched_yield',
-                    'linkat', 'statx', 'stat', 'openat', 'open')
-strace_counts = {}
-for arm_name in arm_samples:
-    strace_file = out_dir / f'strace-{arm_name}.txt'
-    if not strace_file.exists():
-        continue
+                    'linkat', 'statx', 'newfstatat', 'stat', 'lstat', 'fstat', 'openat', 'open')
+def read_strace_calls(strace_file):
     calls_by_syscall = {}
     for line in strace_file.read_text().splitlines():
         fields = line.split()
         # rows: % time, seconds, usecs/call, calls, [errors], syscall
         if len(fields) >= 5 and re.match(r'^[\d.]+$', fields[0]) and fields[-1].isidentifier():
             calls_by_syscall[fields[-1]] = int(fields[3])
-    strace_counts[arm_name] = calls_by_syscall
+    return calls_by_syscall
+
+
+strace_counts = {}
+strace_spans = {}
+for arm_name in arm_samples:
+    strace_passes = [read_strace_calls(strace_file)
+                     for strace_file in sorted(out_dir.glob(f'strace-{arm_name}-r*.txt'))]
+    if not strace_passes:
+        continue
+    strace_counts[arm_name] = {
+        syscall_name: statistics.median(calls.get(syscall_name, 0) for calls in strace_passes)
+        for syscall_name in watched_syscalls}
+    strace_spans[arm_name] = {
+        syscall_name: (min(calls.get(syscall_name, 0) for calls in strace_passes),
+                       max(calls.get(syscall_name, 0) for calls in strace_passes))
+        for syscall_name in watched_syscalls}
 
 if strace_counts:
-    print('\nstrace -f -c calls (one pass per arm):\n')
+    print('\nstrace -f -c calls, median over passes [min-max]:\n')
     print('| syscall | ' + ' | '.join(strace_counts) + ' |')
     print('|---|' + '---|' * len(strace_counts))
     for syscall_name in watched_syscalls:
-        row_values = [str(strace_counts[arm].get(syscall_name, 0)) for arm in strace_counts]
+        row_values = [f'{strace_counts[arm][syscall_name]:.0f} '
+                      f'[{strace_spans[arm][syscall_name][0]}-{strace_spans[arm][syscall_name][1]}]'
+                      for arm in strace_counts]
         print(f'| {syscall_name} | ' + ' | '.join(row_values) + ' |')
+
+for summary_file in sorted(out_dir.glob('paths-*.summary.txt')):
+    print(f'\n`{summary_file.name}`:\n```\n{summary_file.read_text().strip()}\n```')
 
 perf_files = sorted(out_dir.glob('perf-*.txt'))
 for perf_file in perf_files:
