@@ -114,7 +114,7 @@ jobs:
           mkdir -p "$ARMS_DIR" "$OUT/raw" "$OUT/diag"
           for image in "$U26" "$U24" "$OFFICIAL"; do docker pull -q "$image"; done
           for source_name in u26 u24; do
-            image_var=$(echo "$source_name" | tr a-z A-Z)
+            image_var=$(echo "$source_name" | tr '[:lower:]' '[:upper:]')
             docker create --name "src-$source_name" "${!image_var}" >/dev/null
             docker cp "src-$source_name:$WK_DIR" "$ARMS_DIR/wk-$source_name"
             docker rm "src-$source_name" >/dev/null
@@ -130,6 +130,7 @@ jobs:
           docker rm src-u24libs >/dev/null
           chmod -R a+rX "$ARMS_DIR"
           npm install --silent --prefix "$ARMS_DIR/pwmod" "playwright@$PW"
+          # shellcheck disable=SC2016 # ${BASE} is Dockerfile text, expanded by docker build
           printf 'ARG BASE\nFROM ${BASE}\nUSER root\nRUN rm -rf %s\nCOPY --chown=runner:runner wk-u24icu %s\nUSER runner\n' \
             "$WK_DIR" "$WK_DIR" > "$ARMS_DIR/Dockerfile.mixcopy"
           docker build -q --build-arg "BASE=$U26" -f "$ARMS_DIR/Dockerfile.mixcopy" \
@@ -269,7 +270,7 @@ jobs:
               echo "-- protocol messages by method"
               grep -oE '"method":"[A-Za-z.]+"' "$OUT/diag/$arm.debug.txt" | sort | uniq -c | sort -rn | head -10
               echo "-- node --cpu-prof top self time (13 launches)"
-              python3 playwright/bench/cpuprofile-top.py "$(ls "$OUT/diag/cpuprof-$arm"/*.cpuprofile | head -1)" 20
+              python3 playwright/bench/cpuprofile-top.py "$(find "$OUT/diag/cpuprof-$arm" -name '*.cpuprofile' | sort | head -1)" 20
               echo '```'
             done
             for arm in u26own u26mixicu; do
