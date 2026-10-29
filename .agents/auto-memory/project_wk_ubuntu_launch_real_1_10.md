@@ -41,5 +41,10 @@ Swap needs `--allow-remove-essential` AND the explicit `coreutils-from-uutils-`,
 or apt keeps uutils and the A/B arm silently doesn't vary.
 Side effect: node-perf-gate's ubuntu arm gets faster spawns.
 
-**How to apply:** a webkit/ubuntu launch red at 1.2-1.3 on a commit that ships no
-webkit bytes is drift on top of the real 1.10 — rerun once. Re-measure after b12e8f0 before touching the budget.
+**CLOSED after b12e8f0 (perf-probe 40954328312, n=10, wall ms, ours sha-b12e8f0 vs official v1.62.1-noble):**
+Xeon 8573C 67.8 vs 67.65 ms (1.00), EPYC 7763 81.15 vs 82.0 ms (0.99), Xeon 8573C 60.4 vs
+61.55 ms (0.98). Inline perf-report on TP 40950582503: 1.00x. The laptop's 1.04 residual
+was laptop noise. Not CPU-dependent, no #335 entry.
+
+**How to apply:** webkit/ubuntu launch sits at parity now; a red at 1.2+ is single-shot
+drift — rerun once. Budget stays 1.20 (jean: fine).

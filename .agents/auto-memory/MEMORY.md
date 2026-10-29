@@ -101,7 +101,7 @@ touches an area, read that file before concluding no rule exists. Then read
 - [WebKit version assertions](project_webkit_version_assertions.md) — `browser.version()` is a hardcoded playwright-core constant (vacuous); real signals
 - [The aports pkgver rule had drifted in two of three copies](project_aports_pkgver_rule_drift.md) — mirrors claiming to mirror apply-and-build.sh kept strict equality after it went
 
-## process (18) — how to work in this repo
+## process (19) — how to work in this repo
 `.agents/auto-memory/index/process.md`
 - [Per-CPU findings go into issue #335's description](feedback_per_cpu_findings_go_in_issue_335.md) — edit #335 body with every CPU-dependent result, same turn; the last optimization, knowledge needed later
 
