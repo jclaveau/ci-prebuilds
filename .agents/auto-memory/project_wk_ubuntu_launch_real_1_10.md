@@ -48,3 +48,6 @@ was laptop noise. Not CPU-dependent, no #335 entry.
 
 **How to apply:** webkit/ubuntu launch sits at parity now; a red at 1.2+ is single-shot
 drift — rerun once. Budget stays 1.20 (jean: fine).
+
+Mixed-distro arm (24.04 build on 26.04, laptop 9x): laptop artifact, CI parity —
+see [[project_wk_mixed_build_launch_was_laptop_artifact]].
