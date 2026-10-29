@@ -1,0 +1,123 @@
+name: pnpm install CPU probe
+
+# Why does an offline `pnpm install` cost more system CPU on the alpine image
+# than on the ubuntu one (Planner: 37 vs 28 s sys)?
+#
+# Laptop finding (2026-10-29, i5-8350U, the Planner tree): the gap is the pnpm
+# native binary that `packageManager: pnpm@12.6.0` selects. On alpine that is
+# the static musl build, which has no mimalloc before 12.16.0, so it runs on
+# musl mallocng: futex 7,425 vs 453,884 calls and mmap 933 vs 45,742 in the
+# pnpm process alone. A static binary ignores the image's LD_PRELOAD mimalloc.
+#
+# Arms, one runner, interleaved, order rotating per round:
+#   ubuntu-glibc-<old>  ubuntu image, glibc binary of the old pnpm (reference)
+#   alpine-musl-<old>   alpine image, musl binary of the old pnpm (the gap)
+#   ubuntu-musl-<old>   ubuntu image running the musl binary (binary vs image)
+#   ubuntu-glibc-<new>  ubuntu image, glibc binary of the new pnpm
+#   alpine-musl-<new>   alpine image, musl binary of the new pnpm (the fix)
+# Fixture: a pinned public monorepo (vitest), packageManager stripped.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pnpm_old:
+        description: 'pnpm version without the embedded mimalloc'
+        default: '12.6.0'
+        type: string
+      pnpm_new:
+        description: 'pnpm version with the embedded mimalloc'
+        default: '12.16.1'
+        type: string
+      rounds:
+        description: 'Interleaved rounds per runner'
+        default: '5'
+        type: string
+      replicates:
+        description: 'Runners (one job each)'
+        default: '3'
+        type: string
+      fixture_sha:
+        description: 'vitest-dev/vitest commit used as the workspace'
+        default: 'da7ce1712fd4d0e4e807ec01ce755581e6892d5b'
+        type: string
+
+concurrency:
+  group: pnpm-install-probe-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      replicate_list: ${{ steps.list.outputs.replicate_list }}
+    steps:
+      - id: list
+        run: |
+          python3 -c "import json; print('replicate_list=' + json.dumps(list(range(1, int('${{ inputs.replicates }}') + 1))))" >> "$GITHUB_OUTPUT"
+
+  probe:
+    needs: matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        replicate: ${{ fromJSON(needs.matrix.outputs.replicate_list) }}
+    env:
+      WORK: ${{ github.workspace }}/work
+      OUT: ${{ github.workspace }}/out
+      ROUNDS: ${{ inputs.rounds }}
+      PNPM_OLD: ${{ inputs.pnpm_old }}
+      PNPM_NEW: ${{ inputs.pnpm_new }}
+      FIXTURE_SHA: ${{ inputs.fixture_sha }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Runner CPU and perf
+        run: |
+          set -euo pipefail
+          model=$(awk -F': ' '/^model name/ { print $2; exit }' /proc/cpuinfo)
+          echo "runner CPU: $model"
+          echo "CPU_MODEL=$model" >> "$GITHUB_ENV"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq linux-tools-common linux-tools-generic >/dev/null || true
+          if perf --version >/dev/null 2>&1; then perf_path=$(command -v perf)
+          else perf_path="$(find /usr/lib/linux-tools -name perf -type f | head -1)"; fi
+          if [ -n "$perf_path" ]; then
+            sudo sysctl -w kernel.perf_event_paranoid=-1
+            echo "PERF_CMD=sudo $perf_path" >> "$GITHUB_ENV"
+          else
+            echo "::warning::no perf binary on $model: cgroup counters only"
+          fi
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull images
+        run: |
+          docker pull -q ghcr.io/jclaveau/ubuntu-dood-pnpm-gyp:latest
+          docker pull -q ghcr.io/jclaveau/alpine-dood-pnpm-gyp:latest
+
+      - name: Probe
+        run: bash node/bench/pnpm-install-probe.sh
+
+      - name: Report
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -f "$OUT/runs.txt" ] || { echo "no runs.txt: the probe did not reach the rounds" >&2; exit 1; }
+          python3 node/bench/pnpm-install-probe-report.py "$OUT" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pnpm-install-probe-${{ matrix.replicate }}
+          path: ${{ github.workspace }}/out
+          retention-days: 90
