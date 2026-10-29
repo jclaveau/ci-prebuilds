@@ -53,8 +53,8 @@ cleanup_containers() {
 trap cleanup_containers EXIT
 
 fetch_binary() {
-  local libc_name=$1 pnpm_version=$2 package_name
-  package_name=exe.linux-x64$([ "$libc_name" = musl ] && echo -musl)
+  local libc_name=$1 pnpm_version=$2 package_name=exe.linux-x64
+  if [ "$libc_name" = musl ]; then package_name=exe.linux-x64-musl; fi
   local target_dir="$WORK/bins/${pnpm_version}-${libc_name}"
   [ -x "$target_dir/pnpm" ] && return 0
   mkdir -p "$target_dir"
