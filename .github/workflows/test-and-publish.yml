@@ -1338,6 +1338,105 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
 
+  # ----------------------------------------------------------------------------
+  # pnpm-perf-gate: an offline `pnpm install` of a pinned public monorepo
+  # (vitest), CPU-ms from each container's cgroup, on the image's OWN pnpm: the
+  # fixture pins no packageManager, so a pnpm bump is exactly what the ratchet
+  # sees. pnpm 12.6.0's static musl binary, with no mimalloc, cost the Planner
+  # 37 vs 28 s sys before 12.16.0 fixed it.
+  #
+  #   candidate  alpine-dood-pnpm:<build_tag>   under test
+  #   promoted   alpine-dood-pnpm:latest        ratchet
+  #   ubuntu     ubuntu-dood-pnpm:<build_tag>   parity, report-only
+  #
+  # REPORT-ONLY until a null pair sizes the `pnpm` margins in
+  # perf-gate-margins.json (pnpm-install-probe.yml, null_pair mode).
+  # ----------------------------------------------------------------------------
+
+  pnpm-perf-gate:
+    runs-on: ubuntu-latest
+    if: >-
+      fromJSON(needs.github-context.outputs.test_filters).pnpm
+      && contains(needs.github-context.outputs.os_matrix, 'alpine')
+      && contains(needs.github-context.outputs.os_matrix, 'ubuntu')
+    needs: [github-context, build-pnpm-dood]
+    timeout-minutes: 40
+    continue-on-error: true
+    env:
+      WORK: ${{ github.workspace }}/pnpm-work
+      OUT: ${{ github.workspace }}/pnpm-out
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Runner CPU and perf
+        run: |
+          set -euo pipefail
+          grep -m1 'model name' /proc/cpuinfo
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq linux-tools-common linux-tools-generic >/dev/null
+          perf_path=$(command -v perf)
+          perf --version
+          sudo sysctl -w kernel.perf_event_paranoid=-1
+          if python3 playwright/bench/pmu-check.py; then echo "PERF_CMD=sudo $perf_path" >> "$GITHUB_ENV"
+          else echo "::warning::no PMU on this runner: cgroup counters only, no perf stat"; fi
+
+      - name: Resolve the arms
+        id: arms
+        env:
+          TAG: ${{ needs.github-context.outputs.build_tag }}
+        run: |
+          set -euo pipefail
+          arm_list="candidate=ghcr.io/jclaveau/alpine-dood-pnpm:${TAG}|image"
+          # The first publish of the channel has nothing to ratchet against;
+          # the gate says so under its tables rather than going quiet.
+          if docker manifest inspect ghcr.io/jclaveau/alpine-dood-pnpm:latest >/dev/null 2>&1; then
+            arm_list="$arm_list promoted=ghcr.io/jclaveau/alpine-dood-pnpm:latest|image"
+          fi
+          arm_list="$arm_list ubuntu=ghcr.io/jclaveau/ubuntu-dood-pnpm:${TAG}|image"
+          {
+            echo "arms=$arm_list"
+            echo "runs=${{ github.ref == 'refs/heads/main' && 10 || 3 }}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Probe every arm, interleaved
+        env:
+          ARMS: ${{ steps.arms.outputs.arms }}
+          ROUNDS: ${{ steps.arms.outputs.runs }}
+        run: bash node/bench/pnpm-install-probe.sh
+
+      - name: Assert the ratchet
+        env:
+          RUNS: ${{ steps.arms.outputs.runs }}
+        run: |
+          set -o pipefail
+          python3 playwright/bench/assert-perf-gate.py "$OUT/gate" --browser pnpm --runs "$RUNS" \
+            --rule ratchet | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Report parity with ubuntu
+        if: always() && steps.arms.outcome == 'success'
+        continue-on-error: true
+        env:
+          RUNS: ${{ steps.arms.outputs.runs }}
+        run: |
+          set -o pipefail
+          python3 playwright/bench/assert-perf-gate.py "$OUT/gate" --browser pnpm --runs "$RUNS" \
+            --rule parity --control ubuntu | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 node/bench/pnpm-install-probe-report.py "$OUT" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pnpm-perf-gate
+          path: ${{ github.workspace }}/pnpm-out
+          if-no-files-found: warn
+          retention-days: 90
+
   test-pnpm-usage:
     runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).pnpm

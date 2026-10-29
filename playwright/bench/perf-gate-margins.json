@@ -71,6 +71,11 @@
     "rows": ["int_math", "js_alloc", "libm_fmod", "locator_click", "layout", "screenshot"],
     "margin": 0.03
   },
+  "pnpm": {
+    "_note": "pnpm-perf-gate (test-and-publish.yml) rows: cgroup CPU-ms of an offline install. Every row it gates must be named here; 0.05 is provisional until a null pair sizes it.",
+    "rows": {"install_cpu": 0.05, "install_sys": 0.05, "install_user": 0.05},
+    "geomean": 0.05
+  },
   "loose": {
     "_note": "No browser takes this margin today; add a browser key to grant it.",
     "margin": 0.10

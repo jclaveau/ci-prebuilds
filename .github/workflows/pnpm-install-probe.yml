@@ -17,9 +17,19 @@ name: pnpm install CPU probe
 #   alpine-musl-<new>   alpine image, musl binary of the new pnpm (the fix)
 # Fixture: a pinned public monorepo (vitest), packageManager stripped.
 
+#
+# mode null_pair sizes pnpm-perf-gate's margins instead: the promoted alpine
+# image as both candidate and promoted (plus ubuntu), so every ratio it prints
+# is noise.
+
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: 'binaries: the five arms above; null_pair: the gate arms, one image twice'
+        default: 'binaries'
+        type: choice
+        options: [binaries, null_pair]
       pnpm_old:
         description: 'pnpm version without the embedded mimalloc'
         default: '12.6.0'
@@ -84,15 +94,12 @@ jobs:
           echo "runner CPU: $model"
           echo "CPU_MODEL=$model" >> "$GITHUB_ENV"
           sudo apt-get update -qq
-          sudo apt-get install -y -qq linux-tools-common linux-tools-generic >/dev/null || true
-          if perf --version >/dev/null 2>&1; then perf_path=$(command -v perf)
-          else perf_path="$(find /usr/lib/linux-tools -name perf -type f | head -1)"; fi
-          if [ -n "$perf_path" ]; then
-            sudo sysctl -w kernel.perf_event_paranoid=-1
-            echo "PERF_CMD=sudo $perf_path" >> "$GITHUB_ENV"
-          else
-            echo "::warning::no perf binary on $model: cgroup counters only"
-          fi
+          sudo apt-get install -y -qq linux-tools-common linux-tools-generic >/dev/null
+          perf_path=$(command -v perf)
+          perf --version
+          sudo sysctl -w kernel.perf_event_paranoid=-1
+          if python3 playwright/bench/pmu-check.py; then echo "PERF_CMD=sudo $perf_path" >> "$GITHUB_ENV"
+          else echo "::warning::no PMU on $model: cgroup counters only, no perf stat"; fi
 
       - uses: docker/login-action@v4
         with:
@@ -100,13 +107,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull images
+      - name: Arms
         run: |
-          docker pull -q ghcr.io/jclaveau/ubuntu-dood-pnpm-gyp:latest
-          docker pull -q ghcr.io/jclaveau/alpine-dood-pnpm-gyp:latest
+          set -euo pipefail
+          if [ "${{ inputs.mode }}" = null_pair ]; then
+            promoted_image=ghcr.io/jclaveau/alpine-dood-pnpm:latest
+            echo "ARMS=candidate=$promoted_image|image promoted=$promoted_image|image ubuntu=ghcr.io/jclaveau/ubuntu-dood-pnpm:latest|image" >> "$GITHUB_ENV"
+          fi
 
       - name: Probe
         run: bash node/bench/pnpm-install-probe.sh
+
+      - name: Null-pair spread
+        if: inputs.mode == 'null_pair'
+        # A null pair past the provisional ceiling is a finding about the
+        # margin, not a failed probe: the job stays green, the step shows red.
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python3 playwright/bench/assert-perf-gate.py "$OUT/gate" --browser pnpm --runs "$ROUNDS" \
+            --control ubuntu | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Report
         if: always()

@@ -286,5 +286,56 @@ check("both parity tables are printed",
       [line for line in done.stdout.splitlines() if line.startswith("### parity")],
       ["### parity — candidate / ubuntu", "### parity — candidate / official"])
 
+# pnpm-perf-gate's shape: its own margin section, and the ratchet blocking
+# while parity only reports, so each --rule exits on its own rule alone.
+PNPM_MARGINS = {**MARGINS, "pnpm": {"rows": {"install_cpu": 0.05}, "geomean": 0.05}}
+
+
+def run_pnpm_gate(medians, rule, margins):
+    with tempfile.TemporaryDirectory() as directory:
+        for arm, median in medians.items():
+            for shot in (1, 2, 3):
+                path = pathlib.Path(directory) / f"{arm}-pnpm-run{shot}.json"
+                path.write_text(json.dumps({"metrics": {"install_cpu": {"median_ms": median}}}))
+        margins_path = pathlib.Path(directory) / "margins.json"
+        margins_path.write_text(json.dumps(margins))
+        done = subprocess.run(
+            [sys.executable, str(GATE_PATH), directory, "--browser", "pnpm", "--runs", "3",
+             "--control", "ubuntu", "--rule", rule, "--margins", str(margins_path)],
+            capture_output=True, text=True)
+        return done.returncode, done.stdout, done.stderr
+
+
+check("the pnpm section's margin applies, not the browsers' default 0.06",
+      gate.margin_for(PNPM_MARGINS, "pnpm", "install_cpu"), 0.05)
+check("and its geomean margin", gate.geomean_margin_for(PNPM_MARGINS, "pnpm"), 0.05)
+check("a browser without a section keeps the global geomean",
+      gate.geomean_margin_for(PNPM_MARGINS, "node"), 0.02)
+
+rc, out, err = run_pnpm_gate({"candidate": 1060.0, "promoted": 1000.0, "ubuntu": 1000.0},
+                             "ratchet", PNPM_MARGINS)
+check("a 1.06 ratchet breaches the 1.05 ceiling", rc, 1)
+check("the ratchet rule prints no parity table",
+      [line for line in out.splitlines() if line.startswith("### ")],
+      ["### ratchet — candidate / promoted"])
+
+rc, out, err = run_pnpm_gate({"candidate": 1060.0, "promoted": 1060.0, "ubuntu": 1000.0},
+                             "ratchet", PNPM_MARGINS)
+check("a parity breach does not fail the ratchet rule", rc, 0)
+check("and the ratchet rule claims only the ratchet", "**PASS — no slower than promoted.**" in out, True)
+
+rc, out, err = run_pnpm_gate({"candidate": 1060.0, "promoted": 1000.0, "ubuntu": 1060.0},
+                             "parity", PNPM_MARGINS)
+check("a ratchet breach does not fail the parity rule", rc, 0)
+check("the parity rule prints no ratchet table",
+      [line for line in out.splitlines() if line.startswith("### ")],
+      ["### parity — candidate / ubuntu"])
+
+rc, out, err = run_pnpm_gate({"candidate": 1000.0, "promoted": 1000.0, "ubuntu": 1000.0},
+                             "ratchet", {**MARGINS, "pnpm": {"rows": {}, "geomean": 0.05}})
+check("a row the pnpm section forgot is refused, not defaulted", rc, 1)
+check("naming the row", err.strip(),
+      "perf-gate-margins.json `pnpm` section has no margin for `install_cpu`")
+
 print(f"assert-perf-gate: {checks - failures}/{checks} checks passed")
 sys.exit(1 if failures else 0)
