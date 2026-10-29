@@ -34,7 +34,7 @@ CMD ["/bin/bash"]
 # Mimics GitHub's ubuntu-latest VM environment (accounts, env, OS-level tooling) per issue #5.
 # Deliberately NO docker and NO language runtimes — those live in the docker/ overlay and the
 # node|pnpm|playwright layers, so they stay independently versioned.
-LABEL org.opencontainers.image.description="Ubuntu 24.04 mimicking GitHub Actions ubuntu-latest (users, env, OS tools; no docker, no runtimes)"
+LABEL org.opencontainers.image.description="Ubuntu mimicking GitHub Actions ubuntu-latest (users, env, OS tools; no docker, no runtimes)"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -146,4 +146,4 @@ ENV RUNNER_TOOL_CACHE=/opt/hostedtoolcache
 # checks, dood bind-mode when the consumer hasn't passed `-w` explicitly).
 WORKDIR /home/runner
 USER runner
-# Default CMD inherits from the base image (bash on ubuntu).
+# CMD is restated after the flatten above (bash, as in the base image).
