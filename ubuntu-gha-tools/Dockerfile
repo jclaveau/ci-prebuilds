@@ -7,7 +7,29 @@
 # Renovate keeps the default pinned; the workflow_call path overrides OS_VERSION for on-demand
 # requests targeting a different Ubuntu (e.g. 22.04). Default = current consumer pin.
 ARG OS_VERSION=26.04
-FROM mirror.gcr.io/library/ubuntu:${OS_VERSION}
+FROM mirror.gcr.io/library/ubuntu:${OS_VERSION} AS ubuntu-gnu-coreutils
+
+# GNU coreutils in place of uutils, and uutils purged. Ubuntu 26.04 ships uutils: one 11.8 MB Rust
+# multicall that also parses its Fluent locale files on every exec, so `uname -s` costs 4.7-5.1 ms
+# CPU against GNU's 1.8-2.3. Playwright's pw_run.sh execs five of these per WebKit launch, which
+# made our launch 1.08-1.13x official's (24.04, GNU) on the very same browser binaries, and the
+# swap brought it to 1.04. GitHub's ubuntu-latest ships GNU too. Releases without uutils
+# (22.04, 24.04) have no rust-coreutils and skip this.
+RUN if dpkg -s rust-coreutils >/dev/null 2>&1; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends --allow-remove-essential \
+         coreutils-from-gnu coreutils-from-uutils- \
+      && apt-get purge -y --allow-remove-essential rust-coreutils \
+      && rm -rf /var/lib/apt/lists/* \
+      && [ "$(readlink -f /usr/bin/uname)" = /usr/bin/gnuuname ]; \
+    fi
+
+# Flattened, because uutils lives in the base image's own layer: purging it in a layer on top
+# would only add whiteouts and ship the 16 MB anyway. The base's config is restated below.
+FROM scratch
+COPY --from=ubuntu-gnu-coreutils / /
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+CMD ["/bin/bash"]
 
 # Mimics GitHub's ubuntu-latest VM environment (accounts, env, OS-level tooling) per issue #5.
 # Deliberately NO docker and NO language runtimes — those live in the docker/ overlay and the
