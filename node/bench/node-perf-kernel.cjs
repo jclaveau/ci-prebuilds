@@ -13,7 +13,7 @@
  *   require_builtins  fresh node requiring every builtin: code cache
  *   require_tree      fresh node requiring npm's CLI + arborist: resolution + fs
  *   spawn_true_x100   100 spawns of PATH's `true`: the spawn path + what it execs
- *   fs_walk           lstat every file under npm's directory, 4 passes
+ *   fs_walk           lstat every entry of a generated 1800-file tree, 4 passes
  *   alloc_buffers     ~70 KB Buffer.alloc churn: musl mallocng mmap/munmap
  *   alloc_objs        short-lived small objects: V8 young gen
  *   json_roundtrip    stringify + parse a ~4 MB document
@@ -25,8 +25,10 @@
  * so cgroup accounting and scheduler noise stay under ~1% of it.
  *
  * No network, no fixture download: npm ships inside every node install, so
- * require_tree and fs_walk read the image's own copy, which is the same npm
- * for the same node version.
+ * require_tree reads the image's own copy. fs_walk does not: two installs of
+ * the same node version ship different npm trees (24.22.1: 1926 files in the
+ * musl tarball vs 1614 in ubuntu's), so it walks a tree generated in the
+ * temp directory, identical on every arm.
  *
  * Usage: node node-perf-kernel.cjs --target <arm> --run <n> --out <dir>
  */
@@ -34,6 +36,7 @@ const { spawnSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
+const os = require('node:os');
 const path = require('node:path');
 const zlib = require('node:zlib');
 
@@ -87,6 +90,17 @@ function walkTree(directory) {
 }
 
 // Built once, outside any timed region: the inputs every rep reuses.
+// 15 x 30 directories of 4 files each, about npm's shape (450 dirs, 1800 files).
+const walkRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'node-perf-walk-'));
+for (let topIndex = 0; topIndex < 15; topIndex++) {
+  for (let subIndex = 0; subIndex < 30; subIndex++) {
+    const directory = path.join(walkRoot, `d${topIndex}`, `d${subIndex}`);
+    fs.mkdirSync(directory, { recursive: true });
+    for (let fileIndex = 0; fileIndex < 4; fileIndex++) {
+      fs.writeFileSync(path.join(directory, `f${fileIndex}.js`), '');
+    }
+  }
+}
 const jsonDocument = Array.from({ length: 40000 }, (_, index) => ({
   id: index, name: `item-${index}`, tags: ['a', 'b', 'c'], score: index * 0.5, nested: { ok: true },
 }));
@@ -120,7 +134,7 @@ const ROWS = {
     for (let index = 0; index < 100; index++) spawnChecked('true', []);
   } },
   fs_walk: { reps: 5, run() {
-    for (let pass = 0; pass < 4; pass++) sinkValue ^= walkTree(npmDirectory);
+    for (let pass = 0; pass < 4; pass++) sinkValue ^= walkTree(walkRoot);
   } },
   alloc_buffers: { reps: 5, run() {
     for (let index = 0; index < 20000; index++) {
@@ -185,6 +199,7 @@ async function main() {
   };
   fs.writeFileSync(path.join(outDirectory, `${targetName}-node-run${runNumber}.json`),
     JSON.stringify(document, null, 2));
+  fs.rmSync(walkRoot, { recursive: true });
 }
 
 main().catch(error => {
