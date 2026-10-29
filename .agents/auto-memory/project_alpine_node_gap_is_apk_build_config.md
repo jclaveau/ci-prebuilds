@@ -32,7 +32,7 @@ Coreutils (#350 cause 3): GNU 9.11 split binaries each link only musl: 1000 exec
 - alpine-musl-12.16.1: 2.37 vs 2.32 / 1.90 vs 1.91 / 1.88 vs 1.77 s vs ubuntu-glibc-12.16.1, i.e. parity; futex 240k → 3k
 - user follows the same shape (1.92-2.24x → 1.12-1.17x)
 
-The shape holds on every CPU. 12.16.1 itself costs +15-17% sys over glibc 12.6.0 (statx 53k → 121k). Fix: the Planner bumps `packageManager` to pnpm ≥12.16.0, or drops the pin. Not shipped; it is jean's call, in the Planner repo.
+Re-run 40961643910 (9V74, 7763 ×2) gives the same: 1.76-2.11x → 1.17-1.22x. perf stat, cgroup: context switches 107-138k vs 15-18k, task-clock 4.8-5.4 vs 2.2-2.9 s (old musl vs old glibc). The shape holds on every CPU. 12.16.1 itself costs +15-17% sys over glibc 12.6.0 (statx 53k → 121k). Fix: the Planner bumps `packageManager` to pnpm ≥12.16.0, or drops the pin. Not shipped; it is jean's call, in the Planner repo.
 
 **node-perf-kernel gotcha:** `require('<npm dir>')` throws (npm has no programmatic API since v8); require lib/npm.js + lib/commands/install.js + @npmcli/arborist (~540 modules).
 
