@@ -30,7 +30,7 @@ touches an area, read that file before concluding no rule exists. Then read
 - [sccache ghac: broken at 0.15, WORKS at 0.16](project_sccache_ghac_readonly_v18.md) — 0.15+opendal wrote the deprecated v1 path and flipped read-only; 0.16.0 +
 - [A self-built lld's stack-size default crashed a big CFI+ThinLTO link under musl](project_chromium_snapshot_lld_stack_overflow.md) — PT_GNU_STACK memsz 0 vs Alpine lld23's 2 MiB; musl gives threads 128 KiB; `mksnapshot` overflows; fix `-Wl,-z,stack-size=2097152`
 
-## webkit-perf (26) — the WebKit gap campaign — allocator, loader, fmod, Skia
+## webkit-perf (27) — the WebKit gap campaign — allocator, loader, fmod, Skia
 `.agents/auto-memory/index/webkit-perf.md`
 
 - [perf-gate-webkit's red is libm_fmod alone](project_wk_perfgate_libm_fmod_breach.md) — RESOLVED: WebKit clamps performance.now() to 1 ms, so the 1.03 ceiling fell between reachable ticks; kernel resized 9M→36M, the gate prints the observed tick per row, re-run PASSED at 1.026
