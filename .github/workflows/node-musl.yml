@@ -1,0 +1,278 @@
+name: node-musl (Stage B of #351)
+
+# Builds node for musl here (clang23, ThinLTO, PGO; node/musl-build/) into
+# ghcr.io/jclaveau/node-musl:<tag>, then measures it against the published
+# alpine-dood-node (Stage A: unofficial-builds + LD_PRELOAD mimalloc) and the
+# ubuntu image, interleaved on one runner. The tag is a hash of the recipe, so
+# an unchanged recipe skips straight to the bench.
+
+on:
+  push:
+    branches: [ main, 'node-musl/**' ]
+    paths:
+      - 'node/musl-build/**'
+      - 'node/bench/node-perf-kernel.cjs'
+      - 'node/bench/node-arms-table.py'
+      - '.github/workflows/node-musl.yml'
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: 'interleaved shots per arm'
+        default: '10'
+      force_build:
+        description: 'rebuild even when the recipe tag exists'
+        type: boolean
+        default: false
+
+concurrency:
+  group: node-musl-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/jclaveau/node-musl
+
+jobs:
+  recipe:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      node_version: ${{ steps.tag.outputs.node_version }}
+      need_profile: ${{ steps.exists.outputs.need_profile }}
+      need_node: ${{ steps.exists.outputs.need_node }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: tag
+        run: |
+          set -euo pipefail
+          node_version=$(awk -F= '/^ARG NODE_VERSION=/ { print $2; exit }' node/Dockerfile.alpine)
+          [ -n "$node_version" ] || { echo "no ARG NODE_VERSION in node/Dockerfile.alpine" >&2; exit 1; }
+          recipe_hash=$(find node/musl-build node/bench/node-perf-kernel.cjs -type f \
+                          ! -name Dockerfile.bench-arm -print0 \
+                        | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)
+          echo "node_version=$node_version" >> "$GITHUB_OUTPUT"
+          echo "tag=v${node_version}-${recipe_hash}" >> "$GITHUB_OUTPUT"
+          echo "recipe tag v${node_version}-${recipe_hash}"
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: exists
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          FORCE: ${{ inputs.force_build || false }}
+        run: |
+          set -euo pipefail
+          present() { docker manifest inspect "$IMAGE:$1" >/dev/null 2>&1; }
+          need_profile=true need_node=true
+          if [ "$FORCE" != true ]; then
+            if present "pgo-$TAG"; then need_profile=false; fi
+            if present "$TAG" && present "$TAG-mimalloc"; then need_node=false need_profile=false; fi
+          fi
+          echo "need_profile=$need_profile need_node=$need_node"
+          echo "need_profile=$need_profile" >> "$GITHUB_OUTPUT"
+          echo "need_node=$need_node" >> "$GITHUB_OUTPUT"
+
+  build-profile:
+    needs: recipe
+    if: needs.recipe.outputs.need_profile == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v9
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      - name: Instrumented build, train, merge
+        uses: docker/build-push-action@v7
+        with:
+          context: node
+          file: node/musl-build/Dockerfile
+          target: pgo-profile
+          push: true
+          tags: ${{ env.IMAGE }}:pgo-${{ needs.recipe.outputs.tag }}
+          build-args: |
+            NODE_VERSION=${{ needs.recipe.outputs.node_version }}
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  build-node:
+    needs: [recipe, build-profile]
+    if: >-
+      !cancelled() && needs.recipe.outputs.need_node == 'true'
+      && (needs.build-profile.result == 'success' || needs.build-profile.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free up runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Expose GHA cache env
+        uses: actions/github-script@v9
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      # Both targets come out of the one pgo-use stage; the second build-push
+      # finds it in the builder's cache and only exports.
+      - name: Profile-guided build, musl malloc
+        uses: docker/build-push-action@v7
+        with:
+          context: node
+          file: node/musl-build/Dockerfile
+          target: node-plain
+          push: true
+          tags: ${{ env.IMAGE }}:${{ needs.recipe.outputs.tag }}
+          build-args: |
+            NODE_VERSION=${{ needs.recipe.outputs.node_version }}
+            PGO_PROFILE_IMAGE=${{ env.IMAGE }}:pgo-${{ needs.recipe.outputs.tag }}
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+      - name: Same objects, mimalloc-insecure linked in
+        uses: docker/build-push-action@v7
+        with:
+          context: node
+          file: node/musl-build/Dockerfile
+          target: node-mimalloc
+          push: true
+          tags: ${{ env.IMAGE }}:${{ needs.recipe.outputs.tag }}-mimalloc
+          build-args: |
+            NODE_VERSION=${{ needs.recipe.outputs.node_version }}
+            PGO_PROFILE_IMAGE=${{ env.IMAGE }}:pgo-${{ needs.recipe.outputs.tag }}
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  bench:
+    needs: [recipe, build-node]
+    if: >-
+      !cancelled() && needs.recipe.result == 'success'
+      && (needs.build-node.result == 'success' || needs.build-node.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      TAG: ${{ needs.recipe.outputs.tag }}
+      RUNS: ${{ inputs.runs || '10' }}
+      ARMS: stage_a b_plain_preload b_plain b_mimalloc ubuntu official
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check for a PMU
+        run: |
+          sudo sysctl -w kernel.perf_event_paranoid=-1
+          python3 playwright/bench/pmu-check.py \
+            || echo "::warning::no PMU on this runner: CPU-ms only, no instruction counts"
+      - name: Stage each build as the consumer would ship it
+        run: |
+          set -euo pipefail
+          docker pull ghcr.io/jclaveau/alpine-dood-node:latest
+          docker pull ghcr.io/jclaveau/ubuntu-dood-node:latest
+          for variant in plain mimalloc; do
+            suffix=$([ "$variant" = plain ] && echo "" || echo "-$variant")
+            docker build -f node/musl-build/Dockerfile.bench-arm \
+              --build-arg "NODE_SOURCE_IMAGE=$IMAGE:${TAG}${suffix}" \
+              -t "bench-arm:$variant" node/musl-build
+          done
+      - name: Node in every arm
+        run: |
+          set -euo pipefail
+          for image in ghcr.io/jclaveau/alpine-dood-node:latest bench-arm:plain bench-arm:mimalloc \
+                       ghcr.io/jclaveau/ubuntu-dood-node:latest "node:${{ needs.recipe.outputs.node_version }}-bookworm-slim"; do
+            echo "$image: $(docker run --rm --entrypoint node "$image" -p \
+              'process.version + " cc=" + (process.config.variables.clang ? "clang" : "gcc") + " lto=" + process.config.variables.enable_lto')"
+          done
+          echo "LD_PRELOAD in stage A: $(docker run --rm --entrypoint sh ghcr.io/jclaveau/alpine-dood-node:latest -c 'echo $LD_PRELOAD')"
+      - name: Probe every arm, interleaved
+        run: |
+          set -o pipefail
+          mkdir -p perf-out && chmod 777 perf-out   # the container writes as its own uid
+          grep -m1 'model name' /proc/cpuinfo | tee perf-out/cpu.txt
+          rc=0
+          for i in $(seq 1 "$RUNS"); do
+            for arm in $ARMS; do
+              # Stage A's image sets LD_PRELOAD=mimalloc-insecure container-wide;
+              # an empty value turns it off for the arms that must run without.
+              preload_env=()
+              home=/home/runner
+              case "$arm" in
+                stage_a)         image=ghcr.io/jclaveau/alpine-dood-node:latest ;;
+                b_plain_preload) image=bench-arm:plain ;;
+                b_plain)         image=bench-arm:plain; preload_env=(--env LD_PRELOAD=) ;;
+                b_mimalloc)      image=bench-arm:mimalloc; preload_env=(--env LD_PRELOAD=) ;;
+                ubuntu)          image=ghcr.io/jclaveau/ubuntu-dood-node:latest ;;
+                official)        image="node:${{ needs.recipe.outputs.node_version }}-bookworm-slim"; home=/root ;;
+              esac
+              echo "::group::run $i/$RUNS — $arm ($image)"
+              docker run --rm --entrypoint node --env "HOME=$home" "${preload_env[@]}" \
+                -v "$PWD/node/bench:/bench:ro" \
+                -v "$PWD/perf-out:/out" \
+                "$image" /bench/node-perf-kernel.cjs --target "$arm" --run "$i" --out /out \
+                2>&1 | tee "perf-out/kernel-${arm}-${i}.log" || rc=1
+              echo "::endgroup::"
+            done
+          done
+          exit "$rc"
+      - name: Per-row tables
+        if: always()
+        run: |
+          set -o pipefail
+          {
+            echo "## node-musl $TAG on $(cut -d: -f2- perf-out/cpu.txt)"
+            echo
+            python3 node/bench/node-arms-table.py perf-out \
+              --candidate b_plain_preload --candidate b_plain --candidate b_mimalloc \
+              --reference stage_a --reference ubuntu --reference official
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: The perf gate's verdict per candidate
+        if: always()
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          rc=0
+          for candidate in b_plain_preload b_plain b_mimalloc; do
+            echo "### $candidate vs stage_a (promoted)" | tee -a "$GITHUB_STEP_SUMMARY"
+            python3 playwright/bench/assert-perf-gate.py perf-out --browser node --runs "$RUNS" \
+              --candidate "$candidate" --promoted stage_a --control ubuntu --control official \
+              | tee -a "$GITHUB_STEP_SUMMARY" || rc=1
+          done
+          exit "$rc"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: node-musl-bench
+          path: perf-out/
+          if-no-files-found: warn
+          retention-days: 90

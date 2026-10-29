@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+# A node-musl build staged as the consumer would ship it: the published
+# alpine-dood-node with its unofficial-builds node swapped for ours, everything
+# else (base, coreutils, the mimalloc LD_PRELOAD ENV, the tool-cache symlinks)
+# left as published. node-musl.yml's bench measures this against the image as
+# published; whether node/Dockerfile.alpine switches over is decided on those
+# numbers.
+ARG STAGE_A_IMAGE=ghcr.io/jclaveau/alpine-dood-node:latest
+ARG NODE_SOURCE_IMAGE
+FROM ${NODE_SOURCE_IMAGE} AS node-source
+
+FROM ${STAGE_A_IMAGE}
+USER root
+RUN rm -rf /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+        /usr/local/lib/node_modules /usr/local/include/node /usr/local/share/doc/node \
+        /usr/local/share/man/man1/node.1
+COPY --from=node-source /node/ /usr/local/
+RUN rm -rf /usr/local/share/doc/node \
+    && node -p 'process.version + " code_cache=" + process.config.variables.node_use_node_code_cache + " clang=" + process.config.variables.clang' \
+    && npm --version \
+    && arch_dir="/opt/hostedtoolcache/node/$(node -p process.versions.node)/x64" \
+    && [ "$("$arch_dir/bin/node" -p process.execPath)" = /usr/local/bin/node ]
+USER runner
