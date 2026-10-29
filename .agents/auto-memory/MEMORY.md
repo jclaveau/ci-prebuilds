@@ -39,7 +39,7 @@ touches an area, read that file before concluding no rule exists. Then read
 - [WebKit's screenshot gap was Alpine's -Os libpng](project_wk_screenshot_is_alpine_os_libpng.md) — perf record put 81% of a shot in libz+libpng; NOT SIMD, NOT hardening, and Ubuntu
 - [WebKit's launch row is Mesa in the closure](project_wk_launch_is_mesa_in_the_closure.md) — Alpine has no libglvnd, so `mesa-egl` IS libEGL.so.1 and DT_NEEDs libgallium (44
 
-## webkit (21) — WPE/GTK build, PW patch series, browser-side bugs
+## webkit (22) — WPE/GTK build, PW patch series, browser-side bugs
 `.agents/auto-memory/index/webkit.md`
 
 - [PW's WebKit base lags the browser it ships](project_pw_webkit_base_lags_shipped_build.md) — v1.62.0's UPSTREAM_CONFIG names an April WebKit but the shipped webkit-2336 is past
