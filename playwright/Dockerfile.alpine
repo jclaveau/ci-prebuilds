@@ -182,7 +182,14 @@ RUN sudo apk add --no-cache \
         mesa-gles mesa-gbm mesa-dri-gallium mesa-vulkan-swrast \
         gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav \
         opus libsecret \
-        libxslt double-conversion minizip crc32c
+        libxslt double-conversion minizip crc32c \
+        icu-data-en
+
+# icu-data-en is WebKit's ICU data: its bundled libicudata.so.78 is a 9.5 KB
+# stub, so ICU opens /usr/share/icu/78.1/icudt78l.dat, and without it every
+# newPage dies with "Target page, context or browser has been closed". It used
+# to arrive unlisted, through apk nodejs; the base's node is now nodejs.org's
+# tarball (#351), which pulls no ICU.
 
 # gtk4.0 pulls tzdata in, and 600 zone files with no /etc/localtime cost every
 # process that initialises ICU (node, the shim, browser, zygote, utility):
