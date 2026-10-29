@@ -72,8 +72,8 @@
     "margin": 0.03
   },
   "pnpm": {
-    "_note": "pnpm-perf-gate (test-and-publish.yml) rows: cgroup CPU-ms of an offline install. Every row it gates must be named here; 0.05 is provisional until a null pair sizes it.",
-    "rows": {"install_cpu": 0.05, "install_sys": 0.05, "install_user": 0.05},
+    "_note": "pnpm-perf-gate (test-and-publish.yml) rows: cgroup CPU-ms of an offline install. Every row it gates must be named here. Sized by a null pair (same image both arms, n=10, runs 40964388778 + 40965002901, 9V74/9V45x2/7763x3): worst median ratio cpu 0.964, sys 0.959, user 1.026, geomean 0.968; shot cv cpu/sys <= 0.013, user up to 0.045, so user's p99 reaches ~0.065.",
+    "rows": {"install_cpu": 0.05, "install_sys": 0.05, "install_user": 0.07},
     "geomean": 0.05
   },
   "loose": {

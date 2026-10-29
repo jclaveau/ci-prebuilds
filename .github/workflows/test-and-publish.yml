@@ -1349,8 +1349,9 @@ jobs:
   #   promoted   alpine-dood-pnpm:latest        ratchet
   #   ubuntu     ubuntu-dood-pnpm:<build_tag>   parity, report-only
   #
-  # REPORT-ONLY until a null pair sizes the `pnpm` margins in
-  # perf-gate-margins.json (pnpm-install-probe.yml, null_pair mode).
+  # The ratchet blocks promote; its margins come from a null pair
+  # (pnpm-install-probe.yml, null_pair mode). Parity stays report-only:
+  # alpine pays 1.03-1.06x install_cpu vs ubuntu on the same pnpm 12.16.1.
   # ----------------------------------------------------------------------------
 
   pnpm-perf-gate:
@@ -1361,7 +1362,6 @@ jobs:
       && contains(needs.github-context.outputs.os_matrix, 'ubuntu')
     needs: [github-context, build-pnpm-dood]
     timeout-minutes: 40
-    continue-on-error: true
     env:
       WORK: ${{ github.workspace }}/pnpm-work
       OUT: ${{ github.workspace }}/pnpm-out
@@ -2237,7 +2237,7 @@ jobs:
     # that reported nothing, or a row that blew its budget, stop a release. The
     # `!failure()` above turns a red perf-report into a skipped promote; a
     # perf-report SKIPPED by test_filters is not a failure and still publishes.
-    needs: [github-context, versions, build-hardened-variants, test-gha-tools-usage, test-gha-tools-effects, test-gha-tools-hardened-effects, test-dind-hardened-effects, test-dood-dind-usage, test-dood-dind-effects, test-dood-dind-act, test-dind-registry-autostart, test-node-usage, test-pnpm-usage, test-pnpm-gyp-usage, test-playwright-usage, perf-report]
+    needs: [github-context, versions, build-hardened-variants, test-gha-tools-usage, test-gha-tools-effects, test-gha-tools-hardened-effects, test-dind-hardened-effects, test-dood-dind-usage, test-dood-dind-effects, test-dood-dind-act, test-dind-registry-autostart, test-node-usage, test-pnpm-usage, test-pnpm-gyp-usage, test-playwright-usage, perf-report, pnpm-perf-gate]
     steps:
       - uses: docker/setup-buildx-action@v4
       # GHCR login to READ the tested source image and PUSH its consumer tags.
