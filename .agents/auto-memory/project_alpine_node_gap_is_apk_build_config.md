@@ -24,7 +24,15 @@ Coreutils (#350 cause 3): GNU 9.11 split binaries each link only musl: 1000 exec
 
 **Go (jean, 2026-10-29, on #351):** (1) stage A only now — unofficial-builds tarball (sha-pinned `node/node-musl-sha256.txt`, `scripts/pin-node-musl-sha.sh`) to settle the whole CI pipeline; custom builds later. (2) align node with the browsers: `LD_PRELOAD` mimalloc-insecure, then ensure it is faster on the Planner workload. (3) split GNU coreutils per reco. Edits uncommitted in node/Dockerfile.alpine, alpine-gha-tools, ubuntu-gha-tools; bench ubuntu vs alpine-old vs alpine-new was running; node-perf-gate + renovate + playwright + README follow-ups pending.
 
-**Planner bench (2026-10-29, 5 interleaved rounds, CPU-s, Planner ci/alpine-prebuilt-images a733bc0a, --cpus=4):** ubuntu vs apk-node vs tarball vs tarball+mimalloc: install 84.0 / 106.5 / 106.3 / 97.9; vite build 29.2 / 38.2 / 38.5 / 33.8; vitest 14.3 / 18.1 / 17.2 / 15.6; 20x node -e 0 0.81 / 1.47 / 1.06 / 1.01. Container-wide preload wins every step → kept as ENV. Residual vs ubuntu 1.09-1.25x = startup (boot_e0 1.16x, require_builtins 1.16x in node-perf-kernel) → stage B territory. pnpm install sys-time gap (37 vs 28 s) not yet attributed.
+**Planner bench (2026-10-29, 5 interleaved rounds, CPU-s, Planner ci/alpine-prebuilt-images a733bc0a, --cpus=4):** ubuntu vs apk-node vs tarball vs tarball+mimalloc: install 84.0 / 106.5 / 106.3 / 97.9; vite build 29.2 / 38.2 / 38.5 / 33.8; vitest 14.3 / 18.1 / 17.2 / 15.6; 20x node -e 0 0.81 / 1.47 / 1.06 / 1.01. Container-wide preload wins every step → kept as ENV. Residual vs ubuntu 1.09-1.25x = startup (boot_e0 1.16x, require_builtins 1.16x in node-perf-kernel) → stage B territory. pnpm install sys-time gap (37 vs 28 s): ATTRIBUTED, see below.
+
+**pnpm install sys gap = the pnpm binary the Planner pins, not the image (2026-10-29):** pnpm 12 is a Rust binary. `packageManager: pnpm@12.6.0` makes the image's pnpm run 12.6.0, which on alpine is the static musl build (`@pnpm/exe.linux-x64-musl`). It has no embedded mimalloc, which pnpm only embeds from 12.16.0 (bisected: 12.6.0-12.15.0 have none). It also ignores the image's LD_PRELOAD mimalloc because it is static, so it runs on musl mallocng. Laptop, Planner tree, strace -ff, the pnpm process alone, ubuntu vs alpine: futex 7,425 vs 453,884, mmap 933 vs 45,742, munmap 360 vs 43,015; linkat equal. CI probe `.github/workflows/pnpm-install-probe.yml` (run 40960645048, vitest da7ce17 fixture, 67k files, 3 runners: EPYC 7763 / 9V74 / 9V45), sys median, each arm vs ubuntu-glibc-12.6.0:
+- alpine-musl-12.6.0: 3.60 vs 1.97 / 3.35 vs 1.66 / 2.52 vs 1.50 s (1.83x / 2.02x / 1.67x)
+- ubuntu-musl-12.6.0: 1.88x / 2.11x / 1.73x, so the binary carries the gap, not the image
+- alpine-musl-12.16.1: 2.37 vs 2.32 / 1.90 vs 1.91 / 1.88 vs 1.77 s vs ubuntu-glibc-12.16.1, i.e. parity; futex 240k → 3k
+- user follows the same shape (1.92-2.24x → 1.12-1.17x)
+
+The shape holds on every CPU. 12.16.1 itself costs +15-17% sys over glibc 12.6.0 (statx 53k → 121k). Fix: the Planner bumps `packageManager` to pnpm ≥12.16.0, or drops the pin. Not shipped; it is jean's call, in the Planner repo.
 
 **node-perf-kernel gotcha:** `require('<npm dir>')` throws (npm has no programmatic API since v8); require lib/npm.js + lib/commands/install.js + @npmcli/arborist (~540 modules).
 
