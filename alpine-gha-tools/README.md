@@ -30,8 +30,10 @@ Need Docker / Node / pnpm / Playwright? Pick a downstream layer — see
 - **Environment**: `LANG=C.UTF-8`, `CI=true`, `ImageOS=alpine3.21`,
   `RUNNER_TOOL_CACHE=/opt/hostedtoolcache` (+ `AGENT_TOOLSDIRECTORY`), and the `/opt/hostedtoolcache` dir.
 - **OS-level tools** — the Alpine (`apk`) equivalents of the ubuntu-gha-tools curated set:
-  pkgconf, git, curl, wget, gnupg, jq, zip/unzip, xz/bzip2/zstd/lz4, p7zip, rsync, openssh-client,
-  bind-tools, python3, … (see the `Dockerfile` for the full list).
+  pkgconf, git, curl, wget, gnupg, jq, tar, zip/unzip, xz/bzip2/zstd/lz4, p7zip, rsync,
+  openssh-client, bind-tools, python3, … (see the `Dockerfile` for the full list). `tar` is GNU tar,
+  which `actions/cache` requires: busybox's applet rejects its `--posix` invocation and the action
+  then loses every entry it restores and saves, as a warning that leaves the job green.
 - **Bash sugar** — `bash` + `coreutils` + the same interactive aliases as Ubuntu's default shell
   (`ll`/`la`/`l`, colored `ls`/`grep`), installed via `/etc/skel` so `runner` gets them on `docker run`
   / `act`. CI asserts these are identical to ubuntu-gha-tools.

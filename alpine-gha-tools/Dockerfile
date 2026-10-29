@@ -23,6 +23,9 @@ ENV LANG=C.UTF-8 \
 
 # `shadow` provides useradd/usermod/userdel so the account setup matches ubuntu-gha-tools verbatim;
 # `coreutils` gives GNU ls/etc. so the `ll` family behaves like Ubuntu's (not the busybox applets).
+# `tar` is GNU tar: actions/cache shells out to `tar --posix … --use-compress-program zstdmt`, which
+# busybox rejects ("unrecognized option: posix") on BOTH restore and save, each time as a warning —
+# so a container job stays green while losing every cache entry it downloads and every one it writes.
 # apt-only packages (apt-utils, lsb-release, software-properties-common, locales) and `time` are
 # dropped (N/A on Alpine/musl); python-is-python3 becomes a python->python3 symlink.
 # Deliberately NOT installed (mirrors ubuntu-gha-tools — see README): the C/C++ toolchain (build-base,
@@ -42,6 +45,7 @@ RUN echo "OS-level tools: Alpine equivalents of the ubuntu-gha-tools curated set
        ca-certificates \
        gnupg \
        jq \
+       tar \
        zip \
        unzip \
        xz \
