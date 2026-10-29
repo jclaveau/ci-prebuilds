@@ -25,10 +25,21 @@ really was the ubuntu image; `alpine-b` reports musl.
 
 Not CPU-dependent (1.08-1.13 on both models), so no #335 entry.
 
-Untested lead: 3254ba3 fixed the alpine launch row (1.22x) by seeding the baked
-GStreamer registry; whether the ubuntu variant takes the same seed path is the
-first thing to check. Label: guess.
+**Root cause: Ubuntu 26.04's uutils coreutils** (not the GST registry — the ubuntu
+image runs PW's OWN webkit binaries via `playwright install --with-deps`, no bake).
+Loader at parity (`WPEWebProcess --version` 107.7 vs 107.4 ms, 49.3k relocs both),
+file syscalls ours FEWER (2964 vs 3139 / 3 launches). pw_run.sh execs 2 uname +
+2 dirname + 1 readlink per launch; uutils = one 11.8 MB Rust multicall parsing
+Fluent `.ftl` locales each exec: 4.7-5.1 vs GNU 1.8-2.3 ms CPU. Local launch
+CPU-ms: uutils 200.6 / gnu 186.3 / official 178.9 (1.12 / 1.04). Residual 1.04
+unexplained (laptop noise or 26.04 libs: mesa 26, glib 2.88, gst 1.28, icu 78).
+
+Fixed b12e8f0 (jean's go, 2026-10-29): `coreutils-from-gnu coreutils-from-uutils-`
++ purge `rust-coreutils`, stage flattened onto scratch (uutils is in the base
+layer, a purge on top ships whiteouts): ubuntu-gha-tools 351 vs 335 MB.
+Swap needs `--allow-remove-essential` AND the explicit `coreutils-from-uutils-`,
+or apt keeps uutils and the A/B arm silently doesn't vary.
+Side effect: node-perf-gate's ubuntu arm gets faster spawns.
 
 **How to apply:** a webkit/ubuntu launch red at 1.2-1.3 on a commit that ships no
-webkit bytes is drift on top of the real 1.10 — rerun once. Closing the 1.10
-(not widening the budget) is the fix.
+webkit bytes is drift on top of the real 1.10 — rerun once. Re-measure after b12e8f0 before touching the budget.
