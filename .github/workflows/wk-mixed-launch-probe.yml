@@ -3,19 +3,24 @@ name: WebKit mixed-build launch probe
 # Does running Ubuntu 24.04's WebKit build on the Ubuntu 26.04 image make NODE
 # burn CPU at launch, and why?
 #
-# Laptop smoke (2026-10-29, not evidence): the 26.04 image with the 24.04
+# Laptop smoke (2026-10-29, not evidence): the 26.04 image with a 24.04
 # webkit-2336 bind-mounted over its own launched at 1792-1830 vs ~200 ms CPU,
 # and the extra sat in the node process (204.8 vs 9.5 ms per launch), not in
-# MiniBrowser. This asks CI whether it reproduces, and if so where node's time
-# goes.
+# MiniBrowser. That mounted copy was hand-patched: a plain 24.04 build does not
+# load on 26.04 (run 40959521854: libicudata.so.74 not found), so the laptop
+# copy carried the 24.04 image's ICU 74 and libxml2.so.2 in its sys/lib.
 #
-# Arms, all on one runner, interleaved round by round (order rotates):
-#   u26own      the 26.04 consumer image as shipped
-#   u26mix      u26own + the 24.04 image's webkit-2336 bind-mounted (laptop setup)
-#   u26mixcopy  u26own with that webkit-2336 COPYed in (rules out the mount)
-#   u24own      the 24.04 image as shipped
-#   u24mix      u24own + u26own's webkit-2336 bind-mounted (the reverse)
-#   official    mcr.microsoft.com/playwright:v<pw>-noble
+# Arms, all on one runner; launchable ones interleaved round by round:
+#   u26own         the 26.04 consumer image as shipped
+#   u26mix         u26own + the plain 24.04 webkit-2336 mounted (expected not
+#                  to load; recorded, not measured)
+#   u26mixicu      u26own + 24.04 webkit-2336 + 24.04 ICU 74 / libxml2.so.2 in
+#                  its sys/lib, mounted (the laptop setup)
+#   u26mixicucopy  the same tree COPYed into the image (rules out the mount)
+#   u24own         the 24.04 image as shipped
+#   u24mix         u24own + u26own's webkit-2336 mounted (the reverse; measured
+#                  only if it loads)
+#   official       mcr.microsoft.com/playwright:v<pw>-noble
 # Every arm runs the SAME playwright npm package (installed on the host).
 
 on:
@@ -79,6 +84,7 @@ jobs:
       ARMS_DIR: ${{ github.workspace }}/arms
       OUT: ${{ github.workspace }}/out
       WK_DIR: /home/runner/playwright-browsers/webkit-2336
+      ALL_ARMS: u26own u26mix u26mixicu u26mixicucopy u24own u24mix official
     steps:
       - uses: actions/checkout@v7
 
@@ -113,12 +119,21 @@ jobs:
             docker cp "src-$source_name:$WK_DIR" "$ARMS_DIR/wk-$source_name"
             docker rm "src-$source_name" >/dev/null
           done
+          # The laptop's hand-patched tree: the 24.04 libs the 24.04 build needs
+          # and 26.04 does not ship, dropped into the bundle's own sys/lib.
+          cp -a "$ARMS_DIR/wk-u24" "$ARMS_DIR/wk-u24icu"
+          docker create --name src-u24libs "$U24" >/dev/null
+          for lib_name in libicudata.so.74 libicui18n.so.74 libicuuc.so.74 libxml2.so.2; do
+            docker cp -L "src-u24libs:/usr/lib/x86_64-linux-gnu/$lib_name" \
+              "$ARMS_DIR/wk-u24icu/minibrowser-wpe/sys/lib/$lib_name"
+          done
+          docker rm src-u24libs >/dev/null
           chmod -R a+rX "$ARMS_DIR"
           npm install --silent --prefix "$ARMS_DIR/pwmod" "playwright@$PW"
-          printf 'ARG BASE\nFROM ${BASE}\nUSER root\nRUN rm -rf %s\nCOPY --chown=runner:runner wk-u24 %s\nUSER runner\n' \
+          printf 'ARG BASE\nFROM ${BASE}\nUSER root\nRUN rm -rf %s\nCOPY --chown=runner:runner wk-u24icu %s\nUSER runner\n' \
             "$WK_DIR" "$WK_DIR" > "$ARMS_DIR/Dockerfile.mixcopy"
           docker build -q --build-arg "BASE=$U26" -f "$ARMS_DIR/Dockerfile.mixcopy" \
-            -t wk-u26mixcopy "$ARMS_DIR"
+            -t wk-u26mixicucopy "$ARMS_DIR"
 
       - name: Start one container per arm
         run: |
@@ -138,7 +153,8 @@ jobs:
           chmod 0777 "$OUT" "$OUT/raw" "$OUT/diag"
           start_arm u26own "$U26"
           start_arm u26mix "$U26" -v "$ARMS_DIR/wk-u24:$WK_DIR:ro"
-          start_arm u26mixcopy wk-u26mixcopy
+          start_arm u26mixicu "$U26" -v "$ARMS_DIR/wk-u24icu:$WK_DIR:ro"
+          start_arm u26mixicucopy wk-u26mixicucopy
           start_arm u24own "$U24"
           start_arm u24mix "$U24" -v "$ARMS_DIR/wk-u26:$WK_DIR:ro"
           start_arm official "$OFFICIAL"
@@ -147,7 +163,7 @@ jobs:
         run: |
           set -euo pipefail
           declare -A browser_md5
-          for arm in u26own u26mix u26mixcopy u24own u24mix official; do
+          for arm in $ALL_ARMS; do
             browser_md5[$arm]=$(docker exec "$arm" sh -c \
               'md5sum ${PLAYWRIGHT_BROWSERS_PATH:-/home/runner/playwright-browsers}/webkit-2336/minibrowser-wpe/bin/MiniBrowser | cut -c1-12')
             os_version=$(docker exec "$arm" sh -c '. /etc/os-release; echo $VERSION_ID')
@@ -155,25 +171,40 @@ jobs:
           done
           [ "${browser_md5[u26own]}" != "${browser_md5[u24own]}" ] \
             || { echo "u26 and u24 ship the same webkit build: nothing to mix" >&2; exit 1; }
-          for arm in u26mix u26mixcopy; do
+          for arm in u26mix u26mixicu u26mixicucopy; do
             [ "${browser_md5[$arm]}" = "${browser_md5[u24own]}" ] \
               || { echo "$arm does not carry the 24.04 build" >&2; exit 1; }
           done
           [ "${browser_md5[u24mix]}" = "${browser_md5[u26own]}" ] \
             || { echo "u24mix does not carry the 26.04 build" >&2; exit 1; }
 
+      # An arm that cannot load its libraries is a finding, not a crash: it is
+      # written to unlaunchable.txt with the loader's line and left out of
+      # the rounds. Only the two cross-distro mixes may land there.
       - name: Smoke every arm
         run: |
           set -euo pipefail
-          for arm in u26own u26mix u26mixcopy u24own u24mix official; do
-            LAUNCH_COUNT=1 WARM_COUNT=0 bash playwright/bench/wk-mixed-launch-run.sh measure "$arm" 0
+          : > "$OUT/unlaunchable.txt"
+          launchable_arms=""
+          for arm in $ALL_ARMS; do
+            if LAUNCH_COUNT=1 WARM_COUNT=0 bash playwright/bench/wk-mixed-launch-run.sh measure "$arm" 0 2> "$OUT/raw/$arm-smoke.err"; then
+              launchable_arms="$launchable_arms $arm"
+              continue
+            fi
+            case "$arm" in
+              u26mix|u24mix)
+                loader_line=$(grep -m1 -o 'error while loading shared libraries: [^ ]*' "$OUT/raw/$arm-smoke.err" || true)
+                echo "$arm: ${loader_line:-launch failed, see raw/$arm-smoke.err}" | tee -a "$OUT/unlaunchable.txt" ;;
+              *) cat "$OUT/raw/$arm-smoke.err" >&2; echo "required arm $arm did not launch" >&2; exit 1 ;;
+            esac
           done
+          echo "MEASURED_ARMS=${launchable_arms# }" >> "$GITHUB_ENV"
           rm -f "$OUT"/*.jsonl
 
       - name: Interleaved rounds
         run: |
           set -euo pipefail
-          arm_list=(u26own u26mix u26mixcopy u24own u24mix official)
+          read -r -a arm_list <<< "$MEASURED_ARMS"
           for round_index in $(seq 1 "$ROUNDS"); do
             shift_count=$(( (round_index - 1) % ${#arm_list[@]} ))
             round_order=("${arm_list[@]:$shift_count}" "${arm_list[@]:0:$shift_count}")
@@ -186,14 +217,14 @@ jobs:
       - name: Diagnostics (strace, DEBUG, cpu-prof)
         run: |
           set -euo pipefail
-          for arm in u26own u26mix u26mixcopy u24own u24mix official; do
+          for arm in $MEASURED_ARMS; do
             bash playwright/bench/wk-mixed-launch-run.sh diag "$arm"
           done
 
-      - name: perf record of node (u26own vs u26mix)
+      - name: perf record of node (u26own vs u26mixicu)
         run: |
           set -euo pipefail
-          for arm in u26own u26mix; do
+          for arm in u26own u26mixicu; do
             bash playwright/bench/wk-mixed-launch-run.sh record "$arm"
           done
 
@@ -208,7 +239,7 @@ jobs:
           {
             echo "## WebKit mixed-build launch — $CPU_MODEL (replicate ${{ matrix.replicate }}, PMU=$HAS_PMU)"
             echo
-            echo '```'; cat "$OUT/arms.txt"; echo '```'
+            echo '```'; cat "$OUT/arms.txt"; echo "-- not launchable:"; cat "$OUT/unlaunchable.txt"; echo '```'
             echo
             echo "### Medians per launch vs u26own"
             python3 playwright/bench/wk-mixed-launch-report.py u26own "$OUT"/*.jsonl
@@ -217,11 +248,11 @@ jobs:
             python3 playwright/bench/wk-mixed-launch-report.py official "$OUT"/*.jsonl
             echo
             echo "### perf stat, round 1 (node --no-inherit / container cgroup)"
-            for arm in u26own u26mix u26mixcopy u24own u24mix official; do
+            for arm in $MEASURED_ARMS; do
               echo "- $arm node: $(grep -v '^#' "$OUT/raw/$arm-r1.node.perfstat" | grep . | cut -d, -f1,3 | tr '\n' ' ')"
               echo "- $arm cgroup: $(grep -v '^#' "$OUT/raw/$arm-r1.cgroup.perfstat" | grep . | cut -d, -f1,3 | tr '\n' ' ')"
             done
-            for arm in u26own u26mix u26mixcopy u24own u24mix official; do
+            for arm in $MEASURED_ARMS; do
               echo
               echo "### $arm diagnostics"
               echo '```'
@@ -241,7 +272,7 @@ jobs:
               python3 playwright/bench/cpuprofile-top.py "$(ls "$OUT/diag/cpuprof-$arm"/*.cpuprofile | head -1)" 20
               echo '```'
             done
-            for arm in u26own u26mix; do
+            for arm in u26own u26mixicu; do
               echo
               echo "### perf record, node of $arm"
               echo '```'
@@ -258,6 +289,8 @@ jobs:
           path: |
             out/report.md
             out/arms.txt
+            out/unlaunchable.txt
+            out/raw/*-smoke.err
             out/*.jsonl
             out/raw/*.perfstat
             out/diag/*.txt

@@ -20,7 +20,7 @@ PROBE=/s/wk-mixed-launch-probe.cjs
 exec_identity() {
   case "$1" in
     official) echo "-u 0" ;;
-    u26own|u26mix|u26mixcopy|u24own|u24mix)
+    u26*|u24*)
       echo "-u runner -e HOME=/home/runner -e PLAYWRIGHT_BROWSERS_PATH=/home/runner/playwright-browsers" ;;
     *) echo "unknown arm: $1" >&2; exit 2 ;;
   esac
@@ -69,8 +69,10 @@ resolve_probe_pids() {
 finish_probe() {
   local arm=$1 log_file=$2
   docker exec -u 0 "$arm" touch "$GO_FILE_PATH"
-  wait "$PROBE_EXEC_PID" \
-    || { echo "probe failed ($arm):" >&2; cat "$log_file" >&2; exit 1; }
+  wait "$PROBE_EXEC_PID" && return 0
+  echo "probe failed ($arm):" >&2
+  cat "$log_file" >&2
+  return 1
 }
 
 stat_events() {
@@ -91,9 +93,12 @@ measure() {
     -o "$OUT/raw/$arm-r$round_index.cgroup.perfstat" &
   local cgroup_stat_pid=$!
   sleep 0.5
-  finish_probe "$arm" "$log_file"
+  local probe_status=0
+  finish_probe "$arm" "$log_file" || probe_status=$?
+  # The system-wide stat never ends on its own; stop it on every path.
   sudo pkill -INT -P "$cgroup_stat_pid" 2>/dev/null || true
   wait "$node_stat_pid" "$cgroup_stat_pid" || true
+  [ "$probe_status" = 0 ] || exit 1
   grep '^{' "$log_file" >> "$OUT/$arm.jsonl"
 }
 
@@ -119,7 +124,7 @@ record() {
     -o "$OUT/diag/$arm.perf.data" 2> "$OUT/diag/$arm.perf-record.err" &
   local record_pid=$!
   sleep 0.5
-  finish_probe "$arm" "$log_file"
+  finish_probe "$arm" "$log_file" || exit 1
   wait "$record_pid" || true
   sudo chown -R "$(id -u):$(id -g)" "$OUT/diag"
   # The JIT map is written inside the container under its own pid; perf looks
