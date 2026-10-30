@@ -25,6 +25,10 @@ name: pnpm install CPU probe
 # mode versions bisects a pnpm release range: one arm per listed version and
 # libc, all on the ubuntu image so only the binary varies, with repeated
 # `strace -f -c` passes and a stat-family path trace for the path_arms.
+# source_refs adds arms built from git (`label=owner/repo@ref`), as a glibc
+# release build of pnpm-cli on the runner, so an unreleased fix sits beside
+# the released versions. Build a base ref too: the official binaries come
+# out of `cross`, so only patched vs base varies the source alone.
 
 on:
   workflow_dispatch:
@@ -43,6 +47,10 @@ on:
         default: 'glibc'
         type: choice
         options: [glibc, musl, both]
+      source_refs:
+        description: 'versions mode: space-separated label=owner/repo@ref, each built from source'
+        default: ''
+        type: string
       strace_rounds:
         description: 'strace -f -c passes per arm'
         default: '1'
@@ -85,13 +93,66 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       replicate_list: ${{ steps.list.outputs.replicate_list }}
+      source_list: ${{ steps.list.outputs.source_list }}
     steps:
       - id: list
+        env:
+          REPLICATES: ${{ inputs.replicates }}
+          SOURCE_REFS: ${{ inputs.source_refs }}
         run: |
-          python3 -c "import json; print('replicate_list=' + json.dumps(list(range(1, int('${{ inputs.replicates }}') + 1))))" >> "$GITHUB_OUTPUT"
+          python3 - >> "$GITHUB_OUTPUT" <<'PY'
+          import json, os, re
+          print('replicate_list=' + json.dumps(list(range(1, int(os.environ['REPLICATES']) + 1))))
+          source_list = []
+          for source_spec in os.environ['SOURCE_REFS'].split():
+              spec_match = re.fullmatch(r'([a-z0-9]+)=([\w.-]+/[\w.-]+)@(\S+)', source_spec)
+              if not spec_match:
+                  raise SystemExit(f"source ref '{source_spec}' is not label=owner/repo@ref")
+              label, repository, ref = spec_match.groups()
+              source_list.append({'label': label, 'repository': repository, 'ref': ref})
+          print('source_list=' + json.dumps(source_list))
+          PY
+
+  build:
+    needs: matrix
+    if: inputs.mode == 'versions' && inputs.source_refs != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: true
+      matrix:
+        source: ${{ fromJSON(needs.matrix.outputs.source_list) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ matrix.source.repository }}
+          ref: ${{ matrix.source.ref }}
+          persist-credentials: false
+
+      # The release job's linux flags, minus cross: rust-toolchain.toml picks
+      # the toolchain and Cargo.toml's release profile is the shipped one.
+      - name: Build pnpm-cli
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -C force-unwind-tables=no
+        run: |
+          set -euo pipefail
+          echo "source ${{ matrix.source.repository }}@${{ matrix.source.ref }} = $(git rev-parse HEAD)"
+          cargo build --locked -p pnpm-cli --bin pnpm --release
+          mkdir -p out
+          cp target/release/pnpm out/pnpm
+          git rev-parse HEAD > out/commit.txt
+          ./out/pnpm --version
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pnpm-source-${{ matrix.source.label }}
+          path: out
+          retention-days: 7
 
   probe:
-    needs: matrix
+    needs: [matrix, build]
+    # build is skipped without source_refs; a failed build stops the probe.
+    if: ${{ !cancelled() && needs.matrix.result == 'success' && needs.build.result != 'failure' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
@@ -150,11 +211,39 @@ jobs:
                 arm_list="$arm_list $libc_name-$pnpm_version=$ubuntu_image|$pnpm_version-$libc_name"
               done
             done
+            for source_spec in $SOURCE_REFS; do
+              source_label=${source_spec%%=*}
+              arm_list="$arm_list glibc-$source_label=$ubuntu_image|$source_label-src"
+            done
             echo "ARMS=${arm_list# }" >> "$GITHUB_ENV"
           fi
         env:
           VERSIONS: ${{ inputs.versions }}
           LIBCS: ${{ inputs.libcs }}
+          SOURCE_REFS: ${{ inputs.source_refs }}
+
+      # fetch_binary skips a binary already in $WORK/bins, so a source build
+      # placed there stands in for a registry download.
+      - uses: actions/download-artifact@v8
+        if: inputs.mode == 'versions' && inputs.source_refs != ''
+        with:
+          pattern: pnpm-source-*
+          path: ${{ github.workspace }}/sources
+
+      - name: Place source builds
+        if: inputs.mode == 'versions' && inputs.source_refs != ''
+        env:
+          SOURCE_REFS: ${{ inputs.source_refs }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT"
+          for source_spec in $SOURCE_REFS; do
+            source_label=${source_spec%%=*}
+            source_dir="$GITHUB_WORKSPACE/sources/pnpm-source-$source_label"
+            mkdir -p "$WORK/bins/$source_label-src"
+            install -m 755 "$source_dir/pnpm" "$WORK/bins/$source_label-src/pnpm"
+            echo "source $source_spec commit=$(cat "$source_dir/commit.txt")" | tee -a "$OUT/host.txt"
+          done
 
       - name: Free disk for one store per arm
         if: inputs.mode == 'versions'
