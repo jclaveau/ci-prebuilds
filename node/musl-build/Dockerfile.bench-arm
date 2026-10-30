@@ -15,7 +15,10 @@ RUN rm -rf /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx /usr/local/
         /usr/local/lib/node_modules /usr/local/include/node /usr/local/share/doc/node \
         /usr/local/share/man/man1/node.1
 COPY --from=node-source /node/ /usr/local/
-RUN rm -rf /usr/local/share/doc/node \
+# clang lowers node's 16-byte atomics to libatomic calls, which gcc's
+# unofficial-builds node inlines, so ours needs libatomic.so.1 at runtime.
+RUN apk add --no-cache libatomic \
+    && rm -rf /usr/local/share/doc/node \
     && node -p 'process.version + " code_cache=" + process.config.variables.node_use_node_code_cache + " clang=" + process.config.variables.clang' \
     && npm --version \
     && arch_dir="/opt/hostedtoolcache/node/$(node -p process.versions.node)/x64" \
