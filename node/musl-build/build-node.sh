@@ -103,7 +103,7 @@ node_exe=out/Release/node
 # Symbol tables go to a file first: under pipefail, `llvm-nm | grep -q` fails
 # whenever grep matches early and llvm-nm dies of SIGPIPE.
 "$llvm_bin/llvm-nm" "$node_exe" >/tmp/node-symbols.txt
-if grep -q ' T mi_malloc$' /tmp/node-symbols.txt; then
+if grep -qE " [Tt] mi_malloc$" /tmp/node-symbols.txt; then
   echo "$node_exe links mimalloc but no mimalloc link was asked for" >&2
   exit 1
 fi
@@ -127,8 +127,14 @@ if [ "$phase" = use ]; then
     echo "$node_exe does not export malloc: mimalloc would not interpose musl's" >&2
     exit 1
   fi
-  grep -q ' T mi_malloc$' /tmp/node-symbols.txt \
-    || { echo "$node_exe has no mi_malloc after the mimalloc link" >&2; exit 1; }
+  # The link keeps mi_malloc local (t), at the address of the exported malloc.
+  malloc_address=$(awk '$2 == "T" && $3 == "malloc" { print $1 }' /tmp/node-symbols.txt)
+  mimalloc_address=$(awk '$2 ~ /^[Tt]$/ && $3 == "mi_malloc" { print $1 }' /tmp/node-symbols.txt)
+  if [ -z "$mimalloc_address" ] || [ "$malloc_address" != "$mimalloc_address" ]; then
+    grep -E ' (malloc|mi_malloc)$' /tmp/node-symbols.txt >&2 || true
+    echo "$node_exe: malloc is not mimalloc's mi_malloc after the mimalloc link" >&2
+    exit 1
+  fi
   python3 tools/install.py install --dest-dir "$destdir_mimalloc" --prefix /usr/local
   "$destdir_mimalloc/usr/local/bin/node" -p 'process.version'
 fi
