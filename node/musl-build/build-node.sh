@@ -74,7 +74,8 @@ run_make() {
   shift
   local make_status=0
   timeout "$make_budget" make -j"$(nproc)" "$@" >"$log_file" 2>&1 || make_status=$?
-  if [ "$make_status" -eq 124 ]; then
+  # busybox timeout exits 143 (SIGTERM), coreutils' 124.
+  if [ "$make_status" -eq 124 ] || [ "$make_status" -eq 143 ]; then
     sccache --show-stats
     echo "make ran out of its ${make_budget} budget: the objects compiled so far are in sccache, rerun the job" >&2
     exit 1
