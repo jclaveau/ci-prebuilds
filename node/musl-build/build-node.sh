@@ -100,7 +100,10 @@ if [ "$phase" = use ]; then
 fi
 
 node_exe=out/Release/node
-if "$llvm_bin/llvm-nm" "$node_exe" | grep -q ' T mi_malloc$'; then
+# Symbol tables go to a file first: under pipefail, `llvm-nm | grep -q` fails
+# whenever grep matches early and llvm-nm dies of SIGPIPE.
+"$llvm_bin/llvm-nm" "$node_exe" >/tmp/node-symbols.txt
+if grep -q ' T mi_malloc$' /tmp/node-symbols.txt; then
   echo "$node_exe links mimalloc but no mimalloc link was asked for" >&2
   exit 1
 fi
@@ -116,9 +119,15 @@ if [ "$phase" = use ]; then
   # node loads, as LD_PRELOAD would, without reaching node's children.
   export LDFLAGS="$link_flags -Wl,--whole-archive /usr/lib/libmimalloc-insecure.a -Wl,--no-whole-archive"
   run_make /tmp/build-mimalloc.log
-  "$llvm_bin/llvm-nm" -D "$node_exe" | grep -q ' T malloc$' \
-    || { echo "$node_exe does not export malloc: mimalloc would not interpose musl's" >&2; exit 1; }
-  "$llvm_bin/llvm-nm" "$node_exe" | grep -q ' T mi_malloc$' \
+  "$llvm_bin/llvm-nm" -D "$node_exe" >/tmp/node-dynamic-symbols.txt
+  "$llvm_bin/llvm-nm" "$node_exe" >/tmp/node-symbols.txt
+  if ! grep -q ' T malloc$' /tmp/node-dynamic-symbols.txt; then
+    grep -E ' (malloc|free|mi_malloc)$' /tmp/node-dynamic-symbols.txt /tmp/node-symbols.txt >&2 \
+      || echo "no malloc, free or mi_malloc symbol at all" >&2
+    echo "$node_exe does not export malloc: mimalloc would not interpose musl's" >&2
+    exit 1
+  fi
+  grep -q ' T mi_malloc$' /tmp/node-symbols.txt \
     || { echo "$node_exe has no mi_malloc after the mimalloc link" >&2; exit 1; }
   python3 tools/install.py install --dest-dir "$destdir_mimalloc" --prefix /usr/local
   "$destdir_mimalloc/usr/local/bin/node" -p 'process.version'
