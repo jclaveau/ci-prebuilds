@@ -20,7 +20,9 @@ ACTIONS_RUNTIME_TOKEN=$(secret_value actions_runtime_token)
 ACTIONS_RESULTS_URL=$(secret_value actions_results_url)
 if [ -n "$ACTIONS_RUNTIME_TOKEN" ] && [ -n "$ACTIONS_RESULTS_URL" ]; then
   export ACTIONS_RUNTIME_TOKEN ACTIONS_RESULTS_URL
-  export SCCACHE_GHA_ENABLED=true SCCACHE_GHA_VERSION=node-musl
+  # Without the v2 switch every write fails (run 40955771149: 5929 compiles,
+  # 5929 write errors, nothing stored).
+  export SCCACHE_GHA_ENABLED=true SCCACHE_GHA_VERSION=node-musl ACTIONS_CACHE_SERVICE_V2=1
 else
   echo "WARN: GHA cache env not provided, sccache uses the local cache mount only" >&2
 fi
@@ -60,11 +62,24 @@ esac
 export CFLAGS="$thin_lto_flags $profile_flags" CXXFLAGS="$thin_lto_flags $profile_flags"
 export LDFLAGS="$link_flags"
 
+# A cold compile takes ~5.8 h on a 4-vCPU runner (run 40955771149), past what
+# the job has left once the toolchain is up. make stops at MAKE_BUDGET with the
+# sccache stats printed, so the run fails saying so and its rerun compiles
+# from cache instead of being cancelled silently by the job timeout.
+make_budget=${MAKE_BUDGET:-310m}
+
 # make's output is a log, not a progress bar: only the links reach the job log.
 run_make() {
   local log_file=$1
   shift
-  if ! make -j"$(nproc)" "$@" >"$log_file" 2>&1; then
+  local make_status=0
+  timeout "$make_budget" make -j"$(nproc)" "$@" >"$log_file" 2>&1 || make_status=$?
+  if [ "$make_status" -eq 124 ]; then
+    sccache --show-stats
+    echo "make ran out of its ${make_budget} budget: the objects compiled so far are in sccache, rerun the job" >&2
+    exit 1
+  fi
+  if [ "$make_status" -ne 0 ]; then
     tail -150 "$log_file" >&2
     exit 1
   fi
@@ -88,7 +103,9 @@ if "$llvm_bin/llvm-nm" "$node_exe" | grep -q ' T mi_malloc$'; then
   echo "$node_exe links mimalloc but no mimalloc link was asked for" >&2
   exit 1
 fi
-make install DESTDIR="$destdir_plain" PREFIX=/usr/local
+# install.py, not `make install`: that target reruns `all`, which regenerates
+# the inspector protocol sources and recompiles their dependents serially.
+python3 tools/install.py install --dest-dir "$destdir_plain" --prefix /usr/local
 "$destdir_plain/usr/local/bin/node" -p 'process.version + " code_cache=" + process.config.variables.node_use_node_code_cache'
 
 if [ "$phase" = use ]; then
@@ -102,7 +119,7 @@ if [ "$phase" = use ]; then
     || { echo "$node_exe does not export malloc: mimalloc would not interpose musl's" >&2; exit 1; }
   "$llvm_bin/llvm-nm" "$node_exe" | grep -q ' T mi_malloc$' \
     || { echo "$node_exe has no mi_malloc after the mimalloc link" >&2; exit 1; }
-  make install DESTDIR="$destdir_mimalloc" PREFIX=/usr/local
+  python3 tools/install.py install --dest-dir "$destdir_mimalloc" --prefix /usr/local
   "$destdir_mimalloc/usr/local/bin/node" -p 'process.version'
 fi
 

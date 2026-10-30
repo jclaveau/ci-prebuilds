@@ -1,4 +1,4 @@
-name: node-musl (Stage B of #351)
+name: 'node-musl (Stage B of #351)'
 
 # Builds node for musl here (clang23, ThinLTO, PGO; node/musl-build/) into
 # ghcr.io/jclaveau/node-musl:<tag>, then measures it against the published
@@ -176,7 +176,8 @@ jobs:
     needs: [recipe, build-node]
     if: >-
       !cancelled() && needs.recipe.result == 'success'
-      && (needs.build-node.result == 'success' || needs.build-node.result == 'skipped')
+      && (needs.build-node.result == 'success'
+          || (needs.build-node.result == 'skipped' && needs.recipe.outputs.need_node == 'false'))
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
