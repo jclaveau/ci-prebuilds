@@ -31,6 +31,11 @@ on:
       # still running for the commit before it — the concurrency group is
       # per-ref, so three memory commits in a row left one real build alive.
       - '.agents/**'
+      # node/Dockerfile.alpine pins the Stage B node image by digest, so its
+      # recipe and node-musl.yml (which builds and benches it) reach a
+      # published image only through a new pin, never by themselves.
+      - 'node/musl-build/**'
+      - '.github/workflows/node-musl.yml'
   pull_request:
     branches: [ main ]
     paths-ignore:
@@ -45,6 +50,11 @@ on:
       # still running for the commit before it — the concurrency group is
       # per-ref, so three memory commits in a row left one real build alive.
       - '.agents/**'
+      # node/Dockerfile.alpine pins the Stage B node image by digest, so its
+      # recipe and node-musl.yml (which builds and benches it) reach a
+      # published image only through a new pin, never by themselves.
+      - 'node/musl-build/**'
+      - '.github/workflows/node-musl.yml'
   # Reusable entry point: lets `on-demand-build.yml` (issue-triggered) call
   # this workflow with version overrides + matrix filters. Every input defaults
   # to empty / `true` so the push/PR path is byte-identical to today (verified
@@ -566,6 +576,7 @@ jobs:
           changed_map: ${{ needs.changes.outputs.map }}
           build_args: |
             ${{ inputs.node_version && format('NODE_VERSION={0}', inputs.node_version) || '' }}
+            ${{ inputs.node_version && 'NODE_BUILD=tarball' || '' }}
 
   build-node-dind:
     runs-on: ubuntu-latest
@@ -590,6 +601,7 @@ jobs:
           changed_map: ${{ needs.changes.outputs.map }}
           build_args: |
             ${{ inputs.node_version && format('NODE_VERSION={0}', inputs.node_version) || '' }}
+            ${{ inputs.node_version && 'NODE_BUILD=tarball' || '' }}
 
 
   build-pnpm-dood:

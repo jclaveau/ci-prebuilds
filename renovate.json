@@ -35,7 +35,7 @@
       "matchPackageNames": ["node"],
       "groupName": "Node.js",
       "minimumReleaseAge": "3 days",
-      "description": "node/Dockerfile.alpine installs nodejs.org's musl build from unofficial-builds, which publishes about a day after nodejs.org; the wait means the tarball exists when the PR opens. Its sha256 is pinned in node/node-musl-sha256.txt, so the PR also needs `scripts/pin-node-musl-sha.sh <version>` committed on its branch: the alpine build fails naming that command until it is."
+      "description": "node/Dockerfile.alpine copies node from our Stage B build (ghcr.io/jclaveau/node-musl, pinned by NODE_MUSL_IMAGE), so the PR also needs node-musl.yml dispatched on its branch and the new tag pinned: the alpine build fails naming the version until it is. The tarball fallback (NODE_BUILD=tarball, used by on-demand builds) waits on unofficial-builds, which publishes about a day after nodejs.org, and needs `scripts/pin-node-musl-sha.sh <version>` committed for its sha256."
     },
     {
       "matchDatasources": ["github-releases"],

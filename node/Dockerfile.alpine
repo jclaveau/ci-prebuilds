@@ -1,14 +1,39 @@
 # syntax=mirror.gcr.io/docker/dockerfile:1
 ARG BASE_IMAGE=jclaveau/alpine-dood:latest
-FROM ${BASE_IMAGE}
 
-# Renovate will update this (keep in sync with node/Dockerfile; a bump also needs its line in
-# node-musl-sha256.txt — scripts/pin-node-musl-sha.sh writes it)
+# Renovate will update this (keep in sync with node/Dockerfile). A bump also needs a Stage B build of
+# the new version: dispatch node-musl.yml on the bump's branch, then pin its tag below. The default
+# build fails naming the version until NODE_MUSL_IMAGE carries it.
 ARG NODE_VERSION=24.22.1
 
-# Node + npm only — no node-gyp toolchain (alpine-gha-tools no longer ships build-base). Native addon
-# builds use the `-gyp` variant ({os}-{mode}-pnpm-gyp). See README.
-LABEL org.opencontainers.image.description="Node + npm (slim, no compiler) in Alpine based DinD as Github Actions Container"
+# Where node comes from:
+#   stage-b  our own build (#351 Stage B, node/musl-build/, node-musl.yml): clang23, ThinLTO, PGO on
+#            Alpine edge. EPYC 7763, CPU-ms, 10 shots per arm (run 41135093907): geomean 0.884x vs
+#            the tarball build, 0.880x vs ubuntu-dood-node; `node -e 0` 31.6 vs 36.0 ms (ubuntu 32.8).
+#   tarball  nodejs.org's musl build (unofficial-builds), sha256-pinned in node-musl-sha256.txt. The
+#            fallback for a NODE_VERSION with no Stage B image: on-demand builds pick it.
+ARG NODE_BUILD=stage-b
+ARG NODE_MUSL_IMAGE=ghcr.io/jclaveau/node-musl:v24.22.1-de4850dd5f9b@sha256:8cf4f50fbe702b2581518b462977c09274a896df6ae4405b8c1162be1ba98887
+
+FROM ${NODE_MUSL_IMAGE} AS node-musl-files
+
+FROM ${BASE_IMAGE} AS node-from-stage-b
+ARG NODE_VERSION
+# clang lowers node's 16-byte atomics to libatomic calls (gcc's tarball build inlines them), so this
+# node needs libatomic.so.1 beside libstdc++/libgcc. The image has no LICENSE: install.py skips it.
+COPY --from=node-musl-files /node/ /usr/local/
+RUN set -eu \
+    && sudo apk add --no-cache libstdc++ libgcc libatomic \
+    && sudo rm -rf /usr/local/share/doc/node \
+    && sudo mkdir -p /usr/local/share/licenses/node \
+    && sudo curl -fsSLo /usr/local/share/licenses/node/LICENSE \
+         "https://raw.githubusercontent.com/nodejs/node/v${NODE_VERSION}/LICENSE" \
+    && built_version=$(node -p 'process.versions.node') \
+    && if [ "$built_version" != "${NODE_VERSION}" ]; then \
+         echo "NODE_MUSL_IMAGE holds node ${built_version}, not ${NODE_VERSION}: dispatch node-musl.yml" \
+           "for ${NODE_VERSION} and pin its tag, or build with NODE_BUILD=tarball" >&2; \
+         exit 1; \
+       fi
 
 # nodejs.org's musl build (unofficial-builds), not Alpine's `nodejs` (#350, #351). Alpine's package is
 # configured with node_use_node_code_cache=false and 10 system libs (zlib, openssl, simdutf, …); the
@@ -19,6 +44,8 @@ LABEL org.opencontainers.image.description="Node + npm (slim, no compiler) in Al
 # comes from the same host as the tarball. The expected sha256 is pinned in this repo instead, one
 # line per version, and a version with no line fails the build rather than trusting the host.
 # Runtime deps libstdc++/libgcc are pulled explicitly: the base carries them today only by accident.
+FROM ${BASE_IMAGE} AS node-from-tarball
+ARG NODE_VERSION
 COPY node-musl-sha256.txt /tmp/node-musl-sha256.txt
 RUN set -eu \
     && tarball="node-v${NODE_VERSION}-linux-x64-musl.tar.xz" \
@@ -36,8 +63,15 @@ RUN set -eu \
     && sudo mkdir -p /usr/local/share/licenses/node \
     && sudo mv /usr/local/LICENSE /usr/local/share/licenses/node/LICENSE \
     && sudo rm -rf /usr/local/CHANGELOG.md /usr/local/README.md /usr/local/share/doc/node \
-    && sudo rm -f "/tmp/${tarball}" /tmp/node-musl-sha256.txt \
-    && node -p '"node " + process.version + " code_cache=" + process.config.variables.node_use_node_code_cache' \
+    && sudo rm -f "/tmp/${tarball}" /tmp/node-musl-sha256.txt
+
+FROM node-from-${NODE_BUILD}
+
+# Node + npm only — no node-gyp toolchain (alpine-gha-tools no longer ships build-base). Native addon
+# builds use the `-gyp` variant ({os}-{mode}-pnpm-gyp). See README.
+LABEL org.opencontainers.image.description="Node + npm (slim, no compiler) in Alpine based DinD as Github Actions Container"
+
+RUN node -p '"node " + process.version + " code_cache=" + process.config.variables.node_use_node_code_cache' \
     && npm --version
 
 # The allocator the browser images already run (playwright/Dockerfile.alpine): musl's mallocng maps
@@ -47,7 +81,8 @@ RUN set -eu \
 # dismissed. Container-wide like the browsers': every process run here gets it. On Planner's CI
 # steps that wins overall, CPU with vs without it, 5 interleaved rounds: pnpm install 97.9 vs
 # 106.3 s (0.92x), vite build 33.8 vs 38.5 s (0.88x), vitest 15.6 vs 17.2 s (0.91x). Installed in
-# the layer before the ENV, because musl skips a missing preload silently.
+# the layer before the ENV, because musl skips a missing preload silently. Stage B's node is the
+# musl-malloc link run under this preload: linking mimalloc in instead measured within 1% of it.
 RUN sudo apk add --no-cache mimalloc2-insecure \
     && test -f /usr/lib/libmimalloc-insecure.so.2
 ENV LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2
