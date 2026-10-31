@@ -4,7 +4,7 @@ ARG BASE_IMAGE=jclaveau/alpine-dood:latest
 # Renovate will update this (keep in sync with node/Dockerfile). A bump also needs a Stage B build of
 # the new version: dispatch node-musl.yml on the bump's branch, then pin its tag below. The default
 # build fails naming the version until NODE_MUSL_IMAGE carries it.
-ARG NODE_VERSION=24.22.1
+ARG NODE_VERSION=24.22.2
 
 # Where node comes from:
 #   stage-b  our own build (#351 Stage B, node/musl-build/, node-musl.yml): clang23, ThinLTO, PGO on
