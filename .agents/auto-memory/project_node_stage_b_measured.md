@@ -1,6 +1,6 @@
 ---
 name: project_node_stage_b_measured
-description: #351 Stage B (clang23 ThinLTO+PGO node from source, mimalloc linked in) measured geomean 0.880x vs ubuntu, 0.884x vs stage_a on EPYC 7763; build gotchas — 6 h job limit, local mi_malloc, libatomic at run time
+description: #351 Stage B SHIPPED e9994e6 (2026-10-31) in node/Dockerfile.alpine; clang23 ThinLTO+PGO node geomean 0.880x vs ubuntu on EPYC 7763, 0.898x on 9V74 (gzip_20MB 1.07x vs Stage A there); build gotchas — 6 h job limit, local mi_malloc, libatomic at run time
 metadata:
   type: project
 ---
@@ -25,7 +25,17 @@ Build gotchas, each cost a 3-6 h run:
   time (gcc unofficial-builds node doesn't). Bench arm does `apk add libatomic`.
 - Dockerfile.bench-arm is excluded from the recipe hash: bench-only fixes reuse images.
 
-**How to apply:** switching node/Dockerfile.alpine to Stage B is jean's call;
-if switched, ship libatomic (or link it statically) and add `node/musl-build/**`
-+ node-musl.yml to test-and-publish paths-ignore before merging to main.
-The bench job reds on b_plain's gate by design (control arm).
+Shipped e9994e6, promoted by Test and Publish run 41200859767 (2026-10-31). The
+plain node runs under the image's mimalloc LD_PRELOAD; libatomic is installed.
+On EPYC 9V74 (Zen 4): geomean 0.904x vs Stage A, 0.898x vs ubuntu, startup at
+parity, but gzip_20MB 92.4 vs 86.4 ms (1.07x) vs Stage A: clang's bundled zlib
+is slower there only (the 7763 reads 0.99x). node-perf-gate is report-only, so
+it went red without blocking the promote.
+
+**How to apply:** the pin is NODE_MUSL_IMAGE (tag + digest) in node/Dockerfile.alpine.
+A NODE_VERSION bump fails the build with "NODE_MUSL_IMAGE holds node X, not Y":
+dispatch node-musl.yml on the bump branch (a multi-hour cold build), then pin the new tag.
+Or build with NODE_BUILD=tarball, which test-and-publish passes automatically when
+the node_version input is set. node/musl-build/** + node-musl.yml are in
+test-and-publish paths-ignore. In node-musl's bench, b_plain reds the gate by design
+(the control arm). Next lever if wanted: the zlib row on 9V74.
