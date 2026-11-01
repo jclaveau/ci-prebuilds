@@ -59,7 +59,13 @@ case "$phase" in
     exit 2
     ;;
 esac
-export CFLAGS="$thin_lto_flags $profile_flags" CXXFLAGS="$thin_lto_flags $profile_flags"
+# Alpine's clang predefines _FORTIFY_SOURCE=2, and fortify-headers' inline
+# memcpy then guards every fixed-size copy with a two-range overlap compare and
+# a ud2: in zlib's insert_string loop that cost gzip_20MB 1.07-1.25x on Zen 4/5.
+# Neither the unofficial-builds gcc node nor the nodejs.org build fortifies.
+no_fortify_flags="-U_FORTIFY_SOURCE"
+export CFLAGS="$thin_lto_flags $profile_flags $no_fortify_flags"
+export CXXFLAGS="$thin_lto_flags $profile_flags $no_fortify_flags"
 export LDFLAGS="$link_flags"
 
 # A cold compile takes ~5.8 h on a 4-vCPU runner (run 40955771149), past what
