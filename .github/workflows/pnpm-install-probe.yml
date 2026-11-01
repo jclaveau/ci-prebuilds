@@ -240,6 +240,16 @@ jobs:
           for source_spec in $SOURCE_REFS; do
             source_label=${source_spec%%=*}
             source_dir="$GITHUB_WORKSPACE/sources/pnpm-source-$source_label"
+            # download-artifact extracts a lone matched artifact straight
+            # into its path, without the per-artifact directory.
+            if [ ! -d "$source_dir" ] && [ "$(wc -w <<< "$SOURCE_REFS")" -eq 1 ]; then
+              source_dir="$GITHUB_WORKSPACE/sources"
+            fi
+            if [ ! -f "$source_dir/pnpm" ]; then
+              echo "::error::no pnpm binary for source '$source_label' under $GITHUB_WORKSPACE/sources"
+              ls -R "$GITHUB_WORKSPACE/sources"
+              exit 1
+            fi
             mkdir -p "$WORK/bins/$source_label-src"
             install -m 755 "$source_dir/pnpm" "$WORK/bins/$source_label-src/pnpm"
             echo "source $source_spec commit=$(cat "$source_dir/commit.txt")" | tee -a "$OUT/host.txt"
