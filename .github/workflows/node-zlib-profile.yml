@@ -178,7 +178,7 @@ jobs:
                 perf stat -x, -e '"$stat_events"' \
                   -o /out/stat-'"$arm"'.csv -- node /bench/zlib-profile.cjs loop '"$LOOP_SECONDS"'
                 perf record -e '"$record_event"' -F 2999 -g -o /out/perf-'"$arm"'.data -- node /bench/zlib-profile.cjs loop '"$LOOP_SECONDS"'
-                perf report -i /out/perf-'"$arm"'.data --no-children --sort dso,sym --stdio \
+                perf report -f -i /out/perf-'"$arm"'.data --no-children --no-inline -g none --sort dso,sym --stdio \
                   --percent-limit 0.5 2>/dev/null | grep -vE "^$|^#" | grep -E "^ +[0-9]" | head -40 > /out/report-'"$arm"'.txt
               ' 2>&1 | tail -20
             sudo chown -R "$(id -u):$(id -g)" out
