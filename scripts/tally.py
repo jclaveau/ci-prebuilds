@@ -3,7 +3,7 @@
 conformance verdicts, and runtime perf vs Playwright's official images.
 
     scripts/tally.py            # everything
-    scripts/tally.py builds     # one section: builds | conformance | perf
+    scripts/tally.py builds     # one section: builds | experiments | conformance | perf
     scripts/tally.py --ab 20    # read more chs-perf-ab runs (default 12)
     scripts/tally.py --format eta  # per-run boundary/chain ETAs + a watcher's poll delay
 
@@ -49,6 +49,10 @@ AB_WF = "chs-perf-ab.yml"
 GATE_WF = "perf-gate.yml"
 BROWSERS = ("chromium", "firefox", "webkit")
 CONFORMANCE_WF = "tests-conformance.yml"
+# Node and pnpm experiments, matched by file name so a new probe workflow is
+# listed without editing this file.
+EXPERIMENT_GLOBS = ("node-*.yml", "pnpm-*.yml")
+EXPERIMENT_WINDOW = dt.timedelta(hours=72)
 # <browser>-latest moves in two places: the build workflow's own promote job,
 # and a standalone promote-*.yml dispatch.
 PROMOTE_JOBS = {"promote-firefox": "firefox",
@@ -418,6 +422,36 @@ def section_builds(now, only_run=None, output="table"):
     if focus:
         print(f"  Run: https://github.com/{REPO}/actions/runs/{focus['databaseId']}")
     return build_runs
+
+
+def experiment_workflows():
+    workflow_dir = pathlib.Path(__file__).resolve().parent.parent / ".github" / "workflows"
+    return sorted({path.name for pattern in EXPERIMENT_GLOBS for path in workflow_dir.glob(pattern)})
+
+
+def section_experiments(now):
+    """In-flight runs of the node/pnpm workflows, plus the newest finished run
+    per workflow and branch inside EXPERIMENT_WINDOW: the browser BUILDS table
+    never shows them."""
+    rows = [("workflow", "branch", "sha", "run", "state", "age", "title")]
+    for workflow_name in experiment_workflows():
+        reported_branches = set()
+        for run in runs(workflow_name, 10):
+            age = now - ts(run["updatedAt"])
+            if run["status"] == "completed":
+                if age > EXPERIMENT_WINDOW or run["headBranch"] in reported_branches:
+                    continue
+                reported_branches.add(run["headBranch"])
+            state = run["status"] if run["status"] != "completed" else run["conclusion"]
+            rows.append((workflow_name.removesuffix(".yml"), run["headBranch"], run["headSha"][:7],
+                         run["databaseId"], state, f"{hm(age.total_seconds())} ago",
+                         run["displayTitle"][:60]))
+    print(f"EXPERIMENTS  (node/pnpm workflows: in flight, or newest finished per branch in the last "
+          f"{int(EXPERIMENT_WINDOW.total_seconds() // 3600)} h)")
+    if len(rows) > 1:
+        print_aligned(rows)
+    else:
+        print("  none")
 
 
 def section_prs():
@@ -820,7 +854,7 @@ def section_perf(ab_limit, gate_limit, draws, browsers):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("section", nargs="?", choices=["builds", "conformance", "perf"])
+    ap.add_argument("section", nargs="?", choices=["builds", "experiments", "conformance", "perf"])
     ap.add_argument("--ab", type=int, default=4, help="chs-perf-ab runs to read")
     ap.add_argument("--draws", type=int, default=1,
                     help="per-draw rows listed under each shipped block; the geo rows below them read every draw either way")
@@ -840,6 +874,9 @@ def main():
         build_runs = section_builds(now, args.run, args.format)
         if not args.run and args.format == "table":
             section_prs()
+            section_experiments(now)
+    if section == "experiments":
+        section_experiments(now)
     if section in (None, "conformance"):
         section_conformance(build_runs if build_runs is not None else runs(BUILD_WF, 60), args.depth)
     if section in (None, "perf"):

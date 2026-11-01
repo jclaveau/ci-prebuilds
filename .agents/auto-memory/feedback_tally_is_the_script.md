@@ -6,7 +6,7 @@ metadata:
 ---
 
 When jean asks for a **tally** (builds, conformance, perf, or all three), run
-`pnpm tally` (`python3 scripts/tally.py [builds|conformance|perf]`) and relay
+`pnpm tally` (`python3 scripts/tally.py [builds|experiments|conformance|perf]`) and relay
 the lines — one section when he names one, everything otherwise. Add only
 what the script cannot know (what a number means for the next step).
 
@@ -58,3 +58,8 @@ chromium:**
 Complements [[feedback_tally_include_run_url]] (the run URL the script itself
 cannot append) — this memory is about WHICH tool to run, that one is about
 what to append when relaying it.
+- EXPERIMENTS (added 2026-11-01 after jean saw the tally miss the node/zlib work):
+  every `node-*.yml` / `pnpm-*.yml` workflow, in-flight runs plus the newest
+  finished run per branch over 72 h. A new experiment workflow named that way
+  shows up with no tally edit; one named otherwise needs `EXPERIMENT_GLOBS`.
+  Relay its rows with the tally, and say what each in-flight one is waiting on.
