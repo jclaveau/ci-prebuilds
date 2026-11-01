@@ -1,0 +1,189 @@
+name: node zlib profile (Stage A vs Stage B)
+
+# Why does gzip_20MB read 92.4 vs 86.4 ms (1.07x) Stage B vs Stage A on EPYC
+# 9V74 when the 7763 reads 0.99x (node-musl run after e9994e6)? This times
+# deflate and inflate apart, counts instructions and cycles, records where
+# each arm spends the row, and lists the zlib symbols each node binary
+# carries, so the SIMD paths' presence is checked statically too.
+#
+# Arms, interleaved per round on one runner:
+#   stage_a  alpine-dood-node with its node swapped for the unofficial-builds
+#            tarball (gcc), staged by Dockerfile.bench-arm as node-musl.yml's
+#            bench staged ours; the image's mimalloc LD_PRELOAD stays on.
+#   stage_b  alpine-dood-node:latest as published, which ships Stage B since
+#            e9994e6 (clang23 ThinLTO+PGO, mimalloc LD_PRELOAD).
+# Replicates are separate jobs so several runner CPUs are drawn per dispatch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      replicates:
+        description: 'Runners (one job each)'
+        default: '6'
+      reps:
+        description: 'timed deflate + inflate reps per arm per round'
+        default: '15'
+      rounds:
+        description: 'interleaved rounds per runner'
+        default: '3'
+      loop_seconds:
+        description: 'perf stat / perf record loop length per arm'
+        default: '20'
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      replicate_list: ${{ steps.list.outputs.replicate_list }}
+    steps:
+      - id: list
+        env:
+          REPLICATES: ${{ inputs.replicates }}
+        run: echo "replicate_list=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['REPLICATES']) + 1))))")" >> "$GITHUB_OUTPUT"
+
+  profile:
+    needs: matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        replicate: ${{ fromJSON(needs.matrix.outputs.replicate_list) }}
+    env:
+      REPS: ${{ inputs.reps }}
+      ROUNDS: ${{ inputs.rounds }}
+      LOOP_SECONDS: ${{ inputs.loop_seconds }}
+      ARMS: stage_a stage_b
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Runner CPU and PMU
+        run: |
+          set -euo pipefail
+          mkdir -p out && chmod 777 out
+          grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ //' | tee out/cpu.txt
+          sudo sysctl -w kernel.perf_event_paranoid=-1
+          if python3 playwright/bench/pmu-check.py; then echo "HAVE_PMU=1" >> "$GITHUB_ENV"
+          else echo "::warning::no PMU on $(cat out/cpu.txt): timings only, no perf stat or record"; fi
+
+      - name: Stage both arms
+        run: |
+          set -euo pipefail
+          docker pull ghcr.io/jclaveau/alpine-dood-node:latest
+          node_version=$(awk -F= '/^ARG NODE_VERSION=/ { print $2; exit }' node/Dockerfile.alpine)
+          pinned_sha=$(awk -v version="$node_version" '$1 == version { print $2 }' node/node-musl-sha256.txt)
+          [ -n "$pinned_sha" ] || { echo "no sha256 for node $node_version in node/node-musl-sha256.txt" >&2; exit 1; }
+          mkdir -p tarball-src
+          cat > tarball-src/Dockerfile <<EOF
+          FROM alpine:3.24 AS fetch
+          RUN apk add --no-cache curl xz \
+              && curl -fsSLo /tmp/node.tar.xz "https://unofficial-builds.nodejs.org/download/release/v${node_version}/node-v${node_version}-linux-x64-musl.tar.xz" \
+              && echo "${pinned_sha}  /tmp/node.tar.xz" | sha256sum -c - \
+              && mkdir /node && tar -xJf /tmp/node.tar.xz -C /node --strip-components=1 --no-same-owner
+          FROM scratch
+          COPY --from=fetch /node /node
+          EOF
+          docker build -t tarball-src:local tarball-src
+          docker build -f node/musl-build/Dockerfile.bench-arm \
+            --build-arg NODE_SOURCE_IMAGE=tarball-src:local \
+            -t zlib-arm:stage_a node/musl-build
+          docker tag ghcr.io/jclaveau/alpine-dood-node:latest zlib-arm:stage_b
+
+      # The A/B must vary the compiler: stage_a reports gcc, stage_b clang.
+      - name: Node and zlib in each arm
+        run: |
+          set -euo pipefail
+          for arm in $ARMS; do
+            docker run --rm --user root --entrypoint sh "zlib-arm:$arm" -c '
+              apk add --no-cache binutils >/dev/null
+              node -p "process.version + \" clang=\" + process.config.variables.clang + \" lto=\" + process.config.variables.enable_lto + \" shared_zlib=\" + process.config.variables.node_shared_zlib + \" zlib=\" + process.versions.zlib"
+              echo "LD_PRELOAD=$LD_PRELOAD"
+              echo "--- .comment"; readelf -p .comment /usr/local/bin/node 2>/dev/null | grep -v "^$" | head -5
+              echo "--- zlib symbols (count, then list)"
+              nm /usr/local/bin/node 2>/dev/null | grep -iE "crc32|adler32|inflate_fast|longest_match|deflate_(fast|slow|medium|stored|rle|huff)|fill_window|cpu_check|x86_check|Cr_z_|chunkcopy|insert_string|crc_fold|_tr_" \
+                | awk "{ print \$2, \$3 }" | sort -k2 | tee /tmp/zsyms | wc -l
+              cat /tmp/zsyms
+            ' 2>&1 | tee "out/static-$arm.txt"
+          done
+
+      - name: Time deflate and inflate, interleaved
+        run: |
+          set -euo pipefail
+          for round in $(seq 1 "$ROUNDS"); do
+            for arm in $ARMS; do
+              docker run --rm --entrypoint node -v "$PWD/node/bench:/bench:ro" "zlib-arm:$arm" \
+                /bench/zlib-profile.cjs time "$REPS" \
+                | tee "out/time-$arm-$round.json"
+            done
+          done
+
+      - name: perf stat and perf record per arm
+        if: env.HAVE_PMU == '1'
+        run: |
+          set -euo pipefail
+          for arm in $ARMS; do
+            # --privileged and root for perf_event_open inside the container.
+            docker run --rm --privileged --user root --security-opt seccomp=unconfined \
+              --entrypoint sh -v "$PWD/node/bench:/bench:ro" -v "$PWD/out:/out" "zlib-arm:$arm" -c '
+                set -e
+                apk add --no-cache perf >/dev/null
+                perf stat -x, -e task-clock,cycles,instructions,branch-misses,L1-icache-load-misses \
+                  -o /out/stat-'"$arm"'.csv -- node /bench/zlib-profile.cjs loop '"$LOOP_SECONDS"'
+                perf record -F 2999 -g -o /out/perf-'"$arm"'.data -- node /bench/zlib-profile.cjs loop '"$LOOP_SECONDS"'
+                perf report -i /out/perf-'"$arm"'.data --no-children --sort dso,sym --stdio \
+                  --percent-limit 0.5 2>/dev/null | grep -vE "^$|^#" | grep -E "^ +[0-9]" | head -40 > /out/report-'"$arm"'.txt
+              ' 2>&1 | tail -20
+            sudo chown -R "$(id -u):$(id -g)" out
+          done
+
+      - name: Report
+        if: always()
+        run: |
+          set -o pipefail
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import glob, json, os, statistics
+          cpu = open('out/cpu.txt').read().strip()
+          print(f'## zlib profile on {cpu}\n')
+          medians = {}
+          for arm in os.environ['ARMS'].split():
+              docs = [json.load(open(path)) for path in sorted(glob.glob(f'out/time-{arm}-*.json'))]
+              if not docs:
+                  print(f'{arm}: no timings'); continue
+              medians[arm] = {side: statistics.median(value for doc in docs for value in doc[f'{side}_reps_ms'])
+                              for side in ('deflate', 'inflate')}
+              medians[arm]['bytes'] = docs[0]['deflated_bytes']
+          if len(medians) == 2:
+              stage_a, stage_b = medians['stage_a'], medians['stage_b']
+              print('| side | stage_b vs stage_a CPU-ms (ratio) |\n| --- | --- |')
+              for side in ('deflate', 'inflate'):
+                  print(f'| {side} | {stage_b[side]:.1f} vs {stage_a[side]:.1f} ms ({stage_b[side] / stage_a[side]:.3f}x) |')
+              print(f'| deflated bytes | {stage_b["bytes"]} vs {stage_a["bytes"]} |\n')
+          for arm in os.environ['ARMS'].split():
+              path = f'out/stat-{arm}.csv'
+              if os.path.exists(path):
+                  print(f'### perf stat {arm}\n```')
+                  print(''.join(line for line in open(path) if line[:1].isdigit() or line.startswith('<')))
+                  print('```')
+              path = f'out/report-{arm}.txt'
+              if os.path.exists(path):
+                  print(f'### perf report {arm} (top, >=0.5%)\n```')
+                  print(open(path).read())
+                  print('```')
+          print('=== DONE ===')
+          PY
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: node-zlib-profile-${{ matrix.replicate }}
+          path: out/
+          retention-days: 90
