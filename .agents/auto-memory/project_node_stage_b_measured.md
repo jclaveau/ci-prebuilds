@@ -38,8 +38,18 @@ dispatch node-musl.yml on the bump branch (a multi-hour cold build), then pin th
 Or build with NODE_BUILD=tarball, which test-and-publish passes automatically when
 the node_version input is set. node/musl-build/** + node-musl.yml are in
 test-and-publish paths-ignore. In node-musl's bench, b_plain reds the gate by design
-(the control arm). Next lever if wanted: the zlib row on 9V74 (jean 2026-11-01:
-profile it, then rebuild the lever).
+(the control arm). The zlib row: see below.
+
+**gzip_20MB gap = fortify memcpy check (2026-11-01, node-zlib-profile.yml).**
+Deflate only: 9V74 1.09-1.11x, 9V45 1.24-1.26x, 7763 0.97-0.99x vs Stage A.
+Hot loop = insert_string in deflate_slow; Alpine clang predefines
+_FORTIFY_SOURCE=2, so fortify-headers wraps the 4-byte hash memcpy in an
+overlap compare + ud2 (4877 ud2 vs gcc node's 589). Ruled out: crc32 SIMD
+(both arms table crc32_z), PGO (counts present). Lever `-U_FORTIFY_SOURCE` in
+build-node.sh (7763022), cold build run 41354850829; NOT repinned (jean's call).
+Hosted runners here had no PMU: profile with `perf record -e cpu-clock`;
+`perf report` needs `--no-inline -g none -f` or prints nothing (addr2line).
+Same lesson as chromium: [[project_chromium_nav_gap_is_musl_fortify_overlap_check]].
 
 **Xeon 8370C (jean 2026-11-01): passive.** No dispatch to hunt an 8370C draw. When a
 node-perf-gate or node-musl bench job lands on one, put its Stage B line in #335.
