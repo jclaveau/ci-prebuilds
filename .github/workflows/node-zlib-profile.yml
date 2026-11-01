@@ -112,8 +112,39 @@ jobs:
               nm /usr/local/bin/node 2>/dev/null | grep -iE "crc32|adler32|inflate_fast|longest_match|deflate_(fast|slow|medium|stored|rle|huff)|fill_window|cpu_check|x86_check|Cr_z_|chunkcopy|insert_string|crc_fold|_tr_" \
                 | awk "{ print \$2, \$3 }" | sort -k2 | tee /tmp/zsyms | wc -l
               cat /tmp/zsyms
+              # gzip checksums with crc32: does either build carry the
+              # SSE4.2/PCLMUL crc path, inlined or not?
+              objdump -d --no-show-raw-insn /usr/local/bin/node >/tmp/node.asm
+              echo "--- instruction counts, whole binary"
+              # objdump spells pclmulqdq by its immediate (pclmullqlqdq, ...).
+              for insn in pclmul vpclmul "crc32[bwlq]" pshufb; do
+                echo "$insn $(grep -cE "[[:space:]]$insn[a-z]*[[:space:]]" /tmp/node.asm || true)"
+              done
+              echo "--- calls out of crc32_z and copy_with_crc"
+              for sym in crc32_z Cr_z_crc32_z Cr_z_copy_with_crc; do
+                awk -v sym="<$sym>:" "\$2 == sym { on = 1; print; next } on && /^\$/ { exit } on" /tmp/node.asm \
+                  | grep -E "call|pclmul|crc32|>:" | head -20
+              done
             ' 2>&1 | tee "out/static-$arm.txt"
           done
+
+      - name: PGO counts for the zlib functions
+        env:
+          PROFILE_IMAGE: ghcr.io/jclaveau/node-musl:pgo-v24.22.1-de4850dd5f9b
+        run: |
+          set -euo pipefail
+          container_id=$(docker create "$PROFILE_IMAGE" /none)
+          docker cp "$container_id:/pgo" out/pgo
+          docker rm "$container_id" >/dev/null
+          docker run --rm -v "$PWD/out:/out" alpine:edge sh -c '
+            apk add --no-cache llvm23 >/dev/null
+            profdata=$(ls /out/pgo/node-*.profdata)
+            echo "profile $profdata"
+            /usr/lib/llvm23/bin/llvm-profdata show "$profdata" | head -8
+            /usr/lib/llvm23/bin/llvm-profdata show --all-functions "$profdata" \
+              | grep -E -A4 "^  [^ ].*(longest_match|deflate_slow|deflate_fast|fill_window|crc32|copy_with_crc|adler32|inflate_fast|_tr_flush_block|compress_block|deflate_huff|deflate_rle):\$"
+          ' 2>&1 | tee out/pgo-counts.txt
+          rm -rf out/pgo
 
       - name: Time deflate and inflate, interleaved
         run: |
@@ -127,18 +158,26 @@ jobs:
           done
 
       - name: perf stat and perf record per arm
-        if: env.HAVE_PMU == '1'
         run: |
           set -euo pipefail
+          # Without a PMU, cpu-clock sampling still names the hot functions;
+          # cycles and instructions need the PMU.
+          if [ "${HAVE_PMU:-0}" = 1 ]; then
+            stat_events=task-clock,cycles,instructions,branch-misses,L1-icache-load-misses
+            record_event=cycles
+          else
+            stat_events=task-clock
+            record_event=cpu-clock
+          fi
           for arm in $ARMS; do
             # --privileged and root for perf_event_open inside the container.
             docker run --rm --privileged --user root --security-opt seccomp=unconfined \
               --entrypoint sh -v "$PWD/node/bench:/bench:ro" -v "$PWD/out:/out" "zlib-arm:$arm" -c '
                 set -e
                 apk add --no-cache perf >/dev/null
-                perf stat -x, -e task-clock,cycles,instructions,branch-misses,L1-icache-load-misses \
+                perf stat -x, -e '"$stat_events"' \
                   -o /out/stat-'"$arm"'.csv -- node /bench/zlib-profile.cjs loop '"$LOOP_SECONDS"'
-                perf record -F 2999 -g -o /out/perf-'"$arm"'.data -- node /bench/zlib-profile.cjs loop '"$LOOP_SECONDS"'
+                perf record -e '"$record_event"' -F 2999 -g -o /out/perf-'"$arm"'.data -- node /bench/zlib-profile.cjs loop '"$LOOP_SECONDS"'
                 perf report -i /out/perf-'"$arm"'.data --no-children --sort dso,sym --stdio \
                   --percent-limit 0.5 2>/dev/null | grep -vE "^$|^#" | grep -E "^ +[0-9]" | head -40 > /out/report-'"$arm"'.txt
               ' 2>&1 | tail -20
