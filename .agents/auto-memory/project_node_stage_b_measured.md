@@ -38,4 +38,8 @@ dispatch node-musl.yml on the bump branch (a multi-hour cold build), then pin th
 Or build with NODE_BUILD=tarball, which test-and-publish passes automatically when
 the node_version input is set. node/musl-build/** + node-musl.yml are in
 test-and-publish paths-ignore. In node-musl's bench, b_plain reds the gate by design
-(the control arm). Next lever if wanted: the zlib row on 9V74.
+(the control arm). Next lever if wanted: the zlib row on 9V74 (jean 2026-11-01:
+profile it, then rebuild the lever).
+
+**Xeon 8370C (jean 2026-11-01): passive.** No dispatch to hunt an 8370C draw. When a
+node-perf-gate or node-musl bench job lands on one, put its Stage B line in #335.
