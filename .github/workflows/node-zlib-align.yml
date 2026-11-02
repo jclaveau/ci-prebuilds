@@ -10,6 +10,12 @@ name: node zlib loop placement
 #                           so only where the loops land varies
 #   align32                 -falign-loops=32
 #   fortify                 the shipped Stage B's _FORTIFY_SOURCE=2
+#   builtin gcc headers     the ways to keep fortify without its overlap trap
+#   crc32simd               fortify plus zlib's SSE4.2+PCLMUL crc32
+#   pgo_off pgo_fortify     ThinLTO + PGO as node builds, to check whether the
+#   pgo_builtin             7763 loss needs node's build shape to show
+# Each arm is timed on node-perf-kernel's synthetic 20 MB and on the first
+# 20 MB of node's source tarball.
 # The report prints each arm's loop offsets next to its time, read from the
 # binary, so the placement each arm got is checked, not assumed.
 
@@ -58,6 +64,7 @@ jobs:
           path: |
             out/arms/*/harness
             out/heads.txt
+            out/inputs/*
           retention-days: 7
 
   bench:

@@ -1,8 +1,10 @@
 #!/bin/bash
 # Builds node's bundled zlib (deps/zlib of NODE_VERSION) into the gzip
 # harness once per arm, with clang23 at node's -O3, statically linked.
-# Run in alpine:edge, as node's builder. Writes /out/arms/<arm>/harness and
-# /out/heads.txt, the 32- and 64-byte offsets of deflate_slow's two hot loops.
+# Run in alpine:edge, as node's builder. Writes /out/arms/<arm>/harness,
+# /out/heads.txt (the 32- and 64-byte offsets of deflate_slow's two hot loops)
+# and /out/inputs/node-src.tar, the first 20 MB of node's own source tarball,
+# the realistic input timed next to node-perf-kernel's synthetic one.
 #
 # Arms (all clang23 unless named):
 #   pad0 pad16 pad32 pad48  -U_FORTIFY_SOURCE -falign-loops=16 (the candidate
@@ -13,11 +15,16 @@
 #                           shipped Stage B's flags), -falign-loops=16.
 #   builtin                 fortify, zlib's 4 fixed-size loads via __builtin_memcpy.
 #   gcc                     fortify, zlib compiled with Alpine gcc.
+#   crc32simd               fortify, zlib's SSE4.2+PCLMUL crc32 (node leaves
+#                           that gyp target commented out).
+#   pgo_off pgo_fortify     fortify off / on / builtin, built ThinLTO + PGO as
+#   pgo_builtin             node is, trained on the synthetic input.
 #   headers                 fortify, fortify-headers' memcpy overlap trap removed.
 set -euo pipefail
 : "${NODE_VERSION:?}"
 # gcc: crtbeginT.o and libgcc_eh for the static link the ubuntu runners need.
-apk add --no-cache bash binutils clang23 curl gcc lld23 llvm23 musl-dev python3 tar xz >/dev/null
+# compiler-rt: the profile runtime -fprofile-generate links.
+apk add --no-cache bash binutils clang23 compiler-rt curl gcc lld23 llvm23 musl-dev python3 tar xz >/dev/null
 clang-23 --version | head -1
 
 mkdir -p /work /out/arms
@@ -30,10 +37,20 @@ echo "$tarball_sha  node.tar.xz" | sha256sum -c -
 tar -xJf node.tar.xz --strip-components=2 "node-v${NODE_VERSION}/deps/zlib"
 zlib_dir=/work/zlib
 [ -f "$zlib_dir/deflate.c" ] || { echo "no deps/zlib/deflate.c in node-v${NODE_VERSION}" >&2; exit 1; }
+mkdir -p /out/inputs
+python3 - <<'PY'
+import lzma
+with lzma.open('/work/node.tar.xz') as tarball:
+    source_head = tarball.read(20 * 1024 * 1024)
+if len(source_head) != 20 * 1024 * 1024:
+    raise SystemExit(f'node.tar.xz unpacks to {len(source_head)} bytes, under 20 MiB')
+open('/out/inputs/node-src.tar', 'wb').write(source_head)
+PY
 
 # zlib.gyp on x64 Linux: the "zlib" target plus its zlib_adler32_simd and
 # zlib_data_chunk_simd dependencies, each with the defines gyp gives it.
-# node leaves the crc32 SIMD target commented out.
+# node leaves the crc32 SIMD target commented out; an arm whose flags define
+# CRC32_SIMD_SSE42_PCLMUL also gets that target's two sources.
 zlib_sources="adler32.c compress.c cpu_features.c crc32.c deflate.c gzclose.c gzlib.c
   gzread.c gzwrite.c infback.c inffast.c inftrees.c trees.c uncompr.c zutil.c"
 chunk_sources="contrib/optimizations/inffast_chunk.c contrib/optimizations/inflate.c"
@@ -57,7 +74,7 @@ build_arm() {
   local arm_name=$1 pad_bytes=$2 arm_flags=$3
   arm_cc=${4:-clang-23}
   arm_zlib_dir=${5:-$zlib_dir}
-  arm_dir=/out/arms/$arm_name
+  arm_dir=${arms_root:-/out/arms}/$arm_name
   object_list=""
   mkdir -p "$arm_dir/obj"
   printf '.text\n.globl text_pad\ntext_pad:\n.skip %d, 0x90\n' "$pad_bytes" > "$arm_dir/obj/pad.s"
@@ -65,9 +82,28 @@ build_arm() {
   compile_set "$zlib_flags $arm_flags" $zlib_sources
   compile_set "$chunk_flags $arm_flags" $chunk_sources
   compile_set "$adler_flags $arm_flags" adler32_simd.c
+  case "$arm_flags" in
+    *-DCRC32_SIMD_SSE42_PCLMUL*)
+      compile_set "$zlib_flags $arm_flags -msse4.2 -mpclmul" crc32_simd.c crc_folding.c ;;
+  esac
   clang-23 $zlib_flags -I"$arm_zlib_dir" $arm_flags -c /bench/harness.c -o "$arm_dir/obj/harness.o"
-  # pad.o first, so the skip shifts every zlib function after it.
-  clang-23 -static -fuse-ld=lld -o "$arm_dir/harness" "$arm_dir/obj/pad.o" $object_list "$arm_dir/obj/harness.o" -lm
+  # pad.o first, so the skip shifts every zlib function after it. The arm's
+  # flags reach the link for -flto and -fprofile-*.
+  clang-23 -static -fuse-ld=lld -Wno-unused-command-line-argument $arm_flags \
+    -o "$arm_dir/harness" "$arm_dir/obj/pad.o" $object_list "$arm_dir/obj/harness.o" -lm
+}
+
+# build_pgo_arm <arm> <flags> [zlib source dir]: node's ThinLTO + PGO shape.
+# The instrumented build trains on the synthetic input, as node's profile was
+# trained on node-perf-kernel.cjs, and is built outside /out/arms.
+build_pgo_arm() {
+  local arm_name=$1 arm_flags=$2 source_dir=${3:-$zlib_dir}
+  local profile_dir=/work/profiles/$arm_name
+  arms_root=/work/pgo-generate build_arm "$arm_name" 0 \
+    "$arm_flags -flto=thin -fprofile-generate=$profile_dir" clang-23 "$source_dir"
+  LLVM_PROFILE_FILE="$profile_dir/%p.profraw" /work/pgo-generate/"$arm_name"/harness 3 >/dev/null
+  /usr/lib/llvm23/bin/llvm-profdata merge -o "$profile_dir.profdata" "$profile_dir"/*.profraw
+  build_arm "$arm_name" 0 "$arm_flags -flto=thin -fprofile-use=$profile_dir.profdata" clang-23 "$source_dir"
 }
 
 no_fortify="-U_FORTIFY_SOURCE -falign-loops=16"
@@ -88,6 +124,10 @@ build_arm builtin 0 "-falign-loops=16" clang-23 /work/zlib-builtin
 # gcc: Alpine gcc 15 also predefines _FORTIFY_SOURCE=2 and keeps the overlap
 # compare, but branches on it and moves the ud2 to a .cold section.
 build_arm gcc 0 "-falign-loops=16" gcc
+build_arm crc32simd 0 "-falign-loops=16 -DCRC32_SIMD_SSE42_PCLMUL"
+build_pgo_arm pgo_off "$no_fortify"
+build_pgo_arm pgo_fortify "-falign-loops=16"
+build_pgo_arm pgo_builtin "-falign-loops=16" /work/zlib-builtin
 # headers: fortify-headers' memcpy without the overlap trap, keeping its size
 # trap, as glibc's __memcpy_chk does. Edits this container's header, so last.
 python3 - <<'PY'

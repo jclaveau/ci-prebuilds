@@ -1,6 +1,9 @@
-"""Tabulates run-arms output: median CPU-ms per arm, each against pad0.
+"""Tabulates run-arms output: median CPU-ms per arm and input, against a reference.
 
-usage: report.py <out-dir>   (reads cpu.txt, heads.txt, times/<arm>-<round>.txt)
+usage: report.py <out-dir>   (reads cpu.txt, heads.txt, times/<input>/<arm>-<round>.txt)
+
+A pgo_* arm is read against pgo_off, every other arm against pad0: both are
+fortify off, so each ratio is what the arm's change costs in its build shape.
 """
 import pathlib
 import statistics
@@ -12,32 +15,41 @@ head_rows = {}
 for row in (out_dir / 'heads.txt').read_text().splitlines():
     arm_name, _, summary = row.partition(': ')
     head_rows[arm_name] = summary
-arm_times = {}
-for time_file in sorted((out_dir / 'times').glob('*.txt')):
-    arm_name = time_file.stem.rsplit('-', 1)[0]
-    for row in time_file.read_text().split('\n'):
-        if row.strip():
-            deflate_ms, inflate_ms, packed_size = row.split()
-            arm_times.setdefault(arm_name, []).append((float(deflate_ms), float(inflate_ms), int(packed_size)))
-missing_arms = sorted(set(head_rows) - set(arm_times))
-if missing_arms:
-    sys.exit(f'no timings for arm(s): {", ".join(missing_arms)}')
-packed_sizes = {sample[2] for samples in arm_times.values() for sample in samples}
-if len(packed_sizes) != 1:
-    sys.exit(f'arms compressed to different sizes: {sorted(packed_sizes)}')
+input_dirs = sorted(path for path in (out_dir / 'times').iterdir() if path.is_dir())
+if not input_dirs:
+    sys.exit(f'no input directory under {str(out_dir / "times")!r}')
 
-reference_arm = 'pad0'
-reference_deflate = statistics.median(sample[0] for sample in arm_times[reference_arm])
-reference_inflate = statistics.median(sample[1] for sample in arm_times[reference_arm])
-print(f'### zlib loop placement, {cpu_model}\n')
-print(f'{packed_sizes.pop():,} compressed bytes in every arm. Median CPU-ms, each arm vs {reference_arm}.\n')
-print('| arm | deflate | inflate | n | deflate_slow placement |')
-print('| --- | --- | --- | --- | --- |')
-for arm_name in sorted(arm_times):
-    samples = arm_times[arm_name]
-    deflate_median = statistics.median(sample[0] for sample in samples)
-    inflate_median = statistics.median(sample[1] for sample in samples)
-    print(f'| {arm_name} '
-          f'| {deflate_median:.1f} vs {reference_deflate:.1f} ms ({deflate_median / reference_deflate:.3f}x) '
-          f'| {inflate_median:.1f} vs {reference_inflate:.1f} ms ({inflate_median / reference_inflate:.3f}x) '
-          f'| {len(samples)} | {head_rows[arm_name]} |')
+print(f'### zlib arms, {cpu_model}\n')
+for input_dir in input_dirs:
+    arm_times = {}
+    for time_file in sorted(input_dir.glob('*.txt')):
+        arm_name = time_file.stem.rsplit('-', 1)[0]
+        for row in time_file.read_text().split('\n'):
+            if row.strip():
+                deflate_ms, inflate_ms, packed_size = row.split()
+                arm_times.setdefault(arm_name, []).append((float(deflate_ms), float(inflate_ms), int(packed_size)))
+    missing_arms = sorted(set(head_rows) - set(arm_times))
+    if missing_arms:
+        sys.exit(f'{input_dir.name!r}: no timings for arm(s): {missing_arms!r}')
+    packed_sizes = {sample[2] for samples in arm_times.values() for sample in samples}
+    if len(packed_sizes) != 1:
+        sys.exit(f'{input_dir.name!r}: arms compressed to different sizes: {sorted(packed_sizes)!r}')
+
+    def medians(arm_name):
+        samples = arm_times[arm_name]
+        return (statistics.median(sample[0] for sample in samples),
+                statistics.median(sample[1] for sample in samples))
+
+    print(f'#### input {input_dir.name}\n')
+    print(f'{packed_sizes.pop():,} compressed bytes in every arm. Median CPU-ms.\n')
+    print('| arm | deflate | inflate | n | deflate_slow placement |')
+    print('| --- | --- | --- | --- | --- |')
+    for arm_name in sorted(arm_times):
+        reference_arm = 'pgo_off' if arm_name.startswith('pgo_') else 'pad0'
+        deflate_median, inflate_median = medians(arm_name)
+        reference_deflate, reference_inflate = medians(reference_arm)
+        print(f'| {arm_name} '
+              f'| {deflate_median:.1f} vs {reference_deflate:.1f} ms {reference_arm} ({deflate_median / reference_deflate:.3f}x) '
+              f'| {inflate_median:.1f} vs {reference_inflate:.1f} ms {reference_arm} ({inflate_median / reference_inflate:.3f}x) '
+              f'| {len(arm_times[arm_name])} | {head_rows[arm_name]} |')
+    print()

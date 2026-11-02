@@ -16,7 +16,9 @@ symbol_rows = subprocess.run(['nm', '-S', binary_path], capture_output=True, tex
 
 
 def function_loops(function_name):
-    function_rows = [row.split() for row in symbol_rows.splitlines() if row.endswith(' ' + function_name)]
+    # ThinLTO renames a promoted local to <name>.llvm.<hash>.
+    function_rows = [row.split() for row in symbol_rows.splitlines()
+                     if re.search(rf' {function_name}(\.llvm\.\d+)?$', row)]
     if not function_rows:
         return [], []
     # node links a second, smaller deflate_slow; the hot one is the largest.
