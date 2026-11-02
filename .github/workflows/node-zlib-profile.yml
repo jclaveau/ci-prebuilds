@@ -12,6 +12,7 @@ name: node zlib profile (Stage A vs Stage B)
 #            bench staged ours; the image's mimalloc LD_PRELOAD stays on.
 #   stage_b  alpine-dood-node:latest as published, which ships Stage B since
 #            e9994e6 (clang23 ThinLTO+PGO, mimalloc LD_PRELOAD).
+#   candidate  optional: the candidate_image input's node, staged like stage_a.
 # Replicates are separate jobs so several runner CPUs are drawn per dispatch.
 
 on:
@@ -29,6 +30,9 @@ on:
       loop_seconds:
         description: 'perf stat / perf record loop length per arm'
         default: '20'
+      candidate_image:
+        description: 'node-musl image (no -mimalloc suffix) to stage as a third arm, "candidate"; empty for none'
+        default: ''
 
 permissions:
   contents: read
@@ -57,7 +61,7 @@ jobs:
       REPS: ${{ inputs.reps }}
       ROUNDS: ${{ inputs.rounds }}
       LOOP_SECONDS: ${{ inputs.loop_seconds }}
-      ARMS: stage_a stage_b
+      CANDIDATE_IMAGE: ${{ inputs.candidate_image }}
     steps:
       - uses: actions/checkout@v7
       - uses: docker/login-action@v4
@@ -97,6 +101,15 @@ jobs:
             --build-arg NODE_SOURCE_IMAGE=tarball-src:local \
             -t zlib-arm:stage_a node/musl-build
           docker tag ghcr.io/jclaveau/alpine-dood-node:latest zlib-arm:stage_b
+          arm_list="stage_a stage_b"
+          if [ -n "$CANDIDATE_IMAGE" ]; then
+            # Staged the way node-musl's b_plain_preload arm is: the shipped config.
+            docker build -f node/musl-build/Dockerfile.bench-arm \
+              --build-arg "NODE_SOURCE_IMAGE=$CANDIDATE_IMAGE" \
+              -t zlib-arm:candidate node/musl-build
+            arm_list="$arm_list candidate"
+          fi
+          echo "ARMS=$arm_list" >> "$GITHUB_ENV"
 
       # The A/B must vary the compiler: stage_a reports gcc, stage_b clang.
       - name: Node and zlib in each arm
@@ -117,8 +130,9 @@ jobs:
               objdump -d --no-show-raw-insn /usr/local/bin/node >/tmp/node.asm
               echo "--- instruction counts, whole binary"
               # objdump spells pclmulqdq by its immediate (pclmullqlqdq, ...).
-              for insn in pclmul vpclmul "crc32[bwlq]" pshufb; do
-                echo "$insn $(grep -cE "[[:space:]]$insn[a-z]*[[:space:]]" /tmp/node.asm || true)"
+              # ud2 counts the fortify-headers traps (the candidate drops them).
+              for insn in pclmul vpclmul "crc32[bwlq]" pshufb ud2; do
+                echo "$insn $(grep -cE "[[:space:]]$insn[a-z]*([[:space:]]|\$)" /tmp/node.asm || true)"
               done
               echo "--- calls out of crc32_z and copy_with_crc"
               for sym in crc32_z Cr_z_crc32_z Cr_z_copy_with_crc; do
@@ -200,12 +214,15 @@ jobs:
               medians[arm] = {side: statistics.median(value for doc in docs for value in doc[f'{side}_reps_ms'])
                               for side in ('deflate', 'inflate')}
               medians[arm]['bytes'] = docs[0]['deflated_bytes']
-          if len(medians) == 2:
-              stage_a, stage_b = medians['stage_a'], medians['stage_b']
-              print('| side | stage_b vs stage_a CPU-ms (ratio) |\n| --- | --- |')
+          pairs = [('stage_b', 'stage_a'), ('candidate', 'stage_a'), ('candidate', 'stage_b')]
+          for subject, reference in pairs:
+              if subject not in medians or reference not in medians:
+                  continue
+              left, right = medians[subject], medians[reference]
+              print(f'| side | {subject} vs {reference} CPU-ms (ratio) |\n| --- | --- |')
               for side in ('deflate', 'inflate'):
-                  print(f'| {side} | {stage_b[side]:.1f} vs {stage_a[side]:.1f} ms ({stage_b[side] / stage_a[side]:.3f}x) |')
-              print(f'| deflated bytes | {stage_b["bytes"]} vs {stage_a["bytes"]} |\n')
+                  print(f'| {side} | {left[side]:.1f} vs {right[side]:.1f} ms ({left[side] / right[side]:.3f}x) |')
+              print(f'| deflated bytes | {left["bytes"]} vs {right["bytes"]} |\n')
           for arm in os.environ['ARMS'].split():
               path = f'out/stat-{arm}.csv'
               if os.path.exists(path):
