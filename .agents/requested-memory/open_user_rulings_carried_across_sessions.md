@@ -27,7 +27,7 @@ them entirely once the compaction chain that was carrying them ends.
     ([[project_wk_pgo_continuous_mode_value_profiling]]) before it could
     ever run again.
   - `tools/gha-contention` (`7a948eb`) — a GHA contention-check script
-    (`scripts/gha-contention.sh`), used successfully from the branch
+    (was `scripts/gha-contention.sh`; now `~/.agents/scripts/gha-contention.sh`), used successfully from the branch
     (`gh api` runs/jobs, reports running/queued per workflow) to confirm a
     WK PGO redispatch wasn't parked behind four chromium candidates. Works;
     just never merged.
@@ -81,7 +81,7 @@ mid-task.
 
 **2026-10-11, jean ruled the table ("go table"), applied:**
 - settled before the table: tmp/perf-run gone, #312 merged, #311 merged, rename shipped with #332
-- `tools/gha-contention` cherry-picked onto main (4cee30d)
+- `tools/gha-contention` cherry-picked onto main (4cee30d); the repo copy was deleted 2026-11-02 for the account-wide `~/.agents/scripts/gha-contention.sh`
 - deleted: old `tmp/.mem-auto-*` scratch (>1 day; hook live state kept), branches `perf/wk-pgo-corpus`, `perf/chr-libm-fmod-custom` (+ worktree ci-prebuilds-fprem), `perf/fmod-fprem126`, `perf/ff-gate-margins`, local and remote
 - `from_stage=playwright` dropped
 - `fix140` branch (local + remote) and all 4 stashes deleted on jean's go
