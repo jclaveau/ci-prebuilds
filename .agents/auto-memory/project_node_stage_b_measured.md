@@ -55,6 +55,11 @@ Deflate split (run 41394721024, candidate vs gcc A / vs shipped B): 9V74 0.95-0.
 0.81x (the Xeons had the gap too: B vs A 1.20-1.22x). Cost: 7763 deflate 1.05x vs B,
 gzip_20MB 1.033x and 1.053x (2 node-musl draws, geomean 1.006/1.007). ud2: 383 vs
 gcc 589 vs B 4877. Ship = jean's call (drops fortify from the whole node).
+gcc does NOT fold the overlap check either (alpine:edge repro, gcc 15.2 -O2:
+same compares around memcpy(&local, p, 4)); it emits jnb/jb branches and puts the
+ud2 in <fn>.cold, so a ud2 count over a function body reads 0. Upstream: open
+llvm#146401 + GCC PR120903 (no fix); our repro + deflate numbers commented
+2026-11-02 (issuecomment-6572881734).
 Loop placement ruled out (node-zlib-align run 41412540572, harness of node's zlib):
 0/16/32/48-byte .text shifts and -falign-loops=32 move 7763 deflate only 0.98-1.02x,
 while fortify ON vs off reads 0.97-0.99x on the 7763 (fortify faster) vs 1.21x 9V74,

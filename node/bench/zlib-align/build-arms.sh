@@ -85,8 +85,8 @@ sed -i 's/\bmemcpy(&/__builtin_memcpy(\&/' /work/zlib-builtin/compare256.h
 builtin_sites=$(grep -c '__builtin_memcpy(&' /work/zlib-builtin/contrib/optimizations/insert_string.h /work/zlib-builtin/compare256.h | awk -F: '{ total += $2 } END { print total }')
 [ "$builtin_sites" -eq 4 ] || { echo "expected 4 __builtin_memcpy sites in zlib, patched $builtin_sites" >&2; exit 1; }
 build_arm builtin 0 "-falign-loops=16" clang-23 /work/zlib-builtin
-# gcc: Alpine gcc 15 also predefines _FORTIFY_SOURCE=2, and folds the overlap
-# compare against a local away by itself.
+# gcc: Alpine gcc 15 also predefines _FORTIFY_SOURCE=2 and keeps the overlap
+# compare, but branches on it and moves the ud2 to a .cold section.
 build_arm gcc 0 "-falign-loops=16" gcc
 # headers: fortify-headers' memcpy without the overlap trap, keeping its size
 # trap, as glibc's __memcpy_chk does. Edits this container's header, so last.
