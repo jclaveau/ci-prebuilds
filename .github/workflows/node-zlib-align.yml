@@ -1,0 +1,94 @@
+name: node zlib loop placement
+
+# Is the fortify-off node's gzip_20MB loss on EPYC 7763 (deflate 76.4 vs
+# 72.7 ms, 1.051x vs the shipped Stage B, node-zlib-profile run 41394721024)
+# a loop placement effect? Its deflate_slow hot loops start 16 bytes into a
+# 32-byte block where Stage B's start on one, and Zen 3 fetches 32 bytes a
+# cycle. This builds node's bundled zlib alone with clang23, once per arm, and
+# times deflate on every runner drawn. Arms (node/bench/zlib-align/build-arms.sh):
+#   pad0 pad16 pad32 pad48  the candidate's flags, .text shifted by N bytes,
+#                           so only where the loops land varies
+#   align32                 -falign-loops=32
+#   fortify                 the shipped Stage B's _FORTIFY_SOURCE=2
+# The report prints each arm's loop offsets next to its time, read from the
+# binary, so the placement each arm got is checked, not assumed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      replicates:
+        description: 'Runners (one job each)'
+        default: '8'
+      reps:
+        description: 'deflate + inflate pairs per arm per round'
+        default: '10'
+      rounds:
+        description: 'interleaved rounds per runner'
+        default: '3'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      replicate_list: ${{ steps.list.outputs.replicate_list }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: list
+        env:
+          REPLICATES: ${{ inputs.replicates }}
+        run: echo "replicate_list=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['REPLICATES']) + 1))))")" >> "$GITHUB_OUTPUT"
+      - name: Build the arms in alpine:edge
+        run: |
+          set -euo pipefail
+          node_version=$(awk -F= '/^ARG NODE_VERSION=/ { print $2; exit }' node/Dockerfile.alpine)
+          [ -n "$node_version" ] || { echo "no ARG NODE_VERSION in node/Dockerfile.alpine" >&2; exit 1; }
+          mkdir -p out
+          docker run --rm -e NODE_VERSION="$node_version" \
+            -v "$PWD/node/bench/zlib-align:/bench:ro" -v "$PWD/out:/out" \
+            alpine:edge sh -c 'apk add --no-cache bash >/dev/null && bash /bench/build-arms.sh'
+          sudo chown -R "$(id -u):$(id -g)" out
+          cat out/heads.txt | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: zlib-align-arms
+          path: |
+            out/arms/*/harness
+            out/heads.txt
+          retention-days: 7
+
+  bench:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        replicate: ${{ fromJSON(needs.build.outputs.replicate_list) }}
+    env:
+      OUT: ${{ github.workspace }}/out
+      REPS: ${{ inputs.reps }}
+      ROUNDS: ${{ inputs.rounds }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: zlib-align-arms
+          path: ${{ github.workspace }}/out
+      - name: Time the arms
+        run: |
+          set -euo pipefail
+          chmod +x "$OUT"/arms/*/harness
+          grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ //' | tee "$OUT/cpu.txt"
+          bash node/bench/zlib-align/run-arms.sh
+      - name: Report
+        run: python3 node/bench/zlib-align/report.py "$OUT" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: zlib-align-${{ matrix.replicate }}
+          path: ${{ github.workspace }}/out
+          retention-days: 30
