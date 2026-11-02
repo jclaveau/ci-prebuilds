@@ -276,8 +276,9 @@ for arm_name in "${arm_names[@]}"; do
   docker network disconnect bridge "$container_name"
 done
 
-# A layered arm's image: its source arm's image plus the store that arm's warm
-# install filled, and for deps-layer the project installed from it at /app.
+# A layered arm's image: its source arm's image plus the store and the metadata
+# cache that arm's warm install filled (an offline install reads the cache for
+# its lockfile policy check), and for deps-layer the project installed at /app.
 build_layer_image() {
   local arm_name=$1 layer_kind layer_source context_dir
   layer_kind=$(layer_kind_of "$arm_name")
@@ -285,11 +286,14 @@ build_layer_image() {
   context_dir=$WORK/layer-$arm_name
   mkdir -p "$context_dir"
   cp "$OUT/pnpm-lock.yaml" "$context_dir/pnpm-lock.yaml"
+  rm -rf "$WORK/cache-$layer_source"
+  docker cp -q "$(container_of "$layer_source"):/home/runner/.cache/pnpm" "$WORK/cache-$layer_source"
   {
     echo "FROM ${arm_image[$layer_source]}"
     echo 'USER root'
     echo 'RUN if command -v apk >/dev/null; then apk add -q strace; else apt-get -qq update && apt-get -qq install -y strace; fi'
     echo 'COPY --from=store --chown=1001:1001 . /opt/store'
+    echo 'COPY --from=metadata --chown=1001:1001 . /home/runner/.cache/pnpm'
     if [ "$layer_kind" = deps-layer ]; then
       echo 'COPY --from=fixture --chown=1001:1001 . /app'
       echo 'COPY --chown=1001:1001 pnpm-lock.yaml /app/pnpm-lock.yaml'
@@ -300,6 +304,7 @@ build_layer_image() {
   } >"$context_dir/Dockerfile"
   docker build -q -t "$(container_image_of "$arm_name")" \
     --build-context store="$WORK/$(container_of "$layer_source")/store" \
+    --build-context metadata="$WORK/cache-$layer_source" \
     --build-context fixture="$fixture_dir" "$context_dir" >"$OUT/layer-build-$arm_name.log" 2>&1 \
     || { echo "layer image build failed for $arm_name" >&2; tail -30 "$OUT/layer-build-$arm_name.log" >&2; exit 1; }
 }
