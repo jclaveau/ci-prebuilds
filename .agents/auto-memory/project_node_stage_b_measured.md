@@ -77,3 +77,7 @@ headers (no overlap trap) 7763 1.00-1.03x, 9V74 1.00x, 6973P-C 1.08x; gcc zlib 7
 0.94x, 9V74 1.05x, 6973P-C 1.13x; fortify 7763 0.97-1.00x, 9V74 1.20x, 6973P-C 1.30x.
 gcc inflate 0.90x on all 3 CPUs (only arm moving inflate). builtin = best keep-fortify
 lever; node builds of the 3 variants: runs 41414408510/41414411079/41414413412.
+fortify-builtin node (run 41414408510, Xeon 8370C, vs Stage A / vs ubuntu): gzip_20MB
+82.7 vs 93.2 ms (0.888x) / vs 83.6 ms (0.990x), boot_e0 0.979x / 1.011x,
+require_builtins 0.982x / 1.029x, geomean 0.983x / 0.871x; no shipped-B arm in that
+bench. In #335.
