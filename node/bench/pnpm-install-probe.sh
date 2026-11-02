@@ -307,7 +307,10 @@ build_layer_image() {
       echo 'COPY --chown=1001:1001 pnpm-lock.yaml /app/pnpm-lock.yaml'
       echo 'USER 1001'
       echo 'ENV HOME=/home/runner'
-      echo 'RUN --mount=type=bind,from=store,target=/opt/store,rw cd /app && pnpm install --frozen-lockfile --offline --store-dir=/opt/store'
+      # A bind mount of a local context is root-owned, so the store is copied
+      # in as 1001 and emptied in the same RUN: node_modules keeps its
+      # hardlinked inodes, the layer keeps no store path.
+      echo 'RUN --mount=type=bind,from=store,target=/mnt/store cp -R /mnt/store/. /opt/store && cd /app && pnpm install --frozen-lockfile --offline --store-dir=/opt/store && find /opt/store -mindepth 1 -delete'
     else
       echo 'COPY --from=store --chown=1001:1001 . /opt/store'
     fi
@@ -319,7 +322,7 @@ build_layer_image() {
       echo 'RUN cd /app && pnpm install --frozen-lockfile --offline --store-dir=/opt/store'
     fi
   } >"$context_dir/Dockerfile"
-  docker build -q -t "$(container_image_of "$arm_name")" \
+  docker build --progress=plain -t "$(container_image_of "$arm_name")" \
     --build-context store="$WORK/$(container_of "$layer_source")/store" \
     --build-context metadata="$WORK/cache-$layer_source" \
     --build-context fixture="$fixture_dir" "$context_dir" >"$OUT/layer-build-$arm_name.log" 2>&1 \
