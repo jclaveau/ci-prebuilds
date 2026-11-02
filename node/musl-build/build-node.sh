@@ -60,12 +60,21 @@ case "$phase" in
     ;;
 esac
 # Alpine's clang predefines _FORTIFY_SOURCE=2, and fortify-headers' inline
-# memcpy then guards every fixed-size copy with a two-range overlap compare and
-# a ud2: in zlib's insert_string loop that cost gzip_20MB 1.07-1.25x on Zen 4/5.
-# Neither the unofficial-builds gcc node nor the nodejs.org build fortifies.
-no_fortify_flags="-U_FORTIFY_SOURCE"
-export CFLAGS="$thin_lto_flags $profile_flags $no_fortify_flags"
-export CXXFLAGS="$thin_lto_flags $profile_flags $no_fortify_flags"
+# memcpy guards every fixed-size copy with a two-range overlap compare and a
+# ud2 clang cannot fold; in zlib's insert_string loop that cost gzip_20MB
+# 1.07-1.25x on Zen 4/5. Only deps/zlib's targets drop fortify.
+python3 - <<'PY'
+import pathlib
+gyp_path = pathlib.Path('deps/zlib/zlib.gyp')
+gyp_text = gyp_path.read_text()
+target_type = "'type': 'static_library',"
+if "'-U_FORTIFY_SOURCE'" not in gyp_text:
+    if gyp_text.count(target_type) < 3:
+        raise SystemExit(f'deps/zlib/zlib.gyp: expected at least 3 static_library targets, found {gyp_text.count(target_type)}')
+    gyp_path.write_text(gyp_text.replace(target_type, target_type + " 'cflags': [ '-U_FORTIFY_SOURCE' ],"))
+PY
+export CFLAGS="$thin_lto_flags $profile_flags"
+export CXXFLAGS="$thin_lto_flags $profile_flags"
 export LDFLAGS="$link_flags"
 
 # A cold compile takes ~5.8 h on a 4-vCPU runner (run 40955771149), past what
@@ -95,6 +104,8 @@ run_make() {
 
 clang-23 --version | head -1
 ./configure --prefix=/usr/local
+grep -q -- -U_FORTIFY_SOURCE out/deps/zlib/zlib.target.mk \
+  || { echo "zlib.gyp's -U_FORTIFY_SOURCE did not reach out/deps/zlib/zlib.target.mk" >&2; exit 1; }
 run_make /tmp/build.log
 sccache --show-stats
 
