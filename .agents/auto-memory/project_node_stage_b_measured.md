@@ -87,3 +87,6 @@ Per-CPU (node-musl-bench.yml run 41467864882, builtin vs shipped gzip_20MB): 9V4
 0.856-0.876x, 8573C 0.896-0.905x, 7763 1.027-1.045x; geomean 0.989-1.008 all draws.
 9V74 (run 41470412645) 0.901-0.923x, geomean 0.989-0.997. node-musl-bench.yml = per-CPU bench of a built tag
 vs shipped (rejection-sampled slots); use it, not node-musl.yml's single draw.
+zlibonly per-CPU (run 41490523037, tag 68305fccbb40, vs shipped gzip_20MB): 9V74
+0.902-0.925x (6 draws), 9V45 0.864x, 8573C 0.876x, 7763 1.048-1.057x; geomean
+0.984-1.006. Same as builtin within noise, 7763 slightly worse.
