@@ -90,3 +90,12 @@ vs shipped (rejection-sampled slots); use it, not node-musl.yml's single draw.
 zlibonly per-CPU (run 41490523037, tag 68305fccbb40, vs shipped gzip_20MB): 9V74
 0.902-0.925x (6 draws), 9V45 0.864x, 8573C 0.876x, 7763 1.048-1.057x; geomean
 0.984-1.006. Same as builtin within noise, 7763 slightly worse.
+zlib harness + node shape + real input (node-zlib-align run 41548404659, b61bbfc;
+7763 x11, 9V74 x4, 9V45 x1, no Intel): ThinLTO+PGO pgo_fortify vs pgo_off deflate,
+synthetic 7763 0.943x / 9V74 1.150x / 9V45 1.224x, node-source 20 MB 1.023x /
+1.027x / 1.002x. The 7763 inversion needs PGO AND the synthetic input; on real text
+fortify costs 0-3% everywhere. pgo_builtin = pgo_off (0.98-1.00x). crc32 SIMD
+(CRC32_SIMD_SSE42_PCLMUL, off in node's zlib.gyp) vs fortify: inflate 0.39-0.50x
+synthetic, 0.84-0.90x node-source; deflate 0.91-0.94x synthetic, ~1.00x source;
+gzip total 7763 0.87x synthetic, 0.98x source. Wins on every model incl. 7763;
+not built into node yet. In #335.
