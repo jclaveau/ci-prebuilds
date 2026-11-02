@@ -9,8 +9,9 @@ name: 'node-musl bench per CPU model'
 # The model cannot be requested, only drawn. Each slot is one job: it reads
 # /proc/cpuinfo first and ends in ~20s on a model it does not accept. Common
 # models are accepted by the first `common_slots` slots only, so they stop
-# after that many draws; rare ones are accepted by every slot. With 30 slots a
-# 7%-of-fleet model has a draw in ~89% of dispatches.
+# after that many draws; the others are accepted by every slot. With 30 slots a
+# 7%-of-fleet model has a draw in ~89% of dispatches. Only the 7763 (54%) is
+# common: 2 slots gave the 9V74 (20%) a draw in ~36% of dispatches.
 
 on:
   workflow_dispatch:
@@ -29,7 +30,7 @@ on:
         type: string
       common_cpus:
         description: 'CPU-model substrings accepted by the first `common_slots` slots only'
-        default: '7763,9V74'
+        default: '7763'
         type: string
       common_slots:
         description: 'How many slots accept `common_cpus`'
@@ -37,7 +38,7 @@ on:
         type: string
       rare_cpus:
         description: 'CPU-model substrings accepted by every slot'
-        default: '9V45,8573C'
+        default: '9V74,9V45,8573C'
         type: string
       runs:
         description: 'Interleaved shots per arm'
