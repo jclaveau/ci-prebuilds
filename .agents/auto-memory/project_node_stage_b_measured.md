@@ -1,6 +1,6 @@
 ---
 name: project_node_stage_b_measured
-description: #351 Stage B SHIPPED e9994e6 (2026-10-31) in node/Dockerfile.alpine; clang23 ThinLTO+PGO node geomean 0.880x vs ubuntu on EPYC 7763, 0.898x on 9V74 (gzip_20MB 1.07x vs Stage A there); build gotchas — 6 h job limit, local mi_malloc, libatomic at run time
+description: #351 Stage B SHIPPED e9994e6; gzip gap = fortify, -U_FORTIFY_SOURCE candidate 5a2173715ae3 closes it on 9V74/9V45/Xeon (7763 1.05x worse), unshipped (2026-10-31) in node/Dockerfile.alpine; clang23 ThinLTO+PGO node geomean 0.880x vs ubuntu on EPYC 7763, 0.898x on 9V74 (gzip_20MB 1.07x vs Stage A there); build gotchas — 6 h job limit, local mi_malloc, libatomic at run time
 metadata:
   type: project
 ---
@@ -49,7 +49,12 @@ overlap compare + ud2 (4877 ud2 vs gcc node's 589). Ruled out: crc32 SIMD
 build-node.sh (7763022), cold build run 41354850829; NOT repinned (jean's call).
 Fortify-off build node-musl:v24.22.1-5a2173715ae3 vs shipped Stage B, EPYC 7763
 (run 41354850829): gzip_20MB 103.8 vs 100.5 ms (1.033x, noise), geomean 1.006x
-(1.003x without gzip), no row over ceiling. 9V74/9V45 verdict still pending.
+(1.003x without gzip), no row over ceiling.
+Deflate split (run 41394721024, candidate vs gcc A / vs shipped B): 9V74 0.95-0.96x /
+0.87x, 9V45 0.99-1.00x / 0.79-0.81x, Xeon 8573C 1.02x / 0.85x, Xeon 6975P-C 0.99x /
+0.81x (the Xeons had the gap too: B vs A 1.20-1.22x). Cost: 7763 deflate 1.05x vs B,
+gzip_20MB 1.033x and 1.053x (2 node-musl draws, geomean 1.006/1.007). ud2: 383 vs
+gcc 589 vs B 4877. Ship = jean's call (drops fortify from the whole node).
 Hosted runners here had no PMU: profile with `perf record -e cpu-clock`;
 `perf report` needs `--no-inline -g none -f` or prints nothing (addr2line).
 Same lesson as chromium: [[project_chromium_nav_gap_is_musl_fortify_overlap_check]].
