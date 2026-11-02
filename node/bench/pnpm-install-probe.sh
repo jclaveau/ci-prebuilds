@@ -14,6 +14,10 @@
 #   store-layer:<arm>  store at /opt/store in the image, project on /w.
 #   deps-layer:<arm>   store at /opt/store plus the project installed at /app
 #                      in the image, so the counted install finds node_modules.
+#   modules-layer:<arm> the project installed at /app with the store mounted
+#                      only at build time: node_modules ships, the store does
+#                      not (/opt/store is empty). If its warm install fails,
+#                      the arm is dropped and host.txt says so.
 # A layered arm gets a fresh container (no network) before every install, so
 # no install starts from an overlay that an earlier one already copied up.
 #
@@ -71,10 +75,12 @@ layer_kind_of() {
   case "${arm_image[$1]}" in
     store-layer:*) echo store-layer ;;
     deps-layer:*) echo deps-layer ;;
+    modules-layer:*) echo modules-layer ;;
     *) echo none ;;
   esac
 }
 is_layered_arm() { [ "$(layer_kind_of "$1")" != none ]; }
+has_image_project() { case "$(layer_kind_of "$1")" in deps-layer|modules-layer) return 0 ;; *) return 1 ;; esac; }
 layer_source_of() { echo "${arm_image[$1]#*:}"; }
 
 for arm_name in "${arm_names[@]}"; do
@@ -169,7 +175,7 @@ container_image_of() {
   if is_layered_arm "$1"; then echo "pnpm-probe-$1:local"; else echo "${arm_image[$1]}"; fi
 }
 project_dir_of() {
-  if [ "$(layer_kind_of "$1")" = deps-layer ]; then echo /app; else echo /w/fx; fi
+  if has_image_project "$1"; then echo /app; else echo /w/fx; fi
 }
 store_dir_of() {
   if is_layered_arm "$1"; then echo /opt/store; else echo /w/store; fi
@@ -239,10 +245,11 @@ remove_node_modules() {
 
 # Puts an arm back in the state its next counted install starts from: no
 # node_modules on /w, and for a layered arm a fresh container, so the image's
-# overlay is untouched (a deps-layer arm keeps the node_modules of its image).
+# overlay is untouched (an arm with its project in the image keeps the
+# node_modules of its image).
 reset_arm() {
   local arm_name=$1
-  if [ "$(layer_kind_of "$arm_name")" != deps-layer ]; then remove_node_modules "$arm_name"; fi
+  if ! has_image_project "$arm_name"; then remove_node_modules "$arm_name"; fi
   if is_layered_arm "$arm_name"; then
     docker rm -f "$(container_of "$arm_name")" >/dev/null
     start_container "$arm_name"
@@ -279,6 +286,7 @@ done
 # A layered arm's image: its source arm's image plus the store and the metadata
 # cache that arm's warm install filled (an offline install reads the cache for
 # its lockfile policy check), and for deps-layer the project installed at /app.
+# modules-layer installs /app from the store mounted for that one RUN only.
 build_layer_image() {
   local arm_name=$1 layer_kind layer_source context_dir
   layer_kind=$(layer_kind_of "$arm_name")
@@ -292,8 +300,17 @@ build_layer_image() {
     echo "FROM ${arm_image[$layer_source]}"
     echo 'USER root'
     echo 'RUN if command -v apk >/dev/null; then apk add -q strace; else apt-get -qq update && apt-get -qq install -y strace; fi'
-    echo 'COPY --from=store --chown=1001:1001 . /opt/store'
     echo 'COPY --from=metadata --chown=1001:1001 . /home/runner/.cache/pnpm'
+    if [ "$layer_kind" = modules-layer ]; then
+      echo 'RUN mkdir -p /opt/store && chown 1001:1001 /opt/store'
+      echo 'COPY --from=fixture --chown=1001:1001 . /app'
+      echo 'COPY --chown=1001:1001 pnpm-lock.yaml /app/pnpm-lock.yaml'
+      echo 'USER 1001'
+      echo 'ENV HOME=/home/runner'
+      echo 'RUN --mount=type=bind,from=store,target=/opt/store,rw cd /app && pnpm install --frozen-lockfile --offline --store-dir=/opt/store'
+    else
+      echo 'COPY --from=store --chown=1001:1001 . /opt/store'
+    fi
     if [ "$layer_kind" = deps-layer ]; then
       echo 'COPY --from=fixture --chown=1001:1001 . /app'
       echo 'COPY --chown=1001:1001 pnpm-lock.yaml /app/pnpm-lock.yaml'
@@ -309,6 +326,7 @@ build_layer_image() {
     || { echo "layer image build failed for $arm_name" >&2; tail -30 "$OUT/layer-build-$arm_name.log" >&2; exit 1; }
 }
 
+dropped_arms=()
 for arm_name in "${arm_names[@]}"; do
   is_layered_arm "$arm_name" || continue
   build_layer_image "$arm_name"
@@ -323,12 +341,28 @@ for arm_name in "${arm_names[@]}"; do
   docker cp -q "$OUT/pnpm-lock.yaml" "$container_name:/w/fx/pnpm-lock.yaml"
   docker exec -u root "$container_name" chown 1001:1001 /w/fx/pnpm-lock.yaml
   # One uncounted offline install proves the layout installs before any count.
-  run_install "$arm_name" "$OUT/warm-$arm_name.log" \
-    || { echo "warm install failed for $arm_name" >&2; tail -30 "$OUT/warm-$arm_name.log"; exit 1; }
+  if ! run_install "$arm_name" "$OUT/warm-$arm_name.log"; then
+    tail -30 "$OUT/warm-$arm_name.log"
+    [ "$(layer_kind_of "$arm_name")" = modules-layer ] || { echo "warm install failed for $arm_name" >&2; exit 1; }
+    # Whether an install runs without the store is what this arm asks.
+    echo "::warning::$arm_name dropped: offline install fails without the store"
+    echo "dropped $arm_name: warm install failed, see warm-$arm_name.log" | tee -a "$OUT/host.txt"
+    docker rm -f "$container_name" >/dev/null
+    dropped_arms+=("$arm_name")
+    continue
+  fi
   file_count=$(docker exec "$container_name" sh -c \
     "find $(project_dir_of "$arm_name") -path '*/node_modules/*' -type f | wc -l")
   echo "warm $arm_name node_modules_files=$file_count" | tee -a "$OUT/host.txt"
 done
+
+if [ "${#dropped_arms[@]}" -gt 0 ]; then
+  kept_arms=()
+  for arm_name in "${arm_names[@]}"; do
+    [[ " ${dropped_arms[*]} " == *" $arm_name "* ]] || kept_arms+=("$arm_name")
+  done
+  arm_names=("${kept_arms[@]}")
+fi
 
 read_counters() {
   docker exec "$(container_of "$1")" sh -c 'cat /sys/fs/cgroup/cpu.stat /sys/fs/cgroup/memory.stat' \

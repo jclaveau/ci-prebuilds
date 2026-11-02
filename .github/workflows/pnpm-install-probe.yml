@@ -33,8 +33,9 @@ name: pnpm install CPU probe
 # mode store_layer asks whether a CI image can ship the pnpm store: the store
 # on a bind mount beside the project (hardlinks, today's layout), the same
 # store in a lower image layer (a link across the bind mount cannot be made),
-# and node_modules installed into the image at /app, each with and without
-# pnpm_config_verify_store_integrity=false.
+# node_modules installed into the image at /app beside the store, and
+# node_modules alone (store mounted at build time only), each with and
+# without pnpm_config_verify_store_integrity=false.
 
 on:
   workflow_dispatch:
@@ -209,7 +210,8 @@ jobs:
             skip_verify=pnpm_config_verify_store_integrity=false
             arm_list="bind=$alpine_image|image bind_noverify=$alpine_image|image|$skip_verify"
             arm_list="$arm_list store_layer=store-layer:bind|image store_layer_noverify=store-layer:bind|image|$skip_verify"
-            arm_list="$arm_list deps_layer=deps-layer:bind|image"
+            arm_list="$arm_list deps_layer=deps-layer:bind|image deps_layer_noverify=deps-layer:bind|image|$skip_verify"
+            arm_list="$arm_list modules_layer=modules-layer:bind|image modules_layer_noverify=modules-layer:bind|image|$skip_verify"
             echo "ARMS=$arm_list" >> "$GITHUB_ENV"
           fi
           if [ "${{ inputs.mode }}" = versions ]; then
