@@ -1,0 +1,212 @@
+name: 'node-musl bench per CPU model'
+
+# Measures an already-built node-musl tag against the node the image ships,
+# once per wanted CPU model. node-musl.yml benches on whatever single runner it
+# draws; the gap this campaign chases (fortify's memcpy check in zlib) is
+# CPU-dependent, so a candidate is only judged once every common model has a
+# draw.
+#
+# The model cannot be requested, only drawn. Each slot is one job: it reads
+# /proc/cpuinfo first and ends in ~20s on a model it does not accept. Common
+# models are accepted by the first `common_slots` slots only, so they stop
+# after that many draws; rare ones are accepted by every slot. With 30 slots a
+# 7%-of-fleet model has a draw in ~89% of dispatches.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'ghcr.io/jclaveau/node-musl tag under test (the recipe tag, e.g. v24.22.1-93ec8c2ea7cc)'
+        required: true
+        type: string
+      label:
+        description: 'Free-text note for the summary (e.g. "fortify-builtin")'
+        default: ''
+        type: string
+      replicates:
+        description: 'Slots, i.e. independent runner draws'
+        default: '30'
+        type: string
+      common_cpus:
+        description: 'CPU-model substrings accepted by the first `common_slots` slots only'
+        default: '7763,9V74'
+        type: string
+      common_slots:
+        description: 'How many slots accept `common_cpus`'
+        default: '2'
+        type: string
+      rare_cpus:
+        description: 'CPU-model substrings accepted by every slot'
+        default: '9V45,8573C'
+        type: string
+      runs:
+        description: 'Interleaved shots per arm'
+        default: '10'
+        type: string
+
+concurrency:
+  group: node-musl-bench-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  slots:
+    runs-on: ubuntu-latest
+    outputs:
+      slots: ${{ steps.split.outputs.slots }}
+    steps:
+      - id: split
+        env:
+          REPLICATES: ${{ inputs.replicates }}
+          COMMON_CPUS: ${{ inputs.common_cpus }}
+          COMMON_SLOTS: ${{ inputs.common_slots }}
+          RARE_CPUS: ${{ inputs.rare_cpus }}
+        run: |
+          set -euo pipefail
+          slots=$(jq -nc --argjson n "$REPLICATES" --argjson common_count "$COMMON_SLOTS" \
+            --arg common "$COMMON_CPUS" --arg rare "$RARE_CPUS" \
+            '[range(1; $n + 1) | {i: ., want: (if . <= $common_count
+               then [$common, $rare] | map(select(length > 0)) | join(",")
+               else $rare end)}]')
+          echo "slots=$slots" >> "$GITHUB_OUTPUT"
+          echo "slots: $slots"
+
+  bench:
+    name: bench-${{ matrix.slot.i }}
+    needs: slots
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: ${{ fromJSON(needs.slots.outputs.slots) }}
+    env:
+      IMAGE: ghcr.io/jclaveau/node-musl
+      TAG: ${{ inputs.tag }}
+      RUNS: ${{ inputs.runs }}
+      SHIPPED_IMAGE: ghcr.io/jclaveau/alpine-dood-node:latest
+      UBUNTU_IMAGE: ghcr.io/jclaveau/ubuntu-dood-node:latest
+      ARMS: shipped candidate ubuntu official
+    steps:
+      # First step on purpose: an unwanted draw is only cheap if it ends before
+      # the checkout and the image pulls.
+      - id: cpu
+        env:
+          WANT: ${{ matrix.slot.want }}
+        run: |
+          set -euo pipefail
+          model=$(awk -F': ' '/^model name/ { print $2; exit }' /proc/cpuinfo)
+          echo "runner CPU: $model"
+          keep=true
+          if [ -n "$WANT" ]; then
+            keep=false
+            for want in $(tr ',' ' ' <<< "$WANT"); do
+              case "${model,,}" in *"${want,,}"*) keep=true ;; esac
+            done
+            [ "$keep" = true ] \
+              || echo "::notice::skipping this draw — $model matches none of $WANT"
+          fi
+          echo "keep=$keep" >> "$GITHUB_OUTPUT"
+
+      - if: steps.cpu.outputs.keep == 'true'
+        uses: actions/checkout@v7
+      - if: steps.cpu.outputs.keep == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The candidate is the shipped image with its node swapped for the tag's,
+      # so it keeps the image's mimalloc-insecure preload exactly as shipped.
+      - name: Stage the candidate as the consumer would ship it
+        if: steps.cpu.outputs.keep == 'true'
+        run: |
+          set -euo pipefail
+          docker pull "$SHIPPED_IMAGE"
+          docker pull "$UBUNTU_IMAGE"
+          docker build -f node/musl-build/Dockerfile.bench-arm \
+            --build-arg "STAGE_A_IMAGE=$SHIPPED_IMAGE" \
+            --build-arg "NODE_SOURCE_IMAGE=$IMAGE:$TAG" \
+            -t bench-arm:candidate node/musl-build
+          node_version=$(docker run --rm --entrypoint node bench-arm:candidate -p process.versions.node)
+          echo "OFFICIAL_IMAGE=node:${node_version}-bookworm-slim" >> "$GITHUB_ENV"
+
+      - name: Node in every arm
+        if: steps.cpu.outputs.keep == 'true'
+        run: |
+          set -euo pipefail
+          for image in "$SHIPPED_IMAGE" bench-arm:candidate "$UBUNTU_IMAGE" "$OFFICIAL_IMAGE"; do
+            echo "$image: $(docker run --rm --entrypoint node "$image" -p \
+              'process.version + " cc=" + (process.config.variables.clang ? "clang" : "gcc")')"
+          done
+
+      - name: Probe every arm, interleaved
+        if: steps.cpu.outputs.keep == 'true'
+        run: |
+          set -o pipefail
+          mkdir -p perf-out && chmod 777 perf-out   # the container writes as its own uid
+          grep -m1 'model name' /proc/cpuinfo | tee perf-out/cpu.txt
+          rc=0
+          for i in $(seq 1 "$RUNS"); do
+            for arm in $ARMS; do
+              home=/home/runner
+              case "$arm" in
+                shipped)   image=$SHIPPED_IMAGE ;;
+                candidate) image=bench-arm:candidate ;;
+                ubuntu)    image=$UBUNTU_IMAGE ;;
+                official)  image=$OFFICIAL_IMAGE; home=/root ;;
+              esac
+              echo "::group::run $i/$RUNS — $arm ($image)"
+              docker run --rm --entrypoint node --env "HOME=$home" \
+                -v "$PWD/node/bench:/bench:ro" \
+                -v "$PWD/perf-out:/out" \
+                "$image" /bench/node-perf-kernel.cjs --target "$arm" --run "$i" --out /out \
+                2>&1 | tee "perf-out/kernel-${arm}-${i}.log" || rc=1
+              echo "::endgroup::"
+            done
+          done
+          exit "$rc"
+
+      - uses: actions/upload-artifact@v7
+        if: always() && steps.cpu.outputs.keep == 'true'
+        with:
+          name: node-musl-bench-${{ matrix.slot.i }}
+          path: perf-out/
+          if-no-files-found: warn
+          retention-days: 90
+
+  summary:
+    needs: bench
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: node-musl-bench-*
+          path: draws
+      - name: Per-CPU tables
+        env:
+          TAG: ${{ inputs.tag }}
+          LABEL: ${{ inputs.label }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## node-musl:$TAG ${LABEL:+($LABEL) }vs shipped, per CPU model"
+            echo
+            if [ ! -d draws ]; then
+              echo "No slot drew a wanted CPU model."
+              exit 0
+            fi
+            for draw in $(ls -d draws/*/ | sort -t- -k4 -n); do
+              echo "#### $(basename "$draw"): $(cut -d: -f2- "$draw/cpu.txt")"
+              echo
+              python3 node/bench/node-arms-table.py "$draw" \
+                --candidate candidate --reference shipped --reference ubuntu --reference official
+              echo
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
