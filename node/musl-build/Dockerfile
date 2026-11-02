@@ -4,6 +4,9 @@
 # Build context is node/ (the PGO training reruns bench/node-perf-kernel.cjs).
 #
 #   pgo-profile    instrumented build, trained, merged: /pgo/node-<sha>.profdata
+#   pgo-generate-status, pgo-use-status
+#                  /make-status: "done", or "unfinished" when make ran out of
+#                  its budget and the stage's image is the next round's start
 #   node-plain     the profile-guided build, musl's malloc: /node = a /usr/local tree
 #   node-mimalloc  the same objects linked with mimalloc-insecure statically
 #
@@ -16,6 +19,11 @@ ARG NODE_VERSION=24.22.1
 # so CI can run the instrumented build and the final one as separate jobs. Unset
 # = trained inline, in the same build.
 ARG PGO_PROFILE_IMAGE
+# A previous round's pgo-generate / pgo-use image, pushed by CI when make ran
+# out of its budget (build-node.sh, MAKE_RESUMABLE): the round continues in its
+# out/ instead of starting over. Unset = a fresh build.
+ARG GENERATE_RESUME_IMAGE
+ARG USE_RESUME_IMAGE
 
 # Alpine edge, as the browsers: clang23 and its compiler-rt (the profile
 # runtime) exist only there, 3.24 stops at clang22. The edge-built node runs on
@@ -48,11 +56,16 @@ RUN set -eu \
 COPY musl-build/build-node.sh /work/
 
 # ---- PGO: instrument, train, merge ------------------------------------------
-FROM toolchain AS pgo-generate
+FROM ${GENERATE_RESUME_IMAGE:-toolchain} AS pgo-generate
+ARG MAKE_BUDGET
+ARG MAKE_RESUMABLE
 RUN --mount=type=cache,target=/root/.cache/sccache,id=node-musl-sccache,sharing=locked \
     --mount=type=secret,id=actions_runtime_token \
     --mount=type=secret,id=actions_results_url \
     bash /work/build-node.sh generate /opt/node-gen
+
+FROM scratch AS pgo-generate-status
+COPY --from=pgo-generate /work/make-status /
 
 FROM toolchain AS pgo-train
 COPY --from=pgo-generate /opt/node-gen/usr/local /usr/local
@@ -66,12 +79,17 @@ COPY --from=pgo-train /pgo /pgo
 FROM ${PGO_PROFILE_IMAGE:-pgo-profile} AS pgo-profile-in
 
 # ---- the profile-guided build -----------------------------------------------
-FROM toolchain AS pgo-use
+FROM ${USE_RESUME_IMAGE:-toolchain} AS pgo-use
 COPY --from=pgo-profile-in /pgo /pgo
+ARG MAKE_BUDGET
+ARG MAKE_RESUMABLE
 RUN --mount=type=cache,target=/root/.cache/sccache,id=node-musl-sccache,sharing=locked \
     --mount=type=secret,id=actions_runtime_token \
     --mount=type=secret,id=actions_results_url \
     bash /work/build-node.sh use /opt/node-plain /opt/node-mimalloc
+
+FROM scratch AS pgo-use-status
+COPY --from=pgo-use /work/make-status /
 
 FROM scratch AS node-plain
 COPY --from=pgo-use /opt/node-plain/usr/local /node

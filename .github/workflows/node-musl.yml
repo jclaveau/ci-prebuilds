@@ -5,6 +5,11 @@ name: 'node-musl (Stage B of #351)'
 # alpine-dood-node (Stage A: unofficial-builds + LD_PRELOAD mimalloc) and the
 # ubuntu image, interleaved on one runner. The tag is a hash of the recipe, so
 # an unchanged recipe skips straight to the bench.
+#
+# A cold compile outlasts one job. When make runs out of its budget, the job
+# pushes the build stage, out/ included, as $IMAGE:wip-<stage>-<tag> and the
+# next-round job dispatches this workflow again, which resumes from that image.
+# GHCR keeps every compiled object, whatever happened to the sccache writes.
 
 on:
   push:
@@ -20,9 +25,12 @@ on:
         description: 'interleaved shots per arm'
         default: '10'
       force_build:
-        description: 'rebuild even when the recipe tag exists'
+        description: 'rebuild even when the recipe tag exists (round 1 ignores any resume image)'
         type: boolean
         default: false
+      round:
+        description: 'set by the next-round job: which resume round this run is'
+        default: '1'
 
 concurrency:
   group: node-musl-${{ github.ref }}
@@ -34,6 +42,12 @@ permissions:
 
 env:
   IMAGE: ghcr.io/jclaveau/node-musl
+  ROUND: ${{ inputs.round || '1' }}
+  # Rounds after the first resume a pushed image; a recipe that needs more is
+  # not converging (a compile that never finishes), so the chain stops there.
+  MAX_ROUNDS: '4'
+  # Leaves room in the 350-minute job for the toolchain and the resume push.
+  MAKE_BUDGET: 300m
 
 jobs:
   recipe:
@@ -82,6 +96,11 @@ jobs:
     if: needs.recipe.outputs.need_profile == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    outputs:
+      make_status: ${{ steps.status.outputs.make_status }}
+    env:
+      TAG: ${{ needs.recipe.outputs.tag }}
+      FORCE: ${{ inputs.force_build || false }}
     steps:
       - uses: actions/checkout@v7
       - name: Free up runner disk
@@ -101,16 +120,57 @@ jobs:
           script: |
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
-      - name: Instrumented build, train, merge
+      - name: Resume point
+        run: bash node/musl-build/resume-point.sh generate
+      # Every build of the job passes the same build-args, so the later ones
+      # find the instrumented build in the builder's cache and do not rerun it.
+      - name: Instrumented build
+        uses: docker/build-push-action@v7
+        with:
+          context: node
+          file: node/musl-build/Dockerfile
+          target: pgo-generate-status
+          outputs: type=local,dest=make-status
+          build-args: |
+            NODE_VERSION=${{ needs.recipe.outputs.node_version }}
+            GENERATE_RESUME_IMAGE=${{ env.RESUME_IMAGE }}
+            MAKE_BUDGET=${{ env.MAKE_BUDGET }}
+            MAKE_RESUMABLE=1
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+      - id: status
+        run: bash node/musl-build/read-make-status.sh make-status/make-status
+      - name: Push the resume point
+        if: steps.status.outputs.make_status == 'unfinished'
+        uses: docker/build-push-action@v7
+        with:
+          context: node
+          file: node/musl-build/Dockerfile
+          target: pgo-generate
+          outputs: type=registry,name=${{ env.IMAGE }}:wip-generate-${{ env.TAG }},compression=zstd,compression-level=3
+          build-args: |
+            NODE_VERSION=${{ needs.recipe.outputs.node_version }}
+            GENERATE_RESUME_IMAGE=${{ env.RESUME_IMAGE }}
+            MAKE_BUDGET=${{ env.MAKE_BUDGET }}
+            MAKE_RESUMABLE=1
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+      - name: Train, merge
+        if: steps.status.outputs.make_status == 'done'
         uses: docker/build-push-action@v7
         with:
           context: node
           file: node/musl-build/Dockerfile
           target: pgo-profile
           push: true
-          tags: ${{ env.IMAGE }}:pgo-${{ needs.recipe.outputs.tag }}
+          tags: ${{ env.IMAGE }}:pgo-${{ env.TAG }}
           build-args: |
             NODE_VERSION=${{ needs.recipe.outputs.node_version }}
+            GENERATE_RESUME_IMAGE=${{ env.RESUME_IMAGE }}
+            MAKE_BUDGET=${{ env.MAKE_BUDGET }}
+            MAKE_RESUMABLE=1
           secrets: |
             actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
             actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
@@ -119,9 +179,15 @@ jobs:
     needs: [recipe, build-profile]
     if: >-
       !cancelled() && needs.recipe.outputs.need_node == 'true'
-      && (needs.build-profile.result == 'success' || needs.build-profile.result == 'skipped')
+      && (needs.build-profile.result == 'skipped'
+          || (needs.build-profile.result == 'success' && needs.build-profile.outputs.make_status == 'done'))
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    outputs:
+      make_status: ${{ steps.status.outputs.make_status }}
+    env:
+      TAG: ${{ needs.recipe.outputs.tag }}
+      FORCE: ${{ inputs.force_build || false }}
     steps:
       - uses: actions/checkout@v7
       - name: Free up runner disk
@@ -141,42 +207,112 @@ jobs:
           script: |
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
-      # Both targets come out of the one pgo-use stage; the second build-push
-      # finds it in the builder's cache and only exports.
-      - name: Profile-guided build, musl malloc
+      - name: Resume point
+        run: bash node/musl-build/resume-point.sh use
+      # Every build below comes out of the one pgo-use stage with the same
+      # build-args; the later ones find it in the builder's cache and only export.
+      - name: Profile-guided build
+        uses: docker/build-push-action@v7
+        with:
+          context: node
+          file: node/musl-build/Dockerfile
+          target: pgo-use-status
+          outputs: type=local,dest=make-status
+          build-args: |
+            NODE_VERSION=${{ needs.recipe.outputs.node_version }}
+            PGO_PROFILE_IMAGE=${{ env.IMAGE }}:pgo-${{ env.TAG }}
+            USE_RESUME_IMAGE=${{ env.RESUME_IMAGE }}
+            MAKE_BUDGET=${{ env.MAKE_BUDGET }}
+            MAKE_RESUMABLE=1
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+      - id: status
+        run: bash node/musl-build/read-make-status.sh make-status/make-status
+      - name: Push the resume point
+        if: steps.status.outputs.make_status == 'unfinished'
+        uses: docker/build-push-action@v7
+        with:
+          context: node
+          file: node/musl-build/Dockerfile
+          target: pgo-use
+          outputs: type=registry,name=${{ env.IMAGE }}:wip-use-${{ env.TAG }},compression=zstd,compression-level=3
+          build-args: |
+            NODE_VERSION=${{ needs.recipe.outputs.node_version }}
+            PGO_PROFILE_IMAGE=${{ env.IMAGE }}:pgo-${{ env.TAG }}
+            USE_RESUME_IMAGE=${{ env.RESUME_IMAGE }}
+            MAKE_BUDGET=${{ env.MAKE_BUDGET }}
+            MAKE_RESUMABLE=1
+          secrets: |
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+      - name: Push node, musl malloc
+        if: steps.status.outputs.make_status == 'done'
         uses: docker/build-push-action@v7
         with:
           context: node
           file: node/musl-build/Dockerfile
           target: node-plain
           push: true
-          tags: ${{ env.IMAGE }}:${{ needs.recipe.outputs.tag }}
+          tags: ${{ env.IMAGE }}:${{ env.TAG }}
           build-args: |
             NODE_VERSION=${{ needs.recipe.outputs.node_version }}
-            PGO_PROFILE_IMAGE=${{ env.IMAGE }}:pgo-${{ needs.recipe.outputs.tag }}
+            PGO_PROFILE_IMAGE=${{ env.IMAGE }}:pgo-${{ env.TAG }}
+            USE_RESUME_IMAGE=${{ env.RESUME_IMAGE }}
+            MAKE_BUDGET=${{ env.MAKE_BUDGET }}
+            MAKE_RESUMABLE=1
           secrets: |
             actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
             actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
-      - name: Same objects, mimalloc-insecure linked in
+      - name: Push node, mimalloc-insecure linked in
+        if: steps.status.outputs.make_status == 'done'
         uses: docker/build-push-action@v7
         with:
           context: node
           file: node/musl-build/Dockerfile
           target: node-mimalloc
           push: true
-          tags: ${{ env.IMAGE }}:${{ needs.recipe.outputs.tag }}-mimalloc
+          tags: ${{ env.IMAGE }}:${{ env.TAG }}-mimalloc
           build-args: |
             NODE_VERSION=${{ needs.recipe.outputs.node_version }}
-            PGO_PROFILE_IMAGE=${{ env.IMAGE }}:pgo-${{ needs.recipe.outputs.tag }}
+            PGO_PROFILE_IMAGE=${{ env.IMAGE }}:pgo-${{ env.TAG }}
+            USE_RESUME_IMAGE=${{ env.RESUME_IMAGE }}
+            MAKE_BUDGET=${{ env.MAKE_BUDGET }}
+            MAKE_RESUMABLE=1
           secrets: |
             actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
             actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
+
+  # Dispatches this workflow again on the same ref; its recipe job finds no
+  # finished image, and the build job resumes from the wip image just pushed.
+  next-round:
+    needs: [recipe, build-profile, build-node]
+    if: >-
+      !cancelled() && (needs.build-profile.outputs.make_status == 'unfinished'
+                       || needs.build-node.outputs.make_status == 'unfinished')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RUNS: ${{ inputs.runs || '10' }}
+        run: |
+          set -euo pipefail
+          next_round=$((ROUND + 1))
+          if [ "$next_round" -gt "$MAX_ROUNDS" ]; then
+            echo "::error::make is still unfinished after round $ROUND of $MAX_ROUNDS: not dispatching round $next_round"
+            exit 1
+          fi
+          gh workflow run node-musl.yml -R "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+            -f round="$next_round" -f runs="$RUNS"
+          echo "::notice::dispatched round $next_round of node-musl.yml on $GITHUB_REF_NAME"
 
   bench:
     needs: [recipe, build-node]
     if: >-
       !cancelled() && needs.recipe.result == 'success'
-      && (needs.build-node.result == 'success'
+      && ((needs.build-node.result == 'success' && needs.build-node.outputs.make_status == 'done')
           || (needs.build-node.result == 'skipped' && needs.recipe.outputs.need_node == 'false'))
     runs-on: ubuntu-latest
     timeout-minutes: 120

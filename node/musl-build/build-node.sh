@@ -69,20 +69,59 @@ export CXXFLAGS="$thin_lto_flags $profile_flags $no_fortify_flags"
 export LDFLAGS="$link_flags"
 
 # A cold compile takes ~5.8 h on a 4-vCPU runner (run 40955771149), past what
-# the job has left once the toolchain is up. make stops at MAKE_BUDGET with the
-# sccache stats printed, so the run fails saying so and its rerun compiles
-# from cache instead of being cancelled silently by the job timeout.
+# the job has left once the toolchain is up. make stops at MAKE_BUDGET. With
+# MAKE_RESUMABLE set (CI), the run then ends cleanly with "unfinished" in
+# /work/make-status, CI pushes this layer, out/ included, as a resume image,
+# and the next round builds from it, so make only compiles what is missing.
+# Without it, the run fails and its rerun compiles from sccache.
 make_budget=${MAKE_BUDGET:-310m}
+make_status_file=/work/make-status
+
+# A budget overrun leaves compilers running after make dies, and an object
+# written as the container stops would be truncated yet newer than its source.
+# Stop the whole process group, then drop every object written near the stop.
+stop_make_group() {
+  local make_group=$1
+  local recent_marker=/tmp/make-stopped-marker
+  python3 -c 'import os, sys, time
+stamp = time.time() - 300
+open(sys.argv[1], "w").close()
+os.utime(sys.argv[1], (stamp, stamp))' "$recent_marker"
+  kill -TERM -- "-$make_group" 2>/dev/null || echo "make's process group had already exited"
+  local waited_seconds=0
+  while kill -0 -- "-$make_group" 2>/dev/null; do
+    if [ "$waited_seconds" -ge 120 ]; then
+      echo "make's process group was still running 120 s after SIGTERM" >&2
+      exit 1
+    fi
+    sleep 1
+    waited_seconds=$((waited_seconds + 1))
+  done
+  sccache --stop-server || echo "the sccache server was already gone (it ran in make's group)"
+  local dropped_count
+  dropped_count=$(find out \( -name '*.o' -o -name '*.a' \) -type f -newer "$recent_marker" -print -delete | wc -l)
+  echo "dropped $dropped_count objects written in the last 5 min before the stop, the next round rebuilds them"
+}
 
 # make's output is a log, not a progress bar: only the links reach the job log.
 run_make() {
   local log_file=$1
   shift
   local make_status=0
-  timeout "$make_budget" make -j"$(nproc)" "$@" >"$log_file" 2>&1 || make_status=$?
+  # setsid: make leads its own process group, so stop_make_group reaches the
+  # compilers it leaves behind (busybox timeout signals make alone).
+  timeout "$make_budget" setsid make -j"$(nproc)" "$@" >"$log_file" 2>&1 &
+  local make_pid=$!
+  wait "$make_pid" || make_status=$?
   # busybox timeout exits 143 (SIGTERM), coreutils' 124.
   if [ "$make_status" -eq 124 ] || [ "$make_status" -eq 143 ]; then
     sccache --show-stats
+    if [ -n "${MAKE_RESUMABLE:-}" ]; then
+      stop_make_group "$make_pid"
+      echo unfinished >"$make_status_file"
+      echo "make ran out of its ${make_budget} budget: this layer is the resume point, the next round continues from it" >&2
+      exit 0
+    fi
     echo "make ran out of its ${make_budget} budget: the objects compiled so far are in sccache, rerun the job" >&2
     exit 1
   fi
@@ -94,7 +133,13 @@ run_make() {
 }
 
 clang-23 --version | head -1
-./configure --prefix=/usr/local
+# A resumed round keeps the previous round's configure: rerunning it rewrites
+# the generated makefiles and config headers, and make would recompile all.
+if [ -f "$make_status_file" ] && [ -f out/Makefile ]; then
+  echo "resuming: $(cat "$make_status_file") round found, configure skipped"
+else
+  ./configure --prefix=/usr/local
+fi
 run_make /tmp/build.log
 sccache --show-stats
 
@@ -146,3 +191,4 @@ if [ "$phase" = use ]; then
 fi
 
 rm -rf /work/node-src/out /work/thinlto-cache /tmp/build-tools-profraw
+echo done >"$make_status_file"
