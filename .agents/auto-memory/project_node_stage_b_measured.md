@@ -1,6 +1,6 @@
 ---
 name: project_node_stage_b_measured
-description: #351 Stage B SHIPPED e9994e6; gzip gap = fortify, -U_FORTIFY_SOURCE candidate 5a2173715ae3 closes it on 9V74/9V45/Xeon (7763 1.05x worse), unshipped (2026-10-31) in node/Dockerfile.alpine; clang23 ThinLTO+PGO node geomean 0.880x vs ubuntu on EPYC 7763, 0.898x on 9V74 (gzip_20MB 1.07x vs Stage A there); build gotchas — 6 h job limit, local mi_malloc, libatomic at run time
+description: #351 Stage B SHIPPED e9994e6; gzip gap = fortify, -U_FORTIFY_SOURCE candidate 5a2173715ae3 closes it on 9V74/9V45/Xeon (7763 1.05x worse, not alignment), unshipped (2026-10-31) in node/Dockerfile.alpine; clang23 ThinLTO+PGO node geomean 0.880x vs ubuntu on EPYC 7763, 0.898x on 9V74 (gzip_20MB 1.07x vs Stage A there); build gotchas — 6 h job limit, local mi_malloc, libatomic at run time
 metadata:
   type: project
 ---
@@ -55,6 +55,11 @@ Deflate split (run 41394721024, candidate vs gcc A / vs shipped B): 9V74 0.95-0.
 0.81x (the Xeons had the gap too: B vs A 1.20-1.22x). Cost: 7763 deflate 1.05x vs B,
 gzip_20MB 1.033x and 1.053x (2 node-musl draws, geomean 1.006/1.007). ud2: 383 vs
 gcc 589 vs B 4877. Ship = jean's call (drops fortify from the whole node).
+Loop placement ruled out (node-zlib-align run 41412540572, harness of node's zlib):
+0/16/32/48-byte .text shifts and -falign-loops=32 move 7763 deflate only 0.98-1.02x,
+while fortify ON vs off reads 0.97-0.99x on the 7763 (fortify faster) vs 1.21x 9V74,
+1.38-1.39x 9V45, 1.21x Xeon 8573C. The 7763 loss is the code shape itself, cause open
+(no PMU on hosted runners). Probe: `.github/workflows/node-zlib-align.yml`.
 Hosted runners here had no PMU: profile with `perf record -e cpu-clock`;
 `perf report` needs `--no-inline -g none -f` or prints nothing (addr2line).
 Same lesson as chromium: [[project_chromium_nav_gap_is_musl_fortify_overlap_check]].
