@@ -2,10 +2,20 @@
 # pnpm-install-probe.sh: CPU cost of an offline `pnpm install` per arm, every arm
 # on this one host, interleaved, one container per arm.
 #
-# An arm is `name=image|binary`. binary `image` runs the image's own pnpm, which
-# is what pnpm-perf-gate measures; `<version>-<glibc|musl>` runs that native
-# binary from the npm registry, so its libc and version vary apart from the
-# image (the musl builds are static and run on the ubuntu image too).
+# An arm is `name=image|binary[|VAR=value]`. binary `image` runs the image's own
+# pnpm, which is what pnpm-perf-gate measures; `<version>-<glibc|musl>` runs that
+# native binary from the npm registry, so its libc and version vary apart from
+# the image (the musl builds are static and run on the ubuntu image too). The
+# optional third field is one environment variable set on every install.
+#
+# By default an arm's store and project share the /w bind mount, so pnpm
+# hardlinks. Two image forms bake the store into an image layer instead, built
+# on the named arm's image from the store its warm install filled:
+#   store-layer:<arm>  store at /opt/store in the image, project on /w.
+#   deps-layer:<arm>   store at /opt/store plus the project installed at /app
+#                      in the image, so the counted install finds node_modules.
+# A layered arm gets a fresh container (no network) before every install, so
+# no install starts from an overlay that an earlier one already copied up.
 #
 # Counted from the container's own cgroup (cpu.stat user/system, memory.stat
 # pgfault) around the install alone; the node_modules removal before it is a
@@ -42,14 +52,41 @@ alpine-musl-${PNPM_NEW}=${IMG_ALPINE}|${PNPM_NEW}-musl"}
 
 read -r -a arm_specs <<<"${ARMS//$'\n'/ }"
 arm_names=()
-declare -A arm_image arm_binary
+declare -A arm_image arm_binary arm_env
 for arm_spec in "${arm_specs[@]}"; do
   arm_name=${arm_spec%%=*}
   arm_value=${arm_spec#*=}
-  [[ "$arm_spec" == *=*'|'* ]] || { echo "arm spec '$arm_spec' is not name=image|binary" >&2; exit 1; }
+  [[ "$arm_spec" == *=*'|'* ]] || { echo "arm spec '$arm_spec' is not name=image|binary[|VAR=value]" >&2; exit 1; }
+  IFS='|' read -r spec_image spec_binary spec_env <<<"$arm_value"
+  if [ -n "$spec_env" ] && [[ "$spec_env" != [A-Za-z_]*=* ]]; then
+    echo "arm spec '$arm_spec': third field '$spec_env' is not VAR=value" >&2; exit 1
+  fi
   arm_names+=("$arm_name")
-  arm_image[$arm_name]=${arm_value%|*}
-  arm_binary[$arm_name]=${arm_value##*|}
+  arm_image[$arm_name]=$spec_image
+  arm_binary[$arm_name]=$spec_binary
+  arm_env[$arm_name]=$spec_env
+done
+
+layer_kind_of() {
+  case "${arm_image[$1]}" in
+    store-layer:*) echo store-layer ;;
+    deps-layer:*) echo deps-layer ;;
+    *) echo none ;;
+  esac
+}
+is_layered_arm() { [ "$(layer_kind_of "$1")" != none ]; }
+layer_source_of() { echo "${arm_image[$1]#*:}"; }
+
+for arm_name in "${arm_names[@]}"; do
+  is_layered_arm "$arm_name" || continue
+  layer_source=$(layer_source_of "$arm_name")
+  if [ -z "${arm_image[$layer_source]:-}" ] || is_layered_arm "$layer_source"; then
+    echo "arm $arm_name: '$layer_source' is not an unlayered arm of ARMS" >&2; exit 1
+  fi
+  # The layer image runs its install at build time with the image's pnpm.
+  if [ "${arm_binary[$arm_name]}" != image ] || [ "${arm_binary[$layer_source]}" != image ]; then
+    echo "arm $arm_name: a layered arm and its source must both use binary 'image'" >&2; exit 1
+  fi
 done
 
 mkdir -p "$WORK" "$OUT/gate"
@@ -58,8 +95,11 @@ mkdir -p "$WORK" "$OUT/gate"
   echo "nproc: $(nproc)"
   echo "kernel: $(uname -r)"
   echo "fixture: $FIXTURE_REPO@$FIXTURE_SHA"
+  # A hardlink to a lower-layer file copies the whole file up unless metacopy is on.
+  echo "docker storage driver: $(docker info -f '{{.Driver}}')"
+  echo "overlay metacopy: $(cat /sys/module/overlay/parameters/metacopy 2>/dev/null || echo unknown)"
   for arm_name in "${arm_names[@]}"; do
-    echo "arm $arm_name image=${arm_image[$arm_name]} binary=${arm_binary[$arm_name]}"
+    echo "arm $arm_name image=${arm_image[$arm_name]} binary=${arm_binary[$arm_name]} env=${arm_env[$arm_name]:-none}"
   done
 } | tee "$OUT/host.txt"
 
@@ -125,27 +165,51 @@ if grep -q packageManager "$fixture_dir/package.json"; then
   exit 1
 fi
 
+container_image_of() {
+  if is_layered_arm "$1"; then echo "pnpm-probe-$1:local"; else echo "${arm_image[$1]}"; fi
+}
+project_dir_of() {
+  if [ "$(layer_kind_of "$1")" = deps-layer ]; then echo /app; else echo /w/fx; fi
+}
+store_dir_of() {
+  if is_layered_arm "$1"; then echo /opt/store; else echo /w/store; fi
+}
+
 start_container() {
-  local arm_name=$1 container_name
+  local arm_name=$1 container_name network_args=()
   container_name=$(container_of "$arm_name")
   mkdir -p "$WORK/$container_name"
-  docker run -d --name "$container_name" --entrypoint sleep \
+  if is_layered_arm "$arm_name"; then network_args=(--network none); fi
+  docker run -d --name "$container_name" --entrypoint sleep "${network_args[@]}" \
     --cpus="$CPUS" --memory="$MEMORY" \
     --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
     -e HOME=/home/runner \
     -v "$WORK/$container_name:/w" -v "$WORK/bins:/bins:ro" -v "$fixture_dir:/fixture:ro" \
-    "${arm_image[$arm_name]}" infinity >/dev/null
-  # The store sits on the same mount as node_modules, so pnpm hardlinks from it.
-  docker exec -u root "$container_name" sh -c '
+    "$(container_image_of "$arm_name")" infinity >/dev/null
+}
+
+# The store sits on the same mount as node_modules, so pnpm hardlinks from it.
+# A layered image has strace baked in and runs without network.
+prepare_work_tree() {
+  local arm_name=$1 install_strace=true
+  if is_layered_arm "$arm_name"; then install_strace=false; fi
+  docker exec -u root -e INSTALL_STRACE="$install_strace" "$(container_of "$arm_name")" sh -c '
     set -e
     rm -rf /w/fx /w/store && cp -r /fixture /w/fx && mkdir -p /w/store && chown -R 1001:1001 /w
+    [ "$INSTALL_STRACE" = true ] || exit 0
     if command -v apk >/dev/null; then apk add -q strace >/dev/null
     else apt-get -qq update && apt-get -qq install -y strace >/dev/null; fi'
 }
-for arm_name in "${arm_names[@]}"; do start_container "$arm_name"; done
-
-# Which pnpm each arm runs, read the way the install resolves it.
 for arm_name in "${arm_names[@]}"; do
+  is_layered_arm "$arm_name" && continue
+  start_container "$arm_name"
+  prepare_work_tree "$arm_name"
+done
+
+# Which pnpm each arm runs, read the way the install resolves it. A layered
+# arm runs its source arm's image, so its source's line names its pnpm.
+for arm_name in "${arm_names[@]}"; do
+  is_layered_arm "$arm_name" && continue
   container_name=$(container_of "$arm_name")
   pnpm_path=$(docker exec -u 1001 -w /w/fx "$container_name" sh -c \
     "readlink -f \"\$(command -v $(pnpm_command "$arm_name"))\"")
@@ -163,6 +227,7 @@ docker exec -u 1001 -w /w/fx "$(container_of "$first_arm")" "$(pnpm_command "$fi
   --no-frozen-lockfile --store-dir=/w/store >"$OUT/resolve.log" 2>&1 || { tail -30 "$OUT/resolve.log"; exit 1; }
 docker cp -q "$(container_of "$first_arm"):/w/fx/pnpm-lock.yaml" "$OUT/pnpm-lock.yaml"
 for arm_name in "${arm_names[@]:1}"; do
+  is_layered_arm "$arm_name" && continue
   docker cp -q "$OUT/pnpm-lock.yaml" "$(container_of "$arm_name"):/w/fx/pnpm-lock.yaml"
   docker exec -u root "$(container_of "$arm_name")" chown 1001:1001 /w/fx/pnpm-lock.yaml
 done
@@ -172,16 +237,35 @@ remove_node_modules() {
   docker exec -u 1001 -w /w/fx "$(container_of "$1")" sh -c 'find . -name node_modules -type d -prune -exec rm -rf {} +'
 }
 
+# Puts an arm back in the state its next counted install starts from: no
+# node_modules on /w, and for a layered arm a fresh container, so the image's
+# overlay is untouched (a deps-layer arm keeps the node_modules of its image).
+reset_arm() {
+  local arm_name=$1
+  if [ "$(layer_kind_of "$arm_name")" != deps-layer ]; then remove_node_modules "$arm_name"; fi
+  if is_layered_arm "$arm_name"; then
+    docker rm -f "$(container_of "$arm_name")" >/dev/null
+    start_container "$arm_name"
+  fi
+}
+
+install_env_args() {
+  if [ -n "${arm_env[$1]}" ]; then echo "-e ${arm_env[$1]}"; fi
+}
+
 run_install() {
-  local arm_name=$1 log_file=$2
+  local arm_name=$1 log_file=$2 env_args
   shift 2
-  docker exec -u 1001 -w /w/fx "$(container_of "$arm_name")" "$@" "$(pnpm_command "$arm_name")" install \
-    --frozen-lockfile --offline --store-dir=/w/store >"$log_file" 2>&1
+  read -r -a env_args <<<"$(install_env_args "$arm_name")"
+  docker exec -u 1001 "${env_args[@]}" -w "$(project_dir_of "$arm_name")" "$(container_of "$arm_name")" \
+    "$@" "$(pnpm_command "$arm_name")" install \
+    --frozen-lockfile --offline --store-dir="$(store_dir_of "$arm_name")" >"$log_file" 2>&1
 }
 
 # Warm every arm online once: fills its store, and proves its pnpm installs the
 # shared lockfile before any count is taken.
 for arm_name in "${arm_names[@]}"; do
+  is_layered_arm "$arm_name" && continue
   container_name=$(container_of "$arm_name")
   remove_node_modules "$arm_name"
   docker exec -u 1001 -w /w/fx "$container_name" "$(pnpm_command "$arm_name")" install \
@@ -190,6 +274,55 @@ for arm_name in "${arm_names[@]}"; do
   file_count=$(docker exec "$container_name" sh -c 'find /w/fx -path "*/node_modules/*" -type f | wc -l')
   echo "warm $arm_name node_modules_files=$file_count" | tee -a "$OUT/host.txt"
   docker network disconnect bridge "$container_name"
+done
+
+# A layered arm's image: its source arm's image plus the store that arm's warm
+# install filled, and for deps-layer the project installed from it at /app.
+build_layer_image() {
+  local arm_name=$1 layer_kind layer_source context_dir
+  layer_kind=$(layer_kind_of "$arm_name")
+  layer_source=$(layer_source_of "$arm_name")
+  context_dir=$WORK/layer-$arm_name
+  mkdir -p "$context_dir"
+  cp "$OUT/pnpm-lock.yaml" "$context_dir/pnpm-lock.yaml"
+  {
+    echo "FROM ${arm_image[$layer_source]}"
+    echo 'USER root'
+    echo 'RUN if command -v apk >/dev/null; then apk add -q strace; else apt-get -qq update && apt-get -qq install -y strace; fi'
+    echo 'COPY --from=store --chown=1001:1001 . /opt/store'
+    if [ "$layer_kind" = deps-layer ]; then
+      echo 'COPY --from=fixture --chown=1001:1001 . /app'
+      echo 'COPY --chown=1001:1001 pnpm-lock.yaml /app/pnpm-lock.yaml'
+      echo 'USER 1001'
+      echo 'ENV HOME=/home/runner'
+      echo 'RUN cd /app && pnpm install --frozen-lockfile --offline --store-dir=/opt/store'
+    fi
+  } >"$context_dir/Dockerfile"
+  docker build -q -t "$(container_image_of "$arm_name")" \
+    --build-context store="$WORK/$(container_of "$layer_source")/store" \
+    --build-context fixture="$fixture_dir" "$context_dir" >"$OUT/layer-build-$arm_name.log" 2>&1 \
+    || { echo "layer image build failed for $arm_name" >&2; tail -30 "$OUT/layer-build-$arm_name.log" >&2; exit 1; }
+}
+
+for arm_name in "${arm_names[@]}"; do
+  is_layered_arm "$arm_name" || continue
+  build_layer_image "$arm_name"
+  layer_source=$(layer_source_of "$arm_name")
+  image_bytes=$(docker image inspect -f '{{.Size}}' "$(container_image_of "$arm_name")")
+  base_bytes=$(docker image inspect -f '{{.Size}}' "${arm_image[$layer_source]}")
+  echo "layer $arm_name kind=$(layer_kind_of "$arm_name") source=$layer_source image_bytes=$image_bytes base_bytes=$base_bytes" \
+    | tee -a "$OUT/host.txt"
+  start_container "$arm_name"
+  prepare_work_tree "$arm_name"
+  container_name=$(container_of "$arm_name")
+  docker cp -q "$OUT/pnpm-lock.yaml" "$container_name:/w/fx/pnpm-lock.yaml"
+  docker exec -u root "$container_name" chown 1001:1001 /w/fx/pnpm-lock.yaml
+  # One uncounted offline install proves the layout installs before any count.
+  run_install "$arm_name" "$OUT/warm-$arm_name.log" \
+    || { echo "warm install failed for $arm_name" >&2; tail -30 "$OUT/warm-$arm_name.log"; exit 1; }
+  file_count=$(docker exec "$container_name" sh -c \
+    "find $(project_dir_of "$arm_name") -path '*/node_modules/*' -type f | wc -l")
+  echo "warm $arm_name node_modules_files=$file_count" | tee -a "$OUT/host.txt"
 done
 
 read_counters() {
@@ -207,7 +340,7 @@ arm_count=${#arm_names[@]}
 for round in $(seq 1 "$ROUNDS"); do
   for offset in $(seq 0 $((arm_count - 1))); do
     arm_name=${arm_names[$(((round + offset) % arm_count))]}
-    remove_node_modules "$arm_name"
+    reset_arm "$arm_name"
     counters_before=$(read_counters "$arm_name")
     start_ns=$(date +%s%N)
     install_rc=0
@@ -234,7 +367,7 @@ for strace_round in $(seq 1 "$STRACE_ROUNDS"); do
     arm_name=${arm_names[$(((strace_round + offset) % arm_count))]}
     container_name=$(container_of "$arm_name")
     strace_name=strace-$arm_name-r$strace_round
-    remove_node_modules "$arm_name"
+    reset_arm "$arm_name"
     run_install "$arm_name" "$OUT/$strace_name.log" strace -f -c -o "/w/$strace_name.txt" \
       || { echo "strace install failed: $arm_name round $strace_round" >&2; tail -30 "$OUT/$strace_name.log" >&2; exit 1; }
     docker cp -q "$container_name:/w/$strace_name.txt" "$OUT/$strace_name.txt"
@@ -244,8 +377,8 @@ done
 # Which paths each stat-family call names, to see what a version stats twice.
 for arm_name in $STRACE_PATH_ARMS; do
   [ -n "${arm_image[$arm_name]:-}" ] || { echo "STRACE_PATH_ARMS names unknown arm $arm_name" >&2; exit 1; }
+  reset_arm "$arm_name"
   container_name=$(container_of "$arm_name")
-  remove_node_modules "$arm_name"
   run_install "$arm_name" "$OUT/paths-install-$arm_name.log" \
     strace -f -qq -e trace=%stat,%lstat,%fstat -o "/w/paths-$arm_name.txt" \
     || { echo "path trace failed: $arm_name" >&2; tail -30 "$OUT/paths-install-$arm_name.log" >&2; exit 1; }
@@ -257,15 +390,17 @@ done
 if [ -n "$PERF_CMD" ]; then
   perf_events=task-clock,page-faults,minor-faults,major-faults,context-switches,cpu-migrations
   for arm_name in "${arm_names[@]}"; do
+    reset_arm "$arm_name"
     container_name=$(container_of "$arm_name")
     container_pid=$(docker inspect -f '{{.State.Pid}}' "$container_name")
     cgroup_path=$(sed -n 's/^0:://p' "/proc/$container_pid/cgroup")
     # perf wants every -e before -G, and one -G entry per event.
     cgroup_list=$(printf "${cgroup_path#/},%.0s" 1 2 3 4 5 6)
-    remove_node_modules "$arm_name"
+    read -r -a env_args <<<"$(install_env_args "$arm_name")"
     $PERF_CMD stat -a -e "$perf_events" -G "${cgroup_list%,}" -o "$OUT/perf-$arm_name.txt" -- \
-      docker exec -u 1001 -w /w/fx "$container_name" "$(pnpm_command "$arm_name")" install \
-      --frozen-lockfile --offline --store-dir=/w/store >"$OUT/perf-install-$arm_name.log" 2>&1 \
+      docker exec -u 1001 "${env_args[@]}" -w "$(project_dir_of "$arm_name")" "$container_name" \
+      "$(pnpm_command "$arm_name")" install \
+      --frozen-lockfile --offline --store-dir="$(store_dir_of "$arm_name")" >"$OUT/perf-install-$arm_name.log" 2>&1 \
       || { echo "perf stat failed for $arm_name" >&2; tail -30 "$OUT/perf-install-$arm_name.log" >&2; exit 1; }
   done
 fi

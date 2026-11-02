@@ -29,6 +29,12 @@ name: pnpm install CPU probe
 # release build of pnpm-cli on the runner, so an unreleased fix sits beside
 # the released versions. Build a base ref too: the official binaries come
 # out of `cross`, so only patched vs base varies the source alone.
+#
+# mode store_layer asks whether a CI image can ship the pnpm store: the store
+# on a bind mount beside the project (hardlinks, today's layout), the same
+# store in a lower image layer (a link across the bind mount cannot be made),
+# and node_modules installed into the image at /app, each with and without
+# pnpm_config_verify_store_integrity=false.
 
 on:
   workflow_dispatch:
@@ -37,7 +43,7 @@ on:
         description: 'binaries: the five arms above; null_pair: the gate arms, one image twice'
         default: 'binaries'
         type: choice
-        options: [binaries, null_pair, versions]
+        options: [binaries, null_pair, versions, store_layer]
       versions:
         description: 'versions mode: space-separated pnpm versions'
         default: '12.6.0 12.16.1'
@@ -198,6 +204,14 @@ jobs:
             promoted_image=ghcr.io/jclaveau/alpine-dood-pnpm:latest
             echo "ARMS=candidate=$promoted_image|image promoted=$promoted_image|image ubuntu=ghcr.io/jclaveau/ubuntu-dood-pnpm:latest|image" >> "$GITHUB_ENV"
           fi
+          if [ "${{ inputs.mode }}" = store_layer ]; then
+            alpine_image=ghcr.io/jclaveau/alpine-dood-pnpm:latest
+            skip_verify=pnpm_config_verify_store_integrity=false
+            arm_list="bind=$alpine_image|image bind_noverify=$alpine_image|image|$skip_verify"
+            arm_list="$arm_list store_layer=store-layer:bind|image store_layer_noverify=store-layer:bind|image|$skip_verify"
+            arm_list="$arm_list deps_layer=deps-layer:bind|image"
+            echo "ARMS=$arm_list" >> "$GITHUB_ENV"
+          fi
           if [ "${{ inputs.mode }}" = versions ]; then
             ubuntu_image=ghcr.io/jclaveau/ubuntu-dood-pnpm-gyp:latest
             case "$LIBCS" in
@@ -256,7 +270,7 @@ jobs:
           done
 
       - name: Free disk for one store per arm
-        if: inputs.mode == 'versions'
+        if: inputs.mode == 'versions' || inputs.mode == 'store_layer'
         run: |
           set -euo pipefail
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
