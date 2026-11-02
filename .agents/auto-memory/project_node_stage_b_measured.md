@@ -47,6 +47,9 @@ _FORTIFY_SOURCE=2, so fortify-headers wraps the 4-byte hash memcpy in an
 overlap compare + ud2 (4877 ud2 vs gcc node's 589). Ruled out: crc32 SIMD
 (both arms table crc32_z), PGO (counts present). Lever `-U_FORTIFY_SOURCE` in
 build-node.sh (7763022), cold build run 41354850829; NOT repinned (jean's call).
+Fortify-off build node-musl:v24.22.1-5a2173715ae3 vs shipped Stage B, EPYC 7763
+(run 41354850829): gzip_20MB 103.8 vs 100.5 ms (1.033x, noise), geomean 1.006x
+(1.003x without gzip), no row over ceiling. 9V74/9V45 verdict still pending.
 Hosted runners here had no PMU: profile with `perf record -e cpu-clock`;
 `perf report` needs `--no-inline -g none -f` or prints nothing (addr2line).
 Same lesson as chromium: [[project_chromium_nav_gap_is_musl_fortify_overlap_check]].
