@@ -1,6 +1,6 @@
 ---
 name: project_pnpm_store_in_image
-description: pnpm store baked into a CI image layer is 2x WORSE (links fail across bind mount → copies); node_modules prebuilt in image saves ~1 s CPU but image 3.4x; verify_store_integrity=false saves 0.86-0.90x CPU (run 41431180556, 2026-11-02)
+description: pnpm store baked into a CI image layer is 2x WORSE (links fail across bind mount → copies); store+node_modules prebuilt in image 0.65x CPU, 0.44-0.50x with verify off, image 3.4x (store stored twice); node_modules without store FAILS offline install; verify_store_integrity=false 0.85-0.90x (runs 41431180556, 41437119695, 2026-11-02)
 metadata:
   type: project
 ---
@@ -28,6 +28,16 @@ alpine-dood-pnpm pnpm 12.16.1, vitest fixture offline install, 10 rounds,
   lockfile supply-chain check (ERR_PNPM_NO_OFFLINE_META without it): a store image
   must ship it too.
 - Hosted runners: storage driver overlayfs (containerd snapshotter), metacopy N.
+
+Run 41437119695 (9V74, 7763, Xeon 8370C), CPU / wall vs bind:
+deps_layer 0.65-0.70x / 0.87-0.89x; deps_layer_noverify 0.44-0.50x / 0.73-0.77x
+(stat 49,095 → 3,448). modules_layer (node_modules in image, store emptied in the
+same RUN, 473 MB) FAILS the offline install: ERR_PNPM_NO_OFFLINE_TARBALL
+"snapshot not present in local store", even with node_modules up to date and
+verify off. So `pnpm install` always needs the store; an image without it only
+works if CI skips `pnpm install` entirely. deps_layer's 658 MB is the store twice
+(COPY layer + copy-up in the install RUN); copying the store and installing in ONE
+RUN would keep hardlinks: est. ~473 MB, not measured.
 
 **How to apply:** don't ship the store in an image layer. Cheapest real lever =
 `pnpm_config_verify_store_integrity=false` where the store can't be corrupted (env
