@@ -71,3 +71,9 @@ Same lesson as chromium: [[project_chromium_nav_gap_is_musl_fortify_overlap_chec
 
 **Xeon 8370C (jean 2026-11-01): passive.** No dispatch to hunt an 8370C draw. When a
 node-perf-gate or node-musl bench job lands on one, put its Stage B line in #335.
+Fortify-kept arms (node-zlib-align run 41414276892, deflate vs pad0 = -U_FORTIFY_SOURCE):
+builtin (4 sites __builtin_memcpy) 7763 0.98-1.02x, 9V74 1.00x, 6973P-C 1.05x;
+headers (no overlap trap) 7763 1.00-1.03x, 9V74 1.00x, 6973P-C 1.08x; gcc zlib 7763
+0.94x, 9V74 1.05x, 6973P-C 1.13x; fortify 7763 0.97-1.00x, 9V74 1.20x, 6973P-C 1.30x.
+gcc inflate 0.90x on all 3 CPUs (only arm moving inflate). builtin = best keep-fortify
+lever; node builds of the 3 variants: runs 41414408510/41414411079/41414413412.
