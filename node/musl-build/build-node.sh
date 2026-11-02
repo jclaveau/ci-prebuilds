@@ -60,12 +60,28 @@ case "$phase" in
     ;;
 esac
 # Alpine's clang predefines _FORTIFY_SOURCE=2, and fortify-headers' inline
-# memcpy then guards every fixed-size copy with a two-range overlap compare and
-# a ud2: in zlib's insert_string loop that cost gzip_20MB 1.07-1.25x on Zen 4/5.
-# Neither the unofficial-builds gcc node nor the nodejs.org build fortifies.
-no_fortify_flags="-U_FORTIFY_SOURCE"
-export CFLAGS="$thin_lto_flags $profile_flags $no_fortify_flags"
-export CXXFLAGS="$thin_lto_flags $profile_flags $no_fortify_flags"
+# memcpy guards every fixed-size copy with a two-range overlap compare and a
+# ud2 clang cannot fold. zlib's four fixed-size loads into locals (hash read,
+# compare256) go through __builtin_memcpy, which the wrapper does not cover:
+# the overlap can never happen there, and the build stays fortified.
+python3 - <<'PY'
+import pathlib
+patch_sites = {
+    'deps/zlib/contrib/optimizations/insert_string.h': ('zmemcpy(&value, ', 1),
+    'deps/zlib/compare256.h': ('memcpy(&', 3),
+}
+for path_name, (call_text, expected_count) in patch_sites.items():
+    source_path = pathlib.Path(path_name)
+    source_text = source_path.read_text()
+    if '__builtin_memcpy(&' in source_text:
+        continue
+    found_count = source_text.count(call_text)
+    if found_count != expected_count:
+        raise SystemExit(f'{path_name}: expected {expected_count} x {call_text!r}, found {found_count}')
+    source_path.write_text(source_text.replace(call_text, '__builtin_memcpy(&' + call_text.split('(&', 1)[1]))
+PY
+export CFLAGS="$thin_lto_flags $profile_flags"
+export CXXFLAGS="$thin_lto_flags $profile_flags"
 export LDFLAGS="$link_flags"
 
 # A cold compile takes ~5.8 h on a 4-vCPU runner (run 40955771149), past what
