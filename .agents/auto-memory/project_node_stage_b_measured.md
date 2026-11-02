@@ -83,3 +83,7 @@ e9994e6, NOT gcc): gzip_20MB 83.4 vs 93.2 ms (0.895x), other rows 0.99-1.03x,
 geomean 0.995x vs shipped, 0.882x vs ubuntu. 8370C has the gzip gap (shipped vs
 ubuntu 1.115x); builtin closes it. Like-for-like arm = b_plain_preload (shipped
 is plain node + image preload), not b_mimalloc. In #335.
+Per-CPU (node-musl-bench.yml run 41467864882, builtin vs shipped gzip_20MB): 9V45
+0.856-0.876x, 8573C 0.896-0.905x, 7763 1.027-1.045x; geomean 0.989-1.008 all draws.
+9V74 top-up run 41470412645. node-musl-bench.yml = per-CPU bench of a built tag
+vs shipped (rejection-sampled slots); use it, not node-musl.yml's single draw.
