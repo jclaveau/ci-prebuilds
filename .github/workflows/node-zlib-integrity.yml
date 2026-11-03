@@ -1,0 +1,113 @@
+name: 'node-musl zlib integrity'
+
+# Gates a node-musl tag that enables zlib's crc32 SIMD target, which node
+# leaves commented out over https://github.com/nodejs/node/issues/45268
+# ("memory corruption"). Each slot runs, for the candidate and for the shipped
+# node as control:
+#   - that issue's own repro (github.com/morpheus-med/node-defect), which
+#     crashed affected builds; any non-zero exit or signal fails the slot;
+#   - node/bench/zlib-integrity.cjs, gzip/gunzip round trips plus zlib.crc32
+#     against a reference, which would catch silent corruption.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'ghcr.io/jclaveau/node-musl tag under test'
+        required: true
+        type: string
+      slots:
+        description: 'Independent runner draws'
+        default: '4'
+        type: string
+      repro_runs:
+        description: 'node-defect repro runs per arm per slot'
+        default: '10'
+        type: string
+      integrity_rounds:
+        description: 'zlib-integrity.cjs rounds per arm per slot'
+        default: '3000'
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  slots:
+    runs-on: ubuntu-latest
+    outputs:
+      slots: ${{ steps.split.outputs.slots }}
+    steps:
+      - id: split
+        env:
+          SLOT_COUNT: ${{ inputs.slots }}
+        run: echo "slots=$(jq -nc --argjson n "$SLOT_COUNT" '[range(1; $n + 1)]')" >> "$GITHUB_OUTPUT"
+
+  integrity:
+    name: integrity-${{ matrix.slot }}
+    needs: slots
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: ${{ fromJSON(needs.slots.outputs.slots) }}
+    env:
+      SHIPPED_IMAGE: ghcr.io/jclaveau/alpine-dood-node:latest
+      REPRO_RUNS: ${{ inputs.repro_runs }}
+      INTEGRITY_ROUNDS: ${{ inputs.integrity_rounds }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Stage the candidate as the consumer would ship it
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          grep -m1 'model name' /proc/cpuinfo
+          grep -qw pclmulqdq /proc/cpuinfo && grep -qw sse4_2 /proc/cpuinfo \
+            || { echo "::error::runner lacks sse4_2+pclmulqdq, the crc32 SIMD path would not run"; exit 1; }
+          docker pull "$SHIPPED_IMAGE"
+          docker build -f node/musl-build/Dockerfile.bench-arm \
+            --build-arg "STAGE_A_IMAGE=$SHIPPED_IMAGE" \
+            --build-arg "NODE_SOURCE_IMAGE=ghcr.io/jclaveau/node-musl:$TAG" \
+            -t bench-arm:candidate node/musl-build
+      - name: Fetch the node-defect repro
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/morpheus-med/node-defect repro
+          (cd repro && unzip -q anonymized-data.zip && ls -l anonymized-data)
+          chmod -R a+rX repro
+      - name: Run both arms
+        run: |
+          set -uo pipefail
+          rc=0
+          for arm in candidate shipped; do
+            case "$arm" in
+              candidate) image=bench-arm:candidate ;;
+              shipped)   image=$SHIPPED_IMAGE ;;
+            esac
+            echo "::group::$arm integrity ($INTEGRITY_ROUNDS rounds)"
+            docker run --rm --entrypoint node -v "$PWD/repro:/repro:ro" -v "$PWD/node/bench:/bench:ro" \
+              "$image" /bench/zlib-integrity.cjs /repro/anonymized-data "$INTEGRITY_ROUNDS" "$RANDOM$RANDOM" \
+              || { echo "::error::$arm: zlib-integrity.cjs failed"; rc=1; }
+            echo "::endgroup::"
+            for run in $(seq 1 "$REPRO_RUNS"); do
+              started=$(date +%s)
+              docker run --rm --entrypoint sh -w /repro -v "$PWD/repro:/repro:ro" "$image" \
+                -c 'timeout 900 node index.js > /dev/null' 2> "repro-$arm-$run.err"
+              run_rc=$?
+              echo "$arm repro $run/$REPRO_RUNS: rc=$run_rc in $(( $(date +%s) - started ))s"
+              if [ "$run_rc" -ne 0 ]; then
+                echo "::error::$arm: node-defect repro run $run exited $run_rc"
+                tail -20 "repro-$arm-$run.err"
+                rc=1
+              fi
+            done
+          done
+          exit "$rc"
