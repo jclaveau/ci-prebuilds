@@ -117,3 +117,6 @@ PGO trained on gzip of node_modules text) vs shipped gzip_20MB: 7763 0.941x (4),
 9V74 0.801x (8), 9V45 0.778x (4); 7763 regression gone; alloc rows 0.94-0.98x;
 geomean 0.965-0.985 every draw; worst http_rtt 7763 1.014x. Safety gate =
 node-zlib-integrity.yml (run 41711175078). Ship/repin = jean's call. In #335.
+Integrity run 41711175078 (7763 x2, 9V74, 9V45): #45268 repro 40/40 rc=0 both
+arms, zlib-integrity 4x3000 rounds clean both arms. No positive control (repro
+never seen failing here), so a clean run bounds, not proves, crc32 SIMD safety.
