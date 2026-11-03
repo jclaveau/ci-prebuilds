@@ -99,3 +99,7 @@ fortify costs 0-3% everywhere. pgo_builtin = pgo_off (0.98-1.00x). crc32 SIMD
 synthetic, 0.84-0.90x node-source; deflate 0.91-0.94x synthetic, ~1.00x source;
 gzip total 7763 0.87x synthetic, 0.98x source. Wins on every model incl. 7763;
 not built into node yet. In #335.
+headers per-CPU (run 41566034181, tag d7972983a0f7, overlap trap removed from
+fortify-headers, fortify kept; vs shipped gzip_20MB): 9V74 0.907-0.930x (5), 9V45
+0.853-0.866x (3), 8573C 0.881-0.912x (2), 7763 1.034x (1); geomean 0.983-0.996; worst
+other row spawn_true_x100 1.056x. = builtin = zlibonly within noise.
