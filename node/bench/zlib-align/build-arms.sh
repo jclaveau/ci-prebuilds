@@ -7,19 +7,27 @@
 # the realistic input timed next to node-perf-kernel's synthetic one.
 #
 # Arms (all clang23 unless named):
-#   pad0 pad16 pad32 pad48  -U_FORTIFY_SOURCE -falign-loops=16 (the candidate
-#                           node's flags), with N bytes of .text linked ahead
-#                           of zlib, so only where the loops land varies.
-#   align32                 -U_FORTIFY_SOURCE -falign-loops=32.
+#   pad0                    -U_FORTIFY_SOURCE -falign-loops=16 (the candidate
+#                           node's flags).
 #   fortify                 Alpine clang's default _FORTIFY_SOURCE=2 (the
 #                           shipped Stage B's flags), -falign-loops=16.
 #   builtin                 fortify, zlib's 4 fixed-size loads via __builtin_memcpy.
-#   gcc                     fortify, zlib compiled with Alpine gcc.
 #   crc32simd               fortify, zlib's SSE4.2+PCLMUL crc32 (node leaves
 #                           that gyp target commented out).
 #   pgo_off pgo_fortify     fortify off / on / builtin, built ThinLTO + PGO as
 #   pgo_builtin             node is, trained on the synthetic input.
+#   pgo_mixed               pgo_fortify trained on the synthetic input and the
+#                           node source tar.
 #   headers                 fortify, fortify-headers' memcpy overlap trap removed.
+#   headers_crc32           headers plus crc32 SIMD.
+#   headers_v3              headers at -march=x86-64-v3.
+#   headers_crc32_v3        both.
+#   headers_pgo             headers, ThinLTO + PGO trained on the synthetic input.
+#   headers_pgo_mixed       headers, ThinLTO + PGO trained on both inputs.
+#   headers_crc32_pgo_mixed headers_pgo_mixed plus crc32 SIMD: the full shape a
+#                           headers + crc32 node build would have.
+# The pad16-48, align32 and gcc arms of runs up to 41548404659 are settled
+# (loop placement and gcc do not move deflate_slow) and dropped.
 set -euo pipefail
 : "${NODE_VERSION:?}"
 # gcc: crtbeginT.o and libgcc_eh for the static link the ubuntu runners need.
@@ -93,22 +101,29 @@ build_arm() {
     -o "$arm_dir/harness" "$arm_dir/obj/pad.o" $object_list "$arm_dir/obj/harness.o" -lm
 }
 
-# build_pgo_arm <arm> <flags> [zlib source dir]: node's ThinLTO + PGO shape.
-# The instrumented build trains on the synthetic input, as node's profile was
-# trained on node-perf-kernel.cjs, and is built outside /out/arms.
+# build_pgo_arm <arm> <flags> [zlib source dir] [training]: node's ThinLTO +
+# PGO shape. The instrumented build, built outside /out/arms, trains on the
+# synthetic input as node's profile was trained on node-perf-kernel.cjs, or,
+# with training "mixed", on the synthetic input and the node source tar.
 build_pgo_arm() {
-  local arm_name=$1 arm_flags=$2 source_dir=${3:-$zlib_dir}
+  local arm_name=$1 arm_flags=$2 source_dir=${3:-$zlib_dir} training_set=${4:-synthetic}
   local profile_dir=/work/profiles/$arm_name
   arms_root=/work/pgo-generate build_arm "$arm_name" 0 \
     "$arm_flags -flto=thin -fprofile-generate=$profile_dir" clang-23 "$source_dir"
   LLVM_PROFILE_FILE="$profile_dir/%p.profraw" /work/pgo-generate/"$arm_name"/harness 3 >/dev/null
+  case "$training_set" in
+    synthetic) ;;
+    mixed)
+      LLVM_PROFILE_FILE="$profile_dir/%p.profraw" /work/pgo-generate/"$arm_name"/harness 3 \
+        /out/inputs/node-src.tar >/dev/null ;;
+    *) printf 'unknown PGO training set %q for arm %q\n' "$training_set" "$arm_name" >&2; exit 1 ;;
+  esac
   /usr/lib/llvm23/bin/llvm-profdata merge -o "$profile_dir.profdata" "$profile_dir"/*.profraw
   build_arm "$arm_name" 0 "$arm_flags -flto=thin -fprofile-use=$profile_dir.profdata" clang-23 "$source_dir"
 }
 
 no_fortify="-U_FORTIFY_SOURCE -falign-loops=16"
-for pad_bytes in 0 16 32 48; do build_arm "pad$pad_bytes" "$pad_bytes" "$no_fortify"; done
-build_arm align32 0 "-U_FORTIFY_SOURCE -falign-loops=32"
+build_arm pad0 0 "$no_fortify"
 build_arm fortify 0 "-falign-loops=16"
 
 # The ways to keep _FORTIFY_SOURCE=2 without the overlap trap in deflate's
@@ -121,13 +136,11 @@ sed -i 's/\bmemcpy(&/__builtin_memcpy(\&/' /work/zlib-builtin/compare256.h
 builtin_sites=$(grep -c '__builtin_memcpy(&' /work/zlib-builtin/contrib/optimizations/insert_string.h /work/zlib-builtin/compare256.h | awk -F: '{ total += $2 } END { print total }')
 [ "$builtin_sites" -eq 4 ] || { echo "expected 4 __builtin_memcpy sites in zlib, patched $builtin_sites" >&2; exit 1; }
 build_arm builtin 0 "-falign-loops=16" clang-23 /work/zlib-builtin
-# gcc: Alpine gcc 15 also predefines _FORTIFY_SOURCE=2 and keeps the overlap
-# compare, but branches on it and moves the ud2 to a .cold section.
-build_arm gcc 0 "-falign-loops=16" gcc
 build_arm crc32simd 0 "-falign-loops=16 -DCRC32_SIMD_SSE42_PCLMUL"
 build_pgo_arm pgo_off "$no_fortify"
 build_pgo_arm pgo_fortify "-falign-loops=16"
 build_pgo_arm pgo_builtin "-falign-loops=16" /work/zlib-builtin
+build_pgo_arm pgo_mixed "-falign-loops=16" "$zlib_dir" mixed
 # headers: fortify-headers' memcpy without the overlap trap, keeping its size
 # trap, as glibc's __memcpy_chk does. Edits this container's header, so last.
 python3 - <<'PY'
@@ -143,6 +156,12 @@ if header_text.count(overlap_trap) != 1:
 header.write_text(header_text.replace(overlap_trap, "	if (__n > __bd || __n > __bs)"))
 PY
 build_arm headers 0 "-falign-loops=16"
+build_arm headers_crc32 0 "-falign-loops=16 -DCRC32_SIMD_SSE42_PCLMUL"
+build_arm headers_v3 0 "-falign-loops=16 -march=x86-64-v3"
+build_arm headers_crc32_v3 0 "-falign-loops=16 -DCRC32_SIMD_SSE42_PCLMUL -march=x86-64-v3"
+build_pgo_arm headers_pgo "-falign-loops=16"
+build_pgo_arm headers_pgo_mixed "-falign-loops=16" "$zlib_dir" mixed
+build_pgo_arm headers_crc32_pgo_mixed "-falign-loops=16 -DCRC32_SIMD_SSE42_PCLMUL" "$zlib_dir" mixed
 
 : > /out/heads.txt
 for arm_dir in /out/arms/*/; do

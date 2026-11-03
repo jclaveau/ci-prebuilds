@@ -2,8 +2,9 @@
 
 usage: report.py <out-dir>   (reads cpu.txt, heads.txt, times/<input>/<arm>-<round>.txt)
 
-A pgo_* arm is read against pgo_off, every other arm against pad0: both are
-fortify off, so each ratio is what the arm's change costs in its build shape.
+An arm built with PGO is read against pgo_off, another headers_* arm against
+headers, every other arm against pad0, so each ratio is what the arm's change
+does in its build shape.
 """
 import pathlib
 import statistics
@@ -45,7 +46,12 @@ for input_dir in input_dirs:
     print('| arm | deflate | inflate | n | deflate_slow placement |')
     print('| --- | --- | --- | --- | --- |')
     for arm_name in sorted(arm_times):
-        reference_arm = 'pgo_off' if arm_name.startswith('pgo_') else 'pad0'
+        if 'pgo' in arm_name:
+            reference_arm = 'pgo_off'
+        elif arm_name.startswith('headers_'):
+            reference_arm = 'headers'
+        else:
+            reference_arm = 'pad0'
         deflate_median, inflate_median = medians(arm_name)
         reference_deflate, reference_inflate = medians(reference_arm)
         print(f'| {arm_name} '
