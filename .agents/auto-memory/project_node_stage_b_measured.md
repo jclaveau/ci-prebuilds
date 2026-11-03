@@ -103,3 +103,9 @@ headers per-CPU (run 41566034181, tag d7972983a0f7, overlap trap removed from
 fortify-headers, fortify kept; vs shipped gzip_20MB): 9V74 0.907-0.930x (5), 9V45
 0.853-0.866x (3), 8573C 0.881-0.912x (2), 7763 1.034x (1); geomean 0.983-0.996; worst
 other row spawn_true_x100 1.056x. = builtin = zlibonly within noise.
+7763 top-up (run 41605035101, 6 draws): gzip 1.015-1.046x vs shipped, geomean
+0.995-1.004, worst spawn 1.027x. 7763 ~1.03x on gzip confirmed. In flight
+2026-11-03: zlib-align 41605570944 (pgo_mixed, headers_crc32/_v3/_pgo*), node
+build headers+crc32 41605736445 (branch node-musl/headers-crc32; node disabled
+crc32 SIMD for nodejs/node#45268 heap corruption, run morpheus-med/node-defect
+repro before trusting it).
