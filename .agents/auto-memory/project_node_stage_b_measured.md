@@ -112,3 +112,8 @@ zlib-align 41605570944: PGO trained on synthetic+real text = real deflate
 gzips 20 MB of fixture node_modules), run 41607903538. node disabled crc32 SIMD
 for nodejs/node#45268 heap corruption: run morpheus-med/node-defect repro
 before trusting it. In #335.
+Combined node (run 41711168972, tag v24.22.1-2cef23906fde: headers + crc32 SIMD +
+PGO trained on gzip of node_modules text) vs shipped gzip_20MB: 7763 0.941x (4),
+9V74 0.801x (8), 9V45 0.778x (4); 7763 regression gone; alloc rows 0.94-0.98x;
+geomean 0.965-0.985 every draw; worst http_rtt 7763 1.014x. Safety gate =
+node-zlib-integrity.yml (run 41711175078). Ship/repin = jean's call. In #335.
