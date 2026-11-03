@@ -31,6 +31,9 @@ on:
       round:
         description: 'set by the next-round job: which resume round this run is'
         default: '1'
+      resume_stage:
+        description: 'set by the next-round job: the stage whose make ran out (generate or use)'
+        default: ''
 
 concurrency:
   group: node-musl-${{ github.ref }}
@@ -207,8 +210,15 @@ jobs:
           script: |
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || process.env.ACTIONS_RUNTIME_URL || '');
+      # A round resumes only the stage that ran out; when that was generate,
+      # this stage has never run and starts fresh.
       - name: Resume point
-        run: bash node/musl-build/resume-point.sh use
+        env:
+          RESUME_STAGE: ${{ inputs.resume_stage }}
+        run: |
+          stage_round=$ROUND
+          if [ "$RESUME_STAGE" = generate ]; then stage_round=1; fi
+          ROUND=$stage_round bash node/musl-build/resume-point.sh use
       # Every build below comes out of the one pgo-use stage with the same
       # build-args; the later ones find it in the builder's cache and only export.
       - name: Profile-guided build
@@ -297,6 +307,7 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           RUNS: ${{ inputs.runs || '10' }}
+          USE_STATUS: ${{ needs.build-node.outputs.make_status }}
         run: |
           set -euo pipefail
           next_round=$((ROUND + 1))
@@ -304,8 +315,10 @@ jobs:
             echo "::error::make is still unfinished after round $ROUND of $MAX_ROUNDS: not dispatching round $next_round"
             exit 1
           fi
+          resume_stage=generate
+          if [ "$USE_STATUS" = unfinished ]; then resume_stage=use; fi
           gh workflow run node-musl.yml -R "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
-            -f round="$next_round" -f runs="$RUNS"
+            -f round="$next_round" -f runs="$RUNS" -f resume_stage="$resume_stage"
           echo "::notice::dispatched round $next_round of node-musl.yml on $GITHUB_REF_NAME"
 
   bench:
