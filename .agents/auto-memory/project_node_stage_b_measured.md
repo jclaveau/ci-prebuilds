@@ -120,3 +120,7 @@ node-zlib-integrity.yml (run 41711175078). Ship/repin = jean's call. In #335.
 Integrity run 41711175078 (7763 x2, 9V74, 9V45): #45268 repro 40/40 rc=0 both
 arms, zlib-integrity 4x3000 rounds clean both arms. No positive control (repro
 never seen failing here), so a clean run bounds, not proves, crc32 SIMD safety.
+Positive control (runs 41786681564, 41787218479): node 20.2.0 glibc aborts 6/43
+(glibc malloc "double free or corruption"), 7763 + 9V45, 0/20 on 9V74; node
+20.2.0-alpine (musl) 0/40. Repro only detects via glibc malloc checks -> blind on
+musl; candidate's 40/40 clean proves nothing. crc32 SIMD safety still OPEN.
