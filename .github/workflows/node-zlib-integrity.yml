@@ -98,9 +98,11 @@ jobs:
           git clone --depth 1 https://github.com/morpheus-med/node-defect repro
           (cd repro && unzip -q anonymized-data.zip && ls -l anonymized-data)
           chmod -R a+rX repro
-      - name: Run both arms
+      # set +e: the default bash -e would end the step on the first crash; every
+      # arm and run is wanted, and rc carries the failure to the end.
+      - name: Run every arm
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           rc=0
           arms=$CONTROL_IMAGES
           [ "$SKIP_CANDIDATE" = true ] || arms="candidate shipped $arms"
