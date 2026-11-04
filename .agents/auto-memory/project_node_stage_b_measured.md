@@ -143,3 +143,7 @@ vs crc32 candidate v24.22.1-2cef23906fde): gzip_20MB no-crc32 vs crc32 7763 1.09
 (101.9 vs 92.4 ms), 9V74 1.12-1.15x, 9V45 1.13-1.19x; other rows noise; geomean
 1.006-1.045. No-crc32 vs shipped gzip: 7763 1.00-1.04x (gain gone), 9V74 0.91x,
 9V45 0.85-0.88x. crc32 SIMD = all of the candidate's gzip gain on the 7763.
+Same bench vs ubuntu/official (glibc, crc32 off upstream too): no-crc32 geomean
+0.872-0.916 every CPU (crc32 0.851-0.890); gzip_20MB no-crc32 7763 0.98-1.13x
+(parity, noisy), 9V74 0.92-0.97x, 9V45 0.96-1.01x; crc32 7763 0.90-1.02x,
+9V 0.81-0.88x.
