@@ -124,3 +124,8 @@ Positive control (runs 41786681564, 41787218479): node 20.2.0 glibc aborts 6/43
 (glibc malloc "double free or corruption"), 7763 + 9V45, 0/20 on 9V74; node
 20.2.0-alpine (musl) 0/40. Repro only detects via glibc malloc checks -> blind on
 musl; candidate's 40/40 clean proves nothing. crc32 SIMD safety still OPEN.
+Output + canary check (run 41798460939, 4x 7763, node/bench/gzip-verify-hook.cjs
+preloaded: per-stream trailer crc + round trip vs input copy, 4000 malloc'd
+canaries): glibc 20.2.0 aborts 18/40 (hook raises the rate), every surviving glibc
+run and musl 40/40 verify all streams and canaries clean. Damage hits only malloc
+metadata -> hook FAILS its positive control; no test settles crc32 SIMD on musl.
