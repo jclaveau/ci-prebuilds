@@ -81,6 +81,35 @@ elif trap_count == 1:
 else:
     raise SystemExit(f'fortify-headers memcpy overlap trap found {trap_count} times, expected 1')
 PY
+# zlib's SSE4.2+PCLMUL crc32, which node's zlib.gyp leaves commented out
+# (nodejs/node#45268, a heap corruption never traced to it): inflate
+# 0.84-0.90x and deflate+inflate 0.86-0.87x in the zlib-align harness.
+python3 - <<'PY'
+import pathlib
+gyp_path = pathlib.Path('deps/zlib/zlib.gyp')
+gyp_text = gyp_path.read_text()
+target_start = "        # {\n        #   'target_name': 'zlib_crc32_simd',\n"
+target_end = "        # }, # zlib_crc32_simd\n"
+dependency_line = "                # 'zlib_crc32_simd',\n"
+if "'target_name': 'zlib_crc32_simd'" in gyp_text and target_start not in gyp_text:
+    if dependency_line in gyp_text:
+        raise SystemExit('zlib.gyp: zlib_crc32_simd target enabled but its dependency still commented out')
+    print('zlib.gyp: zlib_crc32_simd already enabled (resumed round)')
+else:
+    if gyp_text.count(target_start) != 1 or gyp_text.count(target_end) != 1 or gyp_text.count(dependency_line) != 1:
+        raise SystemExit(f'zlib.gyp: commented zlib_crc32_simd target or dependency not found once in {str(gyp_path)!r}')
+    start_index = gyp_text.index(target_start)
+    end_index = gyp_text.index(target_end) + len(target_end)
+    target_lines = gyp_text[start_index:end_index].splitlines(keepends=True)
+    enabled_lines = []
+    for target_line in target_lines:
+        if not target_line.startswith('        # '):
+            raise SystemExit(f'zlib.gyp: unexpected line in zlib_crc32_simd block: {target_line!r}')
+        enabled_lines.append('        ' + target_line[len('        # '):])
+    gyp_text = gyp_text[:start_index] + ''.join(enabled_lines) + gyp_text[end_index:]
+    gyp_text = gyp_text.replace(dependency_line, "                'zlib_crc32_simd',\n")
+    gyp_path.write_text(gyp_text)
+PY
 export CFLAGS="$thin_lto_flags $profile_flags"
 export CXXFLAGS="$thin_lto_flags $profile_flags"
 export LDFLAGS="$link_flags"

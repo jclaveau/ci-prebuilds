@@ -9,13 +9,15 @@ ARG NODE_VERSION=24.22.1
 # Where node comes from:
 #   stage-b  our own build (#351 Stage B, node/musl-build/, node-musl.yml): clang23, ThinLTO, PGO
 #            trained on gzip of real text too, fortify-headers without its memcpy overlap trap, on
-#            Alpine edge; zlib's crc32 SIMD stays off as upstream has it (nodejs/node#45268). CPU-ms,
-#            10 shots per arm (run 41892818867): geomean vs ubuntu-dood-node 0.872-0.896 on EPYC
-#            7763, 0.880-0.888 on 9V74, 0.879-0.903 on 9V45; vs the previous Stage B 0.963-0.998.
+#            Alpine edge, zlib's SSE4.2+PCLMUL crc32 on. Upstream keeps it off over nodejs/node#45268,
+#            whose root cause (crc_fold_copy's 16-byte tail store) node#52123 fixed; node-zlib-integrity
+#            gates it on node#67148's stored-boundary test. build-node.sh's comment predates that.
+#            CPU-ms, 10 shots per arm (run 41892818867), EPYC 7763, 9V74, 9V45: geomean vs
+#            ubuntu-dood-node 0.851-0.883; gzip_20MB 0.84-0.92x of the same build with crc32 off.
 #   tarball  nodejs.org's musl build (unofficial-builds), sha256-pinned in node-musl-sha256.txt. The
 #            fallback for a NODE_VERSION with no Stage B image: on-demand builds pick it.
 ARG NODE_BUILD=stage-b
-ARG NODE_MUSL_IMAGE=ghcr.io/jclaveau/node-musl:v24.22.1-5ad7a4419957@sha256:3679819ec983cb7ffa5c396bef0546afc78da2686de3c086228a1b07227271e8
+ARG NODE_MUSL_IMAGE=ghcr.io/jclaveau/node-musl:v24.22.1-2cef23906fde@sha256:448961e4182c0524b4ed48c42c35a74eac0f3fe73009870b8b982ded5fa7de25
 
 FROM ${NODE_MUSL_IMAGE} AS node-musl-files
 
