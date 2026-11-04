@@ -5,7 +5,10 @@ name: 'node-musl zlib integrity'
 # ("memory corruption"). Each slot runs, for the candidate and for the shipped
 # node as control:
 #   - that issue's own repro (github.com/morpheus-med/node-defect), which
-#     crashed affected builds; any non-zero exit or signal fails the slot;
+#     crashed affected builds; any non-zero exit or signal fails the slot. It
+#     only crashes when glibc's malloc notices the damage, so it runs with
+#     node/bench/gzip-verify-hook.cjs preloaded, which verifies every gzip
+#     stream (exit 3) and checks malloc'd canary buffers (exit 4);
 #   - node/bench/zlib-integrity.cjs, gzip/gunzip round trips plus zlib.crc32
 #     against a reference, which would catch silent corruption.
 # `control_images` adds arms, e.g. node 20.2.0, which shipped crc32 SIMD and
@@ -122,10 +125,12 @@ jobs:
             for run in $(seq 1 "$REPRO_RUNS"); do
               started=$(date +%s)
               log_name=repro-${arm//[^A-Za-z0-9.-]/_}-$run.err
-              docker run --rm --entrypoint sh -w /repro -v "$PWD/repro:/repro:ro" "$image" \
-                -c 'timeout 900 node index.js > /dev/null' 2> "$log_name"
+              docker run --rm --entrypoint sh -w /repro -v "$PWD/repro:/repro:ro" \
+                -v "$PWD/node/bench:/bench:ro" "$image" \
+                -c 'timeout 900 node -r /bench/gzip-verify-hook.cjs index.js > /dev/null' 2> "$log_name"
               run_rc=$?
-              echo "$arm repro $run/$REPRO_RUNS: rc=$run_rc in $(( $(date +%s) - started ))s"
+              echo "$arm repro $run/$REPRO_RUNS: rc=$run_rc in $(( $(date +%s) - started ))s;" \
+                "$(grep -m1 '^gzip-verify:' "$log_name" || echo 'no gzip-verify summary')"
               if [ "$run_rc" -ne 0 ]; then
                 echo "::error::$arm: node-defect repro run $run exited $run_rc"
                 tail -20 "$log_name"
