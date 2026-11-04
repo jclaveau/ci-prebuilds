@@ -147,3 +147,7 @@ Same bench vs ubuntu/official (glibc, crc32 off upstream too): no-crc32 geomean
 0.872-0.916 every CPU (crc32 0.851-0.890); gzip_20MB no-crc32 7763 0.98-1.13x
 (parity, noisy), 9V74 0.92-0.97x, 9V45 0.96-1.01x; crc32 7763 0.90-1.02x,
 9V 0.81-0.88x.
+
+SHIPPED 2026-11-04 (jean picked B): 4933a1e repins NODE_MUSL_IMAGE to
+v24.22.1-5ad7a4419957 (crc32 SIMD off) + recipe on main; T&P run 41908821366.
+The crc32 candidate v24.22.1-2cef23906fde is NOT shipped (nodejs#45268 risk).
