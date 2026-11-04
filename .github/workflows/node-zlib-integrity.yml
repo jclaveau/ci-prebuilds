@@ -114,8 +114,8 @@ jobs:
           (cd repro && unzip -q anonymized-data.zip && ls -l anonymized-data)
           chmod -R a+rX repro
       # One build per libc: a musl .so cannot load into a glibc node and back.
-      # bullseye matches node:20.2.0-bullseye-slim's glibc; its gcc 10 is older
-      # than upstream tests, hence CONFIG_WERROR=false.
+      # The glibc one loads into node:20.2.0-bookworm-slim (bullseye's apt is
+      # gone); hardened_malloc needs C23, newer than bookworm's gcc 12.
       - name: Build hardened_malloc
         if: ${{ inputs.allocator_preload == 'hardened_malloc' }}
         run: |
@@ -127,8 +127,11 @@ jobs:
           docker run --rm -v "$PWD/hm-src:/src:ro" -v "$PWD/hm:/out" alpine:3.21 sh -c \
             "apk add -q make gcc g++ linux-headers && cp -r /src /b && make -C /b $make_flags && cp /b/out/libhardened_malloc.so /out/musl.so" \
             || echo "::error::hardened_malloc musl build failed"
-          docker run --rm -v "$PWD/hm-src:/src:ro" -v "$PWD/hm:/out" debian:bullseye sh -c \
-            "apt-get -qq update && apt-get -qq install -y make gcc g++ >/dev/null && cp -r /src /b && make -C /b $make_flags && cp /b/out/libhardened_malloc.so /out/glibc.so" \
+          docker run --rm -v "$PWD/hm-src:/src:ro" -v "$PWD/hm:/out" debian:bookworm sh -c \
+            "apt-get -qq update && apt-get -qq install -y make g++ wget gnupg lsb-release software-properties-common >/dev/null \
+              && wget -qO /llvm.sh https://apt.llvm.org/llvm.sh && bash /llvm.sh 19 >/dev/null \
+              && cp -r /src /b && make -C /b $make_flags CC=/usr/lib/llvm-19/bin/clang CXX=/usr/lib/llvm-19/bin/clang++ LDFLAGS=-fuse-ld=lld \
+              && cp /b/out/libhardened_malloc.so /out/glibc.so" \
             || echo "::error::hardened_malloc glibc build failed"
           ls -l hm
           # hardened_malloc maps far more regions than glibc's malloc
