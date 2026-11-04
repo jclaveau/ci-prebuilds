@@ -81,13 +81,20 @@ function streamThrough(transform, sample) {
 const strategies = [zlib.constants.Z_DEFAULT_STRATEGY, zlib.constants.Z_FILTERED,
   zlib.constants.Z_HUFFMAN_ONLY, zlib.constants.Z_RLE, zlib.constants.Z_FIXED];
 
+// zlib.crc32 arrived in node 22.2 and 20.15; older controls get the gzip
+// trailer check, which runs the same crc32.
+const hasCrc32Export = typeof zlib.crc32 === 'function';
+if (!hasCrc32Export) {
+  console.log(`node ${process.version} has no zlib.crc32: checking the gzip trailer only`);
+}
+
 (async () => {
   for (let round = 1; round <= roundCount; round++) {
     const sample = makeSample();
     const crcOffset = randomInt(64);
     const crcSlice = sample.subarray(Math.min(crcOffset, sample.length));
     const expectedCrc = referenceCrc32(crcSlice);
-    const actualCrc = zlib.crc32(crcSlice);
+    const actualCrc = hasCrc32Export ? zlib.crc32(crcSlice) : expectedCrc;
     if (actualCrc !== expectedCrc) {
       fail(round, `zlib.crc32 ${JSON.stringify(actualCrc)} vs reference ${JSON.stringify(expectedCrc)}, ` +
         `${JSON.stringify(crcSlice.length)} bytes at offset ${JSON.stringify(crcOffset)}`);

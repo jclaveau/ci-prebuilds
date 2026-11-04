@@ -8,6 +8,8 @@ name: 'node-musl zlib integrity'
 #     crashed affected builds; any non-zero exit or signal fails the slot;
 #   - node/bench/zlib-integrity.cjs, gzip/gunzip round trips plus zlib.crc32
 #     against a reference, which would catch silent corruption.
+# `control_images` adds arms, e.g. node 20.2.0, which shipped crc32 SIMD and
+# reproduced the issue: the positive control showing the repro bites here.
 
 on:
   workflow_dispatch:
@@ -28,6 +30,14 @@ on:
         description: 'zlib-integrity.cjs rounds per arm per slot'
         default: '3000'
         type: string
+      control_images:
+        description: 'Extra images run as arms (space-separated), e.g. node:20.2.0-bullseye-slim'
+        default: ''
+        type: string
+      skip_candidate:
+        description: 'Run only the control images, not candidate and shipped'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -57,6 +67,8 @@ jobs:
       SHIPPED_IMAGE: ghcr.io/jclaveau/alpine-dood-node:latest
       REPRO_RUNS: ${{ inputs.repro_runs }}
       INTEGRITY_ROUNDS: ${{ inputs.integrity_rounds }}
+      CONTROL_IMAGES: ${{ inputs.control_images }}
+      SKIP_CANDIDATE: ${{ inputs.skip_candidate }}
     steps:
       - uses: actions/checkout@v7
       - uses: docker/login-action@v4
@@ -65,18 +77,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Stage the candidate as the consumer would ship it
+        if: ${{ !inputs.skip_candidate }}
         env:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          grep -m1 'model name' /proc/cpuinfo
-          grep -qw pclmulqdq /proc/cpuinfo && grep -qw sse4_2 /proc/cpuinfo \
-            || { echo "::error::runner lacks sse4_2+pclmulqdq, the crc32 SIMD path would not run"; exit 1; }
           docker pull "$SHIPPED_IMAGE"
           docker build -f node/musl-build/Dockerfile.bench-arm \
             --build-arg "STAGE_A_IMAGE=$SHIPPED_IMAGE" \
             --build-arg "NODE_SOURCE_IMAGE=ghcr.io/jclaveau/node-musl:$TAG" \
             -t bench-arm:candidate node/musl-build
+      - name: Runner CPU
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          grep -qw pclmulqdq /proc/cpuinfo && grep -qw sse4_2 /proc/cpuinfo \
+            || { echo "::error::runner lacks sse4_2+pclmulqdq, the crc32 SIMD path would not run"; exit 1; }
       - name: Fetch the node-defect repro
         run: |
           set -euo pipefail
@@ -87,11 +102,16 @@ jobs:
         run: |
           set -uo pipefail
           rc=0
-          for arm in candidate shipped; do
+          arms=$CONTROL_IMAGES
+          [ "$SKIP_CANDIDATE" = true ] || arms="candidate shipped $arms"
+          [ -n "${arms// }" ] || { echo "::error::no arm to run: skip_candidate with no control_images"; exit 1; }
+          for arm in $arms; do
             case "$arm" in
               candidate) image=bench-arm:candidate ;;
               shipped)   image=$SHIPPED_IMAGE ;;
+              *)         image=$arm ;;
             esac
+            echo "$arm: $(docker run --rm --entrypoint node "$image" --version)"
             echo "::group::$arm integrity ($INTEGRITY_ROUNDS rounds)"
             docker run --rm --entrypoint node -v "$PWD/repro:/repro:ro" -v "$PWD/node/bench:/bench:ro" \
               "$image" /bench/zlib-integrity.cjs /repro/anonymized-data "$INTEGRITY_ROUNDS" "$RANDOM$RANDOM" \
@@ -99,13 +119,14 @@ jobs:
             echo "::endgroup::"
             for run in $(seq 1 "$REPRO_RUNS"); do
               started=$(date +%s)
+              log_name=repro-${arm//[^A-Za-z0-9.-]/_}-$run.err
               docker run --rm --entrypoint sh -w /repro -v "$PWD/repro:/repro:ro" "$image" \
-                -c 'timeout 900 node index.js > /dev/null' 2> "repro-$arm-$run.err"
+                -c 'timeout 900 node index.js > /dev/null' 2> "$log_name"
               run_rc=$?
               echo "$arm repro $run/$REPRO_RUNS: rc=$run_rc in $(( $(date +%s) - started ))s"
               if [ "$run_rc" -ne 0 ]; then
                 echo "::error::$arm: node-defect repro run $run exited $run_rc"
-                tail -20 "repro-$arm-$run.err"
+                tail -20 "$log_name"
                 rc=1
               fi
             done
