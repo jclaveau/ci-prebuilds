@@ -114,8 +114,9 @@ jobs:
           (cd repro && unzip -q anonymized-data.zip && ls -l anonymized-data)
           chmod -R a+rX repro
       # One build per libc: a musl .so cannot load into a glibc node and back.
-      # The glibc one loads into node:20.2.0-bookworm-slim (bullseye's apt is
-      # gone); hardened_malloc needs C23, newer than bookworm's gcc 12.
+      # The glibc one loads into node:20.3.0-bookworm-slim (bullseye's apt is
+      # gone, no 20.2.0 bookworm tag; 20.3.0 still enables crc32 SIMD);
+      # hardened_malloc needs C23, newer than bookworm's gcc 12.
       - name: Build hardened_malloc
         if: ${{ inputs.allocator_preload == 'hardened_malloc' }}
         run: |
