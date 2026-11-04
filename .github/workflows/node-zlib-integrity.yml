@@ -15,7 +15,11 @@ name: 'node-musl zlib integrity'
 #     hardened_malloc, whose slot canaries and free checks do on musl what
 #     glibc's malloc checks do;
 #   - node/bench/zlib-integrity.cjs, gzip/gunzip round trips plus zlib.crc32
-#     against a reference, which would catch silent corruption.
+#     against a reference, which would catch silent corruption;
+#   - node/bench/zlib-stored-boundary.cjs, nodejs/node#67148's test for the
+#     issue's root cause (crc_fold_copy's 16-byte tail store, fixed by
+#     node#52123). It must abort BOUNDARY_CONTROL_IMAGE, which has the old
+#     store, before its pass on the arms means anything.
 # `control_images` adds arms, e.g. node 20.2.0, which shipped crc32 SIMD and
 # reproduced the issue: the positive control showing the repro bites here.
 
@@ -84,6 +88,7 @@ jobs:
       SKIP_CANDIDATE: ${{ inputs.skip_candidate }}
       ALLOCATOR_PRELOAD: ${{ inputs.allocator_preload }}
       HARDENED_MALLOC_SHA: bf37d54560a62b50da72e8fda56abf04f23b5fd2
+      BOUNDARY_CONTROL_IMAGE: node:20.6.0-bookworm-slim
     steps:
       - uses: actions/checkout@v7
       - uses: docker/login-action@v4
@@ -107,6 +112,21 @@ jobs:
           grep -m1 'model name' /proc/cpuinfo
           if ! grep -qw pclmulqdq /proc/cpuinfo || ! grep -qw sse4_2 /proc/cpuinfo; then
             echo "::error::runner lacks sse4_2+pclmulqdq, the crc32 SIMD path would not run"
+            exit 1
+          fi
+      - name: The stored-boundary test aborts the positive control
+        run: |
+          set +e -uo pipefail
+          crash_count=0
+          for run in 1 2 3; do
+            docker run --rm --entrypoint node -v "$PWD/node/bench:/bench:ro" \
+              "$BOUNDARY_CONTROL_IMAGE" /bench/zlib-stored-boundary.cjs 2> control.err
+            run_rc=$?
+            echo "control run $run: rc=$run_rc $(head -c 200 control.err)"
+            [ "$run_rc" -eq 0 ] || crash_count=$((crash_count + 1))
+          done
+          if [ "$crash_count" -eq 0 ]; then
+            echo "::error::$(printf %q "$BOUNDARY_CONTROL_IMAGE") passed zlib-stored-boundary.cjs 3 times: the test cannot see the bug on this runner"
             exit 1
           fi
       - name: Fetch the node-defect repro
@@ -174,6 +194,9 @@ jobs:
               "${preload_args[@]}" "$image" /bench/zlib-integrity.cjs /repro/anonymized-data "$INTEGRITY_ROUNDS" "$RANDOM$RANDOM" \
               || { echo "::error::$arm: zlib-integrity.cjs failed"; rc=1; }
             echo "::endgroup::"
+            docker run --rm --entrypoint node -v "$PWD/node/bench:/bench:ro" \
+              "${preload_args[@]}" "$image" /bench/zlib-stored-boundary.cjs \
+              || { echo "::error::$arm: zlib-stored-boundary.cjs failed"; rc=1; }
             for run in $(seq 1 "$REPRO_RUNS"); do
               started=$(date +%s)
               log_name=repro-${arm//[^A-Za-z0-9.-]/_}-$run.err
