@@ -7,13 +7,15 @@ ARG BASE_IMAGE=jclaveau/alpine-dood:latest
 ARG NODE_VERSION=24.22.1
 
 # Where node comes from:
-#   stage-b  our own build (#351 Stage B, node/musl-build/, node-musl.yml): clang23, ThinLTO, PGO on
-#            Alpine edge. EPYC 7763, CPU-ms, 10 shots per arm (run 41135093907): geomean 0.884x vs
-#            the tarball build, 0.880x vs ubuntu-dood-node; `node -e 0` 31.6 vs 36.0 ms (ubuntu 32.8).
+#   stage-b  our own build (#351 Stage B, node/musl-build/, node-musl.yml): clang23, ThinLTO, PGO
+#            trained on gzip of real text too, fortify-headers without its memcpy overlap trap, on
+#            Alpine edge; zlib's crc32 SIMD stays off as upstream has it (nodejs/node#45268). CPU-ms,
+#            10 shots per arm (run 41892818867): geomean vs ubuntu-dood-node 0.872-0.896 on EPYC
+#            7763, 0.880-0.888 on 9V74, 0.879-0.903 on 9V45; vs the previous Stage B 0.963-0.998.
 #   tarball  nodejs.org's musl build (unofficial-builds), sha256-pinned in node-musl-sha256.txt. The
 #            fallback for a NODE_VERSION with no Stage B image: on-demand builds pick it.
 ARG NODE_BUILD=stage-b
-ARG NODE_MUSL_IMAGE=ghcr.io/jclaveau/node-musl:v24.22.1-de4850dd5f9b@sha256:8cf4f50fbe702b2581518b462977c09274a896df6ae4405b8c1162be1ba98887
+ARG NODE_MUSL_IMAGE=ghcr.io/jclaveau/node-musl:v24.22.1-5ad7a4419957@sha256:3679819ec983cb7ffa5c396bef0546afc78da2686de3c086228a1b07227271e8
 
 FROM ${NODE_MUSL_IMAGE} AS node-musl-files
 

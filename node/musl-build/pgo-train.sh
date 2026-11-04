@@ -21,6 +21,36 @@ npm install --no-audit --no-fund
 npx tsc --noEmit -p .
 npx vite build
 npx vitest run
+# gzip on real text too: a zlib profile trained on node-perf-kernel's synthetic
+# 20 MB alone leaves deflate 1.07x slower on real text than one trained on both
+# (node-zlib-align run 41605570944, pgo_mixed vs pgo_fortify, every CPU).
+node -e '
+const fs = require("fs"), path = require("path"), zlib = require("zlib");
+const wantedBytes = 20 * 1024 * 1024, chunkList = [];
+let collectedBytes = 0;
+const walkDirectory = (directoryPath) => {
+  for (const entry of fs.readdirSync(directoryPath, { withFileTypes: true })) {
+    if (collectedBytes >= wantedBytes) return;
+    const entryPath = path.join(directoryPath, entry.name);
+    if (entry.isDirectory()) walkDirectory(entryPath);
+    else if (/\.(js|cjs|mjs|ts|json|map)$/.test(entry.name)) {
+      const fileBytes = fs.readFileSync(entryPath);
+      chunkList.push(fileBytes);
+      collectedBytes += fileBytes.length;
+    }
+  }
+};
+walkDirectory("node_modules");
+if (collectedBytes < wantedBytes) {
+  throw new Error(`node_modules holds ${JSON.stringify(collectedBytes)} bytes of text, under ${JSON.stringify(wantedBytes)}`);
+}
+const sourceText = Buffer.concat(chunkList).subarray(0, wantedBytes);
+for (let round = 0; round < 3; round++) {
+  const roundTrip = zlib.gunzipSync(zlib.gzipSync(sourceText));
+  if (!roundTrip.equals(sourceText)) throw new Error(`gzip round trip ${JSON.stringify(round)} changed the text`);
+}
+console.log(`gzip training: ${JSON.stringify(sourceText.length)} bytes of node_modules text, 3 round trips`);
+'
 rm -rf node_modules dist
 npm ci --offline --no-audit --no-fund
 npx vite build
