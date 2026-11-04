@@ -129,3 +129,10 @@ preloaded: per-stream trailer crc + round trip vs input copy, 4000 malloc'd
 canaries): glibc 20.2.0 aborts 18/40 (hook raises the rate), every surviving glibc
 run and musl 40/40 verify all streams and canaries clean. Damage hits only malloc
 metadata -> hook FAILS its positive control; no test settles crc32 SIMD on musl.
+hardened_malloc (GrapheneOS bf37d54, preloaded in place of each image's allocator,
+workflow input allocator_preload): musl 20.2.0 0/40 (run 41809368317, 9V74/7763x2/9V45);
+glibc node:20.3.0-bookworm-slim (20.3.0 still has crc32 SIMD; no 20.2.0 bookworm tag;
+bullseye apt 404s) baseline aborts 8/40 (run 41811689477, 7763 6/30, 9V45 2/10) but
+0/40 under hardened_malloc on 4x 7763 (run 41811703214): hardened_malloc HIDES the
+bug -> fails its positive control. Every detector tried is blind off glibc malloc;
+crc32 SIMD safety on musl cannot be tested here: ship-on-trust or drop = jean's call.
