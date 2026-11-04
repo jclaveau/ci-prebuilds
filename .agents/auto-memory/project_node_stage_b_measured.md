@@ -136,3 +136,10 @@ bullseye apt 404s) baseline aborts 8/40 (run 41811689477, 7763 6/30, 9V45 2/10) 
 0/40 under hardened_malloc on 4x 7763 (run 41811703214): hardened_malloc HIDES the
 bug -> fails its positive control. Every detector tried is blind off glibc malloc;
 crc32 SIMD safety on musl cannot be tested here: ship-on-trust or drop = jean's call.
+
+Dropping crc32 SIMD, real node build (bench 41892818867, reference_tag arm;
+no-crc32 v24.22.1-5ad7a4419957 = headers + gzip PGO, branch node-musl/headers-nocrc32,
+vs crc32 candidate v24.22.1-2cef23906fde): gzip_20MB no-crc32 vs crc32 7763 1.09-1.11x
+(101.9 vs 92.4 ms), 9V74 1.12-1.15x, 9V45 1.13-1.19x; other rows noise; geomean
+1.006-1.045. No-crc32 vs shipped gzip: 7763 1.00-1.04x (gain gone), 9V74 0.91x,
+9V45 0.85-0.88x. crc32 SIMD = all of the candidate's gzip gain on the 7763.
