@@ -20,6 +20,10 @@ on:
         description: 'ghcr.io/jclaveau/node-musl tag under test (the recipe tag, e.g. v24.22.1-93ec8c2ea7cc)'
         required: true
         type: string
+      reference_tag:
+        description: 'Optional second node-musl tag, benched as the "reference" arm beside the candidate on the same runner'
+        default: ''
+        type: string
       label:
         description: 'Free-text note for the summary (e.g. "fortify-builtin")'
         default: ''
@@ -90,7 +94,7 @@ jobs:
       RUNS: ${{ inputs.runs }}
       SHIPPED_IMAGE: ghcr.io/jclaveau/alpine-dood-node:latest
       UBUNTU_IMAGE: ghcr.io/jclaveau/ubuntu-dood-node:latest
-      ARMS: shipped candidate ubuntu official
+      REFERENCE_TAG: ${{ inputs.reference_tag }}
     steps:
       # First step on purpose: an unwanted draw is only cheap if it ends before
       # the checkout and the image pulls.
@@ -135,12 +139,23 @@ jobs:
             -t bench-arm:candidate node/musl-build
           node_version=$(docker run --rm --entrypoint node bench-arm:candidate -p process.versions.node)
           echo "OFFICIAL_IMAGE=node:${node_version}-bookworm-slim" >> "$GITHUB_ENV"
+          arms='shipped candidate ubuntu official'
+          if [ -n "$REFERENCE_TAG" ]; then
+            docker build -f node/musl-build/Dockerfile.bench-arm \
+              --build-arg "STAGE_A_IMAGE=$SHIPPED_IMAGE" \
+              --build-arg "NODE_SOURCE_IMAGE=$IMAGE:$REFERENCE_TAG" \
+              -t bench-arm:reference node/musl-build
+            arms="$arms reference"
+          fi
+          echo "ARMS=$arms" >> "$GITHUB_ENV"
 
       - name: Node in every arm
         if: steps.cpu.outputs.keep == 'true'
         run: |
           set -euo pipefail
-          for image in "$SHIPPED_IMAGE" bench-arm:candidate "$UBUNTU_IMAGE" "$OFFICIAL_IMAGE"; do
+          images="$SHIPPED_IMAGE bench-arm:candidate $UBUNTU_IMAGE $OFFICIAL_IMAGE"
+          [ -z "$REFERENCE_TAG" ] || images="$images bench-arm:reference"
+          for image in $images; do
             echo "$image: $(docker run --rm --entrypoint node "$image" -p \
               'process.version + " cc=" + (process.config.variables.clang ? "clang" : "gcc")')"
           done
@@ -158,6 +173,7 @@ jobs:
               case "$arm" in
                 shipped)   image=$SHIPPED_IMAGE ;;
                 candidate) image=bench-arm:candidate ;;
+                reference) image=bench-arm:reference ;;
                 ubuntu)    image=$UBUNTU_IMAGE ;;
                 official)  image=$OFFICIAL_IMAGE; home=/root ;;
               esac
@@ -194,10 +210,11 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
           LABEL: ${{ inputs.label }}
+          REFERENCE_TAG: ${{ inputs.reference_tag }}
         run: |
           set -euo pipefail
           {
-            echo "## node-musl:$TAG ${LABEL:+($LABEL) }vs shipped, per CPU model"
+            echo "## node-musl:$TAG ${LABEL:+($LABEL) }vs shipped${REFERENCE_TAG:+ and reference $REFERENCE_TAG}, per CPU model"
             echo
             if [ ! -d draws ]; then
               echo "No slot drew a wanted CPU model."
@@ -206,8 +223,9 @@ jobs:
             for draw in $(ls -d draws/*/ | sort -t- -k4 -n); do
               echo "#### $(basename "$draw"): $(cut -d: -f2- "$draw/cpu.txt")"
               echo
-              python3 node/bench/node-arms-table.py "$draw" \
-                --candidate candidate --reference shipped --reference ubuntu --reference official
+              reference_args=(--reference shipped --reference ubuntu --reference official)
+              [ -z "$REFERENCE_TAG" ] || reference_args+=(--reference reference)
+              python3 node/bench/node-arms-table.py "$draw" --candidate candidate "${reference_args[@]}"
               echo
             done
           } | tee -a "$GITHUB_STEP_SUMMARY"
