@@ -8,7 +8,12 @@ name: 'node-musl zlib integrity'
 #     crashed affected builds; any non-zero exit or signal fails the slot. It
 #     only crashes when glibc's malloc notices the damage, so it runs with
 #     node/bench/gzip-verify-hook.cjs preloaded, which verifies every gzip
-#     stream (exit 3) and checks malloc'd canary buffers (exit 4);
+#     stream (exit 3) and checks malloc'd canary buffers (exit 4). That hook
+#     never fired, even on glibc where node 20.2.0 aborts: the damage lands in
+#     malloc metadata only. `allocator_preload: hardened_malloc` swaps every
+#     arm's allocator (the image's mimalloc preload included) for GrapheneOS
+#     hardened_malloc, whose slot canaries and free checks do on musl what
+#     glibc's malloc checks do;
 #   - node/bench/zlib-integrity.cjs, gzip/gunzip round trips plus zlib.crc32
 #     against a reference, which would catch silent corruption.
 # `control_images` adds arms, e.g. node 20.2.0, which shipped crc32 SIMD and
@@ -41,6 +46,11 @@ on:
         description: 'Run only the control images, not candidate and shipped'
         type: boolean
         default: false
+      allocator_preload:
+        description: 'Allocator LD_PRELOADed into every arm (none keeps each image own)'
+        type: choice
+        options: [none, hardened_malloc]
+        default: none
 
 permissions:
   contents: read
@@ -72,6 +82,8 @@ jobs:
       INTEGRITY_ROUNDS: ${{ inputs.integrity_rounds }}
       CONTROL_IMAGES: ${{ inputs.control_images }}
       SKIP_CANDIDATE: ${{ inputs.skip_candidate }}
+      ALLOCATOR_PRELOAD: ${{ inputs.allocator_preload }}
+      HARDENED_MALLOC_SHA: bf37d54560a62b50da72e8fda56abf04f23b5fd2
     steps:
       - uses: actions/checkout@v7
       - uses: docker/login-action@v4
@@ -101,6 +113,26 @@ jobs:
           git clone --depth 1 https://github.com/morpheus-med/node-defect repro
           (cd repro && unzip -q anonymized-data.zip && ls -l anonymized-data)
           chmod -R a+rX repro
+      # One build per libc: a musl .so cannot load into a glibc node and back.
+      # bullseye matches node:20.2.0-bullseye-slim's glibc; its gcc 10 is older
+      # than upstream tests, hence CONFIG_WERROR=false.
+      - name: Build hardened_malloc
+        if: ${{ inputs.allocator_preload == 'hardened_malloc' }}
+        run: |
+          set -uo pipefail
+          git clone -q https://github.com/GrapheneOS/hardened_malloc hm-src
+          git -C hm-src checkout -q "$HARDENED_MALLOC_SHA"
+          mkdir -p hm
+          make_flags='CONFIG_NATIVE=false CONFIG_WERROR=false -j4'
+          docker run --rm -v "$PWD/hm-src:/src:ro" -v "$PWD/hm:/out" alpine:3.21 sh -c \
+            "apk add -q make gcc g++ linux-headers && cp -r /src /b && make -C /b $make_flags && cp /b/out/libhardened_malloc.so /out/musl.so" \
+            || echo "::error::hardened_malloc musl build failed"
+          docker run --rm -v "$PWD/hm-src:/src:ro" -v "$PWD/hm:/out" debian:bullseye sh -c \
+            "apt-get -qq update && apt-get -qq install -y make gcc g++ >/dev/null && cp -r /src /b && make -C /b $make_flags && cp /b/out/libhardened_malloc.so /out/glibc.so" \
+            || echo "::error::hardened_malloc glibc build failed"
+          ls -l hm
+          # hardened_malloc maps far more regions than glibc's malloc
+          sudo sysctl -w vm.max_map_count=1048576
       # set +e: the default bash -e would end the step on the first crash; every
       # arm and run is wanted, and rc carries the failure to the end.
       - name: Run every arm
@@ -117,16 +149,30 @@ jobs:
               *)         image=$arm ;;
             esac
             echo "$arm: $(docker run --rm --entrypoint node "$image" --version)"
+            preload_args=()
+            if [ "$ALLOCATOR_PRELOAD" = hardened_malloc ]; then
+              libc_name=glibc
+              docker run --rm --entrypoint sh "$image" -c '[ -e /lib/ld-musl-x86_64.so.1 ]' && libc_name=musl
+              preload_args=(-v "$PWD/hm:/hm:ro" -e "LD_PRELOAD=/hm/$libc_name.so")
+              loaded=$(docker run --rm --entrypoint node "${preload_args[@]}" "$image" -p \
+                "require('fs').readFileSync('/proc/self/maps', 'utf8').includes('/hm/$libc_name.so')")
+              echo "$arm: hardened_malloc $libc_name.so loaded: $loaded"
+              if [ "$loaded" != true ]; then
+                echo "::error::$arm: hardened_malloc $(printf %q "$libc_name.so") did not load, got $(printf %q "$loaded")"
+                rc=1
+                continue
+              fi
+            fi
             echo "::group::$arm integrity ($INTEGRITY_ROUNDS rounds)"
             docker run --rm --entrypoint node -v "$PWD/repro:/repro:ro" -v "$PWD/node/bench:/bench:ro" \
-              "$image" /bench/zlib-integrity.cjs /repro/anonymized-data "$INTEGRITY_ROUNDS" "$RANDOM$RANDOM" \
+              "${preload_args[@]}" "$image" /bench/zlib-integrity.cjs /repro/anonymized-data "$INTEGRITY_ROUNDS" "$RANDOM$RANDOM" \
               || { echo "::error::$arm: zlib-integrity.cjs failed"; rc=1; }
             echo "::endgroup::"
             for run in $(seq 1 "$REPRO_RUNS"); do
               started=$(date +%s)
               log_name=repro-${arm//[^A-Za-z0-9.-]/_}-$run.err
               docker run --rm --entrypoint sh -w /repro -v "$PWD/repro:/repro:ro" \
-                -v "$PWD/node/bench:/bench:ro" "$image" \
+                -v "$PWD/node/bench:/bench:ro" "${preload_args[@]}" "$image" \
                 -c 'timeout 900 node -r /bench/gzip-verify-hook.cjs index.js > /dev/null' 2> "$log_name"
               run_rc=$?
               echo "$arm repro $run/$REPRO_RUNS: rc=$run_rc in $(( $(date +%s) - started ))s;" \
