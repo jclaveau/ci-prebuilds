@@ -105,8 +105,10 @@ jobs:
       - name: Runner CPU
         run: |
           grep -m1 'model name' /proc/cpuinfo
-          grep -qw pclmulqdq /proc/cpuinfo && grep -qw sse4_2 /proc/cpuinfo \
-            || { echo "::error::runner lacks sse4_2+pclmulqdq, the crc32 SIMD path would not run"; exit 1; }
+          if ! grep -qw pclmulqdq /proc/cpuinfo || ! grep -qw sse4_2 /proc/cpuinfo; then
+            echo "::error::runner lacks sse4_2+pclmulqdq, the crc32 SIMD path would not run"
+            exit 1
+          fi
       - name: Fetch the node-defect repro
         run: |
           set -euo pipefail
