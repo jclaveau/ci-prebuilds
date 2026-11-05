@@ -41,8 +41,9 @@ name: pnpm install CPU probe
 # hash): the store seeded and node_modules installed in one RUN, with the
 # project in the image (onerun) or checked out on the bind mount with its
 # node_modules symlinked into the image (linked). The pull_cost job then times,
-# on a fresh runner with nothing cached, a cold pull of that image vs of its
-# base, and an actions/cache restore of the same store and metadata cache.
+# on a fresh runner with nothing cached, a cold pull of that image, of the
+# deps_layer one (store and node_modules in two layers) and of their base, and
+# an actions/cache restore of the same store and metadata cache.
 
 on:
   workflow_dispatch:
@@ -169,7 +170,7 @@ jobs:
     if: ${{ !cancelled() && needs.matrix.result == 'success' && needs.build.result != 'failure' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    # deps_image pushes its layer image for pull_cost.
+    # deps_image pushes its layer images for pull_cost.
     permissions:
       contents: read
       packages: write
@@ -302,14 +303,16 @@ jobs:
       - name: Probe
         run: bash node/bench/pnpm-install-probe.sh
 
-      - name: Push the deps image for the pull timing
+      - name: Push the deps images for the pull timing
         if: inputs.mode == 'deps_image'
         env:
-          PROBE_REF: ghcr.io/jclaveau/pnpm-probe-deps:${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.replicate }}
+          PROBE_TAG_PREFIX: ghcr.io/jclaveau/pnpm-probe-deps:${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.replicate }}
         run: |
           set -euo pipefail
-          docker tag pnpm-probe-onerun_layer_noverify:local "$PROBE_REF"
-          docker push -q "$PROBE_REF"
+          for layer_arm in onerun_layer_noverify deps_layer_noverify; do
+            docker tag "pnpm-probe-$layer_arm:local" "$PROBE_TAG_PREFIX-$layer_arm"
+            docker push -q "$PROBE_TAG_PREFIX-$layer_arm"
+          done
 
       - uses: actions/cache/save@v6
         if: inputs.mode == 'deps_image'
@@ -353,7 +356,7 @@ jobs:
       matrix:
         replicate: ${{ fromJSON(needs.matrix.outputs.replicate_list) }}
     env:
-      PROBE_REF: ghcr.io/jclaveau/pnpm-probe-deps:${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.replicate }}
+      PROBE_TAG_PREFIX: ghcr.io/jclaveau/pnpm-probe-deps:${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.replicate }}
       BASE_REF: ghcr.io/jclaveau/alpine-dood-pnpm:latest
       PULL_ROUNDS: '3'
     steps:
@@ -380,14 +383,14 @@ jobs:
           restored_bytes=$(du -sb "$GITHUB_WORKSPACE/work/export" | cut -f1)
           echo "cache_restore wall_ms=$restore_ms restored_bytes=$restored_bytes" | tee -a pull-cost.txt
 
-      # Each pull starts from an empty image store; base and deps alternate.
+      # Each pull starts from an empty image store; the arms alternate.
       - name: Cold pulls
         run: |
           set -euo pipefail
           grep -m1 'model name' /proc/cpuinfo | tee -a pull-cost.txt
           echo "docker storage driver: $(docker info -f '{{.Driver}}')" | tee -a pull-cost.txt
           for pull_round in $(seq 1 "$PULL_ROUNDS"); do
-            for pull_ref in "$PROBE_REF" "$BASE_REF"; do
+            for pull_ref in "$PROBE_TAG_PREFIX-onerun_layer_noverify" "$PROBE_TAG_PREFIX-deps_layer_noverify" "$BASE_REF"; do
               docker image prune -af >/dev/null
               left_images=$(docker image ls -q | wc -l)
               [ "$left_images" -eq 0 ] || { echo "::error::$left_images images left before a cold pull"; exit 1; }
