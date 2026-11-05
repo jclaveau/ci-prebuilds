@@ -36,6 +36,14 @@ on:
       # published image only through a new pin, never by themselves.
       - 'node/musl-build/**'
       - '.github/workflows/node-musl.yml'
+      # Bench scripts run by dispatch-only probes; the three negated ones are
+      # what node-perf-gate and pnpm-perf-gate below run, so they stay inputs.
+      - 'node/bench/**'
+      - '!node/bench/node-perf-kernel.cjs'
+      - '!node/bench/pnpm-install-probe.sh'
+      - '!node/bench/pnpm-install-probe-report.py'
+      - '!node/bench/pnpm-stat-paths.py'
+      - '.github/workflows/pnpm-install-probe.yml'
   pull_request:
     branches: [ main ]
     paths-ignore:
@@ -55,6 +63,12 @@ on:
       # published image only through a new pin, never by themselves.
       - 'node/musl-build/**'
       - '.github/workflows/node-musl.yml'
+      - 'node/bench/**'
+      - '!node/bench/node-perf-kernel.cjs'
+      - '!node/bench/pnpm-install-probe.sh'
+      - '!node/bench/pnpm-install-probe-report.py'
+      - '!node/bench/pnpm-stat-paths.py'
+      - '.github/workflows/pnpm-install-probe.yml'
   # Reusable entry point: lets `on-demand-build.yml` (issue-triggered) call
   # this workflow with version overrides + matrix filters. Every input defaults
   # to empty / `true` so the push/PR path is byte-identical to today (verified
