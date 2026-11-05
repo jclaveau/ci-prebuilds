@@ -339,6 +339,21 @@ jobs:
           path: ${{ github.workspace }}/work/export
           key: pnpm-probe-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.replicate }}
 
+      # The checkout both paths install, with the lockfile every arm installed.
+      - name: Fixture export
+        if: inputs.mode == 'deps_image'
+        run: |
+          set -euo pipefail
+          mkdir -p "$WORK/fixture-export"
+          cp -a "$WORK/fixture/." "$WORK/fixture-export/"
+          cp "$OUT/pnpm-lock.yaml" "$WORK/fixture-export/pnpm-lock.yaml"
+
+      - uses: actions/cache/save@v6
+        if: inputs.mode == 'deps_image'
+        with:
+          path: ${{ github.workspace }}/work/fixture-export
+          key: pnpm-probe-fixture-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.replicate }}
+
       - name: Null-pair spread
         if: inputs.mode == 'null_pair'
         # A null pair past the provisional ceiling is a finding about the
@@ -421,6 +436,56 @@ jobs:
             done
           done
           cat pull-cost.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}/work/fixture-export
+          key: pnpm-probe-fixture-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.replicate }}
+          fail-on-cache-miss: true
+
+      # A job's wall from an empty image store to installed node_modules. The
+      # cache path pays the restore timed above once, then the base pull and
+      # an install linking the checkout from the restored store; the image
+      # paths pull, then install the project the image holds at /app.
+      - name: Until installed
+        run: |
+          set -euo pipefail
+          export_dir=$GITHUB_WORKSPACE/work/export
+          skip_verify=pnpm_config_verify_store_integrity=false
+          for until_round in $(seq 1 "$PULL_ROUNDS"); do
+            for path_name in cache onerun_layer_noverify deps_layer_noverify; do
+              docker image prune -af >/dev/null
+              left_images=$(docker image ls -q | wc -l)
+              [ "$left_images" -eq 0 ] || { echo "::error::$left_images images left before a cold pull"; exit 1; }
+              if [ "$path_name" = cache ]; then
+                sudo rm -rf "$export_dir/fx"
+                cp -a "$GITHUB_WORKSPACE/work/fixture-export" "$export_dir/fx"
+                sudo chown -R 1001:1001 "$export_dir"
+                path_ref=$BASE_REF
+                run_args=(-v "$export_dir:/w" -v "$export_dir/metadata:/home/runner/.cache/pnpm")
+                install_dir=/w/fx
+                store_dir=/w/store
+              else
+                path_ref=$PROBE_TAG_PREFIX-$path_name
+                run_args=(--network none)
+                install_dir=/app
+                store_dir=/opt/store
+              fi
+              start_ns=$(date +%s%N)
+              docker pull -q "$path_ref" >/dev/null
+              pulled_ns=$(date +%s%N)
+              docker run -d --name until-installed --entrypoint sleep --cpus=4 --memory=6g \
+                -e HOME=/home/runner "${run_args[@]}" "$path_ref" infinity >/dev/null
+              docker exec -u 1001 -e "$skip_verify" -w "$install_dir" until-installed \
+                pnpm install --frozen-lockfile --offline --store-dir="$store_dir" >"until-$path_name-$until_round.log" 2>&1 \
+                || { echo "::error::install failed: $(printf %q "$path_name") round $until_round"; tail -30 "until-$path_name-$until_round.log"; exit 1; }
+              end_ns=$(date +%s%N)
+              docker rm -f until-installed >/dev/null
+              echo "until_installed round=$until_round path=$path_name pull_ms=$(((pulled_ns - start_ns) / 1000000)) start_install_ms=$(((end_ns - pulled_ns) / 1000000)) total_ms=$(((end_ns - start_ns) / 1000000))" \
+                | tee -a pull-cost.txt
+            done
+          done
+          grep until_installed pull-cost.txt >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v7
         if: always()
