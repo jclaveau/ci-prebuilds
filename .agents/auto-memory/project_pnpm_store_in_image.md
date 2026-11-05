@@ -1,6 +1,6 @@
 ---
 name: project_pnpm_store_in_image
-description: pnpm store baked into a CI image layer is 2x WORSE (links fail across bind mount → copies); store+node_modules prebuilt in image 0.65x CPU, 0.44-0.50x with verify off, image 3.4x (store stored twice); node_modules without store FAILS offline install; verify_store_integrity=false 0.85-0.90x (runs 41431180556, 41437119695, 2026-11-02)
+description: deps image (store+node_modules prebuilt) LOSES on a cold runner — pull +15-20 s vs actions/cache restore 4-8 s, install saves only ~0.3 s wall (runs 42000096479, 42001923638, 2026-11-05); pnpm store baked into a CI image layer is 2x WORSE (links fail across bind mount → copies); store+node_modules prebuilt in image 0.65x CPU, 0.44-0.50x with verify off, image 3.4x (store stored twice); node_modules without store FAILS offline install; verify_store_integrity=false 0.85-0.90x (runs 41431180556, 41437119695, 2026-11-02)
 metadata:
   type: project
 ---
@@ -39,6 +39,32 @@ works if CI skips `pnpm install` entirely. deps_layer's 658 MB is the store twic
 (COPY layer + copy-up in the install RUN); copying the store and installing in ONE
 RUN would keep hardlinks: est. ~473 MB, not measured.
 
-**How to apply:** don't ship the store in an image layer. Cheapest real lever =
+Runs 42000096479 + 42001923638 (2026-11-05, mode=deps_image, 10 rounds x 3):
+onerun_layer = seed /opt/store from the previous store, install, `pnpm store
+prune`, all in ONE RUN (hardlinks kept). Wall / CPU vs bind:
+
+| CPU | deps_layer_noverify | onerun_layer_noverify |
+|---|---|---|
+| 8370C | 880 vs 1125 ms (0.78x) / 0.52x | 950 vs 1125 ms (0.84x) / 0.54x |
+| 7763 | 971 vs 1303 ms (0.75x) / 0.43x | 1128 vs 1303 ms (0.87x) / 0.48x |
+| 9V74 | 1082 vs 1506 ms (0.72x) / 0.45x | 1096 vs 1506 ms (0.73x) / 0.49x |
+
+- onerun image 497 vs 668 MB deps_layer (0.74x); +306 vs +477 MB over base.
+  onerun has 63k vs 25k page faults (2.5x) vs bind, still faster.
+- linked_layer (symlink /app's node_modules into the checkout, "option B"):
+  third-party deps resolve, but WORKSPACE packages resolve to the image copy
+  (`@vitest/expect` → /app/packages/expect): stale code for monorepos. Dead
+  unless the repo has no workspace packages.
+- Cold pull on a fresh runner (9V45 x2, 7763), median of 3: deps image 19.2-24.8 s
+  vs base 4.3-4.9 s → +14.8-19.8 s. actions/cache restore of the same store +
+  metadata (1.07 GB uncompressed): 4.4-8.0 s. Pull is extraction-bound (68k
+  small files), not bytes-bound.
+- Net on a cold GitHub-hosted runner: deps image +15-20 s pull for -0.2-0.4 s
+  install vs cache restore 4-8 s. **The deps image loses by ~10 s per job.** It can
+  only win where the image is already local (act, self-hosted, a runner that keeps
+  layers).
+
+**How to apply:** on hosted runners keep actions/cache for the store; a deps image
+is worth it only for act/self-hosted with a warm daemon. Don't ship the store in an image layer. Cheapest real lever =
 `pnpm_config_verify_store_integrity=false` where the store can't be corrupted (env
 var name is pnpm_config_*, NOT npm_config_*). Related: [[project_pnpm_perf_gate]].
