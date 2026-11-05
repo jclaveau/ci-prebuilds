@@ -120,8 +120,6 @@ env:
   # Renovate-managed (see renovate.json customManager for `ACT_VERSION:`).
   ACT_VERSION: 0.2.92
 
-# Every job pins ubuntu-24.04: on ubuntu-26.04 the dood jobs lose the host docker
-# socket and see the overlayfs driver (#353).
 jobs:
   github-context:
     # TEMPORARY: skip TP entirely on the alpine-browsers PR while we iterate on
@@ -132,7 +130,7 @@ jobs:
     # head_ref is set for PRs; ref_name for direct pushes. The `||` picks
     # whichever is non-empty.
     if: (github.head_ref || github.ref_name) != 'playwright-alpine-browsers'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     outputs:
       docker_group_id: ${{ steps.extract_docker_group_id.outputs.docker_group_id }}
       # Throwaway run-scoped tag. Builds push only this; the chain + tests reference it. The
@@ -361,7 +359,7 @@ jobs:
     # head_ref is set for PRs; ref_name for direct pushes. The `||` picks
     # whichever is non-empty.
     if: (github.head_ref || github.ref_name) != 'playwright-alpine-browsers'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     outputs:
       map: ${{ steps.compute.outputs.map }}
     steps:
@@ -465,7 +463,7 @@ jobs:
   # ----------------------------------------------------------------------------
 
   build-gha-tools:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [github-context, changes]
     permissions:
       contents: read
@@ -489,7 +487,7 @@ jobs:
   # Unpublished shared base: ubuntu-gha-tools + docker/compose. Only ever pushed under the
   # throwaway build tag (never promoted); dood and dind are built from it in parallel.
   build-docker:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [github-context, changes, build-gha-tools]
     permissions:
       contents: read
@@ -512,7 +510,7 @@ jobs:
           changed_map: ${{ needs.changes.outputs.map }}
 
   build-dood:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [github-context, changes, build-docker]
     permissions:
       contents: read
@@ -533,7 +531,7 @@ jobs:
           changed_map: ${{ needs.changes.outputs.map }}
 
   build-dind:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [github-context, changes, build-docker]
     permissions:
       contents: read
@@ -556,7 +554,7 @@ jobs:
 
 
   build-node-dood:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [github-context, changes, build-dood]
     permissions:
       contents: read
@@ -581,7 +579,7 @@ jobs:
             ${{ inputs.node_version && 'NODE_BUILD=tarball' || '' }}
 
   build-node-dind:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [github-context, changes, build-dind]
     permissions:
       contents: read
@@ -607,7 +605,7 @@ jobs:
 
 
   build-pnpm-dood:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [github-context, changes, build-node-dood]
     permissions:
       contents: read
@@ -630,7 +628,7 @@ jobs:
             ${{ inputs.pnpm_version && format('PNPM_VERSION={0}', inputs.pnpm_version) || '' }}
 
   build-pnpm-dind:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [github-context, changes, build-node-dind]
     permissions:
       contents: read
@@ -656,7 +654,7 @@ jobs:
   # node-gyp variant: pnpm + the C/C++ toolchain the base gha-tools drops. Built from ./pnpm-gyp as a
   # SIBLING of build-pnpm-* (both FROM the node layer) so the slim and -gyp chains build in parallel.
   build-pnpm-gyp-dood:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [github-context, changes, build-node-dood]
     permissions:
       contents: read
@@ -680,7 +678,7 @@ jobs:
             ${{ inputs.pnpm_version && format('PNPM_VERSION={0}', inputs.pnpm_version) || '' }}
 
   build-pnpm-gyp-dind:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [github-context, changes, build-node-dind]
     permissions:
       contents: read
@@ -705,7 +703,7 @@ jobs:
 
 
   build-playwright-dood:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [github-context, changes, build-pnpm-dood]
     permissions:
       contents: read
@@ -733,7 +731,7 @@ jobs:
             ${{ inputs.wk_source_tag && format('WK_SOURCE_TAG={0}', inputs.wk_source_tag) || '' }}
 
   build-playwright-dind:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [github-context, changes, build-pnpm-dind]
     permissions:
       contents: read
@@ -764,7 +762,7 @@ jobs:
   # Playwright on the node-gyp base: the SAME ./playwright layer, only the base differs (pnpm-gyp), for
   # consumers needing Playwright + native builds and for the slim-vs-gyp benchmark comparison.
   build-playwright-gyp-dood:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [github-context, changes, build-pnpm-gyp-dood]
     permissions:
       contents: read
@@ -792,7 +790,7 @@ jobs:
             ${{ inputs.wk_source_tag && format('WK_SOURCE_TAG={0}', inputs.wk_source_tag) || '' }}
 
   build-playwright-gyp-dind:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [github-context, changes, build-pnpm-gyp-dind]
     permissions:
       contents: read
@@ -833,7 +831,7 @@ jobs:
   # without granting broad NOPASSWD.
   # ----------------------------------------------------------------------------
   build-hardened-variants:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs:
       - github-context
       - changes
@@ -880,7 +878,7 @@ jobs:
   # ----------------------------------------------------------------------------
 
   test-gha-tools-usage:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).gha_tools
     needs: [github-context, build-gha-tools]
     timeout-minutes: 5
@@ -944,7 +942,7 @@ jobs:
     # test-gha-tools-hardened-effects, which is the only thing that has to wait for
     # build-hardened-variants. Splitting like this lets this job run as soon as
     # build-gha-tools finishes, in parallel with the rest of the build pipeline.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).gha_tools
     needs: [github-context, build-gha-tools]
     timeout-minutes: 5
@@ -996,7 +994,7 @@ jobs:
     # image is that broad `sudo -n true` must FAIL. All other defaults (WORKDIR, USER,
     # env, perms) are hardening-invariant and asserted upstream. Sibling of the
     # existing test-dind-hardened-effects.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).gha_tools
     needs: [github-context, build-hardened-variants]
     timeout-minutes: 5
@@ -1024,7 +1022,7 @@ jobs:
     # the overlay, so start-dockerd's specific commands still work. We assert
     # the file presence + content + that broad sudo is denied. The full
     # start-dockerd flow is implicit (any breakage would surface elsewhere).
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).dind_hardened
     needs: [github-context, build-hardened-variants]
     timeout-minutes: 5
@@ -1071,7 +1069,7 @@ jobs:
           grep -F '/var/run/dind.sock' /tmp/sudo-l.txt && echo "OK: dind.sock chown/chmod allowed"
 
   test-dood-dind-usage:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).dood_dind
     needs: [github-context, build-dood, build-dind]
     timeout-minutes: 5
@@ -1122,7 +1120,7 @@ jobs:
 
 
   test-dood-dind-effects:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).dood_dind
     needs: [github-context, build-dood, build-dind]
     timeout-minutes: 5
@@ -1185,7 +1183,7 @@ jobs:
 
 
   test-node-usage:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).node
     needs: [github-context, build-node-dood, build-node-dind]
     timeout-minutes: 5
@@ -1263,7 +1261,7 @@ jobs:
   # ----------------------------------------------------------------------------
 
   node-perf-gate:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: >-
       fromJSON(needs.github-context.outputs.test_filters).node
       && contains(needs.github-context.outputs.os_matrix, 'alpine')
@@ -1369,7 +1367,7 @@ jobs:
   # ----------------------------------------------------------------------------
 
   pnpm-perf-gate:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: >-
       fromJSON(needs.github-context.outputs.test_filters).pnpm
       && contains(needs.github-context.outputs.os_matrix, 'alpine')
@@ -1452,7 +1450,7 @@ jobs:
           retention-days: 90
 
   test-pnpm-usage:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).pnpm
     needs: [github-context, build-pnpm-dood, build-pnpm-dind]
     timeout-minutes: 5
@@ -1476,7 +1474,7 @@ jobs:
   # The -gyp variant restores the node-gyp toolchain on top of slim pnpm. Asserts the compiler is back
   # and that a real native addon compiles (the test moved here from test-node-usage when node went slim).
   test-pnpm-gyp-usage:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).pnpm_gyp
     needs: [github-context, build-pnpm-gyp-dood, build-pnpm-gyp-dind]
     timeout-minutes: 5
@@ -1519,7 +1517,7 @@ jobs:
 
 
   test-playwright-usage:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).playwright
     needs: [github-context, build-playwright-dood, build-playwright-dind, build-playwright-gyp-dood, build-playwright-gyp-dind]
     timeout-minutes: 5
@@ -1619,7 +1617,7 @@ jobs:
   # ----------------------------------------------------------------------------
 
   test-playwright-browser-versions:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).playwright
     needs: [github-context, build-playwright-dood]
     timeout-minutes: 10
@@ -1671,7 +1669,7 @@ jobs:
 
   perf-probe:
     name: perf-${{ matrix.browser }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).playwright
     needs: [github-context, build-playwright-dood]
     timeout-minutes: 40
@@ -1789,7 +1787,7 @@ jobs:
           retention-days: 30
 
   perf-report:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     # `!cancelled()` rather than `success()`: a browser that fails to launch is
     # itself the finding, and the report names the cells that produced nothing.
     if: ${{ !cancelled() && fromJSON(needs.github-context.outputs.test_filters).playwright }}
@@ -1859,7 +1857,7 @@ jobs:
   # ----------------------------------------------------------------------------
 
   test-dood-dind-act:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).dood_dind
     needs: [github-context, build-dood, build-dind]
     timeout-minutes: 10
@@ -1962,7 +1960,7 @@ jobs:
   # ----------------------------------------------------------------------------
 
   test-node-act:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).node
     needs: [github-context, build-node-dood, build-node-dind]
     timeout-minutes: 10
@@ -2002,7 +2000,7 @@ jobs:
   # the inner daemon).
   # ----------------------------------------------------------------------------
   test-prepare-act:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).dood_dind
     needs: [github-context, build-dood, build-dind]
     timeout-minutes: 10
@@ -2039,7 +2037,7 @@ jobs:
   # No test filter — the smoke is image-independent and cheap.
   # ----------------------------------------------------------------------------
   test-prepare-vm-act:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [github-context]
     timeout-minutes: 5
     steps:
@@ -2062,7 +2060,7 @@ jobs:
   # ----------------------------------------------------------------------------
 
   # test-dood-pnpm-act:
-  #   runs-on: ubuntu-24.04
+  #   runs-on: ubuntu-latest
   #   if: >-
   #     fromJSON(needs.github-context.outputs.test_filters).pnpm
   #     || fromJSON(needs.github-context.outputs.test_filters).pnpm_gyp
@@ -2111,7 +2109,7 @@ jobs:
   # ----------------------------------------------------------------------------
 
   test-dind-registry-autostart:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: fromJSON(needs.github-context.outputs.test_filters).dood_dind
     needs: [github-context, build-dind]
     timeout-minutes: 10
@@ -2147,7 +2145,7 @@ jobs:
   # ----------------------------------------------------------------------------
 
   versions:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [github-context, build-playwright-dood]
     outputs:
       os: ${{ steps.v.outputs.os }}
@@ -2231,7 +2229,7 @@ jobs:
         || github.event_name == 'issues'
         || github.event_name == 'issue_comment'
       )
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
@@ -2378,7 +2376,7 @@ jobs:
   aggregate-tags:
     needs: promote
     if: always() && needs.promote.result != 'skipped'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     outputs:
       tags: ${{ steps.collect.outputs.tags }}
     steps:
