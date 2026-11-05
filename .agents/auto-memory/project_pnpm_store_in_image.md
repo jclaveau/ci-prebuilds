@@ -1,6 +1,6 @@
 ---
 name: project_pnpm_store_in_image
-description: CLOSED 2026-11-05 by jean, not worth the complexity — deps image (store+node_modules prebuilt) LOSES to actions/cache on GHA, onerun +11-14 s/job, deps_layer +13-17 s/job (pull 23-27 s vs base 4-5 s + cache restore 5-7 s; install saves only 0.2-0.3 s; runs 42000096479, 42001923638, 42015437056); pnpm store baked into a CI image layer is 2x WORSE (links fail across bind mount → copies); store+node_modules prebuilt in image 0.65x CPU, 0.44-0.50x with verify off, image 3.4x (store stored twice); node_modules without store FAILS offline install; verify_store_integrity=false 0.85-0.90x (runs 41431180556, 41437119695, 2026-11-02)
+description: CLOSED 2026-11-05 by jean, not worth the complexity — deps image (store+node_modules prebuilt) LOSES to actions/cache on GHA; one clock empty image store → installed on Scalabus (Planner proxy, run 42030366706): cache path 15.5-17.2 s vs onerun 31-33 s (1.9-2.0x) vs deps 37-43 s (2.3-2.5x); earlier split timings onerun +11-14 s/job, deps_layer +13-17 s/job (pull 23-27 s vs base 4-5 s + cache restore 5-7 s; install saves only 0.2-0.3 s; runs 42000096479, 42001923638, 42015437056); pnpm store baked into a CI image layer is 2x WORSE (links fail across bind mount → copies); store+node_modules prebuilt in image 0.65x CPU, 0.44-0.50x with verify off, image 3.4x (store stored twice); node_modules without store FAILS offline install; verify_store_integrity=false 0.85-0.90x (runs 41431180556, 41437119695, 2026-11-02)
 metadata:
   type: project
 ---
@@ -79,6 +79,9 @@ prune`, all in ONE RUN (hardlinks kept). Wall / CPU vs bind:
   vs deps 37.4/39.0/42.6 s (2.3-2.5x). Start+install right after a cold pull is
   NOT the 1 s of the warm loop: cache 3.1-5.3 s, onerun 1.8-4.5 s, deps 4.3-9.4 s
   (freshly extracted files, cold page cache).
+- Warm vs cold, so a later reader does not mix them: the 0.44-0.65x CPU and
+  970-1170 vs 1792-1980 ms install figures are WARM (image already local, store
+  full); only act/self-hosted ever sees that. Hosted GHA always pays the cold pull.
 - **Verdict, jean 2026-11-05: closed, not worth the complexity** — no deps image,
   not even an act-only one. Probe code stays on branch `probe/deps-image` and in
   `node/bench/pnpm-install-probe.sh` (`mode=deps_image`); ghcr `pnpm-probe-deps`
