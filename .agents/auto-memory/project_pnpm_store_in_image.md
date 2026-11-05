@@ -73,6 +73,12 @@ prune`, all in ONE RUN (hardlinks kept). Wall / CPU vs bind:
   Net vs cache path: onerun +15.6-18.2 s/job, deps +20.8-22.4 s/job — WORSE
   than vitest: the pull grows with file count faster than the install saving.
   Planner itself (4940 packages linked, CI run 42014916214) is ~2x Scalabus.
+- One clock per path, empty image store → installed (run 42030366706, Scalabus,
+  9V74/7763/9V74, median of 3, verify off on all): cache path (restore + base
+  pull + start + install) 15.5/17.2/17.1 s vs onerun 31.2/32.7/32.8 s (1.9-2.0x)
+  vs deps 37.4/39.0/42.6 s (2.3-2.5x). Start+install right after a cold pull is
+  NOT the 1 s of the warm loop: cache 3.1-5.3 s, onerun 1.8-4.5 s, deps 4.3-9.4 s
+  (freshly extracted files, cold page cache).
 - **Verdict, jean 2026-11-05: closed, not worth the complexity** — no deps image,
   not even an act-only one. Probe code stays on branch `probe/deps-image` and in
   `node/bench/pnpm-install-probe.sh` (`mode=deps_image`); ghcr `pnpm-probe-deps`
