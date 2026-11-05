@@ -36,6 +36,13 @@ name: pnpm install CPU probe
 # node_modules installed into the image at /app beside the store, and
 # node_modules alone (store mounted at build time only), each with and
 # without pnpm_config_verify_store_integrity=false.
+#
+# mode deps_image measures the deps-image design (one image per lockfile
+# hash): the store seeded and node_modules installed in one RUN, with the
+# project in the image (onerun) or checked out on the bind mount with its
+# node_modules symlinked into the image (linked). The pull_cost job then times,
+# on a fresh runner with nothing cached, a cold pull of that image vs of its
+# base, and an actions/cache restore of the same store and metadata cache.
 
 on:
   workflow_dispatch:
@@ -44,7 +51,7 @@ on:
         description: 'binaries: the five arms above; null_pair: the gate arms, one image twice'
         default: 'binaries'
         type: choice
-        options: [binaries, null_pair, versions, store_layer]
+        options: [binaries, null_pair, versions, store_layer, deps_image]
       versions:
         description: 'versions mode: space-separated pnpm versions'
         default: '12.6.0 12.16.1'
@@ -162,6 +169,10 @@ jobs:
     if: ${{ !cancelled() && needs.matrix.result == 'success' && needs.build.result != 'failure' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    # deps_image pushes its layer image for pull_cost.
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -213,6 +224,16 @@ jobs:
             arm_list="$arm_list deps_layer=deps-layer:bind|image deps_layer_noverify=deps-layer:bind|image|$skip_verify"
             arm_list="$arm_list modules_layer=modules-layer:bind|image modules_layer_noverify=modules-layer:bind|image|$skip_verify"
             echo "ARMS=$arm_list" >> "$GITHUB_ENV"
+          fi
+          if [ "${{ inputs.mode }}" = deps_image ]; then
+            alpine_image=ghcr.io/jclaveau/alpine-dood-pnpm:latest
+            skip_verify=pnpm_config_verify_store_integrity=false
+            arm_list="bind=$alpine_image|image bind_noverify=$alpine_image|image|$skip_verify"
+            arm_list="$arm_list deps_layer_noverify=deps-layer:bind|image|$skip_verify"
+            arm_list="$arm_list onerun_layer_noverify=onerun-layer:bind|image|$skip_verify"
+            arm_list="$arm_list linked_layer_noverify=linked-layer:bind|image|$skip_verify"
+            echo "ARMS=$arm_list" >> "$GITHUB_ENV"
+            echo "STORE_EXPORT_ARM=bind" >> "$GITHUB_ENV"
           fi
           if [ "${{ inputs.mode }}" = versions ]; then
             ubuntu_image=ghcr.io/jclaveau/ubuntu-dood-pnpm-gyp:latest
@@ -272,7 +293,7 @@ jobs:
           done
 
       - name: Free disk for one store per arm
-        if: inputs.mode == 'versions' || inputs.mode == 'store_layer'
+        if: inputs.mode == 'versions' || inputs.mode == 'store_layer' || inputs.mode == 'deps_image'
         run: |
           set -euo pipefail
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
@@ -280,6 +301,21 @@ jobs:
 
       - name: Probe
         run: bash node/bench/pnpm-install-probe.sh
+
+      - name: Push the deps image for the pull timing
+        if: inputs.mode == 'deps_image'
+        env:
+          PROBE_REF: ghcr.io/jclaveau/pnpm-probe-deps:${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.replicate }}
+        run: |
+          set -euo pipefail
+          docker tag pnpm-probe-onerun_layer_noverify:local "$PROBE_REF"
+          docker push -q "$PROBE_REF"
+
+      - uses: actions/cache/save@v6
+        if: inputs.mode == 'deps_image'
+        with:
+          path: ${{ github.workspace }}/work/export
+          key: pnpm-probe-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.replicate }}
 
       - name: Null-pair spread
         if: inputs.mode == 'null_pair'
@@ -303,4 +339,69 @@ jobs:
         with:
           name: pnpm-install-probe-${{ matrix.replicate }}
           path: ${{ github.workspace }}/out
+          retention-days: 90
+
+  # A fresh runner has no image and no cache, like a consumer's first job.
+  pull_cost:
+    needs: [matrix, probe]
+    if: inputs.mode == 'deps_image'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        replicate: ${{ fromJSON(needs.matrix.outputs.replicate_list) }}
+    env:
+      PROBE_REF: ghcr.io/jclaveau/pnpm-probe-deps:${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.replicate }}
+      BASE_REF: ghcr.io/jclaveau/alpine-dood-pnpm:latest
+      PULL_ROUNDS: '3'
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache restore, start
+        run: echo "RESTORE_START_NS=$(date +%s%N)" >> "$GITHUB_ENV"
+
+      - uses: actions/cache/restore@v6
+        id: restore
+        with:
+          path: ${{ github.workspace }}/work/export
+          key: pnpm-probe-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.replicate }}
+          fail-on-cache-miss: true
+
+      - name: Cache restore, end
+        run: |
+          set -euo pipefail
+          restore_ms=$((($(date +%s%N) - RESTORE_START_NS) / 1000000))
+          restored_bytes=$(du -sb "$GITHUB_WORKSPACE/work/export" | cut -f1)
+          echo "cache_restore wall_ms=$restore_ms restored_bytes=$restored_bytes" | tee -a pull-cost.txt
+
+      # Each pull starts from an empty image store; base and deps alternate.
+      - name: Cold pulls
+        run: |
+          set -euo pipefail
+          grep -m1 'model name' /proc/cpuinfo | tee -a pull-cost.txt
+          echo "docker storage driver: $(docker info -f '{{.Driver}}')" | tee -a pull-cost.txt
+          for pull_round in $(seq 1 "$PULL_ROUNDS"); do
+            for pull_ref in "$PROBE_REF" "$BASE_REF"; do
+              docker image prune -af >/dev/null
+              left_images=$(docker image ls -q | wc -l)
+              [ "$left_images" -eq 0 ] || { echo "::error::$left_images images left before a cold pull"; exit 1; }
+              start_ns=$(date +%s%N)
+              docker pull -q "$pull_ref" >/dev/null
+              pull_ms=$((($(date +%s%N) - start_ns) / 1000000))
+              image_bytes=$(docker image inspect -f '{{.Size}}' "$pull_ref")
+              echo "pull round=$pull_round ref=$pull_ref wall_ms=$pull_ms image_bytes=$image_bytes" | tee -a pull-cost.txt
+            done
+          done
+          cat pull-cost.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pnpm-pull-cost-${{ matrix.replicate }}
+          path: pull-cost.txt
           retention-days: 90

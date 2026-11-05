@@ -18,6 +18,14 @@
 #                      only at build time: node_modules ships, the store does
 #                      not (/opt/store is empty). If its warm install fails,
 #                      the arm is dropped and host.txt says so.
+#   onerun-layer:<arm> the deps-image shape: the named arm's store mounted as a
+#                      seed, copied to /opt/store and installed at /app in ONE
+#                      RUN, then `pnpm store prune`, so node_modules and the
+#                      store share inodes in one layer.
+#   linked-layer:<arm> the onerun-layer image with the project on /w, each of
+#                      its node_modules a symlink to the one under /app (a
+#                      checkout outside the image). Dropped like modules-layer
+#                      if its warm install or its require check fails.
 # A layered arm gets a fresh container (no network) before every install, so
 # no install starts from an overlay that an earlier one already copied up.
 #
@@ -32,7 +40,8 @@
 #
 # Env: WORK and OUT (required, absolute), ARMS, ROUNDS, STRACE_ROUNDS,
 # STRACE_PATH_ARMS, CPUS, MEMORY, PNPM_OLD, PNPM_NEW, IMG_UBUNTU, IMG_ALPINE,
-# FIXTURE_REPO, FIXTURE_SHA, PERF_CMD.
+# FIXTURE_REPO, FIXTURE_SHA, PERF_CMD, STORE_EXPORT_ARM (copies that arm's
+# store and metadata cache to $WORK/export).
 set -euo pipefail
 
 : "${WORK:?WORK must name an empty scratch dir}" "${OUT:?OUT must name the results dir}"
@@ -48,6 +57,7 @@ IMG_ALPINE=${IMG_ALPINE:-ghcr.io/jclaveau/alpine-dood-pnpm-gyp:latest}
 FIXTURE_REPO=${FIXTURE_REPO:-https://github.com/vitest-dev/vitest}
 FIXTURE_SHA=${FIXTURE_SHA:-da7ce1712fd4d0e4e807ec01ce755581e6892d5b}
 PERF_CMD=${PERF_CMD:-}
+STORE_EXPORT_ARM=${STORE_EXPORT_ARM:-}
 ARMS=${ARMS:-"ubuntu-glibc-${PNPM_OLD}=${IMG_UBUNTU}|${PNPM_OLD}-glibc
 alpine-musl-${PNPM_OLD}=${IMG_ALPINE}|${PNPM_OLD}-musl
 ubuntu-musl-${PNPM_OLD}=${IMG_UBUNTU}|${PNPM_OLD}-musl
@@ -76,11 +86,18 @@ layer_kind_of() {
     store-layer:*) echo store-layer ;;
     deps-layer:*) echo deps-layer ;;
     modules-layer:*) echo modules-layer ;;
+    onerun-layer:*) echo onerun-layer ;;
+    linked-layer:*) echo linked-layer ;;
     *) echo none ;;
   esac
 }
 is_layered_arm() { [ "$(layer_kind_of "$1")" != none ]; }
-has_image_project() { case "$(layer_kind_of "$1")" in deps-layer|modules-layer) return 0 ;; *) return 1 ;; esac; }
+has_image_project() {
+  case "$(layer_kind_of "$1")" in deps-layer|modules-layer|onerun-layer) return 0 ;; *) return 1 ;; esac
+}
+is_dropped_on_failure() {
+  case "$(layer_kind_of "$1")" in modules-layer|linked-layer) return 0 ;; *) return 1 ;; esac
+}
 layer_source_of() { echo "${arm_image[$1]#*:}"; }
 
 for arm_name in "${arm_names[@]}"; do
@@ -254,6 +271,21 @@ reset_arm() {
     docker rm -f "$(container_of "$arm_name")" >/dev/null
     start_container "$arm_name"
   fi
+  if [ "$(layer_kind_of "$arm_name")" = linked-layer ]; then link_image_modules "$arm_name" >/dev/null; fi
+}
+
+# Points every node_modules of the /w checkout at its twin under /app, as a
+# consumer whose checkout lives outside the deps image would.
+link_image_modules() {
+  docker exec -u 1001 "$(container_of "$1")" sh -c '
+    set -e
+    cd /w/fx
+    find . -name node_modules -type d -prune -exec rm -rf {} +
+    cd /app
+    find . -name node_modules -type d -prune | while read -r modules_dir; do
+      ln -s "/app/${modules_dir#./}" "/w/fx/${modules_dir#./}"
+    done
+    find /w/fx -name node_modules -type l | wc -l'
 }
 
 install_env_args() {
@@ -311,6 +343,15 @@ build_layer_image() {
       # in as 1001 and emptied in the same RUN: node_modules keeps its
       # hardlinked inodes, the layer keeps no store path.
       echo 'RUN --mount=type=bind,from=store,target=/mnt/store cp -R /mnt/store/. /opt/store && cd /app && pnpm install --frozen-lockfile --offline --store-dir=/opt/store && find /opt/store -mindepth 1 -delete'
+    elif [ "$layer_kind" = onerun-layer ] || [ "$layer_kind" = linked-layer ]; then
+      echo 'RUN mkdir -p /opt/store && chown 1001:1001 /opt/store'
+      echo 'COPY --from=fixture --chown=1001:1001 . /app'
+      echo 'COPY --chown=1001:1001 pnpm-lock.yaml /app/pnpm-lock.yaml'
+      echo 'USER 1001'
+      echo 'ENV HOME=/home/runner'
+      # The seed stands in for the previous deps image's store; prune drops
+      # whatever this lockfile does not use, in the same RUN as the links.
+      echo 'RUN --mount=type=bind,from=store,target=/mnt/seed cp -R /mnt/seed/. /opt/store && cd /app && pnpm install --frozen-lockfile --offline --store-dir=/opt/store && pnpm store prune --store-dir=/opt/store'
     else
       echo 'COPY --from=store --chown=1001:1001 . /opt/store'
     fi
@@ -343,13 +384,35 @@ for arm_name in "${arm_names[@]}"; do
   container_name=$(container_of "$arm_name")
   docker cp -q "$OUT/pnpm-lock.yaml" "$container_name:/w/fx/pnpm-lock.yaml"
   docker exec -u root "$container_name" chown 1001:1001 /w/fx/pnpm-lock.yaml
-  # One uncounted offline install proves the layout installs before any count.
+  if [ "$(layer_kind_of "$arm_name")" = linked-layer ]; then
+    echo "linked $arm_name node_modules_links=$(link_image_modules "$arm_name")" | tee -a "$OUT/host.txt"
+  fi
+  # One uncounted offline install proves the layout installs before any count;
+  # a linked checkout must also resolve a dependency through its links.
+  warm_failure=""
   if ! run_install "$arm_name" "$OUT/warm-$arm_name.log"; then
     tail -30 "$OUT/warm-$arm_name.log"
-    [ "$(layer_kind_of "$arm_name")" = modules-layer ] || { echo "warm install failed for $arm_name" >&2; exit 1; }
-    # Whether an install runs without the store is what this arm asks.
-    echo "::warning::$arm_name dropped: offline install fails without the store"
-    echo "dropped $arm_name: warm install failed, see warm-$arm_name.log" | tee -a "$OUT/host.txt"
+    warm_failure="offline install fails, see warm-$arm_name.log"
+  elif [ "$(layer_kind_of "$arm_name")" = linked-layer ]; then
+    link_count=$(docker exec "$container_name" sh -c 'find /w/fx -name node_modules -type l | wc -l')
+    echo "linked $arm_name node_modules_links_after_install=$link_count" | tee -a "$OUT/host.txt"
+    if ! docker exec -u 1001 -w /w/fx/packages/vitest "$container_name" \
+      node -e "console.log(require.resolve('tinyrainbow'))" >"$OUT/resolve-$arm_name.log" 2>&1; then
+      cat "$OUT/resolve-$arm_name.log"
+      warm_failure="require through the links fails, see resolve-$arm_name.log"
+    fi
+    # A workspace package resolves through the image's link, so to /app's copy
+    # of the sources, not to the checkout under test.
+    workspace_target=$(docker exec -u 1001 -w /w/fx/packages/vitest "$container_name" \
+      node -e "console.log(require.resolve('@vitest/expect/package.json'))" 2>&1) \
+      || workspace_target="resolve failed: $workspace_target"
+    echo "linked $arm_name workspace_package_resolves_to=$workspace_target" | tee -a "$OUT/host.txt"
+  fi
+  if [ -n "$warm_failure" ]; then
+    is_dropped_on_failure "$arm_name" || { echo "warm install failed for $arm_name: $warm_failure" >&2; exit 1; }
+    # Whether this layout installs at all is what this arm asks.
+    echo "::warning::$arm_name dropped: $warm_failure"
+    echo "dropped $arm_name: $warm_failure" | tee -a "$OUT/host.txt"
     docker rm -f "$container_name" >/dev/null
     dropped_arms+=("$arm_name")
     continue
@@ -445,5 +508,15 @@ if [ -n "$PERF_CMD" ]; then
       --frozen-lockfile --offline --store-dir="$(store_dir_of "$arm_name")" >"$OUT/perf-install-$arm_name.log" 2>&1 \
       || { echo "perf stat failed for $arm_name" >&2; tail -30 "$OUT/perf-install-$arm_name.log" >&2; exit 1; }
   done
+fi
+# The store and metadata cache an actions/cache consumer would restore, kept
+# past the EXIT cleanup so the workflow can save them for the restore timing.
+if [ -n "$STORE_EXPORT_ARM" ]; then
+  [ -n "${arm_image[$STORE_EXPORT_ARM]:-}" ] && ! is_layered_arm "$STORE_EXPORT_ARM" \
+    || { echo "STORE_EXPORT_ARM $(printf %q "$STORE_EXPORT_ARM") is not an unlayered arm" >&2; exit 1; }
+  rm -rf "$WORK/export" && mkdir -p "$WORK/export"
+  cp -a "$WORK/$(container_of "$STORE_EXPORT_ARM")/store" "$WORK/export/store"
+  docker cp -q "$(container_of "$STORE_EXPORT_ARM"):/home/runner/.cache/pnpm" "$WORK/export/metadata"
+  echo "export $STORE_EXPORT_ARM bytes=$(du -sb "$WORK/export" | cut -f1)" | tee -a "$OUT/host.txt"
 fi
 echo "=== DONE ===" | tee -a "$OUT/runs.txt"
