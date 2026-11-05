@@ -1,6 +1,6 @@
 ---
 name: project_pnpm_store_in_image
-description: deps image (store+node_modules prebuilt) LOSES on a cold runner — pull +15-20 s vs actions/cache restore 4-8 s, install saves only ~0.3 s wall (runs 42000096479, 42001923638, 2026-11-05); pnpm store baked into a CI image layer is 2x WORSE (links fail across bind mount → copies); store+node_modules prebuilt in image 0.65x CPU, 0.44-0.50x with verify off, image 3.4x (store stored twice); node_modules without store FAILS offline install; verify_store_integrity=false 0.85-0.90x (runs 41431180556, 41437119695, 2026-11-02)
+description: CLOSED 2026-11-05 by jean, not worth the complexity — deps image (store+node_modules prebuilt) LOSES to actions/cache on GHA, onerun +11-14 s/job, deps_layer +13-17 s/job (pull 23-27 s vs base 4-5 s + cache restore 5-7 s; install saves only 0.2-0.3 s; runs 42000096479, 42001923638, 42015437056); pnpm store baked into a CI image layer is 2x WORSE (links fail across bind mount → copies); store+node_modules prebuilt in image 0.65x CPU, 0.44-0.50x with verify off, image 3.4x (store stored twice); node_modules without store FAILS offline install; verify_store_integrity=false 0.85-0.90x (runs 41431180556, 41437119695, 2026-11-02)
 metadata:
   type: project
 ---
@@ -63,11 +63,16 @@ prune`, all in ONE RUN (hardlinks kept). Wall / CPU vs bind:
   26.3-26.8 s vs onerun 23.2-24.1 s vs base 4.4-5.4 s vs cache restore 5.1-7.3 s.
   Net vs cache path: deps_layer +13.4-16.5 s per job, onerun +11.2-13.5 s.
 - Net on a cold GitHub-hosted runner: deps image +15-20 s pull for -0.2-0.4 s
-  install vs cache restore 4-8 s. **The deps image loses by ~10 s per job.** It can
+  install vs cache restore 4-8 s. **The deps image loses by ~10 s per job.** It could
   only win where the image is already local (act, self-hosted, a runner that keeps
   layers).
+- **Verdict, jean 2026-11-05: closed, not worth the complexity** — no deps image,
+  not even an act-only one. Probe code stays on branch `probe/deps-image` and in
+  `node/bench/pnpm-install-probe.sh` (`mode=deps_image`); ghcr `pnpm-probe-deps`
+  deleted.
 
-**How to apply:** on hosted runners keep actions/cache for the store; a deps image
-is worth it only for act/self-hosted with a warm daemon. Don't ship the store in an image layer. Cheapest real lever =
+**How to apply:** keep actions/cache for the pnpm store, on GHA and act alike. Do
+not re-propose an image holding the store and/or node_modules unless the runner
+model changes (persistent self-hosted daemon). Don't ship the store in an image layer. Cheapest real lever =
 `pnpm_config_verify_store_integrity=false` where the store can't be corrupted (env
 var name is pnpm_config_*, NOT npm_config_*). Related: [[project_pnpm_perf_gate]].
