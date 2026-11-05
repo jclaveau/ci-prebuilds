@@ -66,6 +66,13 @@ prune`, all in ONE RUN (hardlinks kept). Wall / CPU vs bind:
   install vs cache restore 4-8 s. **The deps image loses by ~10 s per job.** It could
   only win where the image is already local (act, self-hosted, a runner that keeps
   layers).
+- Scalabus fixture (jclaveau/directus c4b8ce7, 2452 packages, 95k node_modules
+  files, ignoreScripts), run 42024429400 (7763 x2, 9V74), medians: install bind
+  1792-1980 ms vs onerun/deps 970-1170 ms (saves ~0.8 s); pull onerun 28.5-29.3 s
+  vs deps 33.1-34.1 s vs base 4.7-5.5 s vs cache restore 5.2-6.7 s (0.98 GB).
+  Net vs cache path: onerun +15.6-18.2 s/job, deps +20.8-22.4 s/job — WORSE
+  than vitest: the pull grows with file count faster than the install saving.
+  Planner itself (4940 packages linked, CI run 42014916214) is ~2x Scalabus.
 - **Verdict, jean 2026-11-05: closed, not worth the complexity** — no deps image,
   not even an act-only one. Probe code stays on branch `probe/deps-image` and in
   `node/bench/pnpm-install-probe.sh` (`mode=deps_image`); ghcr `pnpm-probe-deps`
