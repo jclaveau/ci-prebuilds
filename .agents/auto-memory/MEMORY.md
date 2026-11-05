@@ -85,7 +85,7 @@ touches an area, read that file before concluding no rule exists. Then read
 - [GHA concurrency group serializes dispatches](project_gha_concurrency_group_serializes_dispatches.md) — `group: <name>-${ref}` + `cancel-in-progress: false` blocks parallel dispatches on
 - [A force-push can leave a PR with ZERO runs](feedback_force_push_may_not_retrigger_ci.md) — after a rebase `gh pr checks` said "no checks reported" while the OLD sha's green
 
-## images (18) — docker layering, dind/dood, UID handling, strip passes
+## images (19) — docker layering, dind/dood, UID handling, strip passes
 `.agents/auto-memory/index/images.md`
 
 - [Consumer pull is bytes-bound, not layer-bound](project_image_pull_is_bandwidth_bound.md) — concurrency 3→8 is noise; the chromium wrapper rename had duplicated the binary layer (#255, −10% bytes, −7% pull); bench with `image-pull-bench.yml`
