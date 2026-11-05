@@ -29,12 +29,13 @@ jobs:
         # If the bind regresses (or someone copies this smoke without the host-socket
         # mount in real GHA), `docker info` might still succeed against some other
         # daemon. The storage driver is a host-side fact: assert it looks like a real
-        # production daemon (overlay2 on hosted GHA, fuse-overlayfs/btrfs/zfs elsewhere).
+        # production daemon (overlay2 on hosted GHA, overlayfs once docker 29 defaults to the
+        # containerd image store, fuse-overlayfs/btrfs/zfs elsewhere).
         run: |
           driver=$(docker info --format '{{ .Driver }}')
           echo "storage driver=$driver"
           case "$driver" in
-            overlay2|fuse-overlayfs|btrfs|zfs) echo "OK: real daemon";;
+            overlay2|overlayfs|fuse-overlayfs|btrfs|zfs) echo "OK: real daemon";;
             *) echo "FAIL: storage driver $driver not expected from a host docker"; exit 1;;
           esac
       # See smoke-dind.yml for the rationale; same mirror, same
