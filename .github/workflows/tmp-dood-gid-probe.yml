@@ -1,0 +1,53 @@
+name: 'tmp: dood socket gid probe (#353)'
+
+# Some ubuntu-26.04 runner builds deny our dood images the host socket while
+# others allow it, with the same image. Records, per runner draw, the host's
+# docker gid and socket mode next to what the image's runner user gets.
+
+on:
+  workflow_dispatch:
+    inputs:
+      draws:
+        description: 'Runner draws per image'
+        default: '8'
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  draws:
+    runs-on: ubuntu-latest
+    outputs:
+      draws: ${{ steps.split.outputs.draws }}
+    steps:
+      - id: split
+        env:
+          DRAW_COUNT: ${{ inputs.draws }}
+        run: echo "draws=$(jq -nc --argjson n "$DRAW_COUNT" '[range(1; $n + 1)]')" >> "$GITHUB_OUTPUT"
+
+  probe:
+    name: probe-${{ matrix.os }}-${{ matrix.draw }}
+    needs: draws
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [alpine, ubuntu]
+        draw: ${{ fromJSON(needs.draws.outputs.draws) }}
+    steps:
+      - name: Host and image view of the socket
+        env:
+          DOOD_IMAGE: ghcr.io/jclaveau/${{ matrix.os }}-dood:latest
+        run: |
+          set -uo pipefail
+          echo "runner image: $ImageVersion"
+          echo "host docker group: $(getent group docker)"
+          echo "host socket: $(stat -c '%U:%G gid=%g mode=%a' /var/run/docker.sock)"
+          echo "host docker: $(docker version --format '{{.Server.Version}}')"
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$DOOD_IMAGE" sh -c '
+            echo "image id: $(id)"
+            echo "image docker group: $(getent group docker)"
+            echo "image socket: $(stat -c "%U:%G gid=%g mode=%a" /var/run/docker.sock)"
+            docker version --format "image reach: server {{.Server.Version}}" 2>&1 | tail -1'
