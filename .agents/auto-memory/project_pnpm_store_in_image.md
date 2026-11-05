@@ -58,7 +58,10 @@ prune`, all in ONE RUN (hardlinks kept). Wall / CPU vs bind:
 - Cold pull on a fresh runner (9V45 x2, 7763), median of 3: deps image 19.2-24.8 s
   vs base 4.3-4.9 s → +14.8-19.8 s. actions/cache restore of the same store +
   metadata (1.07 GB uncompressed): 4.4-8.0 s. Pull is extraction-bound (68k
-  small files), not bytes-bound.
+  small files), not bytes-bound. That 19.2-24.8 s was the onerun image (497 MB).
+- deps_layer image (668 MB) pull, run 42015437056 (7763 x3), median of 3:
+  26.3-26.8 s vs onerun 23.2-24.1 s vs base 4.4-5.4 s vs cache restore 5.1-7.3 s.
+  Net vs cache path: deps_layer +13.4-16.5 s per job, onerun +11.2-13.5 s.
 - Net on a cold GitHub-hosted runner: deps image +15-20 s pull for -0.2-0.4 s
   install vs cache restore 4-8 s. **The deps image loses by ~10 s per job.** It can
   only win where the image is already local (act, self-hosted, a runner that keeps
