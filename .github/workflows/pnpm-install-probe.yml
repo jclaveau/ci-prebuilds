@@ -344,7 +344,8 @@ jobs:
   # A fresh runner has no image and no cache, like a consumer's first job.
   pull_cost:
     needs: [matrix, probe]
-    if: inputs.mode == 'deps_image'
+    # probe's skipped build ancestor fails the implicit success().
+    if: ${{ !cancelled() && inputs.mode == 'deps_image' && needs.probe.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
