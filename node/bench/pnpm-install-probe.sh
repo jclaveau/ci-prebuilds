@@ -40,7 +40,8 @@
 #
 # Env: WORK and OUT (required, absolute), ARMS, ROUNDS, STRACE_ROUNDS,
 # STRACE_PATH_ARMS, CPUS, MEMORY, PNPM_OLD, PNPM_NEW, IMG_UBUNTU, IMG_ALPINE,
-# FIXTURE_REPO, FIXTURE_SHA, PERF_CMD, STORE_EXPORT_ARM (copies that arm's
+# FIXTURE_REPO, FIXTURE_SHA, FIXTURE_IGNORE_SCRIPTS (true skips every lifecycle
+# script), PERF_CMD, STORE_EXPORT_ARM (copies that arm's
 # store and metadata cache to $WORK/export).
 set -euo pipefail
 
@@ -56,6 +57,7 @@ IMG_UBUNTU=${IMG_UBUNTU:-ghcr.io/jclaveau/ubuntu-dood-pnpm-gyp:latest}
 IMG_ALPINE=${IMG_ALPINE:-ghcr.io/jclaveau/alpine-dood-pnpm-gyp:latest}
 FIXTURE_REPO=${FIXTURE_REPO:-https://github.com/vitest-dev/vitest}
 FIXTURE_SHA=${FIXTURE_SHA:-da7ce1712fd4d0e4e807ec01ce755581e6892d5b}
+FIXTURE_IGNORE_SCRIPTS=${FIXTURE_IGNORE_SCRIPTS:-false}
 PERF_CMD=${PERF_CMD:-}
 STORE_EXPORT_ARM=${STORE_EXPORT_ARM:-}
 ARMS=${ARMS:-"ubuntu-glibc-${PNPM_OLD}=${IMG_UBUNTU}|${PNPM_OLD}-glibc
@@ -182,6 +184,9 @@ manifest.pop('packageManager', None)
 json.dump(manifest, open(path, 'w'), indent=2)
 PY
   printf '\nnodeLinker: hoisted\nstrictDepBuilds: false\n' >>"$fixture_dir/pnpm-workspace.yaml"
+  if [ "$FIXTURE_IGNORE_SCRIPTS" = true ]; then
+    printf 'ignoreScripts: true\n' >>"$fixture_dir/pnpm-workspace.yaml"
+  fi
 fi
 if grep -q packageManager "$fixture_dir/package.json"; then
   echo "fixture still pins packageManager: the image's pnpm would not be the one measured" >&2

@@ -90,10 +90,18 @@ on:
         description: 'Runners (one job each)'
         default: '3'
         type: string
+      fixture_repo:
+        description: 'Git repo used as the workspace'
+        default: 'https://github.com/vitest-dev/vitest'
+        type: string
       fixture_sha:
-        description: 'vitest-dev/vitest commit used as the workspace'
+        description: 'Commit of fixture_repo used as the workspace'
         default: 'da7ce1712fd4d0e4e807ec01ce755581e6892d5b'
         type: string
+      fixture_ignore_scripts:
+        description: 'Skip every lifecycle script (workspace prepare and dependency builds)'
+        type: boolean
+        default: false
 
 concurrency:
   group: pnpm-install-probe-${{ github.ref }}
@@ -186,7 +194,9 @@ jobs:
       STRACE_PATH_ARMS: ${{ inputs.path_arms }}
       PNPM_OLD: ${{ inputs.pnpm_old }}
       PNPM_NEW: ${{ inputs.pnpm_new }}
+      FIXTURE_REPO: ${{ inputs.fixture_repo }}
       FIXTURE_SHA: ${{ inputs.fixture_sha }}
+      FIXTURE_IGNORE_SCRIPTS: ${{ inputs.fixture_ignore_scripts }}
     steps:
       - uses: actions/checkout@v7
 
@@ -232,7 +242,10 @@ jobs:
             arm_list="bind=$alpine_image|image bind_noverify=$alpine_image|image|$skip_verify"
             arm_list="$arm_list deps_layer_noverify=deps-layer:bind|image|$skip_verify"
             arm_list="$arm_list onerun_layer_noverify=onerun-layer:bind|image|$skip_verify"
-            arm_list="$arm_list linked_layer_noverify=linked-layer:bind|image|$skip_verify"
+            # The linked arm's require check names vitest's own packages.
+            if [ "$FIXTURE_REPO" = https://github.com/vitest-dev/vitest ]; then
+              arm_list="$arm_list linked_layer_noverify=linked-layer:bind|image|$skip_verify"
+            fi
             echo "ARMS=$arm_list" >> "$GITHUB_ENV"
             echo "STORE_EXPORT_ARM=bind" >> "$GITHUB_ENV"
           fi
@@ -311,7 +324,13 @@ jobs:
           set -euo pipefail
           for layer_arm in onerun_layer_noverify deps_layer_noverify; do
             docker tag "pnpm-probe-$layer_arm:local" "$PROBE_TAG_PREFIX-$layer_arm"
-            docker push -q "$PROBE_TAG_PREFIX-$layer_arm"
+            # The first push of a new package races the other replicates' and
+            # can get `denied` while ghcr creates it.
+            for push_attempt in 1 2 3; do
+              docker push -q "$PROBE_TAG_PREFIX-$layer_arm" && break
+              [ "$push_attempt" -lt 3 ] || { echo "::error::push of $(printf %q "$layer_arm") failed 3 times"; exit 1; }
+              sleep 20
+            done
           done
 
       - uses: actions/cache/save@v6
