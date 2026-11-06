@@ -22,4 +22,4 @@ Full hooks for this area. The routing keys live in `.agents/auto-memory/MEMORY.m
 - [TP bind-test pattern](project_tp_bind_test_pattern.md) — use `$GITHUB_WORKSPACE/_bind-test*` subdirs (not `mktemp -d`); `chmod g+rwx` + `sudo rm -rf` cleanup
 - [Launch cold costs 2026-10-08](project_launch_cold_costs_2026_10_08.md) — lavapipe ICD (aa781a1), shim dirname (636a781), GStreamer first-launch scan 763→145 ms (ac64224, official 1358), coreutils exec 3.0 vs busybox 1.1 ms
 - [dood joins every hosted docker gid](project_dood_host_docker_gids.md) — socket keeps host gid (24.04 118, 26.04 113/112), container job has no entrypoint to re-align; static `docker-host-<gid>` groups, PR #354 dbefb88; unseen gid → add to DOCKER_HOST_GROUP_IDS
-- [Image size gate + OpenSSL archs prune](../project_image_size_gate_and_openssl_prune.md) — >5% compressed growth fails promote; prune -8.9 MiB per alpine node+ image
+- [Image size gate + OpenSSL archs prune](project_image_size_gate_and_openssl_prune.md) — >5% compressed growth fails promote; prune -8.9 MiB per alpine node+ image
