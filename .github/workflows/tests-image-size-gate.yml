@@ -1,0 +1,27 @@
+name: tests-image-size-gate
+
+# Unit tests for image-size-gate's verdict. The gate stops a release, and its report is
+# what someone reads to find the layer that grew. Pure functions, no network, seconds.
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/image-size-gate.py'
+      - 'tests/scripts/test-image-size-gate.py'
+      - '.github/workflows/tests-image-size-gate.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/image-size-gate.py'
+      - 'tests/scripts/test-image-size-gate.py'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: image size gate unit test
+        run: python3 tests/scripts/test-image-size-gate.py

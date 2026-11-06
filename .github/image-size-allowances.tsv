@@ -1,0 +1,4 @@
+# Accepted image growth past image-size-gate.py's 5% ceiling, one line per image:
+# <os>-<image><TAB><max compressed amd64 MiB><TAB><why it grew>
+# Commit the line with the change that grows the image; delete it once the release that
+# grew is published (the gate then says so).

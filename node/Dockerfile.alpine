@@ -21,11 +21,18 @@ ARG NODE_MUSL_IMAGE=ghcr.io/jclaveau/node-musl:v24.22.1-2cef23906fde@sha256:4489
 
 FROM ${NODE_MUSL_IMAGE} AS node-musl-files
 
+# Pruned in a stage of its own: a file removed after the COPY into node-from-stage-b would still
+# ship in the COPY's layer.
+FROM ${BASE_IMAGE} AS node-musl-pruned
+COPY --from=node-musl-files /node/ /tmp/node/
+COPY --chmod=755 prune-openssl-archs.sh /tmp/prune-openssl-archs.sh
+RUN sudo /tmp/prune-openssl-archs.sh /tmp/node
+
 FROM ${BASE_IMAGE} AS node-from-stage-b
 ARG NODE_VERSION
 # clang lowers node's 16-byte atomics to libatomic calls (gcc's tarball build inlines them), so this
 # node needs libatomic.so.1 beside libstdc++/libgcc. The image has no LICENSE: install.py skips it.
-COPY --from=node-musl-files /node/ /usr/local/
+COPY --from=node-musl-pruned /tmp/node/ /usr/local/
 RUN set -eu \
     && sudo apk add --no-cache libstdc++ libgcc libatomic \
     && sudo rm -rf /usr/local/share/doc/node \
@@ -51,6 +58,7 @@ RUN set -eu \
 FROM ${BASE_IMAGE} AS node-from-tarball
 ARG NODE_VERSION
 COPY node-musl-sha256.txt /tmp/node-musl-sha256.txt
+COPY --chmod=755 prune-openssl-archs.sh /tmp/prune-openssl-archs.sh
 RUN set -eu \
     && tarball="node-v${NODE_VERSION}-linux-x64-musl.tar.xz" \
     && pinned_sha=$(awk -v v="${NODE_VERSION}" '$1 == v { print $2 }' /tmp/node-musl-sha256.txt) \
@@ -67,7 +75,8 @@ RUN set -eu \
     && sudo mkdir -p /usr/local/share/licenses/node \
     && sudo mv /usr/local/LICENSE /usr/local/share/licenses/node/LICENSE \
     && sudo rm -rf /usr/local/CHANGELOG.md /usr/local/README.md /usr/local/share/doc/node \
-    && sudo rm -f "/tmp/${tarball}" /tmp/node-musl-sha256.txt
+    && sudo /tmp/prune-openssl-archs.sh /usr/local \
+    && sudo rm -f "/tmp/${tarball}" /tmp/node-musl-sha256.txt /tmp/prune-openssl-archs.sh
 
 FROM node-from-${NODE_BUILD}
 

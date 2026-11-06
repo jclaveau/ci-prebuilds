@@ -1529,6 +1529,26 @@ jobs:
           npx -y node-gyp rebuild
           node -e "console.log(require('./build/Release/hello.node').hello())"
 
+      # The image prunes include/node/openssl/archs to this machine's arch: an addon built against the
+      # image's own headers (not node-gyp's download) must still find OpenSSL's arch config.
+      - name: Compile an OpenSSL-using addon against the image's own node headers
+        run: |
+          mkdir -p /tmp/gyp-openssl-test && cd /tmp/gyp-openssl-test
+          cat > digest.cc <<'EOF'
+          #include <node.h>
+          #include <openssl/sha.h>
+          namespace demo {
+            using v8::FunctionCallbackInfo; using v8::Local; using v8::Object; using v8::Value;
+            void Method(const FunctionCallbackInfo<Value>& a){ a.GetReturnValue().Set(SHA256_DIGEST_LENGTH); }
+            void Init(Local<Object> e){ NODE_SET_METHOD(e,"digestLength",Method); }
+            NODE_MODULE(NODE_GYP_MODULE_NAME, Init)
+          }
+          EOF
+          printf '{ "targets": [ { "target_name": "digest", "sources": [ "digest.cc" ] } ] }' > binding.gyp
+          npx -y node-gyp rebuild --nodedir="$(dirname "$(dirname "$(command -v node)")")"
+          digest_length=$(node -p "require('./build/Release/digest.node').digestLength()")
+          [ "$digest_length" = 32 ] || { printf 'digestLength() returned %q, not 32\n' "$digest_length"; exit 1; }
+
 
   test-playwright-usage:
     runs-on: ubuntu-latest
@@ -2211,6 +2231,35 @@ jobs:
 
 
   # ----------------------------------------------------------------------------
+  # Image size gate: refuses a release whose compressed amd64 image grew over 5%
+  # past its published -sudoer:latest. A deliberate growth is accepted by a line in
+  # .github/image-size-allowances.tsv, committed with the change that grows it.
+  # ----------------------------------------------------------------------------
+
+  image-size-gate:
+    runs-on: ubuntu-latest
+    if: '!failure() && !cancelled()'
+    needs: [github-context, build-gha-tools, build-dood, build-dind, build-node-dood, build-node-dind, build-pnpm-dood, build-pnpm-dind, build-pnpm-gyp-dood, build-pnpm-gyp-dind, build-playwright-dood, build-playwright-dind, build-playwright-gyp-dood, build-playwright-gyp-dind]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compare each image with its published size
+        env:
+          BUILD_TAG: ${{ needs.github-context.outputs.build_tag }}
+          OS_MATRIX: ${{ needs.github-context.outputs.os_matrix }}
+          IMAGE_MATRIX: ${{ needs.github-context.outputs.image_matrix }}
+        run: |
+          mapfile -t image_names < <(jq -rn --argjson oses "$OS_MATRIX" --argjson images "$IMAGE_MATRIX" \
+            '$oses[] as $os | $images[] | "\($os)-\(.)"')
+          python3 scripts/image-size-gate.py "$BUILD_TAG" .github/image-size-allowances.tsv "${image_names[@]}"
+
+
+  # ----------------------------------------------------------------------------
   # Promote: the all-or-nothing publish gate. `needs` every test job, so a single
   # failure skips this job entirely and nothing consumer-facing is published. On
   # success it adds the consumer tags (latest / pr-<n>) to the exact digests that
@@ -2263,7 +2312,7 @@ jobs:
     # that reported nothing, or a row that blew its budget, stop a release. The
     # `!failure()` above turns a red perf-report into a skipped promote; a
     # perf-report SKIPPED by test_filters is not a failure and still publishes.
-    needs: [github-context, versions, build-hardened-variants, test-gha-tools-usage, test-gha-tools-effects, test-gha-tools-hardened-effects, test-dind-hardened-effects, test-dood-dind-usage, test-dood-dind-effects, test-dood-dind-act, test-dind-registry-autostart, test-node-usage, test-pnpm-usage, test-pnpm-gyp-usage, test-playwright-usage, perf-report, pnpm-perf-gate]
+    needs: [github-context, versions, build-hardened-variants, test-gha-tools-usage, test-gha-tools-effects, test-gha-tools-hardened-effects, test-dind-hardened-effects, test-dood-dind-usage, test-dood-dind-effects, test-dood-dind-act, test-dind-registry-autostart, test-node-usage, test-pnpm-usage, test-pnpm-gyp-usage, test-playwright-usage, perf-report, pnpm-perf-gate, image-size-gate]
     steps:
       - uses: docker/setup-buildx-action@v4
       # GHCR login to READ the tested source image and PUSH its consumer tags.
