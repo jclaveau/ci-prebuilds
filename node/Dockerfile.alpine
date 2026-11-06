@@ -17,7 +17,7 @@ ARG NODE_VERSION=26.13.0
 #   tarball  nodejs.org's musl build (unofficial-builds), sha256-pinned in node-musl-sha256.txt. The
 #            fallback for a NODE_VERSION with no Stage B image: on-demand builds pick it.
 ARG NODE_BUILD=stage-b
-ARG NODE_MUSL_IMAGE=ghcr.io/jclaveau/node-musl:v24.22.1-2cef23906fde@sha256:448961e4182c0524b4ed48c42c35a74eac0f3fe73009870b8b982ded5fa7de25
+ARG NODE_MUSL_IMAGE=ghcr.io/jclaveau/node-musl:v26.13.0-8cef1efe00e6@sha256:bdc3dccafe47e161b68617f4a7888ff78f10dde5836fceed0fe0e85d84fb7273
 
 FROM ${NODE_MUSL_IMAGE} AS node-musl-files
 
