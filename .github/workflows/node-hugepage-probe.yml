@@ -653,3 +653,63 @@ jobs:
             echo "--- $variant"
             sudo python3 "$RUNNER_TEMP/fresh-mapping-zero-pages.py" "$variant"
           done
+
+      - name: Small zero page or huge zero page behind node's zero-page PTEs
+        run: |
+          set -euo pipefail
+          for knob in enabled use_zero_page defrag khugepaged/defrag shmem_enabled; do
+            echo "thp $knob: $(cat /sys/kernel/mm/transparent_hugepage/$knob)"
+          done
+          ls /sys/kernel/mm/transparent_hugepage/ | tr '\n' ' '; echo
+          for size_dir in /sys/kernel/mm/transparent_hugepage/hugepages-*kB; do
+            [ -e "$size_dir/enabled" ] && echo "$(basename "$size_dir") $(cat "$size_dir/enabled")"
+          done
+          cat >| "$RUNNER_TEMP/zero-page-frames.js" <<'PROBE'
+          const fs = require("fs");
+          const smapsBlocks = fs.readFileSync("/proc/self/smaps", "utf8").split(/\n(?=[0-9a-f]+-[0-9a-f]+ )/);
+          const pagemapFd = fs.openSync("/proc/self/pagemap", "r");
+          const kpageflagsFd = fs.openSync("/proc/kpageflags", "r");
+          const flagBuffer = Buffer.alloc(8);
+          const framesByMapping = [];
+          const allZeroFrames = new Map();
+          for (const block of smapsBlocks) {
+            const [start, end] = block.split(" ")[0].split("-").map(text => parseInt(text, 16));
+            if (end - start > 2 ** 31 || start >= 2 ** 47) continue;
+            const pageCount = (end - start) / 4096;
+            const entryBuffer = Buffer.alloc(pageCount * 8);
+            fs.readSync(pagemapFd, entryBuffer, 0, entryBuffer.length, (start / 4096) * 8);
+            const zeroFrames = new Set();
+            let zeroCount = 0, hugeFlagCount = 0, thpFlagCount = 0;
+            for (let page = 0; page < pageCount; page++) {
+              const entry = entryBuffer.readBigUInt64LE(page * 8);
+              if (!(entry >> 63n)) continue;
+              const pageFrame = entry & ((1n << 55n) - 1n);
+              fs.readSync(kpageflagsFd, flagBuffer, 0, 8, Number(pageFrame) * 8);
+              const pageFlags = flagBuffer.readBigUInt64LE(0);
+              if (!((pageFlags >> 24n) & 1n)) continue;
+              zeroCount++;
+              zeroFrames.add(pageFrame);
+              if ((pageFlags >> 17n) & 1n) hugeFlagCount++;
+              if ((pageFlags >> 22n) & 1n) thpFlagCount++;
+              allZeroFrames.set(pageFrame, pageFlags);
+            }
+            if (zeroCount < 64) continue;
+            const anonHuge = (block.match(/^AnonHugePages:\s+(\d+)/m) || [])[1];
+            const thpEligible = (block.match(/^THPeligible:\s+(\d+)/m) || [])[1];
+            const vmFlags = (block.match(/VmFlags:\s*(.*)/) || [])[1];
+            console.log(`${block.split(" ")[0]} size ${(end - start) / 1024}k zero ${zeroCount} distinct frames ${zeroFrames.size}`,
+              `huge-flag ${hugeFlagCount} thp-flag ${thpFlagCount} AnonHugePages ${anonHuge}k THPeligible ${thpEligible} [${vmFlags}]`);
+          }
+          const sortedFrames = [...allZeroFrames.keys()].sort((left, right) => (left < right ? -1 : 1));
+          console.log("distinct zero frames", sortedFrames.length,
+            "first", sortedFrames.slice(0, 3).map(frame => frame.toString(16)).join(","),
+            "last", sortedFrames.slice(-3).map(frame => frame.toString(16)).join(","),
+            "flags", [...new Set(allZeroFrames.values())].map(flags => flags.toString(16)).join(","));
+          PROBE
+          for round in 1 2; do
+            for large_pages in 0 1; do
+              echo "--- round $round large_pages=$large_pages"
+              docker run --rm --privileged --user 0 -v "$RUNNER_TEMP/zero-page-frames.js:/probe.js:ro" \
+                --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" /probe.js
+            done
+          done
