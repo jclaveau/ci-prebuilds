@@ -98,19 +98,40 @@ jobs:
               '
           done
 
-      - name: spawn cost with the option off and on, interleaved
+      - name: spawn cost with the option off and on, order alternated per round
         run: |
           set -euo pipefail
-          for round in 1 2 3 4 5; do
-            for large_pages in 0 1; do
+          for round in 1 2 3 4 5 6; do
+            if [ $((round % 2)) -eq 1 ]; then arm_order="0 1"; else arm_order="1 0"; fi
+            for large_pages in $arm_order; do
               docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" -e '
                 const { spawnSync } = require("child_process");
                 const fs = require("fs");
                 const usageUsec = () => Number(fs.readFileSync("/sys/fs/cgroup/cpu.stat", "utf8").match(/usage_usec (\d+)/)[1]);
                 for (let warm = 0; warm < 10; warm++) spawnSync("true");
+                const status = fs.readFileSync("/proc/self/status", "utf8");
+                const mappingCount = fs.readFileSync("/proc/self/maps", "utf8").trim().split("\n").length;
                 const before = usageUsec();
                 for (let rep = 0; rep < 100; rep++) spawnSync("true");
-                console.log(`round '"$round"' large_pages=${process.env.MIMALLOC_ALLOW_LARGE_OS_PAGES} spawn_true_x100 ${((usageUsec() - before) / 1000).toFixed(1)} ms`);
+                console.log(`round '"$round"' large_pages=${process.env.MIMALLOC_ALLOW_LARGE_OS_PAGES} spawn_true_x100 ${((usageUsec() - before) / 1000).toFixed(1)} ms`,
+                  status.match(/^(VmRSS|VmPTE|RssAnon):.*/gm).join(" | ").replace(/\s+/g, " "), `| maps ${mappingCount}`);
               '
             done
+          done
+
+      - name: Syscalls of 100 spawns with the option off and on
+        run: |
+          set -euo pipefail
+          for large_pages in 0 1; do
+            echo "--- large_pages=$large_pages"
+            docker run --rm --user root --cap-add SYS_PTRACE --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" \
+              --entrypoint sh "$NODE_IMAGE" -c '
+                apk add -q --no-cache strace
+                strace -f -c -o /tmp/summary.txt \
+                  node -e "const {spawnSync}=require(\"child_process\");for(let i=0;i<100;i++)spawnSync(\"true\")"
+                head -25 /tmp/summary.txt
+                strace -f -e trace=clone,clone3,fork,vfork -o /tmp/clones.txt \
+                  node -e "require(\"child_process\").spawnSync(\"true\")"
+                grep -E "clone|fork" /tmp/clones.txt | tail -3
+              '
           done
