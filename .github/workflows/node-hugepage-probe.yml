@@ -119,19 +119,47 @@ jobs:
             done
           done
 
-      - name: Syscalls of 100 spawns with the option off and on
+      - name: Parent vs child option, with THP fault and compaction counters
+        run: |
+          set -euo pipefail
+          for round in 1 2 3; do
+            for arm_pair in "0 0" "0 1" "1 0" "1 1"; do
+              set -- $arm_pair
+              docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$1" --env "CHILD_LARGE_PAGES=$2" \
+                --entrypoint node "$NODE_IMAGE" -e '
+                  const { spawnSync } = require("child_process");
+                  const fs = require("fs");
+                  const childEnv = { ...process.env, MIMALLOC_ALLOW_LARGE_OS_PAGES: process.env.CHILD_LARGE_PAGES };
+                  const readCounters = () => {
+                    const memoryStat = fs.readFileSync("/sys/fs/cgroup/memory.stat", "utf8");
+                    const vmstat = fs.readFileSync("/proc/vmstat", "utf8");
+                    const pick = (text, key) => Number(text.match(new RegExp(`^${key} (\\d+)`, "m"))[1]);
+                    return {
+                      cpu_usec: Number(fs.readFileSync("/sys/fs/cgroup/cpu.stat", "utf8").match(/usage_usec (\d+)/)[1]),
+                      cg_thp_fault_alloc: pick(memoryStat, "thp_fault_alloc"),
+                      cg_pgfault: pick(memoryStat, "pgfault"),
+                      host_compact_stall: pick(vmstat, "compact_stall"),
+                      host_thp_fault_fallback: pick(vmstat, "thp_fault_fallback"),
+                    };
+                  };
+                  for (let warm = 0; warm < 10; warm++) spawnSync("true", { env: childEnv });
+                  const before = readCounters();
+                  for (let rep = 0; rep < 100; rep++) spawnSync("true", { env: childEnv });
+                  const after = readCounters();
+                  const deltas = Object.keys(after).map(key => `${key} ${after[key] - before[key]}`).join(" | ");
+                  console.log(`round '"$round"' parent=${process.env.MIMALLOC_ALLOW_LARGE_OS_PAGES} child=${process.env.CHILD_LARGE_PAGES} x100: ${deltas}`);
+                '
+            done
+          done
+
+      - name: The child's mmap and madvise calls with the option off and on
         run: |
           set -euo pipefail
           for large_pages in 0 1; do
-            echo "--- large_pages=$large_pages"
+            echo "--- child large_pages=$large_pages"
             docker run --rm --user root --cap-add SYS_PTRACE --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" \
               --entrypoint sh "$NODE_IMAGE" -c '
                 apk add -q --no-cache strace
-                strace -f -c -o /tmp/summary.txt \
-                  node -e "const {spawnSync}=require(\"child_process\");for(let i=0;i<100;i++)spawnSync(\"true\")"
-                head -25 /tmp/summary.txt
-                strace -f -e trace=clone,clone3,fork,vfork -o /tmp/clones.txt \
-                  node -e "require(\"child_process\").spawnSync(\"true\")"
-                grep -E "clone|fork" /tmp/clones.txt | tail -3
+                strace -e trace=mmap,munmap,madvise,prctl true 2>&1 | grep -vE "\.so|PROT_READ\|PROT_EXEC|MAP_SHARED"
               '
           done
