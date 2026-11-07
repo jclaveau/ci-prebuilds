@@ -141,7 +141,7 @@ jobs:
                 const field = line.match(/^(Rss|Anonymous|AnonHugePages|VmFlags):\s+(.*?)( kB)?$/);
                 if (field && currentMapping) currentMapping[field[1]] = field[1] === "VmFlags" ? field[2] : Number(field[2]);
               }
-              const forkCopied = mappingList.filter(mapping => !/\bdd\b/.test(mapping.VmFlags));
+              const forkCopied = mappingList.filter(mapping => !/\bdc\b/.test(mapping.VmFlags));
               const sumKb = (list, key) => list.reduce((total, mapping) => total + (mapping[key] || 0), 0);
               console.log(`mappings ${mappingList.length}, copied at fork ${forkCopied.length}:`,
                 `rss ${sumKb(forkCopied, "Rss")} kB, anonymous ${sumKb(forkCopied, "Anonymous")} kB,`,
@@ -151,4 +151,48 @@ jobs:
                   `huge ${mapping.AnonHugePages} ${mapping.name} [${mapping.VmFlags}]`);
               }
             '
+          done
+
+      - name: Children's page faults by node mapping, option off and on
+        run: |
+          set -euo pipefail
+          for large_pages in 0 1; do
+            echo "--- large_pages=$large_pages, 200 spawns"
+            sudo perf record -q -a -e exceptions:page_fault_user -o "faults-$large_pages.data" -- \
+              docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" -e '
+                const { spawnSync } = require("child_process");
+                for (let warm = 0; warm < 10; warm++) spawnSync("true");
+                for (let rep = 0; rep < 200; rep++) spawnSync("true");
+                process.stdout.write(require("fs").readFileSync("/proc/self/maps", "utf8"));
+              ' >| "maps-$large_pages.txt" || echo "perf record exited $?"
+            sudo perf script -i "faults-$large_pages.data" -F comm,tid,trace >| "faults-$large_pages.txt" 2>/dev/null \
+              || echo "perf script exited $?"
+            python3 - "maps-$large_pages.txt" "faults-$large_pages.txt" <<'PY'
+          import collections, re, sys
+          mapping_list = []
+          for line in open(sys.argv[1]):
+              parts = line.split()
+              start_text, end_text = parts[0].split("-")
+              mapping_list.append((int(start_text, 16), int(end_text, 16), parts[1], parts[5] if len(parts) > 5 else "[anon]"))
+          fault_rows = []
+          for line in open(sys.argv[2]):
+              match = re.match(r"\s*(.+?)\s+(\d+)\s+.*address=0x([0-9a-f]+)\s+ip=0x([0-9a-f]+)\s+error_code=0x([0-9a-f]+)", line)
+              if match:
+                  fault_rows.append((match.group(1), int(match.group(2)), int(match.group(3), 16), int(match.group(5), 16)))
+          node_rows = [row for row in fault_rows if row[0].startswith("node")]
+          tid_counts = collections.Counter(row[1] for row in node_rows)
+          parent_tid = tid_counts.most_common(1)[0][0]
+          child_rows = [row for row in node_rows if row[1] != parent_tid]
+          child_tids = {row[1] for row in child_rows}
+          print(f"faults: parent tid {parent_tid} {tid_counts[parent_tid]}, other node tids {len(child_tids)} with {len(child_rows)},",
+                f"true {sum(1 for row in fault_rows if row[0] == 'true')}")
+          def name_mapping(address):
+              for start, end, perms, name in mapping_list:
+                  if start <= address < end:
+                      return f"{perms} {name} {(end - start) // 1024}k"
+              return "unmapped"
+          region_counts = collections.Counter((name_mapping(row[2]), f"err {row[3]:#x}") for row in child_rows)
+          for (region, error_code), count in region_counts.most_common(20):
+              print(f"  {count:6d} {error_code} {region}")
+          PY
           done
