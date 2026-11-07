@@ -118,3 +118,37 @@ jobs:
               || echo "perf report exited $?"
             grep -vE '^#|^$' "report-$large_pages.txt" | head -60 || echo "empty report"
           done
+
+      - name: Node smaps at spawn time, option off and on
+        run: |
+          set -euo pipefail
+          for large_pages in 0 1; do
+            echo "--- large_pages=$large_pages"
+            docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" -e '
+              const { spawnSync } = require("child_process");
+              const fs = require("fs");
+              for (let warm = 0; warm < 10; warm++) spawnSync("true");
+              const mappingList = [];
+              let currentMapping = null;
+              for (const line of fs.readFileSync("/proc/self/smaps", "utf8").split("\n")) {
+                const header = line.match(/^([0-9a-f]+)-([0-9a-f]+) (\S+) \S+ \S+ \S+\s*(.*)$/);
+                if (header) {
+                  currentMapping = { range: `${header[1]}-${header[2]}`, perms: header[3], name: header[4] || "[anon]",
+                    size_kb: (parseInt(header[2], 16) - parseInt(header[1], 16)) / 1024 };
+                  mappingList.push(currentMapping);
+                  continue;
+                }
+                const field = line.match(/^(Rss|Anonymous|AnonHugePages|VmFlags):\s+(.*?)( kB)?$/);
+                if (field && currentMapping) currentMapping[field[1]] = field[1] === "VmFlags" ? field[2] : Number(field[2]);
+              }
+              const forkCopied = mappingList.filter(mapping => !/\bdd\b/.test(mapping.VmFlags));
+              const sumKb = (list, key) => list.reduce((total, mapping) => total + (mapping[key] || 0), 0);
+              console.log(`mappings ${mappingList.length}, copied at fork ${forkCopied.length}:`,
+                `rss ${sumKb(forkCopied, "Rss")} kB, anonymous ${sumKb(forkCopied, "Anonymous")} kB,`,
+                `anon huge ${sumKb(forkCopied, "AnonHugePages")} kB | not copied rss ${sumKb(mappingList, "Rss") - sumKb(forkCopied, "Rss")} kB`);
+              for (const mapping of mappingList.filter(mapping => mapping.Rss >= 256 || mapping.AnonHugePages > 0)) {
+                console.log(`  ${mapping.range} ${mapping.perms} size ${mapping.size_kb} rss ${mapping.Rss} anon ${mapping.Anonymous}`,
+                  `huge ${mapping.AnonHugePages} ${mapping.name} [${mapping.VmFlags}]`);
+              }
+            '
+          done
