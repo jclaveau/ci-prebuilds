@@ -544,3 +544,28 @@ jobs:
           PY
             done
           done
+
+      - name: Kernel THP and migration counters around one boot, and who maps the zero page
+        run: |
+          set -euo pipefail
+          sudo grep -wE "try_to_map_unused_to_zeropage|remove_migration_pte|split_huge_pmd_locked|__split_huge_pmd" /proc/kallsyms | head || true
+          zero_mapper=$(sudo grep -woE "try_to_map_unused_to_zeropage|remove_migration_pte" /proc/kallsyms | head -1 || true)
+          if [ -n "$zero_mapper" ]; then sudo perf probe -q -a "$zero_mapper" || echo "perf probe $zero_mapper exited $?"; fi
+          for large_pages in 0 1 0 1; do
+            echo "--- large_pages=$large_pages"
+            grep -E "^(thp|compact|numa|pgmigrate|zero)" /proc/vmstat >| vmstat-before.txt
+            probe_events=(-e 'huge_memory:*')
+            if [ -n "$zero_mapper" ]; then probe_events+=(-e "probe:$zero_mapper"); fi
+            sudo perf record -q -a -g "${probe_events[@]}" -o "thp-$large_pages.data" -- \
+              docker run --rm --privileged --user 0 -v "$RUNNER_TEMP/zero-page-by-spawns.js:/probe.js:ro" \
+                --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" /probe.js || echo "perf record exited $?"
+            grep -E "^(thp|compact|numa|pgmigrate|zero)" /proc/vmstat >| vmstat-after.txt
+            echo "vmstat deltas:"
+            join vmstat-before.txt vmstat-after.txt | awk '$3 != $2 { print "  " $1, $3 - $2 }'
+            echo "events by name and comm:"
+            sudo perf script -i "thp-$large_pages.data" -F comm,event 2>/dev/null | sort | uniq -c | sort -rn | head -12 \
+              || echo "perf script exited $?"
+            echo "zero-page mapper call chains:"
+            sudo perf script -i "thp-$large_pages.data" -F comm,event,ip,sym 2>/dev/null \
+              | awk -v want="probe:" 'index($0, want) { show = 12 } show-- > 0' | head -40 || echo "perf script exited $?"
+          done
