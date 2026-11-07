@@ -96,14 +96,20 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get install -y -qq "linux-tools-$(uname -r)" >/dev/null 2>&1 \
-            || sudo apt-get install -y -qq linux-tools-azure linux-tools-common >/dev/null 2>&1 \
-            || { echo "no perf package for $(uname -r)"; exit 0; }
+            || sudo apt-get install -y -qq linux-tools-azure linux-tools-generic linux-tools-common >/dev/null 2>&1 || true
+          perf_binary=$(ls /usr/lib/linux-tools/*/perf /usr/lib/linux-tools-*/perf 2>/dev/null | tail -1 || true)
+          if [ -z "$perf_binary" ]; then
+            echo "no perf binary for $(uname -r)" >&2
+            exit 1
+          fi
+          echo "perf: $perf_binary"
           sudo sysctl -q kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
           for large_pages in 0 1; do
             echo "--- large_pages=$large_pages"
-            sudo perf record -q -a -g -F 1999 -o "perf-$large_pages.data" -- \
+            sudo "$perf_binary" record -q -a -g -F 1999 -o "perf-$large_pages.data" -- \
               docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" \
-                -e 'const {spawnSync}=require("child_process");for(let i=0;i<1000;i++)spawnSync("true")' 2>&1 | tail -2
-            sudo perf report -i "perf-$large_pages.data" --stdio --no-children --comms node,true \
-              --sort comm,sym --percent-limit 1 -g none 2>/dev/null | grep -vE '^#|^$' | head -30
+                -e 'const {spawnSync}=require("child_process");for(let i=0;i<1000;i++)spawnSync("true")'
+            sudo "$perf_binary" report -i "perf-$large_pages.data" --stdio --no-children --comms node,true \
+              --sort comm,sym --percent-limit 0.7 -g none >| "report-$large_pages.txt"
+            grep -vE '^#|^$' "report-$large_pages.txt" | head -40
           done
