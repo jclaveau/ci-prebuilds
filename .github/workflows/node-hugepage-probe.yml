@@ -447,3 +447,48 @@ jobs:
                 node -e "$(sed "s/rep < 200/rep < 0/; s/warm < 10/warm < 0/" /probe.js)" | grep -E "^(x200|totals)"
               '
           done
+
+      - name: Zero-page PTEs after 0, 1, 5, 20 and 200 spawns, option off and on
+        run: |
+          set -euo pipefail
+          cat >| "$RUNNER_TEMP/zero-page-by-spawns.js" <<'PROBE'
+          const { spawnSync } = require("child_process");
+          const fs = require("fs");
+          const pagemapFd = fs.openSync("/proc/self/pagemap", "r");
+          const kpageflagsFd = fs.openSync("/proc/kpageflags", "r");
+          const flagBuffer = Buffer.alloc(8);
+          const countPages = () => {
+            const pageTotals = { present: 0, zero: 0, stackZero: 0 };
+            for (const line of fs.readFileSync("/proc/self/maps", "utf8").trim().split("\n")) {
+              const [start, end] = line.split(" ")[0].split("-").map(text => parseInt(text, 16));
+              if (end - start > 2 ** 31 || start >= 2 ** 47) continue;
+              const entryBuffer = Buffer.alloc(((end - start) / 4096) * 8);
+              fs.readSync(pagemapFd, entryBuffer, 0, entryBuffer.length, (start / 4096) * 8);
+              for (let page = 0; page < entryBuffer.length / 8; page++) {
+                const entry = entryBuffer.readBigUInt64LE(page * 8);
+                if (!(entry >> 63n)) continue;
+                const pageFrame = entry & ((1n << 55n) - 1n);
+                pageTotals.present++;
+                fs.readSync(kpageflagsFd, flagBuffer, 0, 8, Number(pageFrame) * 8);
+                if (!((flagBuffer.readBigUInt64LE(0) >> 24n) & 1n)) continue;
+                pageTotals.zero++;
+                if (end - start === 16781312) pageTotals.stackZero++;
+              }
+            }
+            return pageTotals;
+          };
+          let spawnsDone = 0;
+          for (const checkpoint of [0, 1, 5, 20, 200]) {
+            const before = process.resourceUsage().systemCPUTime;
+            for (; spawnsDone < checkpoint; spawnsDone++) spawnSync("true");
+            const sysMs = ((process.resourceUsage().systemCPUTime - before) / 1000).toFixed(0);
+            console.log(`after ${checkpoint} spawns (sys ${sysMs} ms)`, JSON.stringify(countPages()));
+          }
+          PROBE
+          for round in 1 2; do
+            for large_pages in 0 1; do
+              echo "--- round $round large_pages=$large_pages"
+              docker run --rm --privileged --user 0 -v "$RUNNER_TEMP/zero-page-by-spawns.js:/probe.js:ro" \
+                --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" /probe.js
+            done
+          done
