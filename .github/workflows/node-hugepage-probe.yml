@@ -759,3 +759,49 @@ jobs:
               print(f"  {count:6d} {area} {kind} {chain}")
           PY
           done
+
+      - name: KSM state, prctl arguments, and zero-page PTEs over time in one process
+        run: |
+          set -euo pipefail
+          for knob in /sys/kernel/mm/ksm/*; do echo "ksm $(basename "$knob"): $(cat "$knob" 2>/dev/null | head -1)"; done
+          grep -E 'ksm|zero' /proc/vmstat || true
+          cat >| "$RUNNER_TEMP/zero-pages-over-time.js" <<'PROBE'
+          const fs = require("fs");
+          const pagemapFd = fs.openSync("/proc/self/pagemap", "r");
+          const kpageflagsFd = fs.openSync("/proc/kpageflags", "r");
+          const flagBuffer = Buffer.alloc(8);
+          const countZeroPages = () => {
+            let zeroCount = 0;
+            for (const line of fs.readFileSync("/proc/self/maps", "utf8").trim().split("\n")) {
+              const [start, end] = line.split(" ")[0].split("-").map(text => parseInt(text, 16));
+              if (end - start > 2 ** 31 || start >= 2 ** 47) continue;
+              const entryBuffer = Buffer.alloc(((end - start) / 4096) * 8);
+              fs.readSync(pagemapFd, entryBuffer, 0, entryBuffer.length, (start / 4096) * 8);
+              for (let offset = 0; offset < entryBuffer.length; offset += 8) {
+                const entry = entryBuffer.readBigUInt64LE(offset);
+                if (!(entry >> 63n)) continue;
+                fs.readSync(kpageflagsFd, flagBuffer, 0, 8, Number(entry & ((1n << 55n) - 1n)) * 8);
+                if ((flagBuffer.readBigUInt64LE(0) >> 24n) & 1n) zeroCount++;
+              }
+            }
+            return zeroCount;
+          };
+          const ksmLine = () => {
+            try { return fs.readFileSync("/proc/self/ksm_stat", "utf8").trim().replace(/\n/g, ", "); }
+            catch (error) { return "ksm_stat " + JSON.stringify(error.code); }
+          };
+          const ksmTotal = () => (fs.readFileSync("/proc/self/smaps_rollup", "utf8").match(/^KSM:.*/m) || ["KSM: (no field)"])[0];
+          const report = label => console.log(`${label} uptime ${(process.uptime() * 1000).toFixed(0)} ms zero ${countZeroPages()} | ${ksmLine()} | ${ksmTotal()}`);
+          report("first line");
+          setTimeout(() => report("+100 ms"), 100);
+          setTimeout(() => report("+1 s"), 1000);
+          setTimeout(() => report("+4 s"), 4000);
+          PROBE
+          for large_pages in 0 1; do
+            echo "--- large_pages=$large_pages"
+            docker run --rm --privileged --user 0 -v "$RUNNER_TEMP/zero-pages-over-time.js:/probe.js:ro" \
+              --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" /probe.js
+            echo "prctl calls:"
+            docker run --rm --user 0 --cap-add SYS_PTRACE --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" \
+              --entrypoint sh "$NODE_IMAGE" -c 'apk add -q strace >/dev/null && strace -f -e trace=prctl -o /tmp/prctl node -e 0 && sed -E "s/^[0-9]+ +//" /tmp/prctl | sort | uniq -c'
+          done
