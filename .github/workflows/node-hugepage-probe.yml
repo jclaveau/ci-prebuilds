@@ -1564,3 +1564,65 @@ jobs:
               print(event_line)
           PY
           done
+      - name: Does a failed mremap make provjobd read a process, and node's syscalls just before the read
+        run: |
+          set -euo pipefail
+          cat >| mremap-trigger.py <<'PY'
+          import ctypes, sys, time
+          libc = ctypes.CDLL(None, use_errno=True)
+          libc.mmap.restype = ctypes.c_void_p
+          libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long]
+          libc.syscall.restype = ctypes.c_long
+          libc.syscall.argtypes = [ctypes.c_long, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_size_t, ctypes.c_int]
+          time.sleep(0.2)
+          two_pages = libc.mmap(None, 8192, 3, 0x22, -1, 0)
+          if sys.argv[1] == "mremap-enomem":
+              # grows the first page in place over the second without MREMAP_MAYMOVE
+              result = libc.syscall(25, two_pages, 4096, 8192, 0)
+              print(f"    mremap = {result} errno {ctypes.get_errno()}")
+          if sys.argv[1] == "mremap-ok":
+              result = libc.syscall(25, two_pages, 8192, 4096, 0)
+              print(f"    mremap = {result} errno {ctypes.get_errno()}")
+          time.sleep(0.6)
+          PY
+          for arm in none mremap-enomem mremap-ok none mremap-enomem mremap-ok; do
+            sudo perf record -q -a -m 1024 -o mremap.data -e syscalls:sys_enter_pread64 -- \
+              docker run --rm -v "$PWD/mremap-trigger.py:/t.py:ro" python:3.13-alpine python3 /t.py "$arm" >| mremap.out || echo "perf record exited $?"
+            read_count=$(sudo perf script -i mremap.data -F comm,event 2>/dev/null | grep -E '^\s*provjobd' | grep -c pread64 || true)
+            echo "  container $arm: provjobd preads $read_count $(tr '\n' ' ' < mremap.out)"
+          done
+          mkdir -p strace-out && chmod 777 strace-out
+          for large_pages in 0 0 1; do
+            echo "--- node under strace, large_pages=$large_pages"
+            rm -f strace-out/node.txt
+            sudo perf record -q -a -m 1024 -k CLOCK_REALTIME -o st.data -e syscalls:sys_enter_pread64 -- \
+              docker run --rm --user root --cap-add SYS_PTRACE -v "$PWD/strace-out:/out" \
+                --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint sh "$NODE_IMAGE" -c \
+                'apk add -q strace >/dev/null && exec strace -f -ttt -o /out/node.txt node -e "setTimeout(() => {}, 300)"' \
+              || echo "perf record exited $?"
+            sudo perf script -i st.data -F comm,time,event 2>/dev/null >| st.txt || echo "perf script exited $?"
+            python3 - st.txt strace-out/node.txt <<'PY'
+          import re, sys
+          read_times = [float(match.group(1)) for line in open(sys.argv[1])
+                        if line.lstrip().startswith("provjobd") and (match := re.search(r"(\d+\.\d+):", line))]
+          syscall_lines = []
+          for line in open(sys.argv[2]):
+              match = re.match(r"(\d+)\s+(\d+\.\d+)\s+(.*)", line)
+              if match:
+                  syscall_lines.append((float(match.group(2)), match.group(1), match.group(3)))
+          node_execve = next((when for when, _, text in syscall_lines if text.startswith("execve(")), None)
+          if node_execve is None or not read_times:
+              print(f"    no execve ({node_execve}) or no provjobd read ({len(read_times)})")
+              sys.exit(0)
+          first_read = min(when for when in read_times if when >= node_execve - 0.001)
+          print(f"    provjobd first pread +{(first_read - node_execve) * 1000:.2f} ms after node's execve, {len(read_times)} preads")
+          for when, thread_id, text in syscall_lines:
+              if first_read - 0.003 <= when <= first_read + 0.0005:
+                  marker = "  <-- read" if when > first_read else ""
+                  print(f"    +{(when - node_execve) * 1000:7.2f} ms {thread_id} {text[:110]}{marker}")
+          failed_lines = [(when, text) for when, _, text in syscall_lines if when < first_read and re.search(r"= -1 E", text)]
+          print(f"    failed syscalls before the read: {len(failed_lines)}")
+          for when, text in failed_lines[-12:]:
+              print(f"    +{(when - node_execve) * 1000:7.2f} ms {text[:110]}")
+          PY
+          done
