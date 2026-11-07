@@ -980,3 +980,54 @@ jobs:
               print(f"  +{elapsed:7.3f} s {label} asked {asked // 1024} KiB got {got // 1024} KiB")
           PY
           done
+      - name: Node's boot timeline against the moment provjobd reads its maps, off vs on
+        run: |
+          set -euo pipefail
+          for large_pages in 0 1; do
+            echo "--- large_pages=$large_pages"
+            sudo perf record -q -a -o "timeline-$large_pages.data" \
+              -e syscalls:sys_enter_mmap -e syscalls:sys_exit_mmap -e syscalls:sys_enter_clone3 \
+              -e syscalls:sys_enter_pread64 -e syscalls:sys_enter_exit_group -- \
+              docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" \
+                -e 'setTimeout(() => {}, 1000)' || echo "perf record exited $?"
+            sudo perf script -i "timeline-$large_pages.data" -F comm,tid,time,event,trace 2>/dev/null >| "timeline-$large_pages.txt" \
+              || echo "perf script exited $?"
+            python3 - "timeline-$large_pages.txt" <<'PY'
+          import re, sys
+          node_start = None
+          pending_mmap = {}
+          pread_count = 0
+          for line in open(sys.argv[1]):
+              match = re.match(r"\s*(\S.*?)\s+(\d+)\s+(\d+\.\d+):\s+syscalls:(\w+):\s*(.*)", line)
+              if not match:
+                  continue
+              comm, thread_id, time_text, event_name, trace_text = match.groups()
+              event_time = float(time_text)
+              if comm == "node" and node_start is None:
+                  node_start = event_time
+                  print(f"  +   0.0 ms node first event ({event_name})")
+              if node_start is None:
+                  continue
+              elapsed = (event_time - node_start) * 1000
+              if comm == "node" or comm.startswith("V8") or comm.startswith("node"):
+                  if event_name == "sys_enter_mmap":
+                      length = int(re.search(r"len: 0x([0-9a-f]+)", trace_text).group(1), 16)
+                      flags = int(re.search(r"flags: 0x([0-9a-f]+)", trace_text).group(1), 16)
+                      if length >= 1 << 20:
+                          pending_mmap[thread_id] = (length, flags)
+                  elif event_name == "sys_exit_mmap" and thread_id in pending_mmap:
+                      length, flags = pending_mmap.pop(thread_id)
+                      result = trace_text.split("0x")[-1]
+                      hugetlb_note = " MAP_HUGETLB" if flags & 0x40000 else ""
+                      print(f"  +{elapsed:6.1f} ms {comm}: mmap {length // 1024} KiB flags 0x{flags:x}{hugetlb_note} -> {trace_text.strip()}")
+                  elif event_name == "sys_enter_clone3":
+                      print(f"  +{elapsed:6.1f} ms {comm}: clone3 (new thread)")
+                  elif event_name == "sys_enter_exit_group":
+                      print(f"  +{elapsed:6.1f} ms {comm}: exit_group")
+              elif comm.startswith("provjobd") and event_name == "sys_enter_pread64":
+                  pread_count += 1
+                  if pread_count == 1:
+                      print(f"  +{elapsed:6.1f} ms provjobd: first pread64 (maps already read)")
+          print(f"  provjobd pread64 calls after node start: {pread_count}")
+          PY
+          done
