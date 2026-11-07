@@ -21,6 +21,9 @@ RUN apk add --no-cache libatomic \
     && rm -rf /usr/local/share/doc/node \
     && node -p 'process.version + " code_cache=" + process.config.variables.node_use_node_code_cache + " clang=" + process.config.variables.clang' \
     && npm --version \
-    && arch_dir="/opt/hostedtoolcache/node/$(node -p process.versions.node)/x64" \
-    && [ "$("$arch_dir/bin/node" -p process.execPath)" = /usr/local/bin/node ]
+    && rm -rf "$RUNNER_TOOL_CACHE"/node/*
+# The published image registered its own node version, which a major bump no longer matches.
 USER runner
+RUN register-node-in-tool-cache \
+    && arch_dir="$RUNNER_TOOL_CACHE/node/$(node -p process.versions.node)/$(node -p process.arch)" \
+    && [ "$("$arch_dir/bin/node" -p process.execPath)" = /usr/local/bin/node ]

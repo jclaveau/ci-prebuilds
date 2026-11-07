@@ -181,6 +181,7 @@
   "timezone": "Europe/Paris",
   "automerge": true,
   "automergeStrategy": "squash",
+  "platformAutomerge": false,
   "prHourlyLimit": 0,
   "prConcurrentLimit": 5
 }
