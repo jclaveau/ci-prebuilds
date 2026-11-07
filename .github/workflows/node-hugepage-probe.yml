@@ -911,3 +911,72 @@ jobs:
               print(f"  {length // 1024:8d} KiB read from {label} (mapping {size // 1024} KiB)")
           PY
           done
+      - name: The maps provjobd sees and the order and time of its reads, off vs on
+        run: |
+          set -euo pipefail
+          scanner_pid=$(pgrep -o '^provjobd' || true)
+          if [ -z "$scanner_pid" ]; then
+            echo "no provjobd process found by name"
+            exit 0
+          fi
+          for large_pages in 0 1; do
+            echo "--- large_pages=$large_pages"
+            sudo strace -f -ttt -s 4194304 -p "$scanner_pid" -e trace=openat,read,pread64 -o "order-$large_pages.txt" &
+            strace_pid=$!
+            sleep 1
+            node_launch_time=$(date +%s.%N)
+            docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" \
+              -e 'setTimeout(() => {}, 1500)'
+            sleep 1
+            sudo kill "$strace_pid" || true
+            wait "$strace_pid" || true
+            sudo chmod a+r "order-$large_pages.txt"
+            python3 - "order-$large_pages.txt" "$node_launch_time" <<'PY'
+          import codecs, re, sys
+          launch_time = float(sys.argv[2])
+          maps_line_pattern = re.compile(r"^([0-9a-f]+)-([0-9a-f]+) (\S{4}) \S+ \S+ \d+\s*(.*)$")
+          maps_fd_by_thread = {}
+          maps_snapshot = []
+          maps_read_time = None
+          read_list = []
+          for line in open(sys.argv[1]):
+              thread_id, time_text = line.split()[:2]
+              elapsed = float(time_text) - launch_time
+              opened = re.search(r'openat\(\w+, "/proc/(\d+)/maps".*= (\d+)', line)
+              if opened:
+                  maps_fd_by_thread[thread_id] = opened.group(2)
+                  print(f"  +{elapsed:7.3f} s openat /proc/{opened.group(1)}/maps")
+                  continue
+              opened = re.search(r'openat\(\w+, "/proc/(\d+)/mem".*= (\d+)', line)
+              if opened:
+                  print(f"  +{elapsed:7.3f} s openat /proc/{opened.group(1)}/mem")
+                  continue
+              content = re.search(r'read\((\d+), "(.*)"(?:\.\.\.)?, \d+\) = \d+', line)
+              if content and maps_fd_by_thread.get(thread_id) == content.group(1):
+                  text = codecs.decode(content.group(2), "unicode_escape")
+                  for maps_line in text.splitlines():
+                      if maps_line_pattern.match(maps_line):
+                          maps_snapshot.append(maps_line)
+                  maps_read_time = maps_read_time or elapsed
+                  continue
+              pread = re.search(r"pread64\(\d+, .*, (\d+), (\d+|0x[0-9a-f]+)\) = (-?\d+)", line)
+              if pread:
+                  read_list.append((elapsed, int(pread.group(2), 0), int(pread.group(1)), int(pread.group(3))))
+          print(f"maps read at +{maps_read_time} s: {len(maps_snapshot)} mappings")
+          mapping_list = []
+          for maps_line in maps_snapshot:
+              start_text, end_text, perms, name = maps_line_pattern.match(maps_line).groups()
+              start, end = int(start_text, 16), int(end_text, 16)
+              mapping_list.append((start, end, perms, name or "[anon]"))
+              if end - start >= 1 << 20:
+                  print(f"  {perms} {(end - start) // 1024:8d} KiB {name or '[anon]'}")
+          print("preads in order (time since launch, mapping, offset in mapping, asked, got):")
+          for elapsed, offset, asked, got in read_list:
+              label = "not in its maps"
+              for start, end, perms, name in mapping_list:
+                  if start <= offset < end:
+                      label = f"{perms} {(end - start) // 1024} KiB {name} +{(offset - start) // 1024} KiB"
+                      break
+              print(f"  +{elapsed:7.3f} s {label} asked {asked // 1024} KiB got {got // 1024} KiB")
+          PY
+          done
