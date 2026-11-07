@@ -1104,3 +1104,57 @@ jobs:
               print(f"    {madvise_line[:150]}")
           PY
           done
+      - name: Does a failed mmap make provjobd read a process sooner
+        run: |
+          set -euo pipefail
+          cat >| mmap-trigger.py <<'PY'
+          import ctypes, sys, time
+          libc = ctypes.CDLL(None, use_errno=True)
+          libc.mmap.restype = ctypes.c_void_p
+          libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long]
+          arm_name = sys.argv[1]
+          time.sleep(0.2)
+          if arm_name == "hugetlb":
+              libc.mmap(None, 2 << 20, 3, 0x22 | 0x40000, -1, 0)
+          elif arm_name == "enomem":
+              libc.mmap(None, 1 << 50, 3, 0x22, -1, 0)
+          elif arm_name == "plain":
+              libc.mmap(None, 2 << 20, 3, 0x22, -1, 0)
+          time.sleep(0.6)
+          PY
+          for where_name in host container; do
+            for arm_name in none plain hugetlb enomem none hugetlb; do
+              if [ "$where_name" = host ]; then
+                command_list=(python3 mmap-trigger.py "$arm_name")
+              else
+                command_list=(docker run --rm -v "$PWD/mmap-trigger.py:/t.py:ro" python:3.13-alpine python3 /t.py "$arm_name")
+              fi
+              sudo perf record -q -a -m 1024 -o trigger.data \
+                -e syscalls:sys_exit_mmap -e syscalls:sys_enter_pread64 -e syscalls:sys_enter_openat -- \
+                "${command_list[@]}" || echo "perf record exited $?"
+              sudo perf script -i trigger.data -F comm,tid,time,event,trace 2>/dev/null >| trigger.txt || echo "perf script exited $?"
+              python3 - trigger.txt "$where_name" "$arm_name" <<'PY'
+          import re, sys
+          python_start = None
+          failed_list = []
+          read_list = []
+          for line in open(sys.argv[1]):
+              match = re.match(r"\s*(\S.*?)\s+(\d+)\s+(\d+\.\d+):\s+syscalls:(\w+):\s*(.*)", line)
+              if not match:
+                  continue
+              comm, thread_id, time_text, event_name, rest_text = match.groups()
+              event_time = float(time_text)
+              if comm.startswith("python") and python_start is None:
+                  python_start = event_time
+              if python_start is None:
+                  continue
+              elapsed = (event_time - python_start) * 1000
+              if comm.startswith("python") and event_name == "sys_exit_mmap" and "0xfffffffffffffff" in rest_text:
+                  failed_list.append(f"{elapsed:.1f}")
+              if comm.startswith("provjobd") and event_name == "sys_enter_pread64":
+                  read_list.append(f"{elapsed:.1f}")
+          first_read = read_list[0] if read_list else "none"
+          print(f"  {sys.argv[2]:9s} {sys.argv[3]:8s} failed mmaps at ms {failed_list} provjobd preads {len(read_list)}, first at ms {first_read}")
+          PY
+            done
+          done
