@@ -985,13 +985,17 @@ jobs:
           set -euo pipefail
           for large_pages in 0 1; do
             echo "--- large_pages=$large_pages"
-            sudo perf record -q -a -o "timeline-$large_pages.data" \
-              -e syscalls:sys_enter_mmap -e syscalls:sys_exit_mmap -e syscalls:sys_enter_clone3 \
+            sudo perf record -a -m 4096 -o "timeline-$large_pages.data" \
+              -e syscalls:sys_enter_mmap -e syscalls:sys_exit_mmap -e syscalls:sys_enter_clone3 -e syscalls:sys_enter_clone \
               -e syscalls:sys_enter_pread64 -e syscalls:sys_enter_exit_group -- \
               docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" \
                 -e 'setTimeout(() => {}, 1000)' || echo "perf record exited $?"
             sudo perf script -i "timeline-$large_pages.data" -F comm,tid,time,event,trace 2>/dev/null >| "timeline-$large_pages.txt" \
               || echo "perf script exited $?"
+            echo "events per comm:"
+            awk '{ print $1 }' "timeline-$large_pages.txt" | sort | uniq -c | sort -rn | head -12
+            echo "first node-side and provjobd lines:"
+            grep -m 40 -E '^ *(node|provjobd)' "timeline-$large_pages.txt" | cut -c1-220 || true
             python3 - "timeline-$large_pages.txt" <<'PY'
           import re, sys
           node_start = None
@@ -1020,7 +1024,7 @@ jobs:
                       result = trace_text.split("0x")[-1]
                       hugetlb_note = " MAP_HUGETLB" if flags & 0x40000 else ""
                       print(f"  +{elapsed:6.1f} ms {comm}: mmap {length // 1024} KiB flags 0x{flags:x}{hugetlb_note} -> {trace_text.strip()}")
-                  elif event_name == "sys_enter_clone3":
+                  elif event_name in ("sys_enter_clone3", "sys_enter_clone"):
                       print(f"  +{elapsed:6.1f} ms {comm}: clone3 (new thread)")
                   elif event_name == "sys_enter_exit_group":
                       print(f"  +{elapsed:6.1f} ms {comm}: exit_group")
