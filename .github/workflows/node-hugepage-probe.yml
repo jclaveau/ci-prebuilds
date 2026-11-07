@@ -308,3 +308,53 @@ jobs:
               '
             done
           done
+
+      - name: Folio sizes behind node's present pages (pagemap + kpageflags)
+        run: |
+          set -euo pipefail
+          for round in 1 2; do
+            for large_pages in 0 1; do
+              echo "--- round $round large_pages=$large_pages"
+              docker run --rm --privileged --user 0 --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" -e '
+                const { spawnSync } = require("child_process");
+                const fs = require("fs");
+                for (let warm = 0; warm < 10; warm++) spawnSync("true");
+                const before = process.resourceUsage();
+                for (let rep = 0; rep < 200; rep++) spawnSync("true");
+                console.log(`x200 parent sys ${((process.resourceUsage().systemCPUTime - before.systemCPUTime) / 1000).toFixed(0)} ms`);
+                const pagemapFd = fs.openSync("/proc/self/pagemap", "r");
+                const kpageflagsFd = fs.openSync("/proc/kpageflags", "r");
+                const flagBuffer = Buffer.alloc(8);
+                const totals = { present: 0, small: 0, compound: 0, thp: 0, anon: 0, zero: 0 };
+                const regionRows = [];
+                for (const line of fs.readFileSync("/proc/self/maps", "utf8").trim().split("\n")) {
+                  const [range, perms] = line.split(" ");
+                  const [start, end] = range.split("-").map(text => parseInt(text, 16));
+                  if (end - start > 2 ** 31 || start >= 2 ** 47) continue;
+                  const pageCount = (end - start) / 4096;
+                  const entryBuffer = Buffer.alloc(pageCount * 8);
+                  try { fs.readSync(pagemapFd, entryBuffer, 0, entryBuffer.length, (start / 4096) * 8); } catch { continue; }
+                  const regionCounts = { present: 0, small: 0, compound: 0 };
+                  for (let index = 0; index < pageCount; index++) {
+                    const entry = entryBuffer.readBigUInt64LE(index * 8);
+                    if (!(entry >> 63n)) continue;
+                    const pageFrame = entry & ((1n << 55n) - 1n);
+                    if (pageFrame === 0n) continue;
+                    fs.readSync(kpageflagsFd, flagBuffer, 0, 8, Number(pageFrame) * 8);
+                    const pageFlags = flagBuffer.readBigUInt64LE(0);
+                    const isCompound = ((pageFlags >> 15n) & 1n) || ((pageFlags >> 16n) & 1n);
+                    totals.present++; regionCounts.present++;
+                    if (isCompound) { totals.compound++; regionCounts.compound++; } else { totals.small++; regionCounts.small++; }
+                    if ((pageFlags >> 22n) & 1n) totals.thp++;
+                    if ((pageFlags >> 12n) & 1n) totals.anon++;
+                    if ((pageFlags >> 24n) & 1n) totals.zero++;
+                  }
+                  if (regionRows.length < 400) regionRows.push({ range, perms, name: line.split(/\s+/)[5] || "[anon]", ...regionCounts });
+                }
+                console.log("pages", JSON.stringify(totals));
+                for (const row of regionRows.filter(row => row.present >= 64).sort((left, right) => right.small - left.small).slice(0, 12)) {
+                  console.log(`  ${row.range} ${row.perms} ${row.name} present ${row.present} small ${row.small} compound ${row.compound}`);
+                }
+              '
+            done
+          done
