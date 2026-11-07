@@ -96,9 +96,11 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq "linux-tools-$(uname -r)" >/dev/null 2>&1 \
-            || sudo apt-get install -y -qq linux-tools-azure linux-tools-generic linux-tools-common >/dev/null 2>&1 || true
-          perf_binary=$(ls /usr/lib/linux-tools/*/perf /usr/lib/linux-tools-*/perf 2>/dev/null | tail -1 || true)
+          apt-cache search --names-only '^(linux-tools|linux-perf|perf)' | grep -E "azure|generic|common|^perf|linux-perf|$(uname -r)" | head -20
+          for package in "linux-tools-$(uname -r)" linux-tools-azure linux-perf perf linux-tools-generic; do
+            if sudo apt-get install -y -qq "$package" >/dev/null 2>&1; then echo "installed $package"; fi
+          done
+          perf_binary=$(sudo find /usr -type f -name perf -perm -u+x 2>/dev/null | head -1)
           if [ -z "$perf_binary" ]; then
             echo "no perf binary for $(uname -r)" >&2
             exit 1
