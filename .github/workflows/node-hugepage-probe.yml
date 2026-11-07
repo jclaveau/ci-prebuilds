@@ -1,0 +1,116 @@
+name: node huge page probe (MIMALLOC_ALLOW_LARGE_OS_PAGES)
+
+# MIMALLOC_ALLOW_LARGE_OS_PAGES=1 halves spawn_true_x100 on GHA's AMD runners
+# (#335, 0.57-0.66x) but is a no-op on an i3-4005U with HugePages_Total 0.
+# mimalloc 2.2.7 maps its arenas with MAP_HUGETLB under that option (hugetlbfs,
+# not THP; THP's MADV_HUGEPAGE sits under allow_thp, on either way), so the
+# option can only act where the host reserves hugetlb pages. Each runner
+# prints its hugetlb pool, then node's mappings, mimalloc's mmap calls and the
+# spawn cost with the option off and on.
+
+on:
+  workflow_dispatch:
+    inputs:
+      replicates:
+        description: 'Runners (one job each)'
+        default: '4'
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      replicate_list: ${{ steps.list.outputs.replicate_list }}
+    steps:
+      - id: list
+        env:
+          REPLICATES: ${{ inputs.replicates }}
+        run: echo "replicate_list=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['REPLICATES']) + 1))))")" >> "$GITHUB_OUTPUT"
+
+  probe:
+    needs: matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        replicate: ${{ fromJSON(needs.matrix.outputs.replicate_list) }}
+    env:
+      NODE_IMAGE: ghcr.io/jclaveau/alpine-dood-node:latest
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Host huge page configuration
+        run: |
+          set -euo pipefail
+          grep -m1 'model name' /proc/cpuinfo
+          uname -r
+          grep -iE 'huge' /proc/meminfo
+          echo "nr_hugepages $(cat /proc/sys/vm/nr_hugepages)"
+          echo "nr_overcommit_hugepages $(cat /proc/sys/vm/nr_overcommit_hugepages)"
+          for knob in enabled defrag shmem_enabled; do
+            echo "thp $knob $(cat /sys/kernel/mm/transparent_hugepage/$knob)"
+          done
+          grep -o 'hugepages[^ ]*\|hugepagesz[^ ]*\|transparent_hugepage[^ ]*' /proc/cmdline || echo "cmdline: no huge page argument"
+          docker pull -q "$NODE_IMAGE"
+
+      - name: Node mappings with the option off and on
+        run: |
+          set -euo pipefail
+          for large_pages in 0 1; do
+            docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --env MIMALLOC_VERBOSE=1 \
+              --entrypoint node "$NODE_IMAGE" -e '
+                const buffers = [];
+                for (let index = 0; index < 2000; index++) buffers.push(Buffer.alloc(65536));
+                const fs = require("fs");
+                const rollup = fs.readFileSync("/proc/self/smaps_rollup", "utf8");
+                const hugetlbMappings = fs.readFileSync("/proc/self/smaps", "utf8")
+                  .split(/\n(?=[0-9a-f]+-[0-9a-f]+ )/)
+                  .filter(mapping => /KernelPageSize:\s+2048 kB/.test(mapping))
+                  .map(mapping => mapping.split("\n")[0]);
+                console.log(`large_pages=${process.env.MIMALLOC_ALLOW_LARGE_OS_PAGES}`,
+                  rollup.match(/^(Rss|AnonHugePages|Private_Hugetlb|Shared_Hugetlb):.*/gm).join(" | "));
+                console.log(`2 MiB kernel page mappings: ${hugetlbMappings.length}`, hugetlbMappings.join(" ; "));
+              ' 2>&1 | grep -vE "^mimalloc: option '"
+          done
+
+      - name: mimalloc's mmap calls with the option off and on
+        run: |
+          set -euo pipefail
+          for large_pages in 0 1; do
+            echo "--- large_pages=$large_pages"
+            docker run --rm --user root --cap-add SYS_PTRACE --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" \
+              --entrypoint sh "$NODE_IMAGE" -c '
+                apk add -q --no-cache strace
+                strace -f -e trace=mmap,madvise -o /tmp/trace.txt \
+                  node -e "const b=[];for(let i=0;i<2000;i++)b.push(Buffer.alloc(65536))"
+                echo "MAP_HUGETLB calls $(grep -c MAP_HUGETLB /tmp/trace.txt || true)," \
+                  "failed $(grep MAP_HUGETLB /tmp/trace.txt | grep -c "= -1" || true)"
+                echo "MADV_HUGEPAGE calls $(grep -c MADV_HUGEPAGE /tmp/trace.txt || true)"
+                grep MAP_HUGETLB /tmp/trace.txt | head -3 || true
+              '
+          done
+
+      - name: spawn cost with the option off and on, interleaved
+        run: |
+          set -euo pipefail
+          for round in 1 2 3 4 5; do
+            for large_pages in 0 1; do
+              docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" -e '
+                const { spawnSync } = require("child_process");
+                const fs = require("fs");
+                const usageUsec = () => Number(fs.readFileSync("/sys/fs/cgroup/cpu.stat", "utf8").match(/usage_usec (\d+)/)[1]);
+                for (let warm = 0; warm < 10; warm++) spawnSync("true");
+                const before = usageUsec();
+                for (let rep = 0; rep < 100; rep++) spawnSync("true");
+                console.log(`round '"$round"' large_pages=${process.env.MIMALLOC_ALLOW_LARGE_OS_PAGES} spawn_true_x100 ${((usageUsec() - before) / 1000).toFixed(1)} ms`);
+              '
+            done
+          done
