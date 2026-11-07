@@ -1477,3 +1477,43 @@ jobs:
               print(event_line)
           PY
           done
+      - name: Is provjobd's trigger the process's total virtual size, and node's VmSize at its first clone
+        run: |
+          set -euo pipefail
+          cat >| vsz-trigger.py <<'PY'
+          import ctypes, re, sys, time
+          libc = ctypes.CDLL(None, use_errno=True)
+          libc.mmap.restype = ctypes.c_void_p
+          libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long]
+          def vm_size_mib():
+              return int(re.search(r"VmSize:\s+(\d+)", open("/proc/self/status").read()).group(1)) >> 10
+          base_mib = vm_size_mib()
+          time.sleep(0.2)
+          for size_mib in map(int, sys.argv[1].split("+")):
+              if size_mib:
+                  libc.mmap(None, size_mib << 20, 0, 0x22 | 0x4000, -1, 0)
+          print(f"    VmSize {base_mib} -> {vm_size_mib()} MiB")
+          time.sleep(0.6)
+          PY
+          for size_spec in 0 512+512 768 896 960 512+256+128 1024 512; do
+            sudo perf record -q -a -m 1024 -o vsz.data -e syscalls:sys_enter_pread64 -- \
+              docker run --rm -v "$PWD/vsz-trigger.py:/t.py:ro" python:3.13-alpine python3 /t.py "$size_spec" >| vsz.out || echo "perf record exited $?"
+            read_count=$(sudo perf script -i vsz.data -F comm,event 2>/dev/null | grep -E '^\s*provjobd' | grep -c pread64 || true)
+            echo "  container mmap ${size_spec} MiB: provjobd preads $read_count $(cat vsz.out)"
+          done
+          for large_pages in 0 1; do
+            docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" -e '
+              const fs = require("fs");
+              const vm_size = () => fs.readFileSync("/proc/self/status", "utf8").match(/VmSize:\s+(\d+)/)[1] >> 10;
+              const map_lines = fs.readFileSync("/proc/self/maps", "utf8").trim().split("\n");
+              const big_lines = map_lines.filter((line) => {
+                const [range_start, range_end] = line.split(" ")[0].split("-").map((hex) => BigInt("0x" + hex));
+                return range_end - range_start >= 64n << 20n;
+              });
+              console.log(`  node large_pages='"$large_pages"' at script start: VmSize ${vm_size()} MiB, ${map_lines.length} mappings, >= 64 MiB:`);
+              for (const line of big_lines) {
+                const [range_start, range_end] = line.split(" ")[0].split("-").map((hex) => BigInt("0x" + hex));
+                console.log(`    ${(range_end - range_start) >> 20n} MiB ${line.split(/\s+/).slice(1, 2).join(" ")} ${line.split(/\s+/)[5] || "[anon]"}`);
+              }
+            '
+          done
