@@ -1585,14 +1585,14 @@ jobs:
               print(f"    mremap = {result} errno {ctypes.get_errno()}")
           time.sleep(0.6)
           PY
-          for arm in none mremap-enomem; do
+          for arm in none; do
             sudo perf record -q -a -m 1024 -o mremap.data -e syscalls:sys_enter_pread64 -- \
               docker run --rm -v "$PWD/mremap-trigger.py:/t.py:ro" python:3.13-alpine python3 /t.py "$arm" >| mremap.out || echo "perf record exited $?"
             read_count=$(sudo perf script -i mremap.data -F comm,event 2>/dev/null | grep -E '^\s*provjobd' | grep -c pread64 || true)
             echo "  container $arm: provjobd preads $read_count $(tr '\n' ' ' < mremap.out)"
           done
           mkdir -p strace-out && chmod 777 strace-out
-          for large_pages in 0 0 1; do
+          for large_pages in 0 0 1 1; do
             echo "--- node under strace, large_pages=$large_pages"
             rm -f strace-out/node.txt
             sudo perf record -q -a -m 1024 -k CLOCK_MONOTONIC -o st.data -e syscalls:sys_enter_pread64 -- \
@@ -1622,6 +1622,10 @@ jobs:
               if first_read - 0.003 <= when <= first_read + 0.0005:
                   marker = "  <-- read" if when > first_read else ""
                   print(f"    +{(when - node_execve) * 1000:7.2f} ms {thread_id} {text[:110]}{marker}")
+          for when, thread_id, text in syscall_lines:
+              size_match = re.match(r"mmap\([^,]+, (\d+),", text)
+              if (size_match and int(size_match.group(1)) >= 1 << 30) or "MAP_HUGETLB" in text:
+                  print(f"    big or huge mmap +{(when - node_execve) * 1000:7.2f} ms {thread_id} {text[:130]}")
           failed_lines = [(when, text) for when, _, text in syscall_lines if when < first_read and re.search(r"= -1 E", text)]
           print(f"    failed syscalls before the read: {len(failed_lines)}")
           for when, text in failed_lines[-12:]:
