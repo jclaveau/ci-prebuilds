@@ -109,10 +109,12 @@ jobs:
           sudo sysctl -q kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
           for large_pages in 0 1; do
             echo "--- large_pages=$large_pages"
-            sudo "$perf_binary" record -q -a -g -F 1999 -o "perf-$large_pages.data" -- \
+            sudo "$perf_binary" record -a -g -F 1999 -o "perf-$large_pages.data" -- \
               docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" \
-                -e 'const {spawnSync}=require("child_process");for(let i=0;i<1000;i++)spawnSync("true")'
-            sudo "$perf_binary" report -i "perf-$large_pages.data" --stdio --no-children --comms node,true \
-              --sort comm,sym --percent-limit 0.7 -g none >| "report-$large_pages.txt"
-            grep -vE '^#|^$' "report-$large_pages.txt" | head -40
+                -e 'const {spawnSync}=require("child_process");for(let i=0;i<1000;i++)spawnSync("true")' \
+              || echo "perf record exited $?"
+            sudo "$perf_binary" report -i "perf-$large_pages.data" --stdio --no-children \
+              --sort comm,sym --percent-limit 0.5 -g none >| "report-$large_pages.txt" \
+              || echo "perf report exited $?"
+            grep -vE '^#|^$' "report-$large_pages.txt" | head -60 || echo "empty report"
           done
