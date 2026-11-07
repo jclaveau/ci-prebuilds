@@ -1517,3 +1517,50 @@ jobs:
               }
             '
           done
+      - name: When node maps its 1 GiB arena against provjobd's first read, kernel-filtered, off vs on
+        run: |
+          set -euo pipefail
+          for large_pages in 0 0 1 1; do
+            echo "--- large_pages=$large_pages"
+            sudo perf record -a -m 4096 -o gib.data \
+              -e syscalls:sys_enter_mmap --filter 'len >= 0x40000000' -e syscalls:sys_exit_mmap -e syscalls:sys_enter_pread64 \
+              -e syscalls:sys_enter_clone -e syscalls:sys_enter_execve -- \
+              docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" \
+                -e 'setTimeout(() => {}, 300)' 2>&1 | grep -iE 'lost|wake' || true
+            sudo perf script -i gib.data -F comm,tid,time,event,trace 2>/dev/null >| gib.txt || echo "perf script exited $?"
+            python3 - gib.txt <<'PY'
+          import re, sys
+          node_start = None
+          first_read = None
+          first_clone = None
+          pending_by_thread = {}
+          event_list = []
+          for line in open(sys.argv[1]):
+              match = re.match(r"\s*(\S.*?)\s+(\d+)\s+(\d+\.\d+):\s+syscalls:(\w+):\s*(.*)", line)
+              if not match:
+                  continue
+              comm, thread_id, time_text, event_name, rest_text = match.groups()
+              event_time = float(time_text)
+              is_node = comm == "node" or comm.startswith("node-") or comm.startswith("V8")
+              if event_name == "sys_enter_execve" and node_start is None and "node" in rest_text:
+                  node_start = event_time
+              if is_node and node_start is None:
+                  node_start = event_time
+              if node_start is None:
+                  continue
+              elapsed = (event_time - node_start) * 1000
+              if comm.startswith("provjobd") and event_name == "sys_enter_pread64" and first_read is None:
+                  first_read = elapsed
+                  event_list.append(f"    +{elapsed:7.2f} ms provjobd first pread")
+              if is_node and event_name == "sys_enter_clone" and first_clone is None:
+                  first_clone = elapsed
+                  event_list.append(f"    +{elapsed:7.2f} ms {comm:16s} first clone")
+              if event_name == "sys_enter_mmap":
+                  pending_by_thread[thread_id] = (elapsed, comm, rest_text)
+              if event_name == "sys_exit_mmap" and thread_id in pending_by_thread:
+                  start_ms, mmap_comm, enter_text = pending_by_thread.pop(thread_id)
+                  event_list.append(f"    +{start_ms:7.2f} ms {mmap_comm:16s} mmap {enter_text[:90]} = {rest_text.strip()[-18:]}")
+          for event_line in event_list:
+              print(event_line)
+          PY
+          done
