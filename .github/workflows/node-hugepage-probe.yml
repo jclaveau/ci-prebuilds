@@ -569,3 +569,34 @@ jobs:
             sudo perf script -i "thp-$large_pages.data" -F comm,event,ip,sym 2>/dev/null \
               | awk -v want="probe:" 'index($0, want) { show = 12 } show-- > 0' | head -40 || echo "perf script exited $?"
           done
+
+      - name: Kernel-side faults (handle_mm_fault callers) and every syscall, option off and on
+        run: |
+          set -euo pipefail
+          sudo perf probe -q -a handle_mm_fault || echo "perf probe handle_mm_fault exited $?"
+          for large_pages in 0 1; do
+            echo "--- large_pages=$large_pages"
+            sudo perf record -q -a -g -e probe:handle_mm_fault -o "mmfault-$large_pages.data" -- \
+              docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" \
+                -e 'setTimeout(() => {}, 300)' || echo "perf record exited $?"
+            echo "handle_mm_fault callers in node's threads, user-fault path excluded:"
+            sudo perf script -i "mmfault-$large_pages.data" -F comm,ip,sym 2>/dev/null | python3 -c '
+          import collections, sys
+          chain_counts = collections.Counter()
+          for sample in sys.stdin.read().split("\n\n"):
+              lines = [line.strip() for line in sample.strip().split("\n") if line.strip()]
+              if not lines or not lines[0].startswith(("node", "DelayedTask", "SignalInspector")):
+                  continue
+              frames = [line.split()[1] for line in lines[1:] if len(line.split()) > 1]
+              if any("exc_page_fault" in frame or "asm_exc_page_fault" in frame for frame in frames):
+                  chain_counts["(user page fault)"] += 1
+                  continue
+              chain_counts[" <- ".join(frames[1:7])] += 1
+          for chain, count in chain_counts.most_common(12):
+              print(f"  {count:6d} {chain}")
+          ' || echo "perf script exited $?"
+            echo "every syscall:"
+            docker run --rm --user 0 --cap-add SYS_PTRACE --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" \
+              --entrypoint sh "$NODE_IMAGE" -c 'apk add -q strace >/dev/null && strace -f -c -o /tmp/summary node -e "setTimeout(() => {}, 300)" && cat /tmp/summary' \
+              | awk 'NR > 2 && $1 !~ /^-/ { print "  " $NF, $4 }' | head -45
+          done
