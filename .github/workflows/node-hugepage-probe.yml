@@ -196,3 +196,31 @@ jobs:
               print(f"  {count:6d} {error_code} {region}")
           PY
           done
+
+      - name: Kernel fault, syscall and TLB counts, option off and on
+        run: |
+          set -euo pipefail
+          event_list=exceptions:page_fault_user,exceptions:page_fault_kernel,tlb:tlb_flush,sched:sched_process_fork
+          event_list=$event_list,syscalls:sys_enter_mmap,syscalls:sys_enter_munmap,syscalls:sys_enter_madvise
+          event_list=$event_list,syscalls:sys_enter_mprotect,syscalls:sys_enter_read,syscalls:sys_enter_execve
+          for round in 1 2; do
+            for large_pages in 0 1; do
+              echo "--- round $round large_pages=$large_pages, 200 spawns"
+              sudo perf stat -a -e "$event_list" -x, -o "stat-$large_pages.csv" -- \
+                docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" -e '
+                  const { spawnSync } = require("child_process");
+                  for (let rep = 0; rep < 200; rep++) spawnSync("true");
+                ' || echo "perf stat exited $?"
+              grep -vE '^#|^$' "stat-$large_pages.csv" | cut -d, -f1,3
+            done
+          done
+          for large_pages in 0 1; do
+            echo "--- callers of copy_present_ptes and zap_present_ptes, large_pages=$large_pages"
+            sudo perf record -q -a -g -F 4999 -o "callers-$large_pages.data" -- \
+              docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" \
+                -e 'const {spawnSync}=require("child_process");for(let i=0;i<500;i++)spawnSync("true")' \
+              || echo "perf record exited $?"
+            sudo perf report -i "callers-$large_pages.data" --stdio --no-children --comms node-MainThread \
+              --sort sym --percent-limit 1.5 -G --max-stack 14 2>/dev/null | grep -vE '^#|^$' | head -90 \
+              || echo "perf report exited $?"
+          done
