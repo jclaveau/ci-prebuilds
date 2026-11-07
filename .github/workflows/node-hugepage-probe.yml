@@ -1319,3 +1319,55 @@ jobs:
           PY
             done
           done
+      - name: Does anonymous executable memory make provjobd read a process
+        run: |
+          set -euo pipefail
+          cat >| exec-trigger.py <<'PY'
+          import ctypes, sys, time
+          libc = ctypes.CDLL(None, use_errno=True)
+          libc.mmap.restype = ctypes.c_void_p
+          libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long]
+          libc.mprotect.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+          time.sleep(0.2)
+          arm_name = sys.argv[1]
+          if arm_name == "rwx":
+              libc.mmap(None, 1 << 20, 7, 0x22, -1, 0)
+          elif arm_name == "rx":
+              libc.mmap(None, 1 << 20, 5, 0x22, -1, 0)
+          elif arm_name == "rw-to-rx":
+              address = libc.mmap(None, 1 << 20, 3, 0x22, -1, 0)
+              ctypes.memset(address, 0xc3, 4096)
+              libc.mprotect(address, 1 << 20, 5)
+          elif arm_name == "reserve":
+              libc.mmap(None, 1 << 30, 0, 0x22 | 0x4000, -1, 0)
+          time.sleep(0.6)
+          PY
+          for where_name in host container; do
+            for arm_name in none rwx rx rw-to-rx reserve none rwx rw-to-rx; do
+              if [ "$where_name" = host ]; then
+                command_list=(python3 exec-trigger.py "$arm_name")
+              else
+                command_list=(docker run --rm -v "$PWD/exec-trigger.py:/t.py:ro" python:3.13-alpine python3 /t.py "$arm_name")
+              fi
+              sudo perf record -q -a -m 1024 -o exec.data -e syscalls:sys_enter_pread64 -e syscalls:sys_exit_mmap -e syscalls:sys_exit_mprotect -- \
+                "${command_list[@]}" || echo "perf record exited $?"
+              sudo perf script -i exec.data -F comm,time,event 2>/dev/null >| exec.txt || echo "perf script exited $?"
+              python3 - exec.txt "$where_name" "$arm_name" <<'PY'
+          import re, sys
+          python_start = None
+          read_list = []
+          for line in open(sys.argv[1]):
+              match = re.match(r"\s*(\S.*?)\s+(\d+\.\d+):\s+(\S+):", line)
+              if not match:
+                  continue
+              comm, time_text, event_name = match.groups()
+              event_time = float(time_text)
+              if comm.startswith("python") and python_start is None:
+                  python_start = event_time
+              if python_start is not None and comm.startswith("provjobd") and "pread64" in event_name:
+                  read_list.append((event_time - python_start) * 1000)
+          first_read = f"{read_list[0]:.1f} ms" if read_list else "-"
+          print(f"  {sys.argv[2]:9s} {sys.argv[3]:8s} provjobd preads {len(read_list)}, first at {first_read} (arm acts at ~200 ms)")
+          PY
+            done
+          done
