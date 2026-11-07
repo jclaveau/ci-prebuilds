@@ -492,3 +492,55 @@ jobs:
                 --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" /probe.js
             done
           done
+
+      - name: Who faults in the zero pages at boot (stack and arena read faults), direct and under sh
+        run: |
+          set -euo pipefail
+          for launcher in direct sh; do
+            for large_pages in 0 1; do
+              echo "--- $launcher large_pages=$large_pages, boot only"
+              boot_script='setTimeout(() => process.stdout.write(require("fs").readFileSync("/proc/self/maps", "utf8")), 300)'
+              if [ "$launcher" = direct ]; then
+                launch_args=(--entrypoint node "$NODE_IMAGE" -e "$boot_script")
+              else
+                launch_args=(--entrypoint sh "$NODE_IMAGE" -c 'node -e "$0"' "$boot_script")
+              fi
+              sudo perf record -q -a -e exceptions:page_fault_user -o "boot-$launcher-$large_pages.data" -- \
+                docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" "${launch_args[@]}" \
+                >| "boot-maps-$launcher-$large_pages.txt" || echo "perf record exited $?"
+              sudo perf script -i "boot-$launcher-$large_pages.data" -F comm,tid,trace \
+                >| "boot-faults-$launcher-$large_pages.txt" 2>/dev/null || echo "perf script exited $?"
+              python3 - "boot-maps-$launcher-$large_pages.txt" "boot-faults-$launcher-$large_pages.txt" <<'PY'
+          import collections, re, sys
+          mapping_list = []
+          for line in open(sys.argv[1]):
+              parts = line.split()
+              start_text, end_text = parts[0].split("-")
+              mapping_list.append((int(start_text, 16), int(end_text, 16), parts[1], parts[5] if len(parts) > 5 else "[anon]"))
+          def find_mapping(address):
+              for start, end, perms, name in mapping_list:
+                  if start <= address < end:
+                      return start, end, name
+              return None
+          def describe_ip(address):
+              found = find_mapping(address)
+              return f"{found[2]}+{address - found[0]:#x}" if found else f"{address:#x}"
+          zero_candidate_counts = collections.Counter()
+          node_fault_count = 0
+          for line in open(sys.argv[2]):
+              match = re.match(r"\s*(.+?)\s+(\d+)\s+.*address=0x([0-9a-f]+)\s+ip=0x([0-9a-f]+)\s+error_code=0x([0-9a-f]+)", line)
+              if not match or not match.group(1).startswith(("node", "DelayedTask", "SignalInspector")):
+                  continue
+              node_fault_count += 1
+              found = find_mapping(int(match.group(3), 16))
+              if not found or (found[1] - found[0]) not in (16781312, 1073741824):
+                  continue
+              area = "stack" if found[1] - found[0] == 16781312 else "arena"
+              is_write = int(match.group(5), 16) & 2
+              zero_candidate_counts[(area, "write" if is_write else "read", match.group(1), describe_ip(int(match.group(4), 16)))] += 1
+          print(f"node-process faults {node_fault_count}, in stacks/arena {sum(zero_candidate_counts.values())}")
+          for (area, kind, comm, where), count in zero_candidate_counts.most_common(15):
+              print(f"  {count:6d} {area} {kind} {comm} ip {where}")
+          PY
+            done
+          done
