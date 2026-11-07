@@ -1371,3 +1371,68 @@ jobs:
           PY
             done
           done
+      - name: Which mapping size makes provjobd read a process, and node's large mmaps before the read
+        run: |
+          set -euo pipefail
+          cat >| size-trigger.py <<'PY'
+          import ctypes, sys, time
+          libc = ctypes.CDLL(None, use_errno=True)
+          libc.mmap.restype = ctypes.c_void_p
+          libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long]
+          time.sleep(0.2)
+          size_mib = int(sys.argv[1])
+          if size_mib:
+              libc.mmap(None, size_mib << 20, int(sys.argv[2]), 0x22 | 0x4000, -1, 0)
+          time.sleep(0.6)
+          PY
+          for size_spec in "0 0" "64 0" "128 0" "256 0" "512 0" "1024 0" "1024 3" "4096 0" "0 0" "256 0" "512 0"; do
+            read -r size_mib prot_value <<<"$size_spec"
+            sudo perf record -q -a -m 1024 -o size.data -e syscalls:sys_enter_pread64 -- \
+              docker run --rm -v "$PWD/size-trigger.py:/t.py:ro" python:3.13-alpine python3 /t.py "$size_mib" "$prot_value" || echo "perf record exited $?"
+            read_count=$(sudo perf script -i size.data -F comm,event 2>/dev/null | grep -E '^\s*provjobd' | grep -c pread64 || true)
+            echo "  container mmap ${size_mib} MiB prot=$prot_value: provjobd preads $read_count"
+          done
+          for large_pages in 0 0 1; do
+            echo "--- node, large_pages=$large_pages"
+            sudo perf record -q -a -m 1024 -o big.data \
+              -e syscalls:sys_enter_mmap -e syscalls:sys_exit_mmap -e syscalls:sys_enter_pread64 -e syscalls:sys_enter_clone -- \
+              docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" \
+                -e 'setTimeout(() => {}, 300)' || echo "perf record exited $?"
+            sudo perf script -i big.data -F comm,tid,time,event,trace 2>/dev/null >| big.txt || echo "perf script exited $?"
+            python3 - big.txt <<'PY'
+          import re, sys
+          node_start = None
+          first_read = None
+          first_clone = None
+          pending_by_thread = {}
+          big_list = []
+          for line in open(sys.argv[1]):
+              match = re.match(r"\s*(\S.*?)\s+(\d+)\s+(\d+\.\d+):\s+syscalls:(\w+):\s*(.*)", line)
+              if not match:
+                  continue
+              comm, thread_id, time_text, event_name, rest_text = match.groups()
+              event_time = float(time_text)
+              is_node = comm == "node" or comm.startswith("node-") or comm.startswith("V8")
+              if is_node and node_start is None:
+                  node_start = event_time
+              if node_start is None:
+                  continue
+              elapsed = (event_time - node_start) * 1000
+              if comm.startswith("provjobd") and event_name == "sys_enter_pread64" and first_read is None:
+                  first_read = elapsed
+              if is_node and event_name == "sys_enter_clone" and first_clone is None:
+                  first_clone = elapsed
+              if is_node and event_name == "sys_enter_mmap":
+                  length_match = re.search(r"len: (0x[0-9a-f]+), prot: (0x[0-9a-f]+), flags: (0x[0-9a-f]+)", rest_text)
+                  if length_match:
+                      pending_by_thread[thread_id] = (elapsed, comm, int(length_match.group(1), 16), length_match.group(2), length_match.group(3))
+              if is_node and event_name == "sys_exit_mmap" and thread_id in pending_by_thread:
+                  start_ms, mmap_comm, length_bytes, prot_text, flags_text = pending_by_thread.pop(thread_id)
+                  if length_bytes >= 32 << 20:
+                      result_text = rest_text.split("0x")[-1]
+                      big_list.append(f"    +{start_ms:7.2f} ms {mmap_comm:16s} mmap {length_bytes >> 20:6d} MiB prot {prot_text} flags {flags_text} = 0x{result_text}")
+          print(f"  first clone at {first_clone} ms, provjobd first pread at {first_read} ms; node's mmaps >= 32 MiB:")
+          for big_line in big_list:
+              print(big_line)
+          PY
+          done
