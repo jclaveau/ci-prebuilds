@@ -95,6 +95,7 @@ jobs:
       - name: Kernel profile of 1000 spawns with the option off and on
         run: |
           set -euo pipefail
+          sudo apt-get update -qq
           sudo apt-get install -y -qq "linux-tools-$(uname -r)" >/dev/null 2>&1 \
             || sudo apt-get install -y -qq linux-tools-azure linux-tools-generic linux-tools-common >/dev/null 2>&1 || true
           perf_binary=$(ls /usr/lib/linux-tools/*/perf /usr/lib/linux-tools-*/perf 2>/dev/null | tail -1 || true)
