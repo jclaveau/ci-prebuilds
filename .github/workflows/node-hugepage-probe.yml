@@ -1268,3 +1268,54 @@ jobs:
               echo "  round $round_index large_pages=$large_pages UV_USE_IO_URING=$use_uring: io_uring_setup $setup_count, provjobd preads $read_count$(cat node-uring.out)"
             done
           done
+      - name: Does a new thread make provjobd read a process
+        run: |
+          set -euo pipefail
+          cat >| thread-trigger.py <<'PY'
+          import os, sys, threading, time
+          time.sleep(0.2)
+          if sys.argv[1] == "thread":
+              worker = threading.Thread(target=time.sleep, args=(0.3,))
+              worker.start()
+          elif sys.argv[1] == "fork":
+              child_pid = os.fork()
+              if child_pid == 0:
+                  time.sleep(0.3)
+                  os._exit(0)
+          time.sleep(0.6)
+          PY
+          for where_name in host container; do
+            for arm_name in none thread fork none thread fork; do
+              if [ "$where_name" = host ]; then
+                command_list=(python3 thread-trigger.py "$arm_name")
+              else
+                command_list=(docker run --rm -v "$PWD/thread-trigger.py:/t.py:ro" python:3.13-alpine python3 /t.py "$arm_name")
+              fi
+              sudo perf record -q -a -m 1024 -o thread.data \
+                -e syscalls:sys_enter_pread64 -e syscalls:sys_enter_clone -e syscalls:sys_enter_clone3 -- \
+                "${command_list[@]}" || echo "perf record exited $?"
+              sudo perf script -i thread.data -F comm,time,event 2>/dev/null >| thread.txt || echo "perf script exited $?"
+              python3 - thread.txt "$where_name" "$arm_name" <<'PY'
+          import re, sys
+          python_start = None
+          clone_time = None
+          read_list = []
+          for line in open(sys.argv[1]):
+              match = re.match(r"\s*(\S.*?)\s+(\d+\.\d+):\s+(\S+):", line)
+              if not match:
+                  continue
+              comm, time_text, event_name = match.groups()
+              event_time = float(time_text)
+              if comm.startswith("python") and python_start is None:
+                  python_start = event_time
+              if python_start is None:
+                  continue
+              if comm.startswith("python") and "clone" in event_name and clone_time is None and event_time - python_start > 0.1:
+                  clone_time = event_time
+              if comm.startswith("provjobd") and "pread64" in event_name:
+                  read_list.append(event_time)
+          first_gap = f"{(read_list[0] - clone_time) * 1000:.1f} ms after the clone" if read_list and clone_time else "-"
+          print(f"  {sys.argv[2]:9s} {sys.argv[3]:6s} provjobd preads {len(read_list)}, first {first_gap}")
+          PY
+            done
+          done
