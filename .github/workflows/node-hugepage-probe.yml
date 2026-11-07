@@ -846,3 +846,66 @@ jobs:
               print(f"  {count:6d} {event} {comm} {chain}")
           ' || echo "perf script exited $?"
           done
+
+      - name: What provjobd is, and which ranges of node's memory it reads
+        run: |
+          set -euo pipefail
+          ps -eo pid,ppid,user,comm,args | awk 'NR == 1 || /provjob/' | grep -v awk || true
+          for scanner_pid in $(pgrep -f provjob || true); do
+            echo "--- pid $scanner_pid"
+            sudo ls -l "/proc/$scanner_pid/exe" || true
+            sudo tr '\0' ' ' < "/proc/$scanner_pid/cmdline"; echo
+            sudo cat "/proc/$scanner_pid/cgroup" || true
+            sudo ls -l "/proc/$scanner_pid/fd" 2>/dev/null | tail -n +2 | awk '{ print $NF }' | sort | uniq -c | sort -rn | head -10 || true
+          done
+          systemctl list-units --all --no-pager 2>/dev/null | grep -iE 'prov|job|scan|defender|mde|falcon|guard' || true
+          scanner_pid=$(pgrep -o -f provjob || true)
+          if [ -z "$scanner_pid" ]; then
+            echo "no provjobd process found by name; comm seen in perf was provjobd<pid>"
+            exit 0
+          fi
+          for large_pages in 0 1; do
+            echo "--- large_pages=$large_pages"
+            sudo strace -f -tt -p "$scanner_pid" -e trace=openat,pread64,read,process_vm_readv -o "scan-$large_pages.txt" &
+            strace_pid=$!
+            sleep 1
+            docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" \
+              -e 'console.log("node pid in host ns: see openat"); setTimeout(() => process.stdout.write(require("fs").readFileSync("/proc/self/maps", "utf8")), 1500)' \
+              >| "scan-maps-$large_pages.txt"
+            sleep 1
+            sudo kill "$strace_pid" || true
+            wait "$strace_pid" || true
+            echo "files opened:"
+            grep -oE 'openat\([^"]*"[^"]+"' "scan-$large_pages.txt" | sed -E 's/.*"(.*)"/\1/; s#/proc/[0-9]+/#/proc/<pid>/#' | sort | uniq -c | sort -rn | head -15
+            echo "pread64 on /proc/<pid>/mem by length:"
+            grep -E 'pread64\(' "scan-$large_pages.txt" | sed -E 's/.*, ([0-9]+), (0x[0-9a-f]+|[0-9]+)\) += (-?[0-9]+).*/\1 \3/' | sort | uniq -c | sort -rn | head -8
+            python3 - "scan-maps-$large_pages.txt" "scan-$large_pages.txt" <<'PY'
+          import collections, re, sys
+          mapping_list = []
+          for line in open(sys.argv[1]):
+              parts = line.split()
+              if "-" not in parts[0]:
+                  continue
+              start_text, end_text = parts[0].split("-")
+              mapping_list.append((int(start_text, 16), int(end_text, 16), parts[5] if len(parts) > 5 else "[anon]"))
+          bytes_by_mapping = collections.Counter()
+          for line in open(sys.argv[2]):
+              match = re.search(r"pread64\(\d+, .*, (\d+), (\d+|0x[0-9a-f]+)\)", line)
+              if not match:
+                  continue
+              length, offset = int(match.group(1)), int(match.group(2), 0)
+              for start, end, name in mapping_list:
+                  if start <= offset < end:
+                      size = end - start
+                      label = {16781312: "thread stack", 1073741824: "mimalloc arena"}.get(size, name)
+                      bytes_by_mapping[(label, size, offset - start)] += length
+                      break
+              else:
+                  bytes_by_mapping[("not in node's maps", 0, 0)] += length
+          per_label = collections.Counter()
+          for (label, size, _), length in bytes_by_mapping.items():
+              per_label[(label, size)] += length
+          for (label, size), length in per_label.most_common(15):
+              print(f"  {length // 1024:8d} KiB read from {label} (mapping {size // 1024} KiB)")
+          PY
+          done
