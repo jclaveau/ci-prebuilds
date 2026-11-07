@@ -423,3 +423,27 @@ jobs:
                 --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" /probe.js
             done
           done
+
+      - name: Memory syscalls off vs on, and zero-page PTEs before any spawn
+        run: |
+          set -euo pipefail
+          for large_pages in 0 1; do
+            echo "--- large_pages=$large_pages"
+            docker run --rm --privileged --user 0 -v "$RUNNER_TEMP/zero-page-regions.js:/probe.js:ro" \
+              --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint sh "$NODE_IMAGE" -c '
+                apk add -q strace >/dev/null
+                strace -f -e trace=mmap,munmap,madvise,mprotect,mremap,process_madvise -o /tmp/trace node -e "
+                  const fs = require(\"fs\");
+                  const readRollup = () => fs.readFileSync(\"/proc/self/smaps_rollup\", \"utf8\");
+                  console.log(\"rss at boot\", (readRollup().match(/^Rss:.*/m) || [])[0]);
+                  require(\"child_process\").spawnSync(\"true\");
+                "
+                echo "syscalls, addresses stripped:"
+                sed -E "s/^[0-9]+ +//; s/0x[0-9a-f]+/ADDR/g; s/= [0-9]+$/= N/" /tmp/trace | sort | uniq -c | sort -rn >| /tmp/syscall-counts
+                cat /tmp/syscall-counts
+                echo "stack-sized mmaps:"
+                grep -E "mmap\(.*, 1678(1312|5408)," /tmp/trace | head -8 || echo "none"
+                echo "zero-page PTEs, no spawn loop:"
+                node -e "$(sed "s/rep < 200/rep < 0/; s/warm < 10/warm < 0/" /probe.js)" | grep -E "^(x200|totals)"
+              '
+          done
