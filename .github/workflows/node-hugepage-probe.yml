@@ -1436,3 +1436,44 @@ jobs:
               print(big_line)
           PY
           done
+      - name: When node maps mimalloc's 1 GiB arena against provjobd's first read, off vs on
+        run: |
+          set -euo pipefail
+          for large_pages in 0 0 1 1; do
+            echo "--- large_pages=$large_pages"
+            sudo perf record -q -a -m 4096 -o arena.data \
+              -e raw_syscalls:sys_enter --filter 'id == 9 || id == 56' -e syscalls:sys_enter_pread64 -- \
+              docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" \
+                -e 'setTimeout(() => {}, 300)' || echo "perf record exited $?"
+            sudo perf script -i arena.data -F comm,time,event,trace 2>/dev/null >| arena.txt || echo "perf script exited $?"
+            python3 - arena.txt <<'PY'
+          import re, sys
+          node_start = None
+          first_read = None
+          event_list = []
+          for line in open(sys.argv[1]):
+              match = re.match(r"\s*(\S.*?)\s+(\d+\.\d+):\s+(\S+):\s*(.*)", line)
+              if not match:
+                  continue
+              comm, time_text, event_name, rest_text = match.groups()
+              event_time = float(time_text)
+              is_node = comm == "node" or comm.startswith("node-") or comm.startswith("V8")
+              if is_node and node_start is None:
+                  node_start = event_time
+              if node_start is None:
+                  continue
+              elapsed = (event_time - node_start) * 1000
+              if comm.startswith("provjobd") and "pread64" in event_name and first_read is None:
+                  first_read = elapsed
+                  event_list.append(f"    +{elapsed:7.2f} ms provjobd first pread")
+              syscall_match = re.search(r"NR (\d+) \(([0-9a-f]+), ([0-9a-f]+), ([0-9a-f]+), ([0-9a-f]+)", rest_text)
+              if is_node and syscall_match:
+                  syscall_id = int(syscall_match.group(1))
+                  if syscall_id == 56 and not any("clone" in event_line for event_line in event_list):
+                      event_list.append(f"    +{elapsed:7.2f} ms {comm:16s} first clone")
+                  if syscall_id == 9 and int(syscall_match.group(3), 16) >= 256 << 20:
+                      event_list.append(f"    +{elapsed:7.2f} ms {comm:16s} mmap {int(syscall_match.group(3), 16) >> 20} MiB prot {syscall_match.group(4)} flags {syscall_match.group(5)}")
+          for event_line in event_list:
+              print(event_line)
+          PY
+          done
