@@ -259,3 +259,30 @@ jobs:
             python3 fork-after-hugetlb.py 0
             python3 fork-after-hugetlb.py 1
           done
+
+      - name: mimalloc's own view, option off and on, crossed with allow_thp
+        run: |
+          set -euo pipefail
+          spawn_script='const {spawnSync}=require("child_process");
+            for (let warm = 0; warm < 10; warm++) spawnSync("true");
+            const before = process.resourceUsage(); const wallBefore = performance.now();
+            for (let rep = 0; rep < 200; rep++) spawnSync("true");
+            const after = process.resourceUsage();
+            console.log(`x200 wall ${(performance.now() - wallBefore).toFixed(0)} ms, parent sys ${((after.systemCPUTime - before.systemCPUTime) / 1000).toFixed(0)} ms`);'
+          for round in 1 2; do
+            for large_pages in 0 1; do
+              for allow_thp in 0 1; do
+                printf 'round %s large_pages=%s allow_thp=%s: ' "$round" "$large_pages" "$allow_thp"
+                docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --env "MIMALLOC_ALLOW_THP=$allow_thp" \
+                  --entrypoint node "$NODE_IMAGE" -e "$spawn_script"
+              done
+            done
+          done
+          for large_pages in 0 1; do
+            docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --env MIMALLOC_VERBOSE=1 --env MIMALLOC_SHOW_STATS=1 \
+              --entrypoint node "$NODE_IMAGE" -e "$spawn_script" >| "verbose-$large_pages.txt" 2>&1 || echo "node exited $?"
+          done
+          echo "--- mimalloc verbose, large_pages=0 vs 1 (addresses masked)"
+          diff <(sed -E 's/0x[0-9a-f]+/ADDR/g' verbose-0.txt) <(sed -E 's/0x[0-9a-f]+/ADDR/g' verbose-1.txt) | head -120 || true
+          echo "--- large_pages=1 option lines"
+          grep -iE 'option|large|thp|arena|reserve' verbose-1.txt | head -40 || true
