@@ -134,7 +134,7 @@ permissions:
 
 env:
   # Renovate-managed (see renovate.json customManager for `ACT_VERSION:`).
-  ACT_VERSION: 0.2.92
+  ACT_VERSION: 0.2.97
 
 jobs:
   github-context:
