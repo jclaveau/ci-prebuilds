@@ -1585,7 +1585,7 @@ jobs:
               print(f"    mremap = {result} errno {ctypes.get_errno()}")
           time.sleep(0.6)
           PY
-          for arm in none mremap-enomem mremap-ok none mremap-enomem mremap-ok; do
+          for arm in none mremap-enomem; do
             sudo perf record -q -a -m 1024 -o mremap.data -e syscalls:sys_enter_pread64 -- \
               docker run --rm -v "$PWD/mremap-trigger.py:/t.py:ro" python:3.13-alpine python3 /t.py "$arm" >| mremap.out || echo "perf record exited $?"
             read_count=$(sudo perf script -i mremap.data -F comm,event 2>/dev/null | grep -E '^\s*provjobd' | grep -c pread64 || true)
@@ -1595,15 +1595,17 @@ jobs:
           for large_pages in 0 0 1; do
             echo "--- node under strace, large_pages=$large_pages"
             rm -f strace-out/node.txt
-            sudo perf record -q -a -m 1024 -k CLOCK_REALTIME -o st.data -e syscalls:sys_enter_pread64 -- \
+            sudo perf record -q -a -m 1024 -k CLOCK_MONOTONIC -o st.data -e syscalls:sys_enter_pread64 -- \
               docker run --rm --user root --cap-add SYS_PTRACE -v "$PWD/strace-out:/out" \
                 --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint sh "$NODE_IMAGE" -c \
                 'apk add -q strace >/dev/null && exec strace -f -ttt -o /out/node.txt node -e "setTimeout(() => {}, 300)"' \
               || echo "perf record exited $?"
             sudo perf script -i st.data -F comm,time,event 2>/dev/null >| st.txt || echo "perf script exited $?"
-            python3 - st.txt strace-out/node.txt <<'PY'
+            realtime_offset=$(python3 -c 'import time; print(time.time() - time.clock_gettime(time.CLOCK_MONOTONIC))')
+            python3 - st.txt strace-out/node.txt "$realtime_offset" <<'PY'
           import re, sys
-          read_times = [float(match.group(1)) for line in open(sys.argv[1])
+          realtime_offset = float(sys.argv[3])
+          read_times = [float(match.group(1)) + realtime_offset for line in open(sys.argv[1])
                         if line.lstrip().startswith("provjobd") and (match := re.search(r"(\d+\.\d+):", line))]
           syscall_lines = []
           for line in open(sys.argv[2]):
