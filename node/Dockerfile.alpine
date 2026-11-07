@@ -99,6 +99,10 @@ RUN node -p '"node " + process.version + " code_cache=" + process.config.variabl
 RUN sudo apk add --no-cache mimalloc2-insecure \
     && test -f /usr/lib/libmimalloc-insecure.so.2
 ENV LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2
+# mimalloc asks for transparent huge pages on its arenas: node boot_e0 vs official node 26, 6
+# rotated rounds (#335, run 42333710198), 7763 1.085x → 1.013x, 9V45 1.026x → 0.995x.
+# alloc_buffers unmoved. Needs the host's THP in `madvise` or `always` mode, a no-op otherwise.
+ENV MIMALLOC_ALLOW_LARGE_OS_PAGES=1
 
 # A node in /usr/local/bin is invisible to `actions/setup-node`, which would then download the only
 # build the manifest offers — glibc, unusable here. Symlinks only, so the image carries one node.
