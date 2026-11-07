@@ -600,3 +600,56 @@ jobs:
               --entrypoint sh "$NODE_IMAGE" -c 'apk add -q strace >/dev/null && strace -f -c -o /tmp/summary node -e "setTimeout(() => {}, 300)" && cat /tmp/summary' \
               | awk 'NR > 2 && $1 !~ /^-/ { print "  " $NF, $4 }' | head -45
           done
+
+      - name: Does the kernel map zero pages into fresh anon mappings, with and without a failed MAP_HUGETLB
+        run: |
+          set -euo pipefail
+          cat >| "$RUNNER_TEMP/fresh-mapping-zero-pages.py" <<'PROBE'
+          import ctypes, mmap, os, struct, sys, threading
+          libc = ctypes.CDLL(None, use_errno=True)
+          libc.mmap.restype = ctypes.c_void_p
+          libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long]
+          libc.mprotect.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+          MAP_NORESERVE, MAP_HUGETLB, MAP_HUGE_2MB = 0x4000, 0x40000, 21 << 26
+          anon_private = mmap.MAP_PRIVATE | mmap.MAP_ANONYMOUS
+          read_write = mmap.PROT_READ | mmap.PROT_WRITE
+          if sys.argv[1] == "after-failed-hugetlb":
+              for attempt in range(2):
+                  result = libc.mmap(None, 32 << 20, read_write, anon_private | MAP_HUGETLB | MAP_HUGE_2MB, -1, 0)
+                  print(f"MAP_HUGETLB attempt {attempt}: {'ok' if result not in (None, ctypes.c_void_p(-1).value) else 'failed errno ' + str(ctypes.get_errno())}")
+          arena = libc.mmap(None, 1 << 30, read_write, anon_private | MAP_NORESERVE, -1, 0)
+          ctypes.memset(arena, 1, 4096)
+          stack_size = 16 << 20
+          stack = libc.mmap(None, stack_size + 8192, 0, anon_private, -1, 0)
+          libc.mprotect(stack + 4096, stack_size, read_write)
+          ctypes.memset(stack + stack_size - 4096, 1, 4096)
+          worker = threading.Thread(target=lambda: None); worker.start(); worker.join()
+          pagemap = open("/proc/self/pagemap", "rb", buffering=0)
+          kpageflags = open("/proc/kpageflags", "rb", buffering=0)
+          def count_pages(start, size):
+              pagemap.seek((start // 4096) * 8)
+              entries = pagemap.read((size // 4096) * 8)
+              present_count = zero_count = 0
+              for (entry,) in struct.iter_unpack("<Q", entries):
+                  if not entry >> 63:
+                      continue
+                  present_count += 1
+                  kpageflags.seek((entry & ((1 << 55) - 1)) * 8)
+                  if (struct.unpack("<Q", kpageflags.read(8))[0] >> 24) & 1:
+                      zero_count += 1
+              return present_count, zero_count
+          print("arena 1 GiB: present %d zero %d" % count_pages(arena, 1 << 30))
+          print("stack 16 MiB: present %d zero %d" % count_pages(stack + 4096, stack_size))
+          totals = [0, 0]
+          for line in open("/proc/self/maps"):
+              start, end = (int(text, 16) for text in line.split()[0].split("-"))
+              if end - start > 2 ** 31 or start >= 2 ** 47:
+                  continue
+              present_count, zero_count = count_pages(start, end - start)
+              totals[0] += present_count; totals[1] += zero_count
+          print("whole process: present %d zero %d" % tuple(totals))
+          PROBE
+          for variant in plain after-failed-hugetlb plain after-failed-hugetlb; do
+            echo "--- $variant"
+            sudo python3 "$RUNNER_TEMP/fresh-mapping-zero-pages.py" "$variant"
+          done
