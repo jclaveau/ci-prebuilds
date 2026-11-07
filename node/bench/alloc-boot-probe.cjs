@@ -11,6 +11,8 @@
  *   boot_e0_nopre   `node -e 0` with LD_PRELOAD emptied: the preload's share
  *
  * CPU-ms off the container's cgroup, median over the reps, as the kernel.
+ * PROBE_BALLAST=1 first allocates the kernel's live inputs (json, 20 MB gzip,
+ * 100 MB hash), which the gate's process holds while it runs these two rows.
  *
  *   node alloc-boot-probe.cjs time               one json line of medians
  *   node alloc-boot-probe.cjs loop <row> <secs>  repeat a row, for perf/strace
@@ -41,6 +43,20 @@ function spawnChecked(args, extraEnv) {
   if (result.status !== 0) {
     throw new Error(`alloc-boot-probe: node ${JSON.stringify(args)} exited ${JSON.stringify(result.status)}: ${JSON.stringify(String(result.stderr))}`);
   }
+}
+
+const ballastInputs = [];
+if (process.env.PROBE_BALLAST === '1') {
+  ballastInputs.push(Array.from({ length: 40000 }, (_, index) => ({
+    id: index, name: `item-${index}`, tags: ['a', 'b', 'c'], score: index * 0.5, nested: { ok: true },
+  })));
+  const gzipInput = Buffer.alloc(20 * 1024 * 1024);
+  for (let offset = 0; offset < gzipInput.length; offset += 4) {
+    gzipInput.writeUInt32LE((offset * 2654435761) % 1000, offset);
+  }
+  ballastInputs.push(gzipInput, Buffer.alloc(100 * 1024 * 1024, 7));
+} else if (process.env.PROBE_BALLAST !== undefined && process.env.PROBE_BALLAST !== '0') {
+  throw new Error(`alloc-boot-probe: PROBE_BALLAST is ${JSON.stringify(process.env.PROBE_BALLAST)}, not 0 or 1`);
 }
 
 let sinkValue = 0;
@@ -80,7 +96,9 @@ function timeRows() {
     }
     medians[rowName] = Number(medianOf(repCosts).toFixed(3));
   }
-  console.log(JSON.stringify({ node: process.version, ld_preload: process.env.LD_PRELOAD || '', medians, sink: sinkValue }));
+  console.log(JSON.stringify({
+    node: process.version, ld_preload: process.env.LD_PRELOAD || '', ballast_count: ballastInputs.length, medians, sink: sinkValue,
+  }));
 }
 
 const [probeMode, rowName, secondsText] = process.argv.slice(2);

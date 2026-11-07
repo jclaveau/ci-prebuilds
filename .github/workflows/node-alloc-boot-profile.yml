@@ -163,6 +163,9 @@ jobs:
               docker run --rm "${env_args[@]}" --entrypoint node -v "$PWD/node/bench:/bench:ro" "$image" \
                 /bench/alloc-boot-probe.cjs time >| "out/time-$arm-$round.json" < /dev/null
               echo "round $round $arm $(cat "out/time-$arm-$round.json")"
+              docker run --rm "${env_args[@]}" --env PROBE_BALLAST=1 --entrypoint node -v "$PWD/node/bench:/bench:ro" \
+                "$image" /bench/alloc-boot-probe.cjs time >| "out/ballast-$arm-$round.json" < /dev/null
+              echo "round $round $arm ballast $(cat "out/ballast-$arm-$round.json")"
             done < out/arms.txt
           done
 
@@ -194,14 +197,23 @@ jobs:
                 set -e
                 if command -v apk >/dev/null; then apk add --no-cache perf strace >/dev/null
                 else apt-get update -qq && apt-get install -y -qq --no-install-recommends linux-perf strace >/dev/null; fi
-                for row in alloc_zero boot_e0; do
-                  perf stat -x, -e '"$stat_events"' -o /out/stat-'"$arm"'-$row.csv -- \
-                    node /bench/alloc-boot-probe.cjs loop $row '"$LOOP_SECONDS"' >| /out/loopcount-'"$arm"'-$row.txt
-                  perf record -q -e '"$record_event"' -F 4999 -o /tmp/perf-$row.data -- \
-                    node /bench/alloc-boot-probe.cjs loop $row '"$LOOP_SECONDS"' >/dev/null
-                  perf report -f -i /tmp/perf-$row.data --no-children --no-inline --sort comm,dso,sym --stdio \
-                    --percent-limit 0.4 2>/dev/null | grep -E "^ +[0-9]" | head -45 >| /out/report-'"$arm"'-$row.txt
+                for ballast_flag in 0 1; do
+                  export PROBE_BALLAST=$ballast_flag
+                  suffix=$([ "$ballast_flag" = 1 ] && echo -ballast || true)
+                  for row in alloc_zero boot_e0; do
+                    perf stat -x, -e '"$stat_events"' -o /out/stat-'"$arm"'-$row$suffix.csv -- \
+                      node /bench/alloc-boot-probe.cjs loop $row '"$LOOP_SECONDS"' >| /out/loopcount-'"$arm"'-$row$suffix.txt
+                    perf record -q -e '"$record_event"' -F 4999 -o /tmp/perf-$row.data -- \
+                      node /bench/alloc-boot-probe.cjs loop $row '"$LOOP_SECONDS"' >/dev/null
+                    perf report -f -i /tmp/perf-$row.data --no-children --no-inline --sort comm,dso,sym --stdio \
+                      --percent-limit 0.1 2>/dev/null | grep -E "^ +[0-9]" | head -120 >| /out/report-'"$arm"'-$row$suffix.txt
+                    perf report -f -i /tmp/perf-$row.data --no-children --sort comm,dso --stdio \
+                      2>/dev/null | grep -E "^ +[0-9]" >| /out/dso-'"$arm"'-$row$suffix.txt
+                  done
                 done
+                PROBE_BALLAST=1 strace -f -e trace=clone,clone3,fork,vfork,execve,wait4 -o /out/spawn-'"$arm"'-ballast.txt \
+                  node /bench/alloc-boot-probe.cjs once boot_e0
+                export PROBE_BALLAST=0
                 strace -f -c -o /out/strace-'"$arm"'-alloc_zero.txt node /bench/alloc-boot-probe.cjs once alloc_zero
                 strace -f -c -o /out/strace-'"$arm"'-boot_e0.txt node -e 0
                 strace -f -o /out/strace-full-'"$arm"'-boot_e0.txt node -e 0
@@ -231,6 +243,22 @@ jobs:
               cells = []
               for row in rows:
                   reference = medians.get('off26', {}).get(row)
+                  ratio = f' ({by_row[row] / reference:.3f}x)' if reference else ''
+                  cells.append(f'{by_row[row]:.1f}{ratio}')
+              print(f'| {arm} | ' + ' | '.join(cells) + ' |')
+          print()
+          ballast_medians = {}
+          for arm in arms:
+              docs = [json.load(open(path)) for path in sorted(glob.glob(f'out/ballast-{arm}-*.json'))]
+              if docs:
+                  ballast_medians[arm] = {row: statistics.median(doc['medians'][row] for doc in docs) for row in docs[0]['medians']}
+          print('With the gate kernel\'s 120 MB of live inputs (PROBE_BALLAST=1); ratio vs off26\n')
+          print('| arm | ' + ' | '.join(rows) + ' |')
+          print('| --- |' + ' --- |' * len(rows))
+          for arm, by_row in ballast_medians.items():
+              cells = []
+              for row in rows:
+                  reference = ballast_medians.get('off26', {}).get(row)
                   ratio = f' ({by_row[row] / reference:.3f}x)' if reference else ''
                   cells.append(f'{by_row[row]:.1f}{ratio}')
               print(f'| {arm} | ' + ' | '.join(cells) + ' |')
