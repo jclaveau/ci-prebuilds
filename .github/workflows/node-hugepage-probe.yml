@@ -224,3 +224,38 @@ jobs:
               --sort sym --percent-limit 1.5 -G --max-stack 14 2>/dev/null | grep -vE '^#|^$' | head -90 \
               || echo "perf report exited $?"
           done
+
+      - name: Failed MAP_HUGETLB alone, without node or mimalloc
+        run: |
+          set -euo pipefail
+          cat >| fork-after-hugetlb.py <<'PY'
+          import ctypes, os, sys, time
+          libc = ctypes.CDLL(None, use_errno=True)
+          libc.mmap.restype = ctypes.c_void_p
+          libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long]
+          map_failed = ctypes.c_void_p(-1).value
+          try_hugetlb = sys.argv[1] == "1"
+          if try_hugetlb:
+              hugetlb_flags = 0x02 | 0x20 | 0x40000 | (21 << 26)  # PRIVATE ANONYMOUS HUGETLB HUGE_2MB
+              for size in (1 << 30, 32 << 20):
+                  address = libc.mmap(None, size, 0x1 | 0x2, hugetlb_flags, -1, 0)
+                  print(f"hugetlb mmap {size >> 20} MiB -> {'failed errno ' + str(ctypes.get_errno()) if address == map_failed else 'ok'}")
+          touched_memory = bytearray(64 << 20)
+          for offset in range(0, len(touched_memory), 4096):
+              touched_memory[offset] = 1
+          times_before = os.times()
+          wall_before = time.perf_counter()
+          for rep in range(200):
+              child_pid = os.fork()
+              if child_pid == 0:
+                  os.execv("/bin/true", ["true"])
+              os.waitpid(child_pid, 0)
+          times_after = os.times()
+          print(f"try_hugetlb={int(try_hugetlb)} x200: wall {(time.perf_counter() - wall_before) * 1000:.0f} ms,",
+                f"parent sys {(times_after.system - times_before.system) * 1000:.0f} ms,",
+                f"children cpu {(times_after.children_user + times_after.children_system - times_before.children_user - times_before.children_system) * 1000:.0f} ms")
+          PY
+          for round in 1 2 3; do
+            python3 fork-after-hugetlb.py 0
+            python3 fork-after-hugetlb.py 1
+          done
