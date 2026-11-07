@@ -8,17 +8,19 @@ name: node alloc + boot profile (node 26 gate rows)
 # Round 3 times each arm three ways: the probe with the gate's live inputs
 # (ballast), the same after the rows the gate runs first (prelude), and the
 # gate's own node-perf-kernel.cjs as the control that the breach reproduces.
+# Round 3 put alloc_buffers on the allocator: official node with mimalloc
+# preloaded breaches as much as ours. Round 4 tries mimalloc's options on b26.
 #
 # Arms:
-#   b26          alpine-dood-node:latest, Stage B node 26 (clang23, mimalloc LD_PRELOAD)
-#   b26_nopre    same image, LD_PRELOAD emptied: musl mallocng
-#   b24          alpine-dood-node:main-2d5cd53, Stage B node 24.22.1
-#   gcc26        alpine-dood-node with unofficial-builds' gcc musl node 26 staged in
-#   ubuntu26     ubuntu-dood-node:latest (NodeSource, glibc)
-#   ubuntu24     ubuntu-dood-node:main-2d5cd53
-#   off26        node:26.13.0-bookworm-slim
-#   off26_mi     node:26.13.0-bookworm-slim with Debian's mimalloc LD_PRELOADed
-#   off24        node:24.22.1-bookworm-slim
+#   b26              alpine-dood-node:latest, Stage B node 26 (clang23, mimalloc LD_PRELOAD)
+#   b26_purge_never  same, MIMALLOC_PURGE_DELAY=-1: freed pages are never returned
+#   b26_purge_now    same, MIMALLOC_PURGE_DELAY=0: freed pages are returned at once
+#   b26_eager        same, MIMALLOC_ARENA_EAGER_COMMIT=1
+#   b26_thp          same, MIMALLOC_ALLOW_LARGE_OS_PAGES=1
+#   b26_nopre        same image, LD_PRELOAD emptied: musl mallocng
+#   ubuntu26         ubuntu-dood-node:latest (NodeSource, glibc)
+#   off26            node:26.13.0-bookworm-slim
+#   off26_mi         node:26.13.0-bookworm-slim with Debian's mimalloc LD_PRELOADed
 
 on:
   workflow_dispatch:
@@ -59,7 +61,7 @@ jobs:
     env:
       ROUNDS: ${{ inputs.rounds }}
       LOOP_SECONDS: ${{ inputs.loop_seconds }}
-      PROFILED_ARMS: b26 b26_nopre b24 gcc26 off26 off26_mi off24
+      PROFILED_ARMS: b26 b26_purge_never off26
     steps:
       - uses: actions/checkout@v7
       - uses: docker/login-action@v4
@@ -80,27 +82,11 @@ jobs:
       - name: Stage the arms
         run: |
           set -euo pipefail
-          for image in ghcr.io/jclaveau/alpine-dood-node:latest ghcr.io/jclaveau/alpine-dood-node:main-2d5cd53 \
-                       ghcr.io/jclaveau/ubuntu-dood-node:latest ghcr.io/jclaveau/ubuntu-dood-node:main-2d5cd53 \
-                       node:26.13.0-bookworm-slim node:24.22.1-bookworm-slim; do
+          for image in ghcr.io/jclaveau/alpine-dood-node:latest ghcr.io/jclaveau/ubuntu-dood-node:latest \
+                       node:26.13.0-bookworm-slim; do
             docker pull -q "$image"
           done
-          node_version=26.13.0
-          pinned_sha=$(awk -v version="$node_version" '$1 == version { print $2 }' node/node-musl-sha256.txt)
-          [ -n "$pinned_sha" ] || { echo "no sha256 for node $node_version in node/node-musl-sha256.txt" >&2; exit 1; }
-          mkdir -p tarball-src mimalloc-src
-          cat > tarball-src/Dockerfile <<EOF
-          FROM alpine:3.24 AS fetch
-          RUN apk add --no-cache curl xz \
-              && curl -fsSLo /tmp/node.tar.xz "https://unofficial-builds.nodejs.org/download/release/v${node_version}/node-v${node_version}-linux-x64-musl.tar.xz" \
-              && echo "${pinned_sha}  /tmp/node.tar.xz" | sha256sum -c - \
-              && mkdir /node && tar -xJf /tmp/node.tar.xz -C /node --strip-components=1 --no-same-owner
-          FROM scratch
-          COPY --from=fetch /node /node
-          EOF
-          docker build -q -t tarball-src:local tarball-src
-          docker build -q -f node/musl-build/Dockerfile.bench-arm \
-            --build-arg NODE_SOURCE_IMAGE=tarball-src:local -t probe-arm:gcc26 node/musl-build
+          mkdir -p mimalloc-src
           cat > mimalloc-src/Dockerfile <<'EOF'
           FROM node:26.13.0-bookworm-slim
           RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends libmimalloc2.0 >/dev/null \
@@ -115,14 +101,14 @@ jobs:
           # <arm> <image> <docker run env flag or ->
           cat > out/arms.txt <<'EOF'
           b26 ghcr.io/jclaveau/alpine-dood-node:latest -
+          b26_purge_never ghcr.io/jclaveau/alpine-dood-node:latest MIMALLOC_PURGE_DELAY=-1
+          b26_purge_now ghcr.io/jclaveau/alpine-dood-node:latest MIMALLOC_PURGE_DELAY=0
+          b26_eager ghcr.io/jclaveau/alpine-dood-node:latest MIMALLOC_ARENA_EAGER_COMMIT=1
+          b26_thp ghcr.io/jclaveau/alpine-dood-node:latest MIMALLOC_ALLOW_LARGE_OS_PAGES=1
           b26_nopre ghcr.io/jclaveau/alpine-dood-node:latest LD_PRELOAD=
-          b24 ghcr.io/jclaveau/alpine-dood-node:main-2d5cd53 -
-          gcc26 probe-arm:gcc26 -
           ubuntu26 ghcr.io/jclaveau/ubuntu-dood-node:latest -
-          ubuntu24 ghcr.io/jclaveau/ubuntu-dood-node:main-2d5cd53 -
           off26 node:26.13.0-bookworm-slim -
           off26_mi probe-arm:off26_mi -
-          off24 node:24.22.1-bookworm-slim -
           EOF
           sed -i 's/^ *//' out/arms.txt
           cat out/arms.txt
