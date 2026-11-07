@@ -9,15 +9,14 @@ name: node alloc + boot profile (node 26 gate rows)
 # (ballast), the same after the rows the gate runs first (prelude), and the
 # gate's own node-perf-kernel.cjs as the control that the breach reproduces.
 # Round 3 put alloc_buffers on the allocator: official node with mimalloc
-# preloaded breaches as much as ours. Round 4 tries mimalloc's options on b26.
+# preloaded breaches as much as ours. Round 4 tried mimalloc's options on b26:
+# none closed alloc_buffers, large OS pages lowered boot_e0 3-8% with the arm
+# order fixed. Round 5 rotates the order to check that.
 #
 # Arms:
 #   b26              alpine-dood-node:latest, Stage B node 26 (clang23, mimalloc LD_PRELOAD)
 #   b26_purge_never  same, MIMALLOC_PURGE_DELAY=-1: freed pages are never returned
-#   b26_purge_now    same, MIMALLOC_PURGE_DELAY=0: freed pages are returned at once
-#   b26_eager        same, MIMALLOC_ARENA_EAGER_COMMIT=1
 #   b26_thp          same, MIMALLOC_ALLOW_LARGE_OS_PAGES=1
-#   b26_nopre        same image, LD_PRELOAD emptied: musl mallocng
 #   ubuntu26         ubuntu-dood-node:latest (NodeSource, glibc)
 #   off26            node:26.13.0-bookworm-slim
 #   off26_mi         node:26.13.0-bookworm-slim with Debian's mimalloc LD_PRELOADed
@@ -61,7 +60,7 @@ jobs:
     env:
       ROUNDS: ${{ inputs.rounds }}
       LOOP_SECONDS: ${{ inputs.loop_seconds }}
-      PROFILED_ARMS: b26 b26_purge_never off26
+      PROFILED_ARMS: b26 b26_thp off26
     steps:
       - uses: actions/checkout@v7
       - uses: docker/login-action@v4
@@ -101,11 +100,8 @@ jobs:
           # <arm> <image> <docker run env flag or ->
           cat > out/arms.txt <<'EOF'
           b26 ghcr.io/jclaveau/alpine-dood-node:latest -
-          b26_purge_never ghcr.io/jclaveau/alpine-dood-node:latest MIMALLOC_PURGE_DELAY=-1
-          b26_purge_now ghcr.io/jclaveau/alpine-dood-node:latest MIMALLOC_PURGE_DELAY=0
-          b26_eager ghcr.io/jclaveau/alpine-dood-node:latest MIMALLOC_ARENA_EAGER_COMMIT=1
           b26_thp ghcr.io/jclaveau/alpine-dood-node:latest MIMALLOC_ALLOW_LARGE_OS_PAGES=1
-          b26_nopre ghcr.io/jclaveau/alpine-dood-node:latest LD_PRELOAD=
+          b26_purge_never ghcr.io/jclaveau/alpine-dood-node:latest MIMALLOC_PURGE_DELAY=-1
           ubuntu26 ghcr.io/jclaveau/ubuntu-dood-node:latest -
           off26 node:26.13.0-bookworm-slim -
           off26_mi probe-arm:off26_mi -
@@ -147,7 +143,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out/kernel && chmod 777 out/kernel
+          cat /sys/kernel/mm/transparent_hugepage/enabled /sys/kernel/mm/transparent_hugepage/defrag | tee out/thp.txt
           for round in $(seq 1 "$ROUNDS"); do
+            # Rotated one arm per round, so no arm always runs first.
+            arm_count=$(wc -l < out/arms.txt)
+            { tail -n +"$(( (round - 1) % arm_count + 1 ))" out/arms.txt; head -n "$(( (round - 1) % arm_count ))" out/arms.txt; } >| out/arms-round.txt
             while read -r arm image env_flag; do
               env_args=(); [ "$env_flag" = - ] || env_args=(--env "$env_flag")
               docker run --rm "${env_args[@]}" --env PROBE_BALLAST=1 --entrypoint node -v "$PWD/node/bench:/bench:ro" \
@@ -162,7 +162,7 @@ jobs:
               docker run --rm "${env_args[@]}" --env "HOME=$home" --entrypoint node -v "$PWD/node/bench:/bench:ro" \
                 -v "$PWD/out/kernel:/out" "$image" /bench/node-perf-kernel.cjs --target "$arm" --run "$round" --out /out \
                 < /dev/null | grep -E ' (boot_e0|alloc_buffers) '
-            done < out/arms.txt
+            done < out/arms-round.txt
           done
 
       - name: GC count of one alloc_touch run
