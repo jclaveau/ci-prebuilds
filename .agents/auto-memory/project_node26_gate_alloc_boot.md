@@ -19,4 +19,9 @@ Probe: `node-alloc-boot-profile.yml` + `node/bench/alloc-boot-probe.cjs`; per-CP
 
 **Why:** rounds 1-2 blamed boot on the build (1.2-1.4x) — artefact: alloc rows ran before boot rows and the mimalloc heap inflated fork cost. Order rows like the gate.
 
-**How to apply:** don't chase our build for these rows. Levers are mimalloc options (round 4, run 42330744004: PURGE_DELAY, EAGER_COMMIT, LARGE_OS_PAGES) or accepting a per-row ceiling. See [[node-stage-b-measured]], [[alpine-node-gap-is-apk-build-config]].
+**mimalloc options** (round 4 run 42330744004, round 5 run 42333710198 with arm order rotated):
+- alloc_buffers: none closes it. PURGE_DELAY=-1 a few % at best, EAGER_COMMIT / ALLOW_LARGE_OS_PAGES nothing, PURGE_DELAY=0 3.4-5.0x dearer.
+- boot_e0: `MIMALLOC_ALLOW_LARGE_OS_PAGES=1` cuts 2-7% (7763 1.085x→1.013x, 9V45 1.026x→0.995x vs official), faults/spawn unchanged; host THP `madvise`. Not shipped; RSS cost unmeasured.
+- a fixed arm order biases the first arm: rotate it per round.
+
+**How to apply:** don't chase our build for these rows. alloc_buffers = accept or per-row ceiling; boot_e0 lever = ALLOW_LARGE_OS_PAGES (jean's call, measure RSS first). See [[node-stage-b-measured]], [[alpine-node-gap-is-apk-build-config]].
