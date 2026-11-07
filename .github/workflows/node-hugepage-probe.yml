@@ -61,145 +61,49 @@ jobs:
           grep -o 'hugepages[^ ]*\|hugepagesz[^ ]*\|transparent_hugepage[^ ]*' /proc/cmdline || echo "cmdline: no huge page argument"
           docker pull -q "$NODE_IMAGE"
 
-      - name: Node mappings with the option off and on
+      - name: Parent vs children, CPU and page faults
         run: |
           set -euo pipefail
-          for large_pages in 0 1; do
-            docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --env MIMALLOC_VERBOSE=1 \
-              --entrypoint node "$NODE_IMAGE" -e '
-                const buffers = [];
-                for (let index = 0; index < 2000; index++) buffers.push(Buffer.alloc(65536));
-                const fs = require("fs");
-                const rollup = fs.readFileSync("/proc/self/smaps_rollup", "utf8");
-                const hugetlbMappings = fs.readFileSync("/proc/self/smaps", "utf8")
-                  .split(/\n(?=[0-9a-f]+-[0-9a-f]+ )/)
-                  .filter(mapping => /KernelPageSize:\s+2048 kB/.test(mapping))
-                  .map(mapping => mapping.split("\n")[0]);
-                console.log(`large_pages=${process.env.MIMALLOC_ALLOW_LARGE_OS_PAGES}`,
-                  rollup.match(/^(Rss|AnonHugePages|Private_Hugetlb|Shared_Hugetlb):.*/gm).join(" | "));
-                console.log(`2 MiB kernel page mappings: ${hugetlbMappings.length}`, hugetlbMappings.join(" ; "));
-              ' 2>&1 | grep -vE "^mimalloc: option '"
-          done
-
-      - name: mimalloc's mmap calls with the option off and on
-        run: |
-          set -euo pipefail
-          for large_pages in 0 1; do
-            echo "--- large_pages=$large_pages"
-            docker run --rm --user root --cap-add SYS_PTRACE --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" \
-              --entrypoint sh "$NODE_IMAGE" -c '
-                apk add -q --no-cache strace
-                strace -f -e trace=mmap,madvise -o /tmp/trace.txt \
-                  node -e "const b=[];for(let i=0;i<2000;i++)b.push(Buffer.alloc(65536))"
-                echo "MAP_HUGETLB calls $(grep -c MAP_HUGETLB /tmp/trace.txt || true)," \
-                  "failed $(grep MAP_HUGETLB /tmp/trace.txt | grep -c "= -1" || true)"
-                echo "MADV_HUGEPAGE calls $(grep -c MADV_HUGEPAGE /tmp/trace.txt || true)"
-                grep MAP_HUGETLB /tmp/trace.txt | head -3 || true
-              '
-          done
-
-      - name: spawn cost with the option off and on, order alternated per round
-        run: |
-          set -euo pipefail
-          for round in 1 2 3 4 5 6; do
-            if [ $((round % 2)) -eq 1 ]; then arm_order="0 1"; else arm_order="1 0"; fi
-            for large_pages in $arm_order; do
-              docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" -e '
-                const { spawnSync } = require("child_process");
-                const fs = require("fs");
-                const usageUsec = () => Number(fs.readFileSync("/sys/fs/cgroup/cpu.stat", "utf8").match(/usage_usec (\d+)/)[1]);
-                for (let warm = 0; warm < 10; warm++) spawnSync("true");
-                const status = fs.readFileSync("/proc/self/status", "utf8");
-                const mappingCount = fs.readFileSync("/proc/self/maps", "utf8").trim().split("\n").length;
-                const before = usageUsec();
-                for (let rep = 0; rep < 100; rep++) spawnSync("true");
-                console.log(`round '"$round"' large_pages=${process.env.MIMALLOC_ALLOW_LARGE_OS_PAGES} spawn_true_x100 ${((usageUsec() - before) / 1000).toFixed(1)} ms`,
-                  status.match(/^(VmRSS|VmPTE|RssAnon):.*/gm).join(" | ").replace(/\s+/g, " "), `| maps ${mappingCount}`);
-              '
-            done
-          done
-
-      - name: Parent faults vs children faults, and the parent's huge mappings
-        run: |
-          set -euo pipefail
-          grep -H . /sys/kernel/mm/transparent_hugepage/hugepages-*/enabled || echo "no mTHP size knobs"
-          for round in 1 2; do
+          for round in 1 2 3; do
             for large_pages in 0 1; do
               docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" -e '
                 const { spawnSync } = require("child_process");
                 const fs = require("fs");
-                const cgroupFaults = () => Number(fs.readFileSync("/sys/fs/cgroup/memory.stat", "utf8").match(/^pgfault (\d+)/m)[1]);
+                const readCgroup = () => ({
+                  cpu_usec: Number(fs.readFileSync("/sys/fs/cgroup/cpu.stat", "utf8").match(/usage_usec (\d+)/)[1]),
+                  faults: Number(fs.readFileSync("/sys/fs/cgroup/memory.stat", "utf8").match(/^pgfault (\d+)/m)[1]),
+                });
+                const readParent = () => {
+                  const usage = process.resourceUsage();
+                  return { cpu_usec: usage.userCPUTime + usage.systemCPUTime, sys_usec: usage.systemCPUTime, faults: usage.minorPageFault };
+                };
                 for (let warm = 0; warm < 10; warm++) spawnSync("true");
-                const bigMappings = fs.readFileSync("/proc/self/smaps", "utf8")
-                  .split(/\n(?=[0-9a-f]+-[0-9a-f]+ )/)
-                  .filter(mapping => /AnonHugePages:\s+[1-9]/.test(mapping) || /^Size:\s+(\d{5,}) kB/m.test(mapping))
-                  .map(mapping => [mapping.split("\n")[0].split(" ")[0],
-                    ...["Size", "Rss", "AnonHugePages", "THPeligible", "VmFlags"].map(key => (mapping.match(new RegExp(`^${key}:.*`, "m")) || [`${key}: ?`])[0].replace(/\s+/g, " "))].join(" "));
-                const parentFaultsBefore = process.resourceUsage().minorPageFaults;
-                const cgroupBefore = cgroupFaults();
+                const cgroupBefore = readCgroup();
+                const parentBefore = readParent();
                 for (let rep = 0; rep < 100; rep++) spawnSync("true");
-                const parentFaults = process.resourceUsage().minorPageFaults - parentFaultsBefore;
-                console.log(`round '"$round"' large_pages=${process.env.MIMALLOC_ALLOW_LARGE_OS_PAGES} x100: parent faults ${parentFaults}, children faults ${cgroupFaults() - cgroupBefore - parentFaults}`);
-                if ('"$round"' === 1) console.log(bigMappings.join("\n"));
+                const cgroupAfter = readCgroup();
+                const parentAfter = readParent();
+                const parentCpu = parentAfter.cpu_usec - parentBefore.cpu_usec;
+                const parentFaults = parentAfter.faults - parentBefore.faults;
+                console.log(`round '"$round"' large_pages=${process.env.MIMALLOC_ALLOW_LARGE_OS_PAGES} x100:`,
+                  `parent cpu ${(parentCpu / 1000).toFixed(1)} ms (sys ${((parentAfter.sys_usec - parentBefore.sys_usec) / 1000).toFixed(1)}), parent faults ${parentFaults} |`,
+                  `children cpu ${((cgroupAfter.cpu_usec - cgroupBefore.cpu_usec - parentCpu) / 1000).toFixed(1)} ms, children faults ${cgroupAfter.faults - cgroupBefore.faults - parentFaults}`);
               '
             done
           done
 
-      - name: node's own big mmap and madvise calls with the option off and on
+      - name: Kernel profile of 1000 spawns with the option off and on
         run: |
           set -euo pipefail
+          sudo apt-get install -y -qq "linux-tools-$(uname -r)" >/dev/null 2>&1 \
+            || sudo apt-get install -y -qq linux-tools-azure linux-tools-common >/dev/null 2>&1 \
+            || { echo "no perf package for $(uname -r)"; exit 0; }
+          sudo sysctl -q kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
           for large_pages in 0 1; do
             echo "--- large_pages=$large_pages"
-            docker run --rm --user root --cap-add SYS_PTRACE --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" \
-              --entrypoint sh "$NODE_IMAGE" -c '
-                apk add -q --no-cache strace
-                strace -f -e trace=mmap,madvise,munmap -o /tmp/trace.txt \
-                  node -e "const {spawnSync}=require(\"child_process\");for(let i=0;i<5;i++)spawnSync(\"true\")"
-                grep -E "madvise|mmap\([^,]*, [0-9]{7,}," /tmp/trace.txt | grep -v MAP_HUGETLB | head -30
-              '
-          done
-
-      - name: Parent vs child option, with THP fault and compaction counters
-        run: |
-          set -euo pipefail
-          for round in 1 2 3; do
-            for arm_pair in "0 0" "0 1" "1 0" "1 1"; do
-              set -- $arm_pair
-              docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$1" --env "CHILD_LARGE_PAGES=$2" \
-                --entrypoint node "$NODE_IMAGE" -e '
-                  const { spawnSync } = require("child_process");
-                  const fs = require("fs");
-                  const childEnv = { ...process.env, MIMALLOC_ALLOW_LARGE_OS_PAGES: process.env.CHILD_LARGE_PAGES };
-                  const readCounters = () => {
-                    const memoryStat = fs.readFileSync("/sys/fs/cgroup/memory.stat", "utf8");
-                    const vmstat = fs.readFileSync("/proc/vmstat", "utf8");
-                    const pick = (text, key) => Number(text.match(new RegExp(`^${key} (\\d+)`, "m"))[1]);
-                    return {
-                      cpu_usec: Number(fs.readFileSync("/sys/fs/cgroup/cpu.stat", "utf8").match(/usage_usec (\d+)/)[1]),
-                      cg_thp_fault_alloc: pick(memoryStat, "thp_fault_alloc"),
-                      cg_pgfault: pick(memoryStat, "pgfault"),
-                      host_compact_stall: pick(vmstat, "compact_stall"),
-                      host_thp_fault_fallback: pick(vmstat, "thp_fault_fallback"),
-                    };
-                  };
-                  for (let warm = 0; warm < 10; warm++) spawnSync("true", { env: childEnv });
-                  const before = readCounters();
-                  for (let rep = 0; rep < 100; rep++) spawnSync("true", { env: childEnv });
-                  const after = readCounters();
-                  const deltas = Object.keys(after).map(key => `${key} ${after[key] - before[key]}`).join(" | ");
-                  console.log(`round '"$round"' parent=${process.env.MIMALLOC_ALLOW_LARGE_OS_PAGES} child=${process.env.CHILD_LARGE_PAGES} x100: ${deltas}`);
-                '
-            done
-          done
-
-      - name: The child's mmap and madvise calls with the option off and on
-        run: |
-          set -euo pipefail
-          for large_pages in 0 1; do
-            echo "--- child large_pages=$large_pages"
-            docker run --rm --user root --cap-add SYS_PTRACE --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" \
-              --entrypoint sh "$NODE_IMAGE" -c '
-                apk add -q --no-cache strace
-                strace -e trace=mmap,munmap,madvise,prctl true 2>&1 | grep -vE "\.so|PROT_READ\|PROT_EXEC|MAP_SHARED"
-              '
+            sudo perf record -q -a -g -F 1999 -o "perf-$large_pages.data" -- \
+              docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" \
+                -e 'const {spawnSync}=require("child_process");for(let i=0;i<1000;i++)spawnSync("true")' 2>&1 | tail -2
+            sudo perf report -i "perf-$large_pages.data" --stdio --no-children --comms node,true \
+              --sort comm,sym --percent-limit 1 -g none 2>/dev/null | grep -vE '^#|^$' | head -30
           done
