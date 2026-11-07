@@ -182,6 +182,7 @@
   "automerge": true,
   "automergeStrategy": "squash",
   "platformAutomerge": false,
+  "rebaseWhen": "conflicted",
   "prHourlyLimit": 0,
   "prConcurrentLimit": 5
 }

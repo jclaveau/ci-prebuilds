@@ -202,7 +202,8 @@ concurrency:
     inputs.build_firefox == 'true' && 'ff' ||
     inputs.build_chromium_headless_shell == 'true' && 'chs-apk' ||
     'main' }}
-  cancel-in-progress: false
+  # Renovate PRs carry no build label, so a run its next push supersedes has nothing worth finishing.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && startsWith(github.head_ref, 'renovate/') }}
 
 permissions:
   contents: read
