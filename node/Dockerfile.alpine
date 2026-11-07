@@ -99,9 +99,12 @@ RUN node -p '"node " + process.version + " code_cache=" + process.config.variabl
 RUN sudo apk add --no-cache mimalloc2-insecure \
     && test -f /usr/lib/libmimalloc-insecure.so.2
 ENV LD_PRELOAD=/usr/lib/libmimalloc-insecure.so.2
-# mimalloc asks for transparent huge pages on its arenas: node boot_e0 vs official node 26, 6
-# rotated rounds (#335, run 42333710198), 7763 1.085x → 1.013x, 9V45 1.026x → 0.995x.
-# alloc_buffers unmoved. Needs the host's THP in `madvise` or `always` mode, a no-op otherwise.
+# Not a huge-page win: no host gives node a huge page. On GHA runners, `provjobd` (the hosted
+# compute agent) reads ≤8 MiB of each mapping of a new process once, 4-11 ms after it starts; the
+# failed MAP_HUGETLB tries delay node's worker threads past that read, so it skips their stacks
+# and leaves ~10-16k fewer zero-page PTEs for every later fork to copy (#335, run 42383346818).
+# GHA: spawn_true_x100 0.57-0.66x, boot_e0 0.91-0.98x, 7763 boot_e0 vs official node 26 1.085x →
+# 1.013x. No-op where nothing scans node (i3-4005U laptop geomean 0.993-1.003x); no RSS cost.
 ENV MIMALLOC_ALLOW_LARGE_OS_PAGES=1
 
 # A node in /usr/local/bin is invisible to `actions/setup-node`, which would then download the only
