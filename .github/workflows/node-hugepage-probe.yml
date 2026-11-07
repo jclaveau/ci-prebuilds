@@ -1158,3 +1158,52 @@ jobs:
           PY
             done
           done
+      - name: Which failed syscall of node triggers provjobd with the option off
+        run: |
+          set -euo pipefail
+          for large_pages in 0 0 1; do
+            echo "--- large_pages=$large_pages"
+            sudo perf record -q -a -m 1024 -o failed.data \
+              -e raw_syscalls:sys_exit --filter 'ret < 0' -e syscalls:sys_enter_pread64 -e syscalls:sys_enter_clone -- \
+              docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" \
+                -e 'setTimeout(() => {}, 300)' || echo "perf record exited $?"
+            sudo perf script -i failed.data -F comm,tid,time,event,trace 2>/dev/null >| failed.txt || echo "perf script exited $?"
+            python3 - failed.txt <<'PY'
+          import re, sys
+          syscall_names = {0: "read", 1: "write", 2: "open", 4: "stat", 9: "mmap", 10: "mprotect", 11: "munmap", 12: "brk",
+                           13: "rt_sigaction", 16: "ioctl", 21: "access", 25: "mremap", 28: "madvise", 39: "getpid", 56: "clone",
+                           59: "execve", 72: "fcntl", 89: "readlink", 157: "prctl", 202: "futex", 228: "clock_gettime",
+                           257: "openat", 262: "newfstatat", 267: "readlinkat", 302: "prlimit64", 318: "getrandom",
+                           332: "statx", 334: "rseq", 435: "clone3", 439: "faccessat2"}
+          node_start = None
+          first_read = None
+          first_clone = None
+          failed_list = []
+          for line in open(sys.argv[1]):
+              match = re.match(r"\s*(\S.*?)\s+(\d+)\s+(\d+\.\d+):\s+(\S+):\s*(.*)", line)
+              if not match:
+                  continue
+              comm, thread_id, time_text, event_name, rest_text = match.groups()
+              event_time = float(time_text)
+              is_node = comm == "node" or comm.startswith("node-") or comm.startswith("V8")
+              if is_node and node_start is None:
+                  node_start = event_time
+              if node_start is None:
+                  continue
+              elapsed = (event_time - node_start) * 1000
+              if comm.startswith("provjobd") and "pread64" in event_name and first_read is None:
+                  first_read = elapsed
+              if is_node and "sys_enter_clone" in event_name and first_clone is None:
+                  first_clone = elapsed
+              if is_node and event_name == "raw_syscalls:sys_exit":
+                  syscall_match = re.search(r"NR (\d+) = (-?\d+)", rest_text)
+                  if syscall_match:
+                      syscall_id, result = int(syscall_match.group(1)), int(syscall_match.group(2))
+                      failed_list.append((elapsed, comm, syscall_names.get(syscall_id, str(syscall_id)), result))
+          print(f"  first clone at {first_clone} ms, provjobd first pread at {first_read} ms")
+          print("  node's failed syscalls up to 2 ms after provjobd's first pread:")
+          for elapsed, comm, syscall_name, result in failed_list:
+              if first_read is None or elapsed <= first_read + 2:
+                  print(f"    +{elapsed:7.2f} ms {comm:16s} {syscall_name} = {result}")
+          PY
+          done
