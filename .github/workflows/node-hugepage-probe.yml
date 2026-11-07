@@ -286,3 +286,25 @@ jobs:
           diff <(sed -E 's/0x[0-9a-f]+/ADDR/g' verbose-0.txt) <(sed -E 's/0x[0-9a-f]+/ADDR/g' verbose-1.txt) | head -120 || true
           echo "--- large_pages=1 option lines"
           grep -iE 'option|large|thp|arena|reserve' verbose-1.txt | head -40 || true
+
+      - name: Spawn cost against where mimalloc's regions landed
+        run: |
+          set -euo pipefail
+          for run in $(seq 1 16); do
+            for large_pages in 0 1; do
+              docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" -e '
+                const { spawnSync } = require("child_process");
+                for (let warm = 0; warm < 10; warm++) spawnSync("true");
+                const before = process.resourceUsage();
+                for (let rep = 0; rep < 200; rep++) spawnSync("true");
+                const parentSysMs = (process.resourceUsage().systemCPUTime - before.systemCPUTime) / 1000;
+                const bigRegions = require("fs").readFileSync("/proc/self/smaps", "utf8").split(/\n(?=[0-9a-f]+-)/)
+                  .map(block => ({ range: block.split(" ")[0], size_mb: 0, flags: (block.match(/VmFlags:(.*)/) || [])[1] || "" }))
+                  .map(region => { const [start, end] = region.range.split("-").map(text => parseInt(text, 16));
+                    return { ...region, start, size_mb: (end - start) / 1048576 }; })
+                  .filter(region => region.size_mb >= 32 && !/\bdc\b/.test(region.flags) && region.start < 0x500000000000);
+                console.log(`large_pages=${process.env.MIMALLOC_ALLOW_LARGE_OS_PAGES} parent sys ${parentSysMs.toFixed(0)} ms |`,
+                  bigRegions.map(region => `${region.start.toString(16)}+${region.size_mb}M${/\bhg\b/.test(region.flags) ? "hg" : ""}`).join(" "));
+              '
+            done
+          done
