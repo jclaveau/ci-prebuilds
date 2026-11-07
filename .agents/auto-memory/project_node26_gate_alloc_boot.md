@@ -21,7 +21,7 @@ Probe: `node-alloc-boot-profile.yml` + `node/bench/alloc-boot-probe.cjs`; per-CP
 
 **mimalloc options** (round 4 run 42330744004, round 5 run 42333710198 with arm order rotated):
 - alloc_buffers: none closes it. PURGE_DELAY=-1 a few % at best, EAGER_COMMIT / ALLOW_LARGE_OS_PAGES nothing, PURGE_DELAY=0 3.4-5.0x dearer.
-- boot_e0: `MIMALLOC_ALLOW_LARGE_OS_PAGES=1` cuts 2-7% (7763 1.085x→1.013x, 9V45 1.026x→0.995x vs official), faults/spawn unchanged; host THP `madvise`. Not shipped; RSS cost unmeasured.
+- boot_e0: `MIMALLOC_ALLOW_LARGE_OS_PAGES=1` cuts 2-7% (7763 1.085x→1.013x, 9V45 1.026x→0.995x vs official), faults/spawn unchanged; host THP `madvise`. SHIPPED f998075 (run 42341824830, 9V74 gate boot_e0 1.013x vs ubuntu, alloc 0.98x); RSS cost unmeasured.
 - a fixed arm order biases the first arm: rotate it per round.
 
-**How to apply:** don't chase our build for these rows. alloc_buffers = accept or per-row ceiling; boot_e0 lever = ALLOW_LARGE_OS_PAGES (jean's call, measure RSS first). See [[node-stage-b-measured]], [[alpine-node-gap-is-apk-build-config]].
+**How to apply:** don't chase our build for these rows. alloc_buffers = accept or per-row ceiling; boot_e0 lever ALLOW_LARGE_OS_PAGES is shipped; gate json_roundtrip is bimodal (26 or 36 ms per shot on both arms), a breach there is noise. See [[node-stage-b-measured]], [[alpine-node-gap-is-apk-build-config]].
