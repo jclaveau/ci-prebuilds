@@ -1035,3 +1035,72 @@ jobs:
           print(f"  provjobd pread64 calls after node start: {pread_count}")
           PY
           done
+      - name: What node's main thread does between start and its first thread, off vs on
+        run: |
+          set -euo pipefail
+          for large_pages in 0 1 0 1; do
+            echo "--- large_pages=$large_pages"
+            grep -E '^thp_(fault_alloc|fault_fallback|split_pmd|zero_page_alloc) ' /proc/vmstat >| "vmstat-before.txt"
+            sudo perf record -q -a -F 20000 -m 4096 -o "window-$large_pages.data" \
+              -e cpu-clock -e sched:sched_switch -e exceptions:page_fault_user \
+              -e syscalls:sys_enter_madvise -e syscalls:sys_enter_mprotect -e syscalls:sys_enter_munmap \
+              -e syscalls:sys_exit_mmap -e syscalls:sys_enter_clone -- \
+              docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" \
+                -e 'setTimeout(() => {}, 300)' || echo "perf record exited $?"
+            grep -E '^thp_(fault_alloc|fault_fallback|split_pmd|zero_page_alloc) ' /proc/vmstat \
+              | paste - <(cat vmstat-before.txt) | awk '{ print "  vmstat " $1 " +" $2 - $4 }'
+            sudo perf script -i "window-$large_pages.data" -F comm,tid,time,event,sym,dso,trace 2>/dev/null >| "window-$large_pages.txt" \
+              || echo "perf script exited $?"
+            python3 - "window-$large_pages.txt" <<'PY'
+          import collections, re, sys
+          node_thread = None
+          node_start = None
+          first_clone = None
+          line_list = []
+          for line in open(sys.argv[1]):
+              match = re.match(r"\s*(\S.*?)\s+(\d+)\s+(\d+\.\d+):\s+(?:\d+\s+)?(\S+):\s*(.*)", line)
+              if not match:
+                  continue
+              comm, thread_id, time_text, event_name, rest_text = match.groups()
+              event_time = float(time_text)
+              if node_thread is None and comm == "node":
+                  node_thread, node_start = thread_id, event_time
+              if thread_id == node_thread or (event_name == "sched:sched_switch" and node_thread and f"={node_thread} " in rest_text):
+                  line_list.append((event_time, comm, thread_id, event_name, rest_text))
+                  if event_name == "syscalls:sys_enter_clone" and first_clone is None:
+                      first_clone = event_time
+          if node_start is None or first_clone is None:
+              print("  node start or first clone not seen")
+              sys.exit(0)
+          window_ms = (first_clone - node_start) * 1000
+          print(f"  window start -> first clone: {window_ms:.1f} ms")
+          on_cpu_by_symbol = collections.Counter()
+          event_count = collections.Counter()
+          madvise_list = []
+          off_cpu_ms = 0.0
+          switched_out_at = None
+          for event_time, comm, thread_id, event_name, rest_text in line_list:
+              if not node_start <= event_time <= first_clone:
+                  continue
+              event_count[event_name] += 1
+              if event_name == "cpu-clock":
+                  symbol = " ".join(rest_text.split()[1:]) or rest_text
+                  on_cpu_by_symbol[symbol] += 1
+              elif event_name == "sched:sched_switch":
+                  if f"prev_pid={node_thread} " in rest_text:
+                      switched_out_at = event_time
+                  elif f"next_pid={node_thread} " in rest_text and switched_out_at is not None:
+                      off_cpu_ms += (event_time - switched_out_at) * 1000
+                      switched_out_at = None
+              elif event_name == "syscalls:sys_enter_madvise":
+                  madvise_list.append(f"+{(event_time - node_start) * 1000:.1f} ms {rest_text.strip()}")
+          print(f"  off-CPU in window: {off_cpu_ms:.1f} ms")
+          print("  events in window: " + ", ".join(f"{name.split(':')[-1]} {count}" for name, count in sorted(event_count.items())))
+          print("  on-CPU samples (50 us each) by symbol, top 15:")
+          for symbol, count in on_cpu_by_symbol.most_common(15):
+              print(f"    {count:5d} {symbol[:110]}")
+          print("  madvise calls in window:")
+          for madvise_line in madvise_list[:12]:
+              print(f"    {madvise_line[:150]}")
+          PY
+          done
