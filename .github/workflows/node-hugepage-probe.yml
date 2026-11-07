@@ -1207,3 +1207,64 @@ jobs:
                   print(f"    +{elapsed:7.2f} ms {comm:16s} {syscall_name} = {result}")
           PY
           done
+      - name: Does a failed io_uring_setup make provjobd read a process, and does UV_USE_IO_URING=0 stop node's
+        run: |
+          set -euo pipefail
+          cat >| uring-trigger.py <<'PY'
+          import ctypes, sys, time
+          libc = ctypes.CDLL(None, use_errno=True)
+          time.sleep(0.2)
+          if sys.argv[1] == "uring":
+              params = ctypes.create_string_buffer(120)
+              ring_fd = libc.syscall(425, 4, params)
+              print(f"    io_uring_setup = {ring_fd}, errno {ctypes.get_errno()}")
+          time.sleep(0.6)
+          PY
+          for where_name in host container; do
+            for arm_name in none uring none uring; do
+              if [ "$where_name" = host ]; then
+                command_list=(python3 uring-trigger.py "$arm_name")
+              else
+                command_list=(docker run --rm -v "$PWD/uring-trigger.py:/t.py:ro" python:3.13-alpine python3 /t.py "$arm_name")
+              fi
+              sudo perf record -q -a -m 1024 -o uring.data -e syscalls:sys_enter_pread64 -e raw_syscalls:sys_exit --filter 'id == 425' -- \
+                "${command_list[@]}" || echo "perf record exited $?"
+              sudo perf script -i uring.data -F comm,time,event 2>/dev/null >| uring.txt || echo "perf script exited $?"
+              python3 - uring.txt "$where_name" "$arm_name" <<'PY'
+          import re, sys
+          setup_time = None
+          read_list = []
+          for line in open(sys.argv[1]):
+              match = re.match(r"\s*(\S.*?)\s+(\d+\.\d+):\s+(\S+):", line)
+              if not match:
+                  continue
+              comm, time_text, event_name = match.groups()
+              if comm.startswith("python") and event_name == "raw_syscalls:sys_exit" and setup_time is None:
+                  setup_time = float(time_text)
+              if comm.startswith("provjobd") and "pread64" in event_name:
+                  read_list.append(float(time_text))
+          first_gap = f"{(read_list[0] - setup_time) * 1000:.1f} ms after io_uring_setup" if read_list and setup_time else "-"
+          print(f"  {sys.argv[2]:9s} {sys.argv[3]:5s} provjobd preads {len(read_list)}, first {first_gap}")
+          PY
+            done
+          done
+          for round_index in 1 2 3; do
+            for arm_spec in "0 1" "0 0" "1 1" "1 0"; do
+              read -r large_pages use_uring <<<"$arm_spec"
+              sudo perf record -q -a -m 1024 -o node-uring.data \
+                -e syscalls:sys_enter_pread64 -e raw_syscalls:sys_exit --filter 'id == 425' -- \
+                docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --env "UV_USE_IO_URING=$use_uring" \
+                  --entrypoint node "$NODE_IMAGE" -e '
+                    const { spawnSync } = require("child_process");
+                    for (let warm = 0; warm < 10; warm++) spawnSync("true");
+                    const before = process.cpuUsage();
+                    for (let rep = 0; rep < 100; rep++) spawnSync("true");
+                    const used = process.cpuUsage(before);
+                    console.log(`    spawn_true_x100 parent CPU ${((used.user + used.system) / 1000).toFixed(0)} ms`);
+                  ' >| node-uring.out || echo "perf record exited $?"
+              sudo perf script -i node-uring.data -F comm,time,event 2>/dev/null >| node-uring.txt || echo "perf script exited $?"
+              setup_count=$(grep -c 'raw_syscalls:sys_exit' node-uring.txt || true)
+              read_count=$(grep -E '^\s*provjobd' node-uring.txt | grep -c pread64 || true)
+              echo "  round $round_index large_pages=$large_pages UV_USE_IO_URING=$use_uring: io_uring_setup $setup_count, provjobd preads $read_count$(cat node-uring.out)"
+            done
+          done
