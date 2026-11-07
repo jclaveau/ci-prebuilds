@@ -812,12 +812,13 @@ jobs:
           candidate_list="do_anonymous_page do_pte_missing do_huge_pmd_anonymous_page move_ptes move_page_tables move_pgt_entry change_pte_range copy_pte_range madvise_populate faultin_page __get_user_pages do_set_pmd set_huge_zero_folio insert_pfn vm_insert_page remap_pfn_range_internal mfill_atomic_pte_zeropage collapse_huge_page do_numa_page"
           probe_events=()
           for function_name in $candidate_list; do
-            if sudo grep -qw "$function_name" /proc/kallsyms && sudo perf probe -q -a "$function_name" 2>/dev/null; then
-              probe_events+=(-e "probe:$function_name")
-            else
-              echo "no probe for $function_name"
-            fi
+            sudo grep -qw "$function_name" /proc/kallsyms && sudo perf probe -q -a "$function_name" 2>/dev/null \
+              || echo "no probe for $function_name"
           done
+          for event_name in $(sudo perf probe -l 2>/dev/null | awk '{ print $1 }'); do
+            probe_events+=(-e "$event_name")
+          done
+          echo "probes: ${probe_events[*]}"
           for large_pages in 0 1 0 1; do
             echo "--- large_pages=$large_pages"
             sudo perf record -q -a -g "${probe_events[@]}" -o "pte-$large_pages.data" -- \
