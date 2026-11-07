@@ -44,6 +44,7 @@ on:
       - '!node/bench/pnpm-install-probe-report.py'
       - '!node/bench/pnpm-stat-paths.py'
       - '.github/workflows/pnpm-install-probe.yml'
+      - '.github/workflows/node-alloc-boot-profile.yml'
   pull_request:
     branches: [ main ]
     paths-ignore:
@@ -69,6 +70,7 @@ on:
       - '!node/bench/pnpm-install-probe-report.py'
       - '!node/bench/pnpm-stat-paths.py'
       - '.github/workflows/pnpm-install-probe.yml'
+      - '.github/workflows/node-alloc-boot-profile.yml'
   # Reusable entry point: lets `on-demand-build.yml` (issue-triggered) call
   # this workflow with version overrides + matrix filters. Every input defaults
   # to empty / `true` so the push/PR path is byte-identical to today (verified

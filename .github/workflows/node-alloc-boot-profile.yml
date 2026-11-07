@@ -1,0 +1,283 @@
+name: node alloc + boot profile (node 26 gate rows)
+
+# Why do alloc_buffers and boot_e0 breach node-perf-gate on node 26 (9V74,
+# run 42308999875: alloc_buffers 271 vs ubuntu 240 ms, boot_e0 27.3 vs 25.2 ms)
+# when node 24 sat at parity on the same CPU model (run 41931856074)? Each
+# replicate is one runner; every arm is timed there, interleaved per round,
+# with node/bench/alloc-boot-probe.cjs splitting each row into its parts.
+#
+# Arms:
+#   b26          alpine-dood-node:latest, Stage B node 26 (clang23, mimalloc LD_PRELOAD)
+#   b26_nopre    same image, LD_PRELOAD emptied: musl mallocng
+#   b24          alpine-dood-node:main-2d5cd53, Stage B node 24.22.1
+#   gcc26        alpine-dood-node with unofficial-builds' gcc musl node 26 staged in
+#   ubuntu26     ubuntu-dood-node:latest (NodeSource, glibc)
+#   ubuntu24     ubuntu-dood-node:main-2d5cd53
+#   off26        node:26.13.0-bookworm-slim
+#   off26_mi     node:26.13.0-bookworm-slim with Debian's mimalloc LD_PRELOADed
+#   off24        node:24.22.1-bookworm-slim
+
+on:
+  workflow_dispatch:
+    inputs:
+      replicates:
+        description: 'Runners (one job each)'
+        default: '4'
+      rounds:
+        description: 'interleaved rounds per runner'
+        default: '5'
+      loop_seconds:
+        description: 'perf stat / perf record loop length per arm and row'
+        default: '10'
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      replicate_list: ${{ steps.list.outputs.replicate_list }}
+    steps:
+      - id: list
+        env:
+          REPLICATES: ${{ inputs.replicates }}
+        run: echo "replicate_list=$(python3 -c "import json,os; print(json.dumps(list(range(1, int(os.environ['REPLICATES']) + 1))))")" >> "$GITHUB_OUTPUT"
+
+  profile:
+    needs: matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        replicate: ${{ fromJSON(needs.matrix.outputs.replicate_list) }}
+    env:
+      ROUNDS: ${{ inputs.rounds }}
+      LOOP_SECONDS: ${{ inputs.loop_seconds }}
+      PROFILED_ARMS: b26 b26_nopre b24 gcc26 off26 off26_mi off24
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Runner CPU and PMU
+        run: |
+          set -euo pipefail
+          mkdir -p out && chmod 777 out
+          grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ //' | tee out/cpu.txt
+          sudo sysctl -w kernel.perf_event_paranoid=-1
+          if python3 playwright/bench/pmu-check.py; then echo "HAVE_PMU=1" >> "$GITHUB_ENV"
+          else echo "::warning::no PMU on $(cat out/cpu.txt): software counters only"; fi
+
+      - name: Stage the arms
+        run: |
+          set -euo pipefail
+          for image in ghcr.io/jclaveau/alpine-dood-node:latest ghcr.io/jclaveau/alpine-dood-node:main-2d5cd53 \
+                       ghcr.io/jclaveau/ubuntu-dood-node:latest ghcr.io/jclaveau/ubuntu-dood-node:main-2d5cd53 \
+                       node:26.13.0-bookworm-slim node:24.22.1-bookworm-slim; do
+            docker pull -q "$image"
+          done
+          node_version=26.13.0
+          pinned_sha=$(awk -v version="$node_version" '$1 == version { print $2 }' node/node-musl-sha256.txt)
+          [ -n "$pinned_sha" ] || { echo "no sha256 for node $node_version in node/node-musl-sha256.txt" >&2; exit 1; }
+          mkdir -p tarball-src mimalloc-src
+          cat > tarball-src/Dockerfile <<EOF
+          FROM alpine:3.24 AS fetch
+          RUN apk add --no-cache curl xz \
+              && curl -fsSLo /tmp/node.tar.xz "https://unofficial-builds.nodejs.org/download/release/v${node_version}/node-v${node_version}-linux-x64-musl.tar.xz" \
+              && echo "${pinned_sha}  /tmp/node.tar.xz" | sha256sum -c - \
+              && mkdir /node && tar -xJf /tmp/node.tar.xz -C /node --strip-components=1 --no-same-owner
+          FROM scratch
+          COPY --from=fetch /node /node
+          EOF
+          docker build -q -t tarball-src:local tarball-src
+          docker build -q -f node/musl-build/Dockerfile.bench-arm \
+            --build-arg NODE_SOURCE_IMAGE=tarball-src:local -t probe-arm:gcc26 node/musl-build
+          cat > mimalloc-src/Dockerfile <<'EOF'
+          FROM node:26.13.0-bookworm-slim
+          RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends libmimalloc2.0 >/dev/null \
+              && rm -rf /var/lib/apt/lists/* \
+              && library_path=$(dpkg -L libmimalloc2.0 | grep -E '/libmimalloc\.so\.2' | head -n1) \
+              && test -n "$library_path" \
+              && ln -s "$library_path" /usr/local/lib/libmimalloc-preload.so
+          ENV LD_PRELOAD=/usr/local/lib/libmimalloc-preload.so
+          RUN node -e "if (!require('fs').readFileSync('/proc/self/maps', 'utf8').includes('mimalloc')) throw new Error('mimalloc is not mapped')"
+          EOF
+          docker build -q -t probe-arm:off26_mi mimalloc-src
+          # <arm> <image> <docker run env flag or ->
+          cat > out/arms.txt <<'EOF'
+          b26 ghcr.io/jclaveau/alpine-dood-node:latest -
+          b26_nopre ghcr.io/jclaveau/alpine-dood-node:latest LD_PRELOAD=
+          b24 ghcr.io/jclaveau/alpine-dood-node:main-2d5cd53 -
+          gcc26 probe-arm:gcc26 -
+          ubuntu26 ghcr.io/jclaveau/ubuntu-dood-node:latest -
+          ubuntu24 ghcr.io/jclaveau/ubuntu-dood-node:main-2d5cd53 -
+          off26 node:26.13.0-bookworm-slim -
+          off26_mi probe-arm:off26_mi -
+          off24 node:24.22.1-bookworm-slim -
+          EOF
+          sed -i 's/^ *//' out/arms.txt
+          cat out/arms.txt
+
+      # Every arm runs this before it is timed: the A/B must vary what it says.
+      - name: Build config and ELF of each node
+        run: |
+          set -euo pipefail
+          while read -r arm image env_flag; do
+            env_args=(); [ "$env_flag" = - ] || env_args=(--env "$env_flag")
+            docker run --rm --user root "${env_args[@]}" --entrypoint node "$image" -e '
+              const maps = require("fs").readFileSync("/proc/self/maps", "utf8");
+              console.log(JSON.stringify({
+                version: process.version, v8: process.versions.v8,
+                ld_preload: process.env.LD_PRELOAD || "",
+                mapped_allocators: [...new Set(maps.match(/\S*(malloc|jemalloc|tcmalloc)\S*/g) || [])],
+                config: process.config.variables,
+              }));' >| "out/config-$arm.json"
+            node_path=$(docker run --rm --user root --entrypoint sh "$image" -c 'readlink -f "$(command -v node)"')
+            container_id=$(docker create "$image")
+            docker cp -q "$container_id:$node_path" "out/node-$arm"
+            docker rm "$container_id" >/dev/null
+            {
+              echo "path $node_path size $(stat -c %s "out/node-$arm")"
+              readelf -d "out/node-$arm" | grep -E 'NEEDED|FLAGS|RELR|RELACOUNT|BIND_NOW' || true
+              readelf -SW "out/node-$arm" | grep -E '\] \.(text|rodata|data\.rel\.ro|data|bss|rela\.dyn|relr\.dyn|rela\.plt|lrodata|ldata|eh_frame|tbss|tdata) ' || true
+              echo "dynamic relocations $(readelf -rW "out/node-$arm" | grep -cE '^[0-9a-f]{8,} ' || true)"
+              echo "exported dynamic symbols $(readelf --dyn-syms -W "out/node-$arm" | grep -c ' GLOBAL ' || true)"
+              echo "program headers"; readelf -lW "out/node-$arm" | grep -E 'LOAD|GNU_RELRO|GNU_STACK|TLS'
+            } >| "out/elf-$arm.txt"
+            rm "out/node-$arm"
+            echo "--- $arm"; cat "out/elf-$arm.txt"
+          done < out/arms.txt
+
+      - name: Time every row, interleaved
+        run: |
+          set -euo pipefail
+          for round in $(seq 1 "$ROUNDS"); do
+            while read -r arm image env_flag; do
+              env_args=(); [ "$env_flag" = - ] || env_args=(--env "$env_flag")
+              docker run --rm "${env_args[@]}" --entrypoint node -v "$PWD/node/bench:/bench:ro" "$image" \
+                /bench/alloc-boot-probe.cjs time >| "out/time-$arm-$round.json" < /dev/null
+              echo "round $round $arm $(cat "out/time-$arm-$round.json")"
+            done < out/arms.txt
+          done
+
+      - name: GC count of one alloc_zero run
+        run: |
+          set -euo pipefail
+          while read -r arm image env_flag; do
+            env_args=(); [ "$env_flag" = - ] || env_args=(--env "$env_flag")
+            docker run --rm "${env_args[@]}" --entrypoint node -v "$PWD/node/bench:/bench:ro" "$image" \
+              --trace-gc /bench/alloc-boot-probe.cjs once alloc_zero < /dev/null >| "out/gc-$arm.txt"
+            echo "$arm $(grep -oE '(Scavenge|Mark-Compact|Mark-Sweep|Minor Mark-Sweep)' "out/gc-$arm.txt" | sort | uniq -c | tr '\n' ' ')"
+          done < out/arms.txt
+
+      - name: perf stat, strace and perf record per arm
+        run: |
+          set -euo pipefail
+          if [ "${HAVE_PMU:-0}" = 1 ]; then
+            stat_events=task-clock,page-faults,context-switches,cpu-migrations,cycles,instructions
+            record_event=cycles
+          else
+            stat_events=task-clock,page-faults,context-switches,cpu-migrations
+            record_event=cpu-clock
+          fi
+          while read -r arm image env_flag; do
+            case " $PROFILED_ARMS " in *" $arm "*) ;; *) continue ;; esac
+            env_args=(); [ "$env_flag" = - ] || env_args=(--env "$env_flag")
+            docker run --rm --privileged --user root --security-opt seccomp=unconfined "${env_args[@]}" \
+              --entrypoint sh -v "$PWD/node/bench:/bench:ro" -v "$PWD/out:/out" "$image" -c '
+                set -e
+                if command -v apk >/dev/null; then apk add --no-cache perf strace >/dev/null
+                else apt-get update -qq && apt-get install -y -qq --no-install-recommends linux-perf strace >/dev/null; fi
+                for row in alloc_zero boot_e0; do
+                  perf stat -x, -e '"$stat_events"' -o /out/stat-'"$arm"'-$row.csv -- \
+                    node /bench/alloc-boot-probe.cjs loop $row '"$LOOP_SECONDS"' >| /out/loopcount-'"$arm"'-$row.txt
+                  perf record -q -e '"$record_event"' -F 4999 -o /tmp/perf-$row.data -- \
+                    node /bench/alloc-boot-probe.cjs loop $row '"$LOOP_SECONDS"' >/dev/null
+                  perf report -f -i /tmp/perf-$row.data --no-children --no-inline --sort comm,dso,sym --stdio \
+                    --percent-limit 0.4 2>/dev/null | grep -E "^ +[0-9]" | head -45 >| /out/report-'"$arm"'-$row.txt
+                done
+                strace -f -c -o /out/strace-'"$arm"'-alloc_zero.txt node /bench/alloc-boot-probe.cjs once alloc_zero
+                strace -f -c -o /out/strace-'"$arm"'-boot_e0.txt node -e 0
+                strace -f -o /out/strace-full-'"$arm"'-boot_e0.txt node -e 0
+              ' < /dev/null 2>&1 | tail -5
+            sudo chown -R "$(id -u):$(id -g)" out
+          done < out/arms.txt
+
+      - name: Report
+        if: always()
+        run: |
+          set -o pipefail
+          python3 - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import glob, json, os, statistics
+          cpu = open('out/cpu.txt').read().strip()
+          print(f'## alloc + boot profile on {cpu}\n')
+          arms = [line.split()[0] for line in open('out/arms.txt') if line.strip()]
+          medians = {}
+          for arm in arms:
+              docs = [json.load(open(path)) for path in sorted(glob.glob(f'out/time-{arm}-*.json'))]
+              if docs:
+                  medians[arm] = {row: statistics.median(doc['medians'][row] for doc in docs) for row in docs[0]['medians']}
+          rows = list(next(iter(medians.values())).keys()) if medians else []
+          print('CPU-ms, median of the round medians; ratio vs off26\n')
+          print('| arm | ' + ' | '.join(rows) + ' |')
+          print('| --- |' + ' --- |' * len(rows))
+          for arm, by_row in medians.items():
+              cells = []
+              for row in rows:
+                  reference = medians.get('off26', {}).get(row)
+                  ratio = f' ({by_row[row] / reference:.3f}x)' if reference else ''
+                  cells.append(f'{by_row[row]:.1f}{ratio}')
+              print(f'| {arm} | ' + ' | '.join(cells) + ' |')
+          print()
+          for arm in arms:
+              path = f'out/gc-{arm}.txt'
+              if os.path.exists(path):
+                  kinds = {}
+                  for line in open(path):
+                      for kind in ('Minor Mark-Sweep', 'Scavenge', 'Mark-Compact', 'Mark-Sweep'):
+                          if kind in line:
+                              kinds[kind] = kinds.get(kind, 0) + 1
+                              break
+                  print(f'- gc {arm}: {json.dumps(kinds)}')
+          print()
+          for arm in arms:
+              for row in ('alloc_zero', 'boot_e0'):
+                  stat_path = f'out/stat-{arm}-{row}.csv'
+                  if not os.path.exists(stat_path):
+                      continue
+                  loop_line = open(f'out/loopcount-{arm}-{row}.txt').read().split()
+                  run_count = int(loop_line[2])
+                  counters = []
+                  for line in open(stat_path):
+                      fields = line.strip().split(',')
+                      if len(fields) > 3 and fields[0][:1].isdigit():
+                          counters.append(f'{fields[2]} {float(fields[0]) / run_count:,.1f}')
+                  print(f'- per {row} run, {arm} ({run_count} runs): ' + ', '.join(counters))
+          print()
+          for arm in arms:
+              for row in ('alloc_zero', 'boot_e0'):
+                  for kind in ('strace', 'report'):
+                      path = f'out/{kind}-{arm}-{row}.txt'
+                      if os.path.exists(path):
+                          print(f'### {kind} {arm} {row}\n```')
+                          print(''.join(open(path).readlines()[:40]))
+                          print('```')
+          for arm in arms:
+              path = f'out/elf-{arm}.txt'
+              if os.path.exists(path):
+                  print(f'### elf {arm}\n```\n{open(path).read()}```')
+          print('=== DONE ===')
+          PY
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: node-alloc-boot-profile-${{ matrix.replicate }}
+          path: out/
+          retention-days: 90
