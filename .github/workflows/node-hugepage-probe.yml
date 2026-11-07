@@ -358,3 +358,68 @@ jobs:
               '
             done
           done
+
+      - name: Which mappings hold node's zero-page PTEs, and which thread owns them
+        run: |
+          set -euo pipefail
+          cat >| "$RUNNER_TEMP/zero-page-regions.js" <<'PROBE'
+          const { spawnSync } = require("child_process");
+          const fs = require("fs");
+          for (let warm = 0; warm < 10; warm++) spawnSync("true");
+          const before = process.resourceUsage();
+          for (let rep = 0; rep < 200; rep++) spawnSync("true");
+          console.log(`x200 parent sys ${((process.resourceUsage().systemCPUTime - before.systemCPUTime) / 1000).toFixed(0)} ms`);
+          const threadList = fs.readdirSync("/proc/self/task").map(tid => {
+            const statFields = fs.readFileSync(`/proc/self/task/${tid}/stat`, "utf8").split(") ")[1].split(" ");
+            const syscallFields = fs.readFileSync(`/proc/self/task/${tid}/syscall`, "utf8").trim().split(" ");
+            return { tid, name: fs.readFileSync(`/proc/self/task/${tid}/comm`, "utf8").trim(),
+              stackPointer: parseInt(syscallFields[syscallFields.length - 2], 16), startStack: Number(statFields[25]) };
+          });
+          const smapsBlocks = fs.readFileSync("/proc/self/smaps", "utf8").split(/\n(?=[0-9a-f]+-[0-9a-f]+ )/);
+          const mappingList = smapsBlocks.map(block => {
+            const [range, perms] = block.split(" ");
+            const [start, end] = range.split("-").map(text => parseInt(text, 16));
+            return { range, perms, start, end, flags: (block.match(/VmFlags:\s*(.*)/) || [])[1] || "",
+              rss: Number((block.match(/^Rss:\s+(\d+)/m) || [])[1] || 0), name: block.split("\n")[0].split(/\s+/)[5] || "[anon]" };
+          });
+          const pagemapFd = fs.openSync("/proc/self/pagemap", "r");
+          const kpageflagsFd = fs.openSync("/proc/kpageflags", "r");
+          const flagBuffer = Buffer.alloc(8);
+          const totals = { present: 0, zero: 0, unreadable: 0 };
+          mappingList.forEach((mapping, index) => {
+            if (mapping.end - mapping.start > 2 ** 31 || mapping.start >= 2 ** 47) return;
+            const pageCount = (mapping.end - mapping.start) / 4096;
+            const entryBuffer = Buffer.alloc(pageCount * 8);
+            try { fs.readSync(pagemapFd, entryBuffer, 0, entryBuffer.length, (mapping.start / 4096) * 8); } catch (error) { totals.unreadable++; console.log('unreadable', mapping.range, JSON.stringify(error.message)); return; }
+            let zeroCount = 0, firstZero = -1, lastZero = -1;
+            for (let page = 0; page < pageCount; page++) {
+              const entry = entryBuffer.readBigUInt64LE(page * 8);
+              if (!(entry >> 63n)) continue;
+              totals.present++;
+              const pageFrame = entry & ((1n << 55n) - 1n);
+              if (pageFrame === 0n) continue;
+              fs.readSync(kpageflagsFd, flagBuffer, 0, 8, Number(pageFrame) * 8);
+              if ((flagBuffer.readBigUInt64LE(0) >> 24n) & 1n) {
+                zeroCount++; totals.zero++;
+                if (firstZero < 0) firstZero = page;
+                lastZero = page;
+              }
+            }
+            if (zeroCount < 64) return;
+            const owners = threadList.filter(thread => [thread.stackPointer, thread.startStack].some(address => address >= mapping.start && address < mapping.end));
+            const neighbour = offset => { const other = mappingList[index + offset]; return other ? `${other.range} ${other.perms} ${other.name} [${other.flags}]` : "-"; };
+            console.log(`${mapping.range} ${mapping.perms} ${mapping.name} size ${(mapping.end - mapping.start) / 1024}k rss ${mapping.rss}k zero ${zeroCount}`,
+              `pages ${firstZero}..${lastZero} [${mapping.flags}] threads ${owners.map(thread => thread.name).join(",") || "none"}`);
+            console.log(`    before ${neighbour(-1)}`);
+            console.log(`    after  ${neighbour(1)}`);
+          });
+          console.log("totals", JSON.stringify(totals));
+          console.log("threads", threadList.map(thread => `${thread.name}@${thread.stackPointer.toString(16)}`).join(" "));
+          PROBE
+          for round in 1 2; do
+            for large_pages in 0 1; do
+              echo "--- round $round large_pages=$large_pages"
+              docker run --rm --privileged --user 0 -v "$RUNNER_TEMP/zero-page-regions.js:/probe.js:ro" \
+                --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" /probe.js
+            done
+          done
