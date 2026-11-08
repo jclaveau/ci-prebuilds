@@ -2028,7 +2028,7 @@ jobs:
             -P ubuntu-latest="$IMG"
 
   # ----------------------------------------------------------------------------
-  # act: exercise the `prepare` composite action against each freshly-built
+  # act: exercise the `prepare` action against each freshly-built
   # dood/dind image. Mirrors test-dood-dind-act but drives smoke-prepare-<mode>.yml
   # — which calls `uses: ./.github/actions/prepare` and asserts the image-supplied
   # DOCKER_MODE / HOST_ADDRESS survive the action's `${VAR:-default}` fallbacks.
@@ -2066,7 +2066,7 @@ jobs:
 
 
   # ----------------------------------------------------------------------------
-  # act: vm-mode coverage for the `prepare` composite action — no `container:`,
+  # act: vm-mode coverage for the `prepare` action — no `container:`,
   # no image. Verifies the action's DOCKER_MODE=vm + HOST_ADDRESS=127.0.0.1
   # fallbacks fire when the consumer runs on a plain host runner (the
   # `image: ""` matrix row in tests-e2e-front.yml-style consumers).
@@ -2082,6 +2082,57 @@ jobs:
         run: bash scripts/install-act.sh
       - name: Run the prepare-vm smoke through act
         run: act push -W tests/act/smoke-prepare-vm.yml -P ubuntu-latest=-self-hosted
+
+  # ----------------------------------------------------------------------------
+  # act: the prebuilt-tool assertion the `prepare` action runs in its post step — a step
+  # that re-downloads a tool the image already carries gets named, and `tools-severity`
+  # decides whether that fails the job. Needs a pnpm-bearing image (the manifest starts at
+  # the node layer) with the image AS the act runner, so `pnpm/action-setup` can shadow the
+  # baked pnpm the way it does in a real consumer job. dood only: the assertion reads a
+  # manifest and a PATH, neither of which the docker mode touches.
+  # ----------------------------------------------------------------------------
+  test-prepare-tools-act:
+    runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).pnpm
+    needs: [github-context, build-pnpm-dood]
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+    env:
+      IMG: ghcr.io/jclaveau/${{ matrix.os }}-dood-pnpm:${{ needs.github-context.outputs.build_tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install act
+        run: bash scripts/install-act.sh
+      - name: Pre-pull the container image
+        run: docker pull "$IMG"
+      # The grep matches the message, not its `::warning::` prefix: act renders annotations
+      # its own way, and which prefix the script emits is pinned by
+      # tests/scripts/test-prebuilt-tools-manifest.sh. Here the severity is proven by the
+      # exit code — green in this step, red in the next.
+      - name: tools-severity=warning names the replacement and leaves the job green
+        run: |
+          act push -W tests/act/smoke-prepare-tools-replaced.yml -j warns \
+            -P ubuntu-latest="$IMG" >warns.log 2>&1 || { cat warns.log; exit 1; }
+          cat warns.log
+          grep -q "pnpm was the image's .* at prepare and resolves to .* by the end of the job" warns.log \
+            || { echo "::error::the post step did not name the replaced pnpm"; exit 1; }
+      - name: tools-severity=error fails the job
+        run: |
+          rc=0
+          act push -W tests/act/smoke-prepare-tools-replaced.yml -j fails \
+            -P ubuntu-latest="$IMG" >fails.log 2>&1 || rc=$?
+          cat fails.log
+          test "$rc" -ne 0 || { echo "::error::the error arm stayed green"; exit 1; }
+          grep -q "pnpm was the image's .* at prepare and resolves to .* by the end of the job" fails.log \
+            || { echo "::error::the error arm failed for some other reason"; exit 1; }
 
 
   # ----------------------------------------------------------------------------

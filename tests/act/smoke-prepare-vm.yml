@@ -1,10 +1,10 @@
-# Smoke workflow for the `prepare` composite action in vm-mode (no container).
+# Smoke workflow for the `prepare` action in vm-mode (no container).
 # Runs under `act` from test-prepare-vm-act in test-and-publish.yml. Image-less
 # — exercises the `${VAR:-default}` fallbacks for consumers running on a plain
 # `runs-on: ubuntu-latest` host without any of these images.
 #
 # What this proves: with neither DOCKER_MODE nor HOST_ADDRESS set on the
-# environment, the composite defaults them to `vm` and `127.0.0.1`. The
+# environment, the action defaults them to `vm` and `127.0.0.1`. The
 # `start-dockerd` step must NOT run (its `if:` gates on DOCKER_MODE=dind).
 name: act smoke prepare (vm)
 on: [push]

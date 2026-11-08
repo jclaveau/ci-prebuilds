@@ -20,7 +20,8 @@ ENV PATH="${PATH}:${PNPM_HOME}:${PNPM_HOME}/bin"
 
 
 RUN echo "Install PNPM via the npm registry (SHA512-checked tarballs)" \
-    && sudo npm install -g pnpm@${PNPM_VERSION}
+    && sudo npm install -g pnpm@${PNPM_VERSION} \
+    && sudo record-image-tool pnpm
 
 # `share-dir-with-runner-group <dir>...`: makes an image-baked state dir under
 # /home/runner writable by the `runner` GROUP, so a container run under an

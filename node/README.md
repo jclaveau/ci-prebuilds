@@ -74,6 +74,9 @@ hardened without `sudo`.
   (ubuntu 3234). Every process here inherits it.
 - **That node, registered in the tool cache** — so `actions/setup-node` resolves it instead of
   downloading another one (see [Keeping `actions/setup-node`](#keeping-actionssetup-node)).
+- **A manifest of what it prebuilt**, and the script that asserts the job still runs it, so a
+  step that downloads its own node or pnpm gets named rather than silently paid for twice (see
+  [The prebuilt-tool manifest](#the-prebuilt-tool-manifest)).
 
 ## What it implies
 - Built for **both modes and both OSes**: `ubuntu-dood-node`, `alpine-dind-node`, etc.
@@ -86,3 +89,41 @@ hardened without `sudo`.
 - **No node-gyp toolchain here** — inherits the [`gha-tools` compiler omission](../ubuntu-gha-tools/README.md#whats-deliberately-omitted-and-why).
   For `npm`/`pnpm install` runs that compile native modules, use the
   [`-gyp` variant](../pnpm-gyp/README.md) (`{os}-{mode}-pnpm-gyp`).
+
+## The prebuilt-tool manifest
+
+`/etc/ci-prebuilds/prebuilt-tools.tsv` names every tool this image and the layers above it
+installed, one row written at build time by `record-image-tool`:
+
+```
+node	/usr/local/bin/node	24.22.1	121409536	1762387200
+pnpm	/usr/local/bin/pnpm	12.16.1	2143	1762387213
+```
+
+Name, resolved path, version, size, mtime. Size and mtime because both survive the layer tar
+into every container run — unlike the inode, which overlayfs renumbers — so a step that
+overwrites the baked binary with the same version is caught too. The version comes from
+running the tool, not from the build ARG: the row describes the file that ended up in the
+image.
+
+`assert-prebuilt-tools-in-use` reads it back and reports every row whose name no longer
+resolves to that file:
+
+```console
+$ assert-prebuilt-tools-in-use --severity warning
+  node  /usr/local/bin/node                           24.22.1  image
+  pnpm  /__w/_temp/setup-pnpm/node_modules/.bin/pnpm   12.17.0  REPLACED
+2 prebuilt tools checked, 1 replaced — severity=warning, not failing the job
+```
+
+`--severity error` (its default, a hand-run call being a gate) exits 1 on a finding;
+`warning` exits 0. A missing or malformed manifest, an unknown flag and a bad severity value
+exit 1 in both modes. `--write-snapshot <file>` records what each tool resolves to now, and
+passing it back as `--snapshot <file>` lets the report distinguish a tool replaced *during*
+the job from one already shadowed when it started.
+
+Consumers do not call either script: `.github/actions/prepare` snapshots in its main step and
+reports in a post step that runs even on a failed job
+([the consumer view](../README.md#prebuilt-tools-stay-the-ones-you-run)). The layers above
+this one add only their own `record-image-tool <tool>` call — `node/` is a single build
+context for both OS flavors, so both scripts exist once.

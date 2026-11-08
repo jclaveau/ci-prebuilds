@@ -1,25 +1,30 @@
 name: Prepare container/vm mode
 description: >-
   Universal pre-flight for any GHA job using these images (or none): defaults
-  DOCKER_MODE and HOST_ADDRESS for the no-image / vm case, and boots the inner
-  Docker daemon when running under a dind image. Image-side env vars
+  DOCKER_MODE and HOST_ADDRESS for the no-image / vm case, boots the inner Docker
+  daemon when running under a dind image, and reports at the end of the job any tool
+  the image prebuilt that a step replaced with its own download. Image-side env vars
   (DOCKER_MODE=dood/dind, HOST_ADDRESS=host.docker.internal/127.0.0.1) take
-  precedence — this action only fills the gap when the consumer runs on the
-  host VM with no container.
+  precedence — this action only fills the gap when the consumer runs on the host VM
+  with no container.
+
+inputs:
+  tools-severity:
+    description: >-
+      How to report a prebuilt tool the job stopped running (actions/setup-node or
+      pnpm/action-setup putting its own copy first on PATH, or a step overwriting the
+      baked binary): `warning` annotates and leaves the job green, `error` fails it.
+      Default `warning` — every consumer of these images runs this step, so bumping an
+      image tag must not turn a green workflow red.
+    required: false
+    default: warning
 
 runs:
-  using: composite
-  steps:
-    - name: "'vm' as default DOCKER_MODE"
-      shell: bash
-      run: echo "DOCKER_MODE=${DOCKER_MODE:-vm}" >> "$GITHUB_ENV"
-
-    - name: Boot inner Docker daemon (dind)
-      if: ${{ env.DOCKER_MODE == 'dind' }}
-      shell: bash
-      run: start-dockerd
-
-    - name: Default HOST_ADDRESS
-      shell: bash
-      # 127.0.0.1 not localhost — forcing ipv4 avoids connection refused errors
-      run: echo "HOST_ADDRESS=${HOST_ADDRESS:-127.0.0.1}" >> "$GITHUB_ENV"
+  # JavaScript, not composite: only a JS action can declare `post:`, and only a post step
+  # with `post-if: always()` still prints on a job a later step turned red
+  # (actions/runner#1478). node24 needs an Actions runner >= 2.327.1 (GitHub-hosted ones
+  # are well past it; act knows node24 since 0.2.88).
+  using: node24
+  main: prepare.js
+  post: assert-tools.js
+  post-if: always()

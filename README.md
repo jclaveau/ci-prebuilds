@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     container: jclaveau/ubuntu-dood-playwright-gyp:latest
     steps:
-      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0  # DOCKER_MODE/HOST_ADDRESS defaults + start-dockerd under dind
+      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0  # DOCKER_MODE/HOST_ADDRESS defaults, start-dockerd under dind, prebuilt-tool report
       - uses: actions/checkout@v4
       - run: pnpm install --frozen-lockfile
       - run: docker compose up -d --wait  # no docker mcr.microsoft.com/playwright
@@ -178,7 +178,7 @@ jobs:
       image: ${{ matrix.image }}
       options: ${{ matrix.options }}
     steps:
-      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0  # DOCKER_MODE/HOST_ADDRESS defaults + start-dockerd under dind
+      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0  # DOCKER_MODE/HOST_ADDRESS defaults, start-dockerd under dind, prebuilt-tool report
       - uses: actions/checkout@v4
 
       - if: env.DOCKER_MODE == 'vm'
@@ -203,6 +203,47 @@ See [the action](.github/actions/prepare/action.yml). Versioning:
 - `@v0` — moving tag, advanced manually on compatible action updates
 - `@v0.1.0` (immutable) or a commit SHA — full reproducibility
 - `@v1` will exist once the repo reaches v1
+
+
+## Prebuilt tools stay the ones you run
+
+Every job that starts with `prepare@v0` gets, in its post step, a report of each tool the
+image prebuilt that the job stopped running — a step put its own copy first on PATH
+(`actions/setup-node`, `pnpm/action-setup`), or overwrote the baked binary in place. That is
+the image paid for twice: once as a pull, once as a download.
+
+```
+Post Prepare container/vm mode
+  2 prebuilt tools checked, 1 replaced — severity=warning, not failing the job
+
+    node  /usr/local/bin/node                             24.22.1  image
+    pnpm  /__w/_temp/setup-pnpm/node_modules/.bin/pnpm    12.17.0  REPLACED
+```
+
+plus one annotation per finding, so it shows on the job without opening the log:
+
+```
+Warning: pnpm was the image's /usr/local/bin/pnpm at prepare and resolves to
+/__w/_temp/setup-pnpm/node_modules/.bin/pnpm by the end of the job — a step installed its own
+```
+
+`warning` is the default: a tag bump must not turn a green workflow red. Make it a gate per
+job with
+
+```yaml
+      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0
+        with:
+          tools-severity: error
+```
+
+Nothing to add on the consumer side beyond the `prepare` step it already has, and nothing to
+remove: the report names the replacement, deciding whether to drop the step is yours.
+
+The manifest it reads is written at build time by `record-image-tool`, one row per tool with
+its path, version and a size+mtime fingerprint, and lives from the
+[node layer](node/README.md#the-prebuilt-tool-manifest) up. Below it (`gha-tools`, `docker`,
+`dood`, `dind`) there is no tool worth asserting, and the post step says so instead of
+finding nothing.
 
 
 ## Roadmap

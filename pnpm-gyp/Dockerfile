@@ -18,7 +18,8 @@ ENV PNPM_HOME="/home/runner/.local/share/pnpm"
 ENV PATH="${PATH}:${PNPM_HOME}:${PNPM_HOME}/bin"
 
 RUN echo "Install PNPM via the npm registry (SHA512-checked tarballs)" \
-    && sudo npm install -g pnpm@${PNPM_VERSION}
+    && sudo npm install -g pnpm@${PNPM_VERSION} \
+    && sudo record-image-tool pnpm
 
 RUN echo "Install the node-gyp toolchain (build-essential) for native addon compilation" \
     && sudo apt-get update \

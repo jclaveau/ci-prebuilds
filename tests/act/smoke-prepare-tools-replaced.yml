@@ -1,0 +1,45 @@
+# Smoke workflow for the prebuilt-tool assertion the `prepare` action runs in its post step.
+# Runs under `act` from test-prepare-tools-act in test-and-publish.yml with the pnpm image AS
+# the runner (`-P ubuntu-latest=$IMG`), so `pnpm/action-setup@v4` can put its own pnpm first
+# on PATH exactly as it does in a real consumer job.
+#
+# What this proves, across the two jobs: a step that re-downloads a tool the image already
+# carries is named, and `tools-severity` decides whether that fails the job. Each job first
+# asserts the premise — that action-setup really did shadow the baked pnpm — so neither can
+# pass by the assertion having nothing to find.
+name: act smoke prepare (prebuilt tools replaced)
+on: [push]
+jobs:
+  warns:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/prepare
+      - uses: pnpm/action-setup@v4
+        # Not the version the image bakes, so the report's version column shows the swap too.
+        with:
+          version: 12.17.0
+          run_install: false
+      - name: action-setup shadowed the baked pnpm (the premise of the assertion)
+        run: |
+          baked=$(awk -F'\t' '$1 == "pnpm" { print $2 }' /etc/ci-prebuilds/prebuilt-tools.tsv)
+          live=$(command -v pnpm)
+          test -n "$baked" || { echo "the image recorded no pnpm row"; exit 1; }
+          test "$baked" != "$live" || { echo "pnpm still resolves $baked: nothing to find"; exit 1; }
+          echo "baked=$baked live=$live"
+
+  fails:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/prepare
+        with:
+          tools-severity: error
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.17.0
+          run_install: false
+      - name: action-setup shadowed the baked pnpm (the premise of the assertion)
+        run: |
+          baked=$(awk -F'\t' '$1 == "pnpm" { print $2 }' /etc/ci-prebuilds/prebuilt-tools.tsv)
+          test "$baked" != "$(command -v pnpm)" || { echo "nothing to find"; exit 1; }
