@@ -1,0 +1,15 @@
+Wrong commit message. This commit does not touch pnpm-install-probe; its message was
+reused by mistake from an earlier commit. What it really does:
+
+fix(renovate): merge only on a green branch; bench-arm registers its own node
+
+- renovate.json: platformAutomerge false. main has no branch protection, so GitHub's
+  native auto-merge had no required check to wait for: Renovate merged node 26 bump
+  #349 1.5 min into its Test and Publish run, which then failed and left main red.
+  With it false, Renovate merges itself, only once every check is green.
+- node/musl-build/Dockerfile.bench-arm: drop the tool-cache entry the published image
+  registered for its own node version (a major bump no longer matches it) and rerun
+  register-node-in-tool-cache as runner, checking the arch dir by process.arch.
+- .agents/auto-memory/project_renovate_topology.md: records the platformAutomerge rule.
+
+Assisted-by: Claude:claude-opus-5-5
