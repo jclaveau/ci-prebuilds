@@ -2,6 +2,7 @@
 
 Full hooks for this area. The routing keys live in `.agents/auto-memory/MEMORY.md`; the memories themselves in `.agents/auto-memory/<slug>.md`.
 
+- [Images are drop-in: no consumer patches](feedback_images_are_drop_in_no_consumer_patches.md) — never propose dropping/rewriting a consumer step (pnpm/action-setup…); fix image-side or upstream
 - [Commit straight to main; PR only to trigger CI](feedback_merge_without_review_here.md) — jean does not review; default push to main, PR only when the proving job is pull_request-only, merge on green; never ask "open a PR?"; green bar still holds and PR-green ≠ build-green
 - [Check a source-only patch reaches the build](project_source_patch_reaches_build_checklist.md) — before a multi-hour dispatch: image tag sha-scoped? script COPYed before the RUN that invokes it? a wrong answer ships a green build without the fix
 - [Autonomous CI-fix loop](feedback_autonomous_ci_loop.md) — iterate amend + `push --force-with-lease` to main until CI green without checking in; monitor prompt-free via the allow-listed `pnpm ci:watch`; keep amends file-scoped

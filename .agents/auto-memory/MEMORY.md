@@ -101,8 +101,9 @@ touches an area, read that file before concluding no rule exists. Then read
 - [WebKit version assertions](project_webkit_version_assertions.md) — `browser.version()` is a hardcoded playwright-core constant (vacuous); real signals
 - [The aports pkgver rule had drifted in two of three copies](project_aports_pkgver_rule_drift.md) — mirrors claiming to mirror apply-and-build.sh kept strict equality after it went
 
-## process (19) — how to work in this repo
+## process (20) — how to work in this repo
 `.agents/auto-memory/index/process.md`
+- [Images are drop-in: no consumer patches](feedback_images_are_drop_in_no_consumer_patches.md) — never propose dropping/rewriting a consumer step (pnpm/action-setup…); fix image-side or upstream
 - [Per-CPU findings go into issue #335's description](feedback_per_cpu_findings_go_in_issue_335.md) — edit #335 body with every CPU-dependent result, same turn; the last optimization, knowledge needed later
 
 - [clang23 only, never clang22](feedback_clang23_only_never_clang22.md) — every build/bench/probe uses clang23 like the browsers; bare `apk add clang` on 3.24 gives clang22
