@@ -2028,17 +2028,22 @@ jobs:
             -P ubuntu-latest="$IMG"
 
   # ----------------------------------------------------------------------------
-  # act: exercise the `prepare` action against each freshly-built
-  # dood/dind image. Mirrors test-dood-dind-act but drives smoke-prepare-<mode>.yml
+  # act: exercise the `prepare` action against each freshly-built dood/dind image,
+  # at the node layer. Mirrors test-dood-dind-act but drives smoke-prepare-<mode>.yml
   # — which calls `uses: ./.github/actions/prepare` and asserts the image-supplied
   # DOCKER_MODE / HOST_ADDRESS survive the action's `${VAR:-default}` fallbacks.
   # The dind row additionally verifies `start-dockerd` fired (docker info reaches
   # the inner daemon).
+  # `-node` rather than the bare dood/dind image because `prepare` is a JavaScript
+  # action and act execs a bare `node` in the job container: unlike the GitHub
+  # runner, it mounts no externals node of its own. The node layer builds FROM
+  # dood/dind, so DOCKER_MODE, HOST_ADDRESS and start-dockerd are the same ones.
+  # The node-less case is a real-CI job instead — test-prepare-container-job.
   # ----------------------------------------------------------------------------
   test-prepare-act:
     runs-on: ubuntu-latest
-    if: fromJSON(needs.github-context.outputs.test_filters).dood_dind
-    needs: [github-context, build-dood, build-dind]
+    if: fromJSON(needs.github-context.outputs.test_filters).node
+    needs: [github-context, build-node-dood, build-node-dind]
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -2055,15 +2060,52 @@ jobs:
       - name: Install act
         run: bash scripts/install-act.sh
       - name: Pre-pull the container image
-        run: docker pull "ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.mode }}:${{ needs.github-context.outputs.build_tag }}"
+        run: docker pull "ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.mode }}-node:${{ needs.github-context.outputs.build_tag }}"
       - name: Run the prepare smoke workflow through act
         env:
-          IMG: ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.mode }}:${{ needs.github-context.outputs.build_tag }}
+          IMG: ghcr.io/jclaveau/${{ matrix.os }}-${{ matrix.mode }}-node:${{ needs.github-context.outputs.build_tag }}
         run: |
           act push -W tests/act/smoke-prepare-${{ matrix.mode }}.yml \
             -P ubuntu-latest=-self-hosted \
             --var RUNNER_IMAGE="$IMG"
 
+
+  # ----------------------------------------------------------------------------
+  # Real CI, not act: `prepare` in a GitHub container job on an image that ships no
+  # node at all. A JavaScript action still runs there, on the node the runner mounts
+  # from the host (/__e/node24, /__e/node24_alpine on musl) — which is why the action
+  # can be JavaScript without the dood/dind images growing a node layer. act mounts
+  # no such thing, so this one case only this job can prove.
+  # Green covers both halves: a main step that could not exec would fail 127, and a
+  # failing post step fails the job too. dood only — dind under a real container job
+  # would need its own privileged plumbing, and the daemon boot is already covered by
+  # smoke-prepare-dind.yml under act.
+  # ----------------------------------------------------------------------------
+  test-prepare-container-job:
+    runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).dood_dind
+    needs: [github-context, build-dood]
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+    container:
+      image: ghcr.io/jclaveau/${{ matrix.os }}-dood:${{ needs.github-context.outputs.build_tag }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --add-host=host.docker.internal:host-gateway
+    steps:
+      - uses: actions/checkout@v7
+      - name: The image ships no node (the premise of this job)
+        run: |
+          ! command -v node || { echo "::error::this image has a node — pick one below the node layer"; exit 1; }
+      - uses: ./.github/actions/prepare
+      - name: DOCKER_MODE preserved from image
+        run: test "$DOCKER_MODE" = "dood"
+      - name: HOST_ADDRESS preserved from image
+        run: test "$HOST_ADDRESS" = "host.docker.internal"
 
   # ----------------------------------------------------------------------------
   # act: vm-mode coverage for the `prepare` action — no `container:`,

@@ -239,6 +239,11 @@ job with
 Nothing to add on the consumer side beyond the `prepare` step it already has, and nothing to
 remove: the report names the replacement, deciding whether to drop the step is yours.
 
+`prepare` is a JavaScript action, so it needs a node to run on. In a GitHub container job that
+node comes from the runner (`/__e/node24`, `/__e/node24_alpine` on musl), whatever the image
+ships — including the node-less `dood` / `dind` tags. Under `act` there is no such mount: the
+image itself must carry node, so drive it with a `-node` tag or above.
+
 The manifest it reads is written at build time by `record-image-tool`, one row per tool with
 its path, version and a size+mtime fingerprint, and lives from the
 [node layer](node/README.md#the-prebuilt-tool-manifest) up. Below it (`gha-tools`, `docker`,
