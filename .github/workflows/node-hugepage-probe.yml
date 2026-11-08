@@ -255,7 +255,7 @@ jobs:
                 f"parent sys {(times_after.system - times_before.system) * 1000:.0f} ms,",
                 f"children cpu {(times_after.children_user + times_after.children_system - times_before.children_user - times_before.children_system) * 1000:.0f} ms")
           PY
-          for round in 1 2 3; do
+          for _ in 1 2 3; do
             python3 fork-after-hugetlb.py 0
             python3 fork-after-hugetlb.py 1
           done
@@ -263,6 +263,7 @@ jobs:
       - name: mimalloc's own view, option off and on, crossed with allow_thp
         run: |
           set -euo pipefail
+          # shellcheck disable=SC2016  # node code, not shell
           spawn_script='const {spawnSync}=require("child_process");
             for (let warm = 0; warm < 10; warm++) spawnSync("true");
             const before = process.resourceUsage(); const wallBefore = performance.now();
@@ -290,7 +291,7 @@ jobs:
       - name: Spawn cost against where mimalloc's regions landed
         run: |
           set -euo pipefail
-          for run in $(seq 1 16); do
+          for _ in $(seq 1 16); do
             for large_pages in 0 1; do
               docker run --rm --env "MIMALLOC_ALLOW_LARGE_OS_PAGES=$large_pages" --entrypoint node "$NODE_IMAGE" -e '
                 const { spawnSync } = require("child_process");
@@ -503,6 +504,7 @@ jobs:
               if [ "$launcher" = direct ]; then
                 launch_args=(--entrypoint node "$NODE_IMAGE" -e "$boot_script")
               else
+                # shellcheck disable=SC2016  # $0 expands in the container sh
                 launch_args=(--entrypoint sh "$NODE_IMAGE" -c 'node -e "$0"' "$boot_script")
               fi
               sudo perf record -q -a -e exceptions:page_fault_user -o "boot-$launcher-$large_pages.data" -- \
@@ -660,6 +662,7 @@ jobs:
           for knob in enabled use_zero_page defrag khugepaged/defrag shmem_enabled; do
             echo "thp $knob: $(cat /sys/kernel/mm/transparent_hugepage/$knob)"
           done
+          # shellcheck disable=SC2012  # names only, for the log
           ls /sys/kernel/mm/transparent_hugepage/ | tr '\n' ' '; echo
           for size_dir in /sys/kernel/mm/transparent_hugepage/hugepages-*kB; do
             [ -e "$size_dir/enabled" ] && echo "$(basename "$size_dir") $(cat "$size_dir/enabled")"
@@ -854,7 +857,7 @@ jobs:
           for scanner_pid in $(pgrep -f provjob || true); do
             echo "--- pid $scanner_pid"
             sudo ls -l "/proc/$scanner_pid/exe" || true
-            sudo tr '\0' ' ' < "/proc/$scanner_pid/cmdline"; echo
+            sudo cat "/proc/$scanner_pid/cmdline" | tr '\0' ' '; echo
             sudo cat "/proc/$scanner_pid/cgroup" || true
             sudo ls -l "/proc/$scanner_pid/fd" 2>/dev/null | tail -n +2 | awk '{ print $NF }' | sort | uniq -c | sort -rn | head -10 || true
           done
