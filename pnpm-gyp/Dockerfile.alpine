@@ -18,6 +18,7 @@ ENV PATH="${PATH}:${PNPM_HOME}:${PNPM_HOME}/bin"
 
 RUN echo "Install PNPM via the npm registry (SHA512-checked tarballs)" \
     && sudo npm install -g pnpm@${PNPM_VERSION} \
+    && sudo rm -rf /root/.npm \
     && sudo record-image-tool pnpm
 
 # `share-dir-with-runner-group <dir>...`: makes an image-baked state dir under
@@ -60,8 +61,10 @@ RUN sudo share-dir-with-runner-group \
         /home/runner/.cache/pnpm \
         /home/runner/.config/pnpm
 
+# lto-dump (39.1 MiB) is gcc's LTO object inspector: no build invokes it.
 RUN echo "Install the node-gyp toolchain (build-base) for native addon compilation" \
-    && sudo apk add --no-cache build-base
+    && sudo apk add --no-cache build-base \
+    && sudo rm -f /usr/bin/*lto-dump*
 
 # TEMP: py3-setuptools provides a vendored distutils shim (setuptools >=60) so
 # legacy node-gyp <10 (which imports `distutils.version.StrictVersion`) keeps

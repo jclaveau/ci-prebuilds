@@ -19,10 +19,14 @@ ENV PLAYWRIGHT_BROWSERS_PATH='/home/runner/playwright-browsers'
 # `playwright install` from the baked playwright-core hashes to the same entry
 # and opens it for writing, so the group write the dirs got is not enough. 133
 # bytes, written in this same RUN, so unlike the browser payload it costs no
-# overlay copy-up.
+# overlay copy-up. `--with-deps` runs apt-get update, and the global install
+# fills pnpm's metadata cache: both emptied here (42 + 34 MiB); the cache dir
+# itself stays, group-shared by the pnpm layer.
 RUN echo "Install Playwright globally https://playwright.dev/docs/docker#build-your-own-image" \
     && pnpm install -g playwright@${PLAYWRIGHT_VERSION} \
     && playwright install --with-deps --only-shell \
+    && sudo rm -rf /var/lib/apt/lists/* \
+    && sudo find /home/runner/.cache/pnpm -mindepth 1 -delete \
     && sudo share-dir-with-runner-group "${PNPM_HOME}" "${PLAYWRIGHT_BROWSERS_PATH}" \
     && sudo find "${PLAYWRIGHT_BROWSERS_PATH}/.links" -type f -exec chmod g+w {} +
 

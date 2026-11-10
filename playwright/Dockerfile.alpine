@@ -593,6 +593,7 @@ ENV CHS_LD_PRELOAD=${CHS_LD_PRELOAD}
 # 500x page.evaluate, node CPU ms: pnpm 164-175, npm 161-167, official
 # 154-162. global-node-path.sh already resolves `npm root -g`.
 RUN sudo npm install -g --no-fund --no-audit playwright@${PLAYWRIGHT_VERSION} \
+    && sudo rm -rf /root/.npm \
     && sudo share-dir-with-runner-group "${PNPM_HOME}"
 
 COPY --from=browsers-staged /ms-playwright/chromium_headless_shell-${CHS_REV} /ms-playwright/chromium_headless_shell-${CHS_REV}

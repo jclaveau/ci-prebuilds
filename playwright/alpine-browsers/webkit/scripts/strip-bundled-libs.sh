@@ -218,6 +218,25 @@ for f in $STRIP_LIST; do
 done
 echo "strip-bundled-libs: removed $removed bundled libs from $(basename "$DST") ($FAMILY)"
 
+# Soname-chain dedup: the producer's `cp -aL` (apply-and-build-port.sh) turns
+# libX.so -> libX.so.1 -> libX.so.1.2.3 into full copies (libWPEWebKit: 3 x
+# 131 MiB). Each copy byte-identical to a longer-named one becomes a relative
+# symlink to it, the layout the producer's build tree had.
+chained=0
+for f in "$DST"/*.so*; do
+  if [ ! -f "$f" ] || [ -L "$f" ]; then continue; fi
+  target=""
+  for candidate in "$f".*; do
+    if [ -f "$candidate" ] && [ ! -L "$candidate" ] && cmp -s "$f" "$candidate"; then
+      target="$candidate"
+    fi
+  done
+  if [ -z "$target" ]; then continue; fi
+  ln -sf "$(basename "$target")" "$f"
+  chained=$((chained + 1))
+done
+echo "strip-bundled-libs: linked $chained soname-chain copies in $(basename "$DST")"
+
 # Cross-bundle dedup (combined image only): symlink webkit's still-bundled
 # libs that the other bundle carries byte-identical (ICU 78 today) to the
 # source dir's copy. Relative symlink (not hardlink — see the usage note) so

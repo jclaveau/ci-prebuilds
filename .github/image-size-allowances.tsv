@@ -6,3 +6,7 @@ alpine-dood-pnpm	203	docker-cli-buildx (+24 MiB): BuildKit for compose build, ub
 alpine-dind-pnpm	258	docker-cli-buildx (+24 MiB), see alpine-dood-pnpm
 alpine-dood-pnpm-gyp	299	docker-cli-buildx (+24 MiB), see alpine-dood-pnpm
 alpine-dind-pnpm-gyp	353	docker-cli-buildx (+24 MiB), see alpine-dood-pnpm
+alpine-dood	100	docker-cli-buildx (+24 MiB), see alpine-dood-pnpm
+alpine-dind	155	docker-cli-buildx (+24 MiB), see alpine-dood-pnpm
+alpine-dood-node	149	docker-cli-buildx (+24 MiB), see alpine-dood-pnpm
+alpine-dind-node	204	docker-cli-buildx (+24 MiB), see alpine-dood-pnpm

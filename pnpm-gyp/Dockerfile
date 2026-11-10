@@ -19,12 +19,15 @@ ENV PATH="${PATH}:${PNPM_HOME}:${PNPM_HOME}/bin"
 
 RUN echo "Install PNPM via the npm registry (SHA512-checked tarballs)" \
     && sudo npm install -g pnpm@${PNPM_VERSION} \
+    && sudo rm -rf /root/.npm \
     && sudo record-image-tool pnpm
 
+# lto-dump (34.5 MiB) is gcc's LTO object inspector: no build invokes it.
 RUN echo "Install the node-gyp toolchain (build-essential) for native addon compilation" \
     && sudo apt-get update \
     && sudo apt-get install -y --no-install-recommends build-essential \
-    && sudo rm -rf /var/lib/apt/lists/*
+    && sudo rm -rf /var/lib/apt/lists/* \
+    && sudo rm -f /usr/bin/*lto-dump*
 
 # TEMP: python3-setuptools provides a vendored distutils shim (setuptools >=60)
 # so legacy node-gyp <10 (which imports `distutils.version.StrictVersion`) keeps

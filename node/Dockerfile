@@ -11,10 +11,13 @@ LABEL org.opencontainers.image.description="Node + npm (slim, no compiler) in Ub
 
 # Node + npm only — no node-gyp toolchain here (the base gha-tools no longer ships a compiler). Native
 # addon builds use the `-gyp` variant ({os}-{mode}-pnpm-gyp), which adds build-essential. See README.
+COPY --chmod=755 prune-openssl-archs.sh /tmp/prune-openssl-archs.sh
 RUN echo "Install Node.js (NodeSource)" \
     && sudo curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION%%.*}.x | sudo bash - \
     && sudo apt-get install -y nodejs \
-    && sudo rm -rf /var/lib/apt/lists/*
+    && sudo rm -rf /var/lib/apt/lists/* \
+    && sudo /tmp/prune-openssl-archs.sh /usr \
+    && sudo rm -f /tmp/prune-openssl-archs.sh
 
 # A node in /usr/bin is invisible to `actions/setup-node`, which would download another one over it
 # (~56 MiB per job). Symlinks only, so the image carries one node. Read where the lookup hits
