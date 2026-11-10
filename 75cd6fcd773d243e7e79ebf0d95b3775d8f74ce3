@@ -1,9 +1,18 @@
-fix(benchmark): keep head_ref dispatches out of Bencher and refuse main_ref on main
+Mislabelled commit: the subject and body above belong to another change. This commit's actual diff is:
 
-- A dispatch with head_ref measured another revision than the branch it
-  names, so skip the Bencher upload for it.
-- On main the benchmark runs HEAD alone, so a main_ref compared nothing
-  without saying so. Fail the revisions step with a message instead.
-- Refresh the apt index before installing strace.
+fix(alpine): ship buildx in the dood/dind base, derive ImageOS from OS_VERSION
+
+Ubuntu's docker-ce-cli pulls docker-buildx-plugin through apt
+Recommends; apk has no Recommends, so the alpine images had only compose
+and `docker compose build` fell back to the classic builder: 7.1 vs 5.5 s
+on Planner's CI stack (1.29x), a container per CMD/LABEL layer.
+docker-cli-buildx 0.38.1 is the same version ubuntu ships.
+
+Cost measured locally on alpine-dood-pnpm-gyp: 309.7 vs 337.5 MB gz
+(1.09x), docker load median 5.30 vs 6.08 s (1.15x, n=3). The pull side
+is to be compared on the rebuilt images in CI.
+
+ImageOS and the gha-tools description still said alpine3.21 on a 3.24
+base; both now follow OS_VERSION.
 
 Assisted-by: Claude:claude-opus-5-5
