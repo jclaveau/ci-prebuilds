@@ -49,14 +49,25 @@ jobs:
         run: |
           # busybox date has no %N, so the MARK lines are timed by the runner's
           # own millisecond log timestamps, read back from the raw log.
-          N=$(ls /__e/node2*_alpine/bin/node 2>/dev/null | tail -1 || ls /__e/node2*/bin/node | tail -1)
-          echo "binary=$N size=$(stat -c %s "$N")"
+          # Every job carries BOTH externals on disk, so the arm is decided by
+          # the container's libc, not by which directory exists: round 1 read
+          # the musl binary inside the glibc container and died at exit 127.
+          # Each file's page cache is independent, so the job's own binary is
+          # read first and the other one after, both still cold.
+          if [ -f /lib/ld-musl-x86_64.so.1 ]; then
+            OWN=/__e/node24_alpine/bin/node
+            OTHER=/__e/node24/bin/node
+          else
+            OWN=/__e/node24/bin/node
+            OTHER=/__e/node24_alpine/bin/node
+          fi
+          echo "own=$OWN $(stat -c %s "$OWN")B other=$OTHER $(stat -c %s "$OTHER")B"
           grep ' /__e ' /proc/self/mountinfo || true
-          echo "MARK read_cold start";  cat "$N" >/dev/null;                echo "MARK read_cold end"
-          echo "MARK exec_cold start";  "$N" -e '' ;                        echo "MARK exec_cold end"
-          echo "MARK exec_warm1 start"; "$N" -e '' ;                        echo "MARK exec_warm1 end"
-          echo "MARK exec_warm2 start"; "$N" -e '' ;                        echo "MARK exec_warm2 end"
-          echo "MARK image_node start"; "$(command -v node)" -e '' ;        echo "MARK image_node end"
+          echo "MARK read_own start";   cat "$OWN" >/dev/null;   echo "MARK read_own end"
+          echo "MARK exec_own start";   "$OWN" -e '' ;           echo "MARK exec_own end"
+          echo "MARK exec_warm start";  "$OWN" -e '' ;           echo "MARK exec_warm end"
+          echo "MARK read_other start"; cat "$OTHER" >/dev/null; echo "MARK read_other end"
+          echo "MARK image_node start"; node -e '' ;             echo "MARK image_node end"
       # The real test: the cost either moved to the step above, or it did not.
       - uses: actions/checkout@v7
 
@@ -77,12 +88,23 @@ jobs:
       - name: Cold node probe
         shell: sh
         run: |
-          N=$(ls /__e/node2*_alpine/bin/node 2>/dev/null | tail -1 || ls /__e/node2*/bin/node | tail -1)
-          echo "binary=$N size=$(stat -c %s "$N")"
+          # Every job carries BOTH externals on disk, so the arm is decided by
+          # the container's libc, not by which directory exists: round 1 read
+          # the musl binary inside the glibc container and died at exit 127.
+          # Each file's page cache is independent, so the job's own binary is
+          # read first and the other one after, both still cold.
+          if [ -f /lib/ld-musl-x86_64.so.1 ]; then
+            OWN=/__e/node24_alpine/bin/node
+            OTHER=/__e/node24/bin/node
+          else
+            OWN=/__e/node24/bin/node
+            OTHER=/__e/node24_alpine/bin/node
+          fi
+          echo "own=$OWN $(stat -c %s "$OWN")B other=$OTHER $(stat -c %s "$OTHER")B"
           grep ' /__e ' /proc/self/mountinfo || true
-          echo "MARK read_cold start";  cat "$N" >/dev/null;                echo "MARK read_cold end"
-          echo "MARK exec_cold start";  "$N" -e '' ;                        echo "MARK exec_cold end"
-          echo "MARK exec_warm1 start"; "$N" -e '' ;                        echo "MARK exec_warm1 end"
-          echo "MARK exec_warm2 start"; "$N" -e '' ;                        echo "MARK exec_warm2 end"
-          echo "MARK image_node start"; "$(command -v node)" -e '' ;        echo "MARK image_node end"
+          echo "MARK read_own start";   cat "$OWN" >/dev/null;   echo "MARK read_own end"
+          echo "MARK exec_own start";   "$OWN" -e '' ;           echo "MARK exec_own end"
+          echo "MARK exec_warm start";  "$OWN" -e '' ;           echo "MARK exec_warm end"
+          echo "MARK read_other start"; cat "$OTHER" >/dev/null; echo "MARK read_other end"
+          echo "MARK image_node start"; node -e '' ;             echo "MARK image_node end"
       - uses: actions/checkout@v7
