@@ -1,0 +1,72 @@
+name: Node externals prefetch A/B
+
+# node-first-exec-probe proved the alpine first-JS-action gap is the runner
+# demand-paging /__e/node24_alpine/bin/node, 126.4 MiB that nothing warms in a
+# fresh VM, while the glibc node24 an ubuntu job uses is already hot because
+# the runner itself ran it. 21x on the read, 0.02s on the exec.
+#
+# This asks whether the gap is PAYABLE MORE CHEAPLY. A sequential cat of the
+# whole file measured 2.89s against a 5.27s median gap in Planner, which says
+# streaming the lot may beat the loader's random 4K page-ins - but those two
+# numbers come from different runner pools, so the bare arm here is the
+# control that comparison lacked.
+#
+#   bare   mirrors Planner tests-e2e-back: one cheap shell step, then checkout
+#   sync   same, plus a blocking sequential read before checkout
+#   bg     same, but the read is backgrounded, so it overlaps checkout's own
+#          node launch instead of preceding it
+#
+# The number that decides it is the whole span from the first step's endgroup
+# to checkout's first output line: a prefetch that merely moves the cost into
+# its own step wins nothing.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: node-prefetch-ab-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prefetch:
+    name: ${{ matrix.arm }}-${{ matrix.rep }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        arm: [bare, sync, bg]
+        rep: [1, 2, 3, 4, 5]
+    container:
+      image: ghcr.io/jclaveau/alpine-dood-pnpm-gyp:alpine3.24-node24.22-pnpm12.16-gyp
+      options: >-
+        --privileged
+        --add-host=host.docker.internal:host-gateway
+        --env "PWD=${{ github.workspace }}"
+      volumes:
+        - /home/runner:/home/runner
+    steps:
+      # Planner's own first step, kept in every arm so the three spans start at
+      # the same kind of boundary.
+      - name: Set TERM environment variable
+        shell: sh
+        run: echo "TERM=xterm" >> "$GITHUB_ENV"
+
+      - name: Prefetch the externals node
+        if: matrix.arm != 'bare'
+        shell: sh
+        run: |
+          N=/__e/node24_alpine/bin/node
+          if [ "${{ matrix.arm }}" = "bg" ]; then
+            # Both descriptors go to /dev/null or the runner waits on the step's
+            # stdout staying open and the step never returns.
+            nohup cat "$N" >/dev/null 2>&1 &
+            echo "backgrounded"
+          else
+            cat "$N" >/dev/null
+            echo "read"
+          fi
+
+      - uses: actions/checkout@v7
