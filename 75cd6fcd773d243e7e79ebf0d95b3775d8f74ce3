@@ -1,0 +1,9 @@
+fix(benchmark): keep head_ref dispatches out of Bencher and refuse main_ref on main
+
+- A dispatch with head_ref measured another revision than the branch it
+  names, so skip the Bencher upload for it.
+- On main the benchmark runs HEAD alone, so a main_ref compared nothing
+  without saying so. Fail the revisions step with a message instead.
+- Refresh the apt index before installing strace.
+
+Assisted-by: Claude:claude-opus-5-5
