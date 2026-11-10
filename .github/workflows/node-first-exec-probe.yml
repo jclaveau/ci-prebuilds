@@ -1,0 +1,88 @@
+name: Node first-exec probe
+
+# Why: in a container job, the FIRST JS action pays a gap between its step's
+# ##[endgroup] and the action's own first output line — alpine median 5.27s
+# against ubuntu's 0.38s, n=15 shard jobs (Planner PR #830). A later JS action
+# in the same job pays 0.0004s, so the cost is one-time PER JOB: one job yields
+# one cold measurement, which is why every variant gets its own job and the
+# probe is the job's first step.
+#
+# The planner jobs mirror Planner tests-e2e-back's container options verbatim;
+# the minimal ones keep none of them. A gap present in one shape only names
+# --privileged or the /home/runner bind as the cause. The two shapes cannot
+# share a job definition because container.volumes takes no useful expression,
+# and the probe cannot live in a script file because reaching one needs
+# actions/checkout, which is the JS action whose cost is being measured.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: node-first-exec-probe-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  planner-shape:
+    name: planner-${{ matrix.label }}-${{ matrix.rep }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        label: [alpine, ubuntu]
+        rep: [1, 2, 3]
+    container:
+      image: ${{ matrix.label == 'alpine'
+        && 'ghcr.io/jclaveau/alpine-dood-pnpm-gyp:alpine3.24-node24.22-pnpm12.16-gyp'
+        || 'ghcr.io/jclaveau/ubuntu-dood-pnpm-gyp:ubuntu24.04-node24.21-pnpm12.6-gyp' }}
+      options: >-
+        --privileged
+        --add-host=host.docker.internal:host-gateway
+        --env "PWD=${{ github.workspace }}"
+      volumes:
+        - /home/runner:/home/runner
+    steps:
+      - name: Cold node probe
+        shell: sh
+        run: |
+          # busybox date has no %N, so the MARK lines are timed by the runner's
+          # own millisecond log timestamps, read back from the raw log.
+          N=$(ls /__e/node2*_alpine/bin/node 2>/dev/null | tail -1 || ls /__e/node2*/bin/node | tail -1)
+          echo "binary=$N size=$(stat -c %s "$N")"
+          grep ' /__e ' /proc/self/mountinfo || true
+          echo "MARK read_cold start";  cat "$N" >/dev/null;                echo "MARK read_cold end"
+          echo "MARK exec_cold start";  "$N" -e '' ;                        echo "MARK exec_cold end"
+          echo "MARK exec_warm1 start"; "$N" -e '' ;                        echo "MARK exec_warm1 end"
+          echo "MARK exec_warm2 start"; "$N" -e '' ;                        echo "MARK exec_warm2 end"
+          echo "MARK image_node start"; "$(command -v node)" -e '' ;        echo "MARK image_node end"
+      # The real test: the cost either moved to the step above, or it did not.
+      - uses: actions/checkout@v7
+
+  minimal-shape:
+    name: minimal-${{ matrix.label }}-${{ matrix.rep }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        label: [alpine, ubuntu]
+        rep: [1, 2, 3]
+    container:
+      image: ${{ matrix.label == 'alpine'
+        && 'ghcr.io/jclaveau/alpine-dood-pnpm-gyp:alpine3.24-node24.22-pnpm12.16-gyp'
+        || 'ghcr.io/jclaveau/ubuntu-dood-pnpm-gyp:ubuntu24.04-node24.21-pnpm12.6-gyp' }}
+    steps:
+      - name: Cold node probe
+        shell: sh
+        run: |
+          N=$(ls /__e/node2*_alpine/bin/node 2>/dev/null | tail -1 || ls /__e/node2*/bin/node | tail -1)
+          echo "binary=$N size=$(stat -c %s "$N")"
+          grep ' /__e ' /proc/self/mountinfo || true
+          echo "MARK read_cold start";  cat "$N" >/dev/null;                echo "MARK read_cold end"
+          echo "MARK exec_cold start";  "$N" -e '' ;                        echo "MARK exec_cold end"
+          echo "MARK exec_warm1 start"; "$N" -e '' ;                        echo "MARK exec_warm1 end"
+          echo "MARK exec_warm2 start"; "$N" -e '' ;                        echo "MARK exec_warm2 end"
+          echo "MARK image_node start"; "$(command -v node)" -e '' ;        echo "MARK image_node end"
+      - uses: actions/checkout@v7
