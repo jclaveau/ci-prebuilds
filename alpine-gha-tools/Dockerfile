@@ -70,16 +70,17 @@ RUN set -eu \
     && wc -l </tmp/alpine-coreutils-paths
 
 FROM mirror.gcr.io/library/alpine:${OS_VERSION}
+ARG OS_VERSION
 
 # Alpine/musl counterpart of ubuntu-gha-tools: the same accounts, env, curated OS tooling and the
 # interactive bash sugar (ll/la/l) so the developer environment is identical across both flavors.
 # Deliberately NO docker and NO language runtimes — those live in the docker/ overlay and the
 # node|pnpm|playwright layers, so they stay independently versioned.
-LABEL org.opencontainers.image.description="Alpine 3.21 mirroring the ubuntu-gha-tools dev env (users, env, OS tools, bash sugar; no docker, no runtimes)"
+LABEL org.opencontainers.image.description="Alpine ${OS_VERSION} mirroring the ubuntu-gha-tools dev env (users, env, OS tools, bash sugar; no docker, no runtimes)"
 
 ENV LANG=C.UTF-8 \
     CI=true \
-    ImageOS=alpine3.21 \
+    ImageOS=alpine${OS_VERSION} \
     RUNNER_TOOL_CACHE=/opt/hostedtoolcache \
     AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache
 

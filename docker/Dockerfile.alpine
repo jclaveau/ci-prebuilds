@@ -21,8 +21,10 @@ ARG DOCKER_HOST_GROUP_IDS="112 113 118"
 # pin to a specific image tag rather than `:latest`.
 LABEL org.opencontainers.image.description="alpine-gha-tools + Docker CLI & Compose (shared base for dood/dind)"
 
-RUN echo "Install the Docker CLI + Compose plugin from Alpine's repos (no daemon — see above)" \
-    && sudo apk add --no-cache docker-cli docker-cli-compose \
+# buildx too: Ubuntu's docker-ce-cli gets it through apt Recommends, apk has none, and without it
+# `docker compose build` falls back to the classic builder (a container per CMD/LABEL layer).
+RUN echo "Install the Docker CLI + Compose & buildx plugins from Alpine's repos (no daemon — see above)" \
+    && sudo apk add --no-cache docker-cli docker-cli-compose docker-cli-buildx \
     \
     && echo "Align the docker group GID with GitHub's host GID so dood can reach the mounted host" \
     && echo "socket. -o allows a duplicate GID (Alpine may already use it for another group)." \
