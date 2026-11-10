@@ -2,3 +2,7 @@
 # <os>-<image><TAB><max compressed amd64 MiB><TAB><why it grew>
 # Commit the line with the change that grows the image; delete it once the release that
 # grew is published (the gate then says so).
+alpine-dood-pnpm	203	docker-cli-buildx (+24 MiB): BuildKit for compose build, ubuntu gets it via apt Recommends; pull 5.1 vs 4.7 s (run 42806718878)
+alpine-dind-pnpm	258	docker-cli-buildx (+24 MiB), see alpine-dood-pnpm
+alpine-dood-pnpm-gyp	299	docker-cli-buildx (+24 MiB), see alpine-dood-pnpm
+alpine-dind-pnpm-gyp	353	docker-cli-buildx (+24 MiB), see alpine-dood-pnpm
