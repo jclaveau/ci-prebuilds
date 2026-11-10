@@ -37,8 +37,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arm: [bare, sync, bg]
-        rep: [1, 2, 3, 4, 5]
+        arm: [bare, sync, bg-full, bg-48m, bg-24m]
+        rep: [1, 2, 3, 4, 5, 6, 7, 8]
     container:
       image: ghcr.io/jclaveau/alpine-dood-pnpm-gyp:alpine3.24-node24.22-pnpm12.16-gyp
       options: >-
@@ -59,14 +59,22 @@ jobs:
         shell: sh
         run: |
           N=/__e/node24_alpine/bin/node
-          if [ "${{ matrix.arm }}" = "bg" ]; then
-            # Both descriptors go to /dev/null or the runner waits on the step's
-            # stdout staying open and the step never returns.
-            nohup cat "$N" >/dev/null 2>&1 &
-            echo "backgrounded"
-          else
-            cat "$N" >/dev/null
-            echo "read"
-          fi
+          case "${{ matrix.arm }}" in
+            sync)
+              cat "$N" >/dev/null
+              echo "read 126.4MiB, blocking"
+              ;;
+            *)
+              # Both descriptors go to /dev/null or the runner waits on the
+              # step's stdout staying open and the step never returns.
+              case "${{ matrix.arm }}" in
+                bg-full) MIB=127 ;;
+                bg-48m)  MIB=48 ;;
+                bg-24m)  MIB=24 ;;
+              esac
+              nohup dd "if=$N" of=/dev/null bs=1M "count=$MIB" >/dev/null 2>&1 &
+              echo "backgrounded ${MIB}MiB"
+              ;;
+          esac
 
       - uses: actions/checkout@v7
