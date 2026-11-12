@@ -1,0 +1,5 @@
+# actionlint 1.7.12's built-in label list stops at ubuntu-24.04, so an explicit
+# ubuntu-26.04 arm fails the lint gate even though GitHub schedules it.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
