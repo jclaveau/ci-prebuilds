@@ -32,11 +32,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-latest, ubuntu-26.04]
+        os: [ubuntu-24.04, ubuntu-26.04]
+        image:
+          - ghcr.io/jclaveau/ubuntu-dood-pnpm-gyp:ubuntu24.04-node24.21-pnpm12.6-gyp
+          - ghcr.io/jclaveau/alpine-dood-pnpm-gyp:alpine3.24-node24.22-pnpm12.16-gyp
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     container:
-      image: ghcr.io/jclaveau/ubuntu-dood-pnpm-gyp:ubuntu24.04-node24.21-pnpm12.6-gyp
+      image: ${{ matrix.image }}
       options: >-
         --privileged
         --add-host=host.docker.internal:host-gateway
@@ -46,7 +49,7 @@ jobs:
       - name: Socket and groups inside the job container
         run: |
           set +e
-          echo "runner: ${{ matrix.os }}"
+          echo "runner: ${{ matrix.os }} image: ${{ matrix.image }}"
           id
           stat -c 'socket gid=%g mode=%a' /var/run/docker.sock
           getent group "$(stat -c %g /var/run/docker.sock)" || echo "gid not a known group here"
