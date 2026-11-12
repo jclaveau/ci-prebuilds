@@ -1,0 +1,54 @@
+name: Docker socket gid
+
+# Planner #850 fails on ubuntu-latest now that it resolves to 26.04: the job
+# container cannot reach /var/run/docker.sock. The suspected cause is a changed
+# socket gid against the groups the image bakes. This prints both sides.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-latest, ubuntu-26.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - name: Socket and groups on the host
+        run: |
+          set -eu
+          echo "runner: ${{ matrix.os }}"
+          ls -ln /var/run/docker.sock
+          stat -c 'socket gid=%g mode=%a owner=%u' /var/run/docker.sock
+          getent group docker || echo "no docker group"
+          id
+          docker version --format '{{.Server.Version}}'
+
+  in-container:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-latest, ubuntu-26.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    container:
+      image: ghcr.io/jclaveau/ubuntu-dood-pnpm-gyp:ubuntu24.04-node24.21-pnpm12.6-gyp
+      options: >-
+        --privileged
+        --add-host=host.docker.internal:host-gateway
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+    steps:
+      - name: Socket and groups inside the job container
+        run: |
+          set +e
+          echo "runner: ${{ matrix.os }}"
+          id
+          stat -c 'socket gid=%g mode=%a' /var/run/docker.sock
+          getent group "$(stat -c %g /var/run/docker.sock)" || echo "gid not a known group here"
+          docker version --format '{{.Server.Version}}'
+          echo "docker rc=$?"
