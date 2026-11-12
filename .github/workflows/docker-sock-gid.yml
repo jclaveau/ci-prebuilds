@@ -36,6 +36,8 @@ jobs:
         image:
           - ghcr.io/jclaveau/ubuntu-dood-pnpm-gyp:ubuntu24.04-node24.22-pnpm12.6-gyp
           - ghcr.io/jclaveau/alpine-dood-pnpm-gyp:alpine3.24-node24.22-pnpm12.16-gyp
+          - ghcr.io/jclaveau/ubuntu-dood-playwright-gyp-sudoer:ubuntu24.04-node24.22-pnpm12.6-pw1.59-gyp-sudoer
+          - ghcr.io/jclaveau/ubuntu-dood-playwright-gyp-sudoer:ubuntu24.04-node24.22-pnpm12.6-pw1.62-gyp-sudoer
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     container:
