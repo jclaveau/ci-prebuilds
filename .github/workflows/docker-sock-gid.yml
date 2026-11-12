@@ -34,7 +34,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, ubuntu-26.04]
         image:
-          - ghcr.io/jclaveau/ubuntu-dood-pnpm-gyp:ubuntu24.04-node24.21-pnpm12.6-gyp
+          - ghcr.io/jclaveau/ubuntu-dood-pnpm-gyp:ubuntu24.04-node24.22-pnpm12.6-gyp
           - ghcr.io/jclaveau/alpine-dood-pnpm-gyp:alpine3.24-node24.22-pnpm12.16-gyp
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
