@@ -1,0 +1,107 @@
+name: Node externals shadow A/B
+
+# Round 4 (node-prefetch-ab.yml) left the alpine first-JS-action gap at 1.345 s
+# against a 2.380 s bare arm: a backgrounded 24 MiB read of
+# /__e/node24_alpine/bin/node, which the runner then demand-pages anyway.
+#
+# The runner's own source says the path is not negotiable but its CONTENT is:
+# StepHost.DetermineNodeRuntimeVersion execs `cat /etc/*release | grep ^ID`,
+# matches "alpine" and appends `_alpine`; NodeScriptActionHandler then runs
+# exactly `<externals>/node24_alpine/bin/node`, with no env override anywhere.
+# /__e is a read-only bind of the host's externals, but a nested --tmpfs over
+# /__e/node24_alpine shadows it, and the job's first step can fill that tmpfs
+# before any JavaScript action resolves the path. The image's own node is musl,
+# the same 24.22.1, and sits in overlayfs page cache from the image pull, where
+# the host's externals copy has never been read in this VM boot.
+#
+#   bare       no prefetch, the control
+#   bg-24m     what Planner ships today
+#   bg-8m      the round-4 trend was monotone (127 -> 48 -> 24 MiB), so test below it
+#   bg-par     24 MiB as 4 parallel readers, to raise the device queue depth
+#   shadow-ln  tmpfs + symlink to the image's node: zero bytes copied
+#   shadow-cp  tmpfs + copy of the image's node: the exec reads RAM, not ext4
+#
+# Same span as round 4: the first step's ##[endgroup] to checkout's
+# "Syncing repository", so a variant that merely moves the cost wins nothing.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: node-externals-shadow-ab-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  shadow:
+    name: ${{ matrix.arm }}-${{ matrix.rep }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        arm: [bare, bg-24m, bg-8m, bg-par, shadow-ln, shadow-cp]
+        rep: [1, 2, 3, 4, 5, 6, 7, 8]
+    container:
+      image: ghcr.io/jclaveau/alpine-dood-pnpm-gyp:alpine3.24-node24.22-pnpm12.16-gyp
+      options: >-
+        --privileged
+        --add-host=host.docker.internal:host-gateway
+        --env "PWD=${{ github.workspace }}"
+        ${{ startsWith(matrix.arm, 'shadow') && '--tmpfs /__e/node24_alpine:exec,mode=755' || '' }}
+      volumes:
+        - /home/runner:/home/runner
+    steps:
+      # Planner's own first step, kept in every arm so every span starts at the
+      # same kind of boundary.
+      - name: Set TERM environment variable
+        shell: sh
+        run: echo "TERM=xterm" >> "$GITHUB_ENV"
+
+      - name: Prepare the externals node
+        if: matrix.arm != 'bare'
+        shell: sh
+        run: |
+          set -e
+          N=/__e/node24_alpine/bin/node
+          case "${{ matrix.arm }}" in
+            shadow-*)
+              # The tmpfs shadows the runner's copy, so this directory is empty
+              # until this step writes it, and every JS action below execs what
+              # it leaves here.
+              mkdir -p /__e/node24_alpine/bin
+              if [ "${{ matrix.arm }}" = shadow-ln ]; then
+                ln -s /usr/local/bin/node "$N"
+              else
+                cp /usr/local/bin/node "$N"
+              fi
+              "$N" --version
+              ;;
+            bg-par)
+              # Four readers at 6 MiB each: same 24 MiB, four outstanding requests.
+              for i in 0 1 2 3; do
+                nohup dd "if=$N" of=/dev/null bs=1M count=6 "skip=$((i * 6))" \
+                  >/dev/null 2>&1 &
+              done
+              echo "backgrounded 4x6MiB"
+              ;;
+            *)
+              case "${{ matrix.arm }}" in
+                bg-24m) MIB=24 ;;
+                bg-8m)  MIB=8 ;;
+              esac
+              # Both descriptors go to /dev/null or the runner waits on the
+              # step's stdout staying open and the step never returns.
+              nohup dd "if=$N" of=/dev/null bs=1M "count=$MIB" >/dev/null 2>&1 &
+              echo "backgrounded ${MIB}MiB"
+              ;;
+          esac
+
+      - uses: actions/checkout@v7
+
+      - name: Report which node the actions ran
+        shell: sh
+        run: |
+          ls -l /__e/node24_alpine/bin/node
+          /__e/node24_alpine/bin/node --version
