@@ -42,14 +42,14 @@ jobs:
       fail-fast: false
       matrix:
         arm: [bare, bg-24m, bg-8m, bg-par, shadow-ln, shadow-cp]
-        rep: [1, 2, 3, 4, 5, 6, 7, 8]
+        rep: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     container:
       image: ghcr.io/jclaveau/alpine-dood-pnpm-gyp:alpine3.24-node24.22-pnpm12.16-gyp
       options: >-
         --privileged
         --add-host=host.docker.internal:host-gateway
         --env "PWD=${{ github.workspace }}"
-        ${{ startsWith(matrix.arm, 'shadow') && '--tmpfs /__e/node24_alpine:exec,mode=755' || '' }}
+        ${{ startsWith(matrix.arm, 'shadow') && '--tmpfs /__e/node24_alpine:exec,mode=1777' || '' }}
       volumes:
         - /home/runner:/home/runner
     steps:
@@ -70,6 +70,9 @@ jobs:
               # The tmpfs shadows the runner's copy, so this directory is empty
               # until this step writes it, and every JS action below execs what
               # it leaves here.
+              # mode=755 made the tmpfs root-owned and the container runs as
+              # uid 1001, so the first attempt died on mkdir with EACCES.
+              id
               mkdir -p /__e/node24_alpine/bin
               if [ "${{ matrix.arm }}" = shadow-ln ]; then
                 ln -s /usr/local/bin/node "$N"
