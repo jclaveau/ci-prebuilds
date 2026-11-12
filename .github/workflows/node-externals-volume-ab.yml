@@ -1,0 +1,110 @@
+name: Node externals volume A/B
+
+# Round 6 (node-externals-shadow-ab.yml) removed the alpine first-JS-action gap
+# from the workflow side: --tmpfs /__e/node24_alpine:exec,mode=1777 in
+# container.options plus a first step symlinking the image's own node into it
+# ran 0.297 s against a 2.533 s bare arm, n=10 in one run.
+#
+# This asks whether the IMAGE can do it alone, with no option line and no step
+# in the consumer's workflow. Docker seeds an image-declared VOLUME with the
+# image's content at that path when the container is created, read-write, and
+# round 6 proved docker accepts such a child mount under the runner's own
+# `-v .../externals:/__e:ro`. So an image that ships
+# /__e/node24_alpine/bin/node -> /usr/local/bin/node and declares that
+# directory a VOLUME should hand every consumer the same win for free.
+#
+#   novolume  probe image with the symlink baked but no VOLUME: the runner's ro
+#             bind hides it, so this is the bare control
+#   volume    same image plus VOLUME /__e/node24_alpine, no workflow step
+#   tmpfs     round 6's workflow-side arm, for an in-run reference
+#
+# Same span as rounds 4-6: the first step's ##[endgroup] to checkout's
+# "Syncing repository".
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: node-externals-volume-ab-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  BASE: ghcr.io/jclaveau/alpine-dood-pnpm-gyp:alpine3.24-node24.22-pnpm12.16-gyp
+  PROBE: ghcr.io/jclaveau/externals-volume-probe
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build both probe tags
+        run: |
+          set -eu
+          cat > Dockerfile.novolume <<DOCKER
+          FROM $BASE
+          USER root
+          RUN mkdir -p /__e/node24_alpine/bin \
+            && ln -s /usr/local/bin/node /__e/node24_alpine/bin/node \
+            && chown -R 1001:1001 /__e
+          USER runner
+          DOCKER
+          cp Dockerfile.novolume Dockerfile.volume
+          echo 'VOLUME /__e/node24_alpine' >> Dockerfile.volume
+          docker build -f Dockerfile.novolume -t "$PROBE:novolume" .
+          docker build -f Dockerfile.volume -t "$PROBE:volume" .
+          docker push "$PROBE:novolume"
+          docker push "$PROBE:volume"
+
+  gap:
+    needs: build
+    name: ${{ matrix.arm }}-${{ matrix.rep }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        arm: [novolume, volume, tmpfs]
+        rep: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    container:
+      image: ghcr.io/jclaveau/externals-volume-probe:${{ matrix.arm == 'tmpfs' && 'novolume' || matrix.arm }}
+      options: >-
+        --privileged
+        --add-host=host.docker.internal:host-gateway
+        --env "PWD=${{ github.workspace }}"
+        ${{ matrix.arm == 'tmpfs' && '--tmpfs /__e/node24_alpine:exec,mode=1777' || '' }}
+      volumes:
+        - /home/runner:/home/runner
+    steps:
+      # Kept in every arm so every span starts at the same kind of boundary.
+      - name: Set TERM environment variable
+        shell: sh
+        run: echo "TERM=xterm" >> "$GITHUB_ENV"
+
+      # The volume arm is supposed to arrive already seeded by the image.
+      - name: Populate the shadow mount
+        if: matrix.arm == 'tmpfs'
+        shell: sh
+        run: |
+          set -e
+          mkdir -p /__e/node24_alpine/bin
+          ln -s /usr/local/bin/node /__e/node24_alpine/bin/node
+          /__e/node24_alpine/bin/node --version
+
+      - uses: actions/checkout@v7
+
+      - name: Report which node the actions ran
+        shell: sh
+        run: |
+          id
+          ls -l /__e/node24_alpine/bin/node
+          mount | grep node24_alpine || echo "no mount at /__e/node24_alpine"
+          /__e/node24_alpine/bin/node --version
