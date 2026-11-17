@@ -18,3 +18,5 @@ Shipped image is on 3.24 (alpine-gha-tools OS_VERSION), where gst-libav pulls `l
 
 **Why:** edge moved ffmpeg 8 → 9 on 2026-10-24; firefox conformance was path-filter-skipped until 2026-11-10, so the drift surfaced late.
 **How to apply:** fix the runner's libs (match the consumer's base), never skip the test ([[feedback_never_skip_conformance_tests]]). The same edge drift can red any FF media test whenever edge bumps a dlopen'd soname past FF's list.
+
+Fixed: 9e46367 moved the firefox runner to 3.24 (conformance-firefox 20/20 green, run 44064911168); d51d6a1 put every runner on `RUNNER_ALPINE`, Renovate-bumped with OS_VERSION. See [[project_wk_shipped_image_lacked_webrtc_plugin]].
