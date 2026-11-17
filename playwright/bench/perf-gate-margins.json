@@ -76,6 +76,24 @@
     "rows": {"install_cpu": 0.05, "install_sys": 0.05, "install_user": 0.07},
     "geomean": 0.05
   },
+  "node": {
+    "_note": "node-perf-gate (test-and-publish.yml) rows. Every row it gates must be named here; all take `default` except alloc_buffers. That row is 20,000 Buffer.alloc of 64-72 KB, i.e. the allocator: since node 26 (2026-11-06) musl + mimalloc-insecure reads 0.74-1.16x glibc malloc depending on CPU (9V45 always under 1, 9V74/7763 over), and official node 26 with mimalloc preloaded breaches by the same 1.16-1.20x, so it is mimalloc vs glibc, not our build (project_node26_gate_alloc_boot.md). Its candidate/promoted null pair, same bytes on one runner, spans 0.89-1.19 across 19 gate runs: 0.20 is that spread.",
+    "rows": {
+      "alloc_buffers": 0.20,
+      "alloc_objs": 0.06,
+      "boot_e0": 0.06,
+      "cpu_loop": 0.06,
+      "fs_walk": 0.06,
+      "gzip_20MB": 0.06,
+      "http_rtt_x2000": 0.06,
+      "json_roundtrip": 0.06,
+      "require_builtins": 0.06,
+      "require_tree": 0.06,
+      "sha256_100MB": 0.06,
+      "spawn_true_x100": 0.06
+    },
+    "geomean": 0.02
+  },
   "loose": {
     "_note": "No browser takes this margin today; add a browser key to grant it.",
     "margin": 0.10
