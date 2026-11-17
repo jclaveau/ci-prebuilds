@@ -1,0 +1,77 @@
+name: WebRTC shipped-image probe
+
+# conformance-webkit builds gst-plugins-bad's `webrtc` plugin (webrtcbin, with
+# libnice 0.1.23) from source in its runner (build-runner.sh `webrtc-build`),
+# because Alpine's gst-plugins-bad omits it. playwright/Dockerfile.alpine has no
+# such stage, so the shipped image may lack the plugin the runner proves green:
+# modernizr's datachannel/peerconnection pass in conformance, `new
+# RTCPeerConnection()` may throw for a consumer. This probe asks the shipped
+# images directly. Informational: dispatch-only after its first push.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/webrtc-shipped-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: webrtc-${{ matrix.image }}-${{ matrix.browser }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [alpine, ubuntu]
+        browser: [webkit, chromium, firefox]
+    container:
+      image: jclaveau/${{ matrix.image }}-dood-playwright:latest
+      # seccomp: WebKit-WPE's bwrap needs it on our images.
+      options: --security-opt seccomp=unconfined --env HOME=/root
+    steps:
+      - uses: actions/checkout@v7
+      - name: gstreamer webrtc plugin on disk
+        if: matrix.browser == 'webkit'
+        run: |
+          find / -xdev \( -name 'libgstwebrtc.so' -o -name 'libgstnice.so' \
+            -o -name 'libnice.so*' -o -name 'libgstwebrtc-1.0.so*' \) 2>/dev/null \
+            | sort || true
+          if command -v gst-inspect-1.0 >/dev/null; then
+            gst-inspect-1.0 webrtcbin 2>&1 | head -n 5 || true
+          else
+            echo "gst-inspect-1.0: not installed"
+          fi
+      - name: RTCPeerConnection in the browser
+        run: |
+          NODE_PATH="$(sh "$GITHUB_WORKSPACE/playwright/scripts/global-node-path.sh")"
+          export NODE_PATH
+          cat >| /tmp/webrtc-probe.cjs <<'EOF'
+          const playwright = require('playwright');
+          (async () => {
+            const browser = await playwright[process.argv[2]].launch();
+            const page = await browser.newPage();
+            const result = await page.evaluate(async () => {
+              const report = { hasConstructor: 'RTCPeerConnection' in window };
+              try {
+                const peerConnection = new RTCPeerConnection();
+                report.constructed = true;
+                peerConnection.createDataChannel('probe');
+                report.dataChannel = true;
+                const offer = await peerConnection.createOffer();
+                report.offerHasDataSection = offer.sdp.includes('m=application');
+                peerConnection.close();
+              } catch (error) {
+                report.error = String(error);
+              }
+              return report;
+            });
+            console.log(JSON.stringify(result));
+            await browser.close();
+            process.exit(result.offerHasDataSection ? 0 : 1);
+          })().catch((error) => { console.error(error); process.exit(2); });
+          EOF
+          node /tmp/webrtc-probe.cjs "${{ matrix.browser }}"
