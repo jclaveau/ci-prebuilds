@@ -54,7 +54,7 @@ touches an area, read that file before concluding no rule exists. Then read
 - [FF's gap vs official was the ALLOCATOR — RESOLVED](project_ff_build_missing_pgo_lto_jemalloc.md) — official links mozjemalloc (`malloc` undefined 0 vs our 1); mimalloc preload in the
 - [Firefox PNG: bytes fixed, TIME did not follow](project_ff_png_encoder_gap.md) — libpng+zlib must ship as a pair (system libpng brings its own libz) and reaches
 
-## conformance (31) — the Playwright suite — skips, runner config, triage recipes
+## conformance (32) — the Playwright suite — skips, runner config, triage recipes
 `.agents/auto-memory/index/conformance.md`
 
 - [Goal = PW 1.62.1 browsers, no later-release pins](feedback_goal_is_pw_1_62_1_browsers.md) — conformance + >= parity for 1.62.1's browsers; 1df1d2e built v1.64.0's WebKit = drift; never bump PW_VERSION as a fix
