@@ -10,6 +10,8 @@
 #   ARTIFACT_REV    — browser revision (chs CHS_REV, ff revision, wk revision)
 #                     used to stage at PW's cache-path layout
 #   IMAGE_TAG_OUT   — local tag to assign the runner (default: pw-conformance-runner:latest)
+#   RUNNER_NODE_VERSION — node for the test runner and its test server (default:
+#                     what mcr.microsoft.com/playwright:v<PW_VERSION>-noble runs)
 #
 # Why a separate runner image per call: each browser needs different runtime
 # apks (libxul deps for FF, gtk/wpe libs for WebKit, near-nothing for chromium
@@ -42,6 +44,40 @@ NPM_RETRY="--fetch-retries=5 --fetch-retry-mintimeout=10000 --fetch-retry-maxtim
 # "Alpine base image" PR. The chromium-fetch stages stay on 3.22 on purpose.
 RUNNER_ALPINE=3.24
 
+# The tests' node is bound to PW_VERSION: the exact version the official image
+# of that release runs, so the runner and the Ubuntu control leg serve and drive
+# the suite with the same node and differ only in the browser. PW's tests
+# depend on it: v1.62.1's chunked responseBodySize test expects node to send
+# each res.write() as its own chunk (5175 bytes); node 24.22.3, Alpine 3.24's
+# nodejs, merges them (5113), while the official image runs 24.18.1. PW fixed
+# the test only in v1.65.0 (microsoft/playwright#43409). The official
+# Dockerfile pins only a major (`ARG NODE_VERSION=24`, NodeSource at image
+# build time), so the image itself is the source of truth. pw-conformance.yml
+# resolves it once per run and passes it in; other callers pull the image here.
+if [ -z "${RUNNER_NODE_VERSION:-}" ]; then
+  RUNNER_NODE_VERSION=$(docker run --rm --entrypoint node \
+    "mcr.microsoft.com/playwright:v${PW_VERSION}-noble" --version)
+  RUNNER_NODE_VERSION=${RUNNER_NODE_VERSION#v}
+fi
+if ! [[ "$RUNNER_NODE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "RUNNER_NODE_VERSION \"$RUNNER_NODE_VERSION\" is not x.y.z" >&2
+  exit 1
+fi
+echo "==== Runner node: v$RUNNER_NODE_VERSION (official image of PW $PW_VERSION) ===="
+# nodejs.org's musl build. unofficial-builds signs nothing, so the checksum
+# comes from the same host: an integrity check against a truncated fetch, not
+# provenance. node/Dockerfile.alpine pins its sha in the repo; a version that
+# follows PW on its own cannot.
+NODE_TARBALL="node-v${RUNNER_NODE_VERSION}-linux-x64-musl.tar.xz"
+NODE_URL="https://unofficial-builds.nodejs.org/download/release/v${RUNNER_NODE_VERSION}"
+NODE_STAGE="FROM alpine:${RUNNER_ALPINE} AS node-official
+RUN apk add --no-cache curl xz \\
+ && cd /tmp \\
+ && curl -fsSL --retry 5 --retry-all-errors -O ${NODE_URL}/${NODE_TARBALL} -O ${NODE_URL}/SHASUMS256.txt \\
+ && grep ' ${NODE_TARBALL}\$' SHASUMS256.txt | sha256sum -c - \\
+ && mkdir /node && tar -xJf ${NODE_TARBALL} -C /node --strip-components=1 --no-same-owner"
+NODE_COPY="COPY --from=node-official /node/ /usr/local/"
+
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
@@ -70,9 +106,11 @@ case "$BROWSER" in
     # the REAL binary there. ARTIFACT_REV is the chromium revision (== browsers.json
     # name==chromium .revision) the dispatch passes.
     cat > "$TMPDIR/Dockerfile" <<EOF
+${NODE_STAGE}
 FROM alpine:${RUNNER_ALPINE}
+${NODE_COPY}
 RUN apk update && apk add --no-cache \\
-    nodejs npm bash git \\
+    libstdc++ bash git \\
     ca-certificates font-opensans ttf-freefont xvfb-run \\
     nss freetype harfbuzz libdrm mesa-gl \\
     libwebp libwebpdemux libxcomposite libxdamage libxrandr libxscrnsaver libxtst \\
@@ -119,11 +157,14 @@ EOF
     # holds simdutf 7.2.1, so apk refuses the mix. The Ubuntu control leg's
     # mcr.microsoft.com/playwright:v<PW>-noble image runs v24.18.1, so both
     # tests skipped here and passed there, and conformance-runtime-parity read
-    # the pair as an Alpine regression. 3.24 ships nodejs 24.22.3.
+    # the pair as an Alpine regression. The runner's node now comes from the
+    # official image itself (RUNNER_NODE_VERSION above).
     cat > "$TMPDIR/Dockerfile" <<EOF
+${NODE_STAGE}
 FROM alpine:${RUNNER_ALPINE}
+${NODE_COPY}
 RUN apk update && apk add --no-cache \\
-    nodejs npm bash git \\
+    libstdc++ bash git \\
     ca-certificates font-opensans ttf-freefont \\
     nss freetype harfbuzz libdrm mesa-gl \\
     libwebp libwebpdemux libxcomposite libxdamage libxrandr libxscrnsaver libxtst \\
@@ -232,7 +273,9 @@ RUN mkdir -p /opt/chromium-bundle \\
  && for so in "\$DEST"/*.so*; do [ -L "\$so" ] && continue; patchelf --set-rpath '\$ORIGIN' "\$so" 2>/dev/null || true; done \\
  && "\$DEST"/chrome --version
 
+${NODE_STAGE}
 FROM alpine:${RUNNER_ALPINE}
+${NODE_COPY}
 # Strip parity: everything strip-bundled-libs.sh removes from the FF bundle
 # must be apk-provided here so the runner exercises the SAME dedup'd layout
 # the combined image ships. libvpx is the
@@ -242,7 +285,7 @@ FROM alpine:${RUNNER_ALPINE}
 # firefox's, which can't apply in these single-bundle runners — parity holds
 # by byte-equality (see strip-bundled-libs.sh header).
 RUN apk update && apk add --no-cache \\
-    nodejs npm bash git build-base python3 \\
+    libstdc++ bash git build-base python3 \\
     alsa-lib dbus-libs fontconfig freetype glib gtk+3.0 harfbuzz \\
     icu-libs icu-data-full libevent libffi libjpeg-turbo libnotify libogg \\
     libtheora libvorbis libvpx libwebp libwebp-tools libwebpdemux libxcomposite \\
@@ -392,14 +435,16 @@ FROM alpine:${RUNNER_ALPINE} AS webrtc-build
 COPY webrtc /tmp/webrtc
 RUN sh /tmp/webrtc/build-webrtc.sh /webrtc-dist
 
+${NODE_STAGE}
 FROM alpine:${RUNNER_ALPINE}
+${NODE_COPY}
 # Strip parity: every lib strip-bundled-libs.sh removes from the WK bundle
 # must be apk-provided here so the conformance layout == the shipped dedup'd
 # layout. No 3rd arg passed: this image runs a
 # single bundle, so webkit keeps its real ICU copy (the combined image's
 # symlink to firefox's can't apply) — loader bytes are identical either way.
 RUN apk update && apk add --no-cache \\
-    nodejs npm bash git \\
+    libstdc++ bash git \\
     file binutils ca-certificates ttf-freefont \\
     libwpe libwpebackend-fdo \\
     gtk4.0 at-spi2-core \\

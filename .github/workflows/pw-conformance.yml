@@ -71,7 +71,25 @@ permissions:
   packages: read
 
 jobs:
+  # The node the official image of this PW release runs, read once so the 20
+  # shards don't each pull the official image. build-runner.sh says why the
+  # runner's node is bound to it.
+  runner-node:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - id: resolve
+        env:
+          PW_VERSION: ${{ inputs.pw_version }}
+        run: |
+          version=$(docker run --rm --entrypoint node "mcr.microsoft.com/playwright:v${PW_VERSION}-noble" --version)
+          echo "official image of PW ${PW_VERSION} runs node ${version}"
+          echo "version=${version#v}" >> "$GITHUB_OUTPUT"
+
   shard:
+    needs: runner-node
     runs-on: ubuntu-latest
     # Bumped from 60 → 90 after landing recorder-UI (xvfb-run) + PW-prefs
     # fixes recovered ~450 previously-skipped tests, which pushed some shards
@@ -102,6 +120,7 @@ jobs:
           ARTIFACT_REV: ${{ inputs.artifact_rev }}
           HEADED: ${{ inputs.headed && '1' || '0' }}
           IMAGE_TAG_OUT: pw-conformance-runner-${{ inputs.browser }}:${{ github.sha }}
+          RUNNER_NODE_VERSION: ${{ needs.runner-node.outputs.version }}
         run: ./playwright/alpine-browsers/conformance/build-runner.sh
 
       - name: Run shard ${{ matrix.shard }}/20
