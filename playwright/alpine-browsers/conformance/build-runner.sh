@@ -182,11 +182,12 @@ EOF
     ;;
 
   firefox)
-    # FF runner MUST match the alpine version FF was built against
-    # (playwright/alpine-browsers/Dockerfile uses alpine:edge builder). FF
-    # binary DT_NEEDED points at edge SONAMEs (libFLAC.so.14 from flac 1.5,
-    # libavformat.so.62 from ffmpeg 8.x). alpine:3.22 provides .so.12/.60
-    # → runtime SIGSEGV at launch (see run 29306045726 shard 3 diag).
+    # FF runner base = the shipped image's alpine (alpine-gha-tools
+    # OS_VERSION), so FF runs against the libs it ships with. It was
+    # alpine:edge (FF's builder) until edge's ffmpeg 9 (libavcodec.so.63)
+    # passed FF 153's dlopen list (.so.62 max): no H.264, no Theora either,
+    # and capabilities.spec.ts "should play video" hung at play(). Bump this
+    # with OS_VERSION.
     #
     # 2026-07-15: chromium re-added via multi-stage self-contained bundle at
     # /opt/chromium-bundle/ (isolated from :edge system libs via RPATH
@@ -233,11 +234,11 @@ RUN mkdir -p /opt/chromium-bundle \\
  && for so in "\$DEST"/*.so*; do [ -L "\$so" ] && continue; patchelf --set-rpath '\$ORIGIN' "\$so" 2>/dev/null || true; done \\
  && "\$DEST"/chrome --version
 
-FROM alpine:edge
+FROM alpine:3.24
 # Strip parity: everything strip-bundled-libs.sh removes from the FF bundle
 # must be apk-provided here so the runner exercises the SAME dedup'd layout
-# the combined image ships (validated on the edge closure). libvpx is the
-# lone apk-strip exception — edge's apk libvpx lacks mozilla's symbol set, so
+# the combined image ships. libvpx is the
+# lone apk-strip exception — apk libvpx lacks mozilla's symbol set, so
 # it stays bundled. ICU stays bundled too (3.24 apk data is en-only); the
 # combined image additionally symlinks webkit's byte-identical ICU to
 # firefox's, which can't apply in these single-bundle runners — parity holds
