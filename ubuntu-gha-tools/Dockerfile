@@ -9,6 +9,13 @@
 ARG OS_VERSION=26.04
 FROM mirror.gcr.io/library/ubuntu:${OS_VERSION} AS ubuntu-gnu-coreutils
 
+# Upgrade inside this stage, which is flattened into the base layer. Otherwise the first apt
+# install that pulls a package newer than the base image's copy (apt's Upgrade-By-Source-Package
+# drags its source siblings along) stores a second copy in a later layer: on 2026-11-12 locales
+# 2.43-2ubuntu2.7 against the image's libc6 .4 put a whole glibc twice in ubuntu-gha-tools,
+# 121.6 vs 115.6 MiB (1.052x), past the size gate.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
 # GNU coreutils in place of uutils, and uutils purged. Ubuntu 26.04 ships uutils: one 11.8 MB Rust
 # multicall that also parses its Fluent locale files on every exec, so `uname -s` costs 4.7-5.1 ms
 # CPU against GNU's 1.8-2.3. Playwright's pw_run.sh execs five of these per WebKit launch, which
