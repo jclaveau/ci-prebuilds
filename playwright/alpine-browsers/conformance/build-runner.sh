@@ -209,7 +209,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN npm install -g ${NPM_RETRY} playwright@${PW_VERSION}
 # browserType.executablePath() resolves to /ms-playwright/chromium-<rev>/
 # chrome-linux64/chrome (the full chromium, NOT headless-shell), which the
-# conformance tests never launch but `executablePath should work` existsSync-
+# conformance tests never launch but \`executablePath should work\` existsSync-
 # checks. Stage the binary there (symlink the headless-shell binary) so the
 # check passes. Rev looked up from browsers.json to stay PW-version-correct.
 RUN PWC_JSON=\$(find /usr/local/lib/node_modules -name browsers.json -path '*playwright-core*' | head -1) \\
@@ -309,7 +309,7 @@ RUN bash /tmp/strip-bundled-libs.sh /ms-playwright/firefox-${ARTIFACT_REV}/firef
 # musl Juggler workaround, applied at the BINARY (not via PW args): the FF Juggler
 # stays dormant unless launched with --remote-debugging-port=0 (wakes RemoteAgent).
 # The conformance config injects that arg, but PW's PlaywrightServer.filterLaunchOptions
-# STRIPS all client-supplied `args` for RCE-prevention on the `run-server` path, so
+# STRIPS all client-supplied \`args\` for RCE-prevention on the \`run-server\` path, so
 # browsertype-connect run-server tests launch FF without it → 38min hang. Wrap the
 # binary so the arg is always present regardless of PW's filtering — the security
 # filter stays fully intact. Dedup guard avoids double-passing on paths that add it.
@@ -338,13 +338,13 @@ RUN FFBIN=/ms-playwright/firefox-${ARTIFACT_REV}/firefox/firefox \\
  && chmod +x "\$FFBIN"
 # PW SDK prefs — Alpine FF build (apply-and-build.sh:175) writes these to the
 # wrong path (browser/app/profile/); Ubuntu FF ships them at these exact
-# locations. Missing them means `dom.security.https_first` stays true, PW's
+# locations. Missing them means \`dom.security.https_first\` stays true, PW's
 # proxy filter never attaches, and every proxy / client-cert test fails.
 # Root cause diagnosed 2026-07-09; drop-in fetch here recovers ~56 tests
 # (client-certs + proxy.spec.ts + siblings) without rebuilding FF.
 #
 # 01-alpine-pointer.js: headless musl FF's LookAndFeel defaults pointer/hover to
-# coarse/none, so `(hover: hover)` + `(pointer: fine)` don't match on the default
+# coarse/none, so \`(hover: hover)\` + \`(pointer: fine)\` don't match on the default
 # desktop context (page-emulate-media "should report hover and fine pointer for
 # desktop" fails). Ubuntu FF reports fine+hover by default; PW forces it for
 # chromium via --blink-settings but has no firefox equivalent. Force it via FF's
