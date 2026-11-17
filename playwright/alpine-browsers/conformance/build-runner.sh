@@ -34,6 +34,14 @@ IMAGE_TAG_OUT="${IMAGE_TAG_OUT:-pw-conformance-runner:latest}"
 # fan-out where every shard installs the same package at the same moment.
 NPM_RETRY="--fetch-retries=5 --fetch-retry-mintimeout=10000 --fetch-retry-maxtimeout=120000"
 
+# Every runner runs its browser on the alpine the shipped image is built on
+# (alpine-gha-tools OS_VERSION), so conformance tests the libs consumers get.
+# The runners were alpine:edge (the artifacts' builder) until edge's ffmpeg 9
+# (libavcodec.so.63) passed FF 153's dlopen list (.so.62 max) and "should play
+# video" hung at play(). Renovate bumps this line with OS_VERSION, in the same
+# "Alpine base image" PR. The chromium-fetch stages stay on 3.22 on purpose.
+RUNNER_ALPINE=3.24
+
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
@@ -54,15 +62,14 @@ case "$BROWSER" in
   chromium)
     if [ "${HEADED:-0}" = "1" ]; then
     # HEADED conformance: the full from-source chrome (chr-fs-* image, /chrome-linux
-    # layout). It was built on alpine:edge, so it is DT_NEEDED-linked against edge
-    # SONAMEs — the runner base MUST be edge (like FF/WK), not 3.22, or the .so
-    # versions won't resolve. Runtime apks mirror the producer's Tier-1 smoke set
-    # (full-chrome deps: gtk3/mesa-dri/xdg-utils on top of the headless list).
+    # layout), run on RUNNER_ALPINE like the shipped image. Runtime apks mirror
+    # the producer's Tier-1 smoke set (full-chrome deps: gtk3/mesa-dri/xdg-utils
+    # on top of the headless list).
     # PW launches chromium-<rev>/chrome-linux64/chrome headed under Xvfb, so stage
     # the REAL binary there. ARTIFACT_REV is the chromium revision (== browsers.json
     # name==chromium .revision) the dispatch passes.
     cat > "$TMPDIR/Dockerfile" <<EOF
-FROM alpine:edge
+FROM alpine:${RUNNER_ALPINE}
 RUN apk update && apk add --no-cache \\
     nodejs npm bash git \\
     ca-certificates font-opensans ttf-freefont xvfb-run \\
@@ -100,11 +107,7 @@ EOF
     # project_chromium_from_source_runtime_deps. Both variants safely accept
     # the wider list; extra apks don't hurt the apk path.
     #
-    # edge, not 3.22, for the same reason the firefox runner below pins edge:
-    # the artifact is BUILT on alpine:edge (Dockerfile.setup's chromium-builder
-    # stage), so its DT_NEEDED entries are edge SONAMEs. The headed sibling
-    # above already runs its from-source chromium on edge; this stage was the
-    # odd one out.
+    # RUNNER_ALPINE, not 3.22: the shipped image runs this artifact there.
     #
     # It also settles two conformance rows that no browser change could. PW
     # gates these on the RUNNER's node, not on the browser:
@@ -115,10 +118,9 @@ EOF
     # holds simdutf 7.2.1, so apk refuses the mix. The Ubuntu control leg's
     # mcr.microsoft.com/playwright:v<PW>-noble image runs v24.18.1, so both
     # tests skipped here and passed there, and conformance-runtime-parity read
-    # the pair as an Alpine regression. edge ships v24.18.1 — the control's node
-    # exactly.
+    # the pair as an Alpine regression. 3.24 ships nodejs 24.22.3.
     cat > "$TMPDIR/Dockerfile" <<EOF
-FROM alpine:edge
+FROM alpine:${RUNNER_ALPINE}
 RUN apk update && apk add --no-cache \\
     nodejs npm bash git \\
     ca-certificates font-opensans ttf-freefont \\
@@ -182,12 +184,7 @@ EOF
     ;;
 
   firefox)
-    # FF runner base = the shipped image's alpine (alpine-gha-tools
-    # OS_VERSION), so FF runs against the libs it ships with. It was
-    # alpine:edge (FF's builder) until edge's ffmpeg 9 (libavcodec.so.63)
-    # passed FF 153's dlopen list (.so.62 max): no H.264, no Theora either,
-    # and capabilities.spec.ts "should play video" hung at play(). Bump this
-    # with OS_VERSION.
+    # Runs on RUNNER_ALPINE (see its comment at the top).
     #
     # 2026-07-15: chromium re-added via multi-stage self-contained bundle at
     # /opt/chromium-bundle/ (isolated from :edge system libs via RPATH
@@ -234,7 +231,7 @@ RUN mkdir -p /opt/chromium-bundle \\
  && for so in "\$DEST"/*.so*; do [ -L "\$so" ] && continue; patchelf --set-rpath '\$ORIGIN' "\$so" 2>/dev/null || true; done \\
  && "\$DEST"/chrome --version
 
-FROM alpine:3.24
+FROM alpine:${RUNNER_ALPINE}
 # Strip parity: everything strip-bundled-libs.sh removes from the FF bundle
 # must be apk-provided here so the runner exercises the SAME dedup'd layout
 # the combined image ships. libvpx is the
@@ -388,20 +385,20 @@ RUN mkdir -p /opt/chromium-bundle \\
  && for so in "\$DEST"/*.so*; do [ -L "\$so" ] && continue; patchelf --set-rpath '\$ORIGIN' "\$so" 2>/dev/null || true; done \\
  && "\$DEST"/chrome --version
 
-FROM alpine:edge AS webrtc-build
+FROM alpine:${RUNNER_ALPINE} AS webrtc-build
 # WebRTC runtime plugin: Alpine's gst-plugins-bad OMITS the classic 'webrtc'
 # plugin (webrtcbin) — gst 1.28 needs libnice >= 0.1.23 (NICE_AGENT_OPTION_CLOSE_
 # FORCED) but Alpine ships 0.1.22. WebKit's GStreamerWebRTCProvider checks the
 # 'webrtc' plugin is registered + eagerly creates webrtcbin at RTCPeerConnection
 # construction; without it new RTCPeerConnection() throws → Modernizr
 # datachannel:false. Build libnice 0.1.23 + the webrtc plugin from source against
-# the runner's own gstreamer. GSTVER auto-detected so it can't drift from edge.
+# the runner's own gstreamer. GSTVER auto-detected so it can't drift from it.
 #
 # Two sources for the tarball: gstreamer.freedesktop.org 503'd for hours on
 # 2026-08-24 and took 19 of 20 webkit conformance shards with it, since every
 # shard builds this same image. The fallback is Alpine's distfiles cache, and
 # it holds the RIGHT version by construction rather than by luck: this runner
-# is alpine:edge, so GSTVER is whatever Alpine packages, and distfiles caches
+# is alpine:${RUNNER_ALPINE}, so GSTVER is whatever Alpine packages, and distfiles caches
 # the tarball for exactly the version it packages. libnice keeps a single
 # source — it comes from gitlab.freedesktop.org, a different host that stayed
 # up, and we build 0.1.23 while Alpine packages 0.1.22, so distfiles has no
@@ -444,7 +441,7 @@ RUN set -e; GSTVER=\$(pkg-config --modversion gstreamer-1.0); cd /tmp \\
  && pkg-config --atleast-version=0.1.23 nice \\
  && cd /tmp \\
  && { curl -fsSL -o gpb.tar.xz "https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-\${GSTVER}.tar.xz" && xz -t gpb.tar.xz; } \\
-      || { curl -fsSL -o gpb.tar.xz "https://distfiles.alpinelinux.org/distfiles/edge/gst-plugins-bad-\${GSTVER}.tar.xz" && xz -t gpb.tar.xz; } \\
+      || { curl -fsSL -o gpb.tar.xz "https://distfiles.alpinelinux.org/distfiles/v${RUNNER_ALPINE}/gst-plugins-bad-\${GSTVER}.tar.xz" && xz -t gpb.tar.xz; } \\
  && tar xJf gpb.tar.xz && rm gpb.tar.xz \\
  && cd gst-plugins-bad-\${GSTVER} \\
  && meson setup build -Dauto_features=disabled \\
@@ -458,10 +455,10 @@ RUN set -e; GSTVER=\$(pkg-config --modversion gstreamer-1.0); cd /tmp \\
  && cp -a build/gst-libs/gst/webrtc/nice/libgstwebrtcnice-1.0.so* /webrtc-dist/ \\
  && cp -a /usr/lib/libnice.so.10*                                /webrtc-dist/
 
-FROM alpine:edge
+FROM alpine:${RUNNER_ALPINE}
 # Strip parity: every lib strip-bundled-libs.sh removes from the WK bundle
 # must be apk-provided here so the conformance layout == the shipped dedup'd
-# layout (validated on the edge closure). No 3rd arg passed: this image runs a
+# layout. No 3rd arg passed: this image runs a
 # single bundle, so webkit keeps its real ICU copy (the combined image's
 # symlink to firefox's can't apply) — loader bytes are identical either way.
 RUN apk update && apk add --no-cache \\

@@ -123,6 +123,17 @@
     },
     {
       "customType": "regex",
+      "description": "Conformance runners run the browsers on the shipped alpine; this bumps with OS_VERSION in the same Alpine base image PR.",
+      "fileMatch": ["^playwright/alpine-browsers/conformance/build-runner\\.sh$"],
+      "matchStrings": [
+        "\\nRUNNER_ALPINE=(?<currentValue>.*?)\\n"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "mirror.gcr.io/library/alpine",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
       "fileMatch": ["^ubuntu-gha-tools/Dockerfile$"],
       "matchStrings": [
         "ARG OS_VERSION=(?<currentValue>.*?)\\n"
