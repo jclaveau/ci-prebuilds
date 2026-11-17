@@ -22,3 +22,5 @@ Same day, d51d6a1: every conformance runner stage runs on `RUNNER_ALPINE` (= alp
 
 **Why:** a runner-only fix makes conformance green on a gap consumers still hit.
 **How to apply:** anything the runner adds to make a test pass must come from a script `Dockerfile.alpine` also runs; when a runner stage installs/builds something, grep the consumer for it.
+
+**Verified 2026-11-17:** TP 44090648344 (bdbe001) published latest; WebRTC shipped-image probe 44094198898 green on all 6 legs, alpine webkit included.

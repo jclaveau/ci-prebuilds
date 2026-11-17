@@ -27,3 +27,5 @@ Probe: `node-alloc-boot-profile.yml` + `node/bench/alloc-boot-probe.cjs`; per-CP
 - a fixed arm order biases the first arm: rotate it per round.
 
 **How to apply:** don't chase our build for these rows. alloc_buffers = accept or per-row ceiling; boot_e0 lever ALLOW_LARGE_OS_PAGES is shipped; gate json_roundtrip is bimodal (26 or 36 ms per shot on both arms), a breach there is noise. See [[node-stage-b-measured]], [[alpine-node-gap-is-apk-build-config]].
+
+**Applied 2026-11-17 (jean: per-row margin):** perf-gate-margins.json `node` section, alloc_buffers 0.20, rest 0.06 (bdbe001); first run read 1.162 / 1.121 / 0.997, all inside.
