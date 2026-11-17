@@ -156,6 +156,14 @@ FROM ${BASE_IMAGE} AS zlibng-build
 COPY alpine-browsers/webkit/zlib-ng /work/zlib-ng
 RUN sudo sh /work/zlib-ng/build-zlib-ng.sh
 
+# GStreamer's `webrtc` plugin (webrtcbin) + libnice 0.1.23, which Alpine's
+# gst-plugins-bad omits. Without it WebKit's `new RTCPeerConnection()` throws
+# "InvalidAccessError: Bad Configuration Parameters" (webrtc-shipped-probe.yml).
+# The conformance runner builds it with the same script, which has the why.
+FROM ${BASE_IMAGE} AS webrtc-build
+COPY alpine-browsers/webkit/webrtc /work/webrtc
+RUN sudo sh /work/webrtc/build-webrtc.sh /webrtc-dist
+
 # Runtime libs. chromium-headless-shell has RPATH=$ORIGIN but the FROM-SOURCE
 # build (unlike the old apk one) is NOT fully self-contained — it dynamically
 # links Alpine's libxslt + double-conversion + minizip + crc32c (aports chromium
@@ -184,6 +192,9 @@ RUN sudo apk add --no-cache \
         opus libsecret \
         libxslt double-conversion minizip crc32c \
         icu-data-en
+COPY --from=webrtc-build /webrtc-dist/libnice.so.10* /usr/lib/
+COPY --from=webrtc-build /webrtc-dist/libgstwebrtcnice-1.0.so* /usr/lib/
+COPY --from=webrtc-build /webrtc-dist/gstreamer-1.0/ /usr/lib/gstreamer-1.0/
 
 # icu-data-en is WebKit's ICU data: its bundled libicudata.so.78 is a 9.5 KB
 # stub, so ICU opens /usr/share/icu/78.1/icudt78l.dat, and without it every
@@ -490,6 +501,7 @@ RUN sudo bash /usr/local/bin/strip-bundled-libs.sh /ms-playwright/firefox-${FF_R
 # is rescanned once (first launch 216 ms) and is fresh from then on.
 RUN sudo apk add --no-cache --virtual .gst-tools gstreamer-tools \
  && sudo env GST_REGISTRY=/ms-playwright/webkit-${WK_REV}/gst-registry.bin gst-inspect-1.0 >/dev/null \
+ && sudo env GST_REGISTRY=/ms-playwright/webkit-${WK_REV}/gst-registry.bin gst-inspect-1.0 webrtcbin >/dev/null \
  && sudo chmod 644 /ms-playwright/webkit-${WK_REV}/gst-registry.bin \
  && sudo apk del --no-cache .gst-tools
 

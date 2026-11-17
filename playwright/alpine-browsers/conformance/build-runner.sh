@@ -55,6 +55,7 @@ cp "$(dirname "$0")/../webkit/scripts/strip-mesa-closure.sh" "$TMPDIR/"
 # the same libm the image ships, or it validates a build nobody runs.
 cp -r "$(dirname "$0")/../libm-fmod-custom" "$TMPDIR/"
 cp -r "$(dirname "$0")/../webkit/zlib-ng" "$TMPDIR/"
+cp -r "$(dirname "$0")/../webkit/webrtc" "$TMPDIR/"
 # The string interposer the chromium launcher preloads, for the same reason.
 cp -r "$(dirname "$0")/../chromium-headless-shell/faststring" "$TMPDIR/"
 
@@ -386,74 +387,10 @@ RUN mkdir -p /opt/chromium-bundle \\
  && "\$DEST"/chrome --version
 
 FROM alpine:${RUNNER_ALPINE} AS webrtc-build
-# WebRTC runtime plugin: Alpine's gst-plugins-bad OMITS the classic 'webrtc'
-# plugin (webrtcbin) — gst 1.28 needs libnice >= 0.1.23 (NICE_AGENT_OPTION_CLOSE_
-# FORCED) but Alpine ships 0.1.22. WebKit's GStreamerWebRTCProvider checks the
-# 'webrtc' plugin is registered + eagerly creates webrtcbin at RTCPeerConnection
-# construction; without it new RTCPeerConnection() throws → Modernizr
-# datachannel:false. Build libnice 0.1.23 + the webrtc plugin from source against
-# the runner's own gstreamer. GSTVER auto-detected so it can't drift from it.
-#
-# Two sources for the tarball: gstreamer.freedesktop.org 503'd for hours on
-# 2026-08-24 and took 19 of 20 webkit conformance shards with it, since every
-# shard builds this same image. The fallback is Alpine's distfiles cache, and
-# it holds the RIGHT version by construction rather than by luck: this runner
-# is alpine:${RUNNER_ALPINE}, so GSTVER is whatever Alpine packages, and distfiles caches
-# the tarball for exactly the version it packages. libnice keeps a single
-# source — it comes from gitlab.freedesktop.org, a different host that stayed
-# up, and we build 0.1.23 while Alpine packages 0.1.22, so distfiles has no
-# copy of ours to fall back to.
-#
-# Fetched to a FILE and xz -t'd rather than piped into tar. Piping cannot be
-# made to fall back: the primary failed mid-stream (PROTOCOL_ERROR after the
-# headers, not a clean 503), so -f could not suppress the partial body, tar
-# died on corrupt input, and the fallback curl had no reader left. That left
-# a partially extracted tree that still contained ext/webrtc — a silent half
-# success. Verifying the archive before extracting is what makes the retry
-# mean anything.
-#
-# libnice gets the same treatment now, for the reason the note above already
-# gave and this leg had not acted on. Shard 4 of run 34124287051 failed with
-# `Dependency "nice" not found (tried pkg-config)` — a dependency error, which
-# reads as a recipe fault — 8.5 seconds into a step where compiling libnice
-# alone takes far longer. The recipe reproduces clean locally; what the timing
-# says is that the libnice half never did any work. `curl | tar` on busybox
-# tar accepts an empty body without complaint, so a dropped fetch arrives
-# later disguised as a missing package, and it took the webkit promote with
-# it. Verify the archive, retry the fetch, and assert the package is really
-# installed before moving on: a broken fetch must not be able to present as
-# anything else.
-RUN apk add --no-cache build-base meson ninja pkgconf curl \\
-    gstreamer-dev gst-plugins-base-dev gst-plugins-bad-dev openssl-dev libsrtp-dev glib-dev
-RUN set -e; GSTVER=\$(pkg-config --modversion gstreamer-1.0); cd /tmp \\
- && for attempt in 1 2 3 4 5; do \\
-      curl -fsSL --retry 3 --retry-all-errors -o nice.tar.gz \\
-        "https://gitlab.freedesktop.org/libnice/libnice/-/archive/0.1.23/libnice-0.1.23.tar.gz" \\
-        && gzip -t nice.tar.gz && break; \\
-      echo "libnice fetch attempt \$attempt failed; retrying" >&2; sleep \$((attempt * 5)); \\
-    done \\
- && gzip -t nice.tar.gz \\
- && tar xzf nice.tar.gz && rm nice.tar.gz \\
- && cd libnice-0.1.23 \\
- && meson setup b --prefix=/usr --libdir=lib -Dgstreamer=enabled \\
-      -Dtests=disabled -Dexamples=disabled -Dintrospection=disabled -Dgtk_doc=disabled \\
- && ninja -C b install \\
- && pkg-config --atleast-version=0.1.23 nice \\
- && cd /tmp \\
- && { curl -fsSL -o gpb.tar.xz "https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-\${GSTVER}.tar.xz" && xz -t gpb.tar.xz; } \\
-      || { curl -fsSL -o gpb.tar.xz "https://distfiles.alpinelinux.org/distfiles/v${RUNNER_ALPINE}/gst-plugins-bad-\${GSTVER}.tar.xz" && xz -t gpb.tar.xz; } \\
- && tar xJf gpb.tar.xz && rm gpb.tar.xz \\
- && cd gst-plugins-bad-\${GSTVER} \\
- && meson setup build -Dauto_features=disabled \\
-      -Dwebrtc=enabled -Dsctp=enabled -Ddtls=enabled -Dsrtp=enabled \\
-      -Dnls=disabled -Dorc=disabled -Dgpl=disabled \\
-      -Dexamples=disabled -Dtests=disabled -Dintrospection=disabled -Ddoc=disabled \\
- && ninja -C build ext/webrtc/libgstwebrtc.so \\
- && mkdir -p /webrtc-dist/gstreamer-1.0 \\
- && cp build/ext/webrtc/libgstwebrtc.so                          /webrtc-dist/gstreamer-1.0/ \\
- && cp -a /usr/lib/gstreamer-1.0/libgstnice.so                   /webrtc-dist/gstreamer-1.0/ \\
- && cp -a build/gst-libs/gst/webrtc/nice/libgstwebrtcnice-1.0.so* /webrtc-dist/ \\
- && cp -a /usr/lib/libnice.so.10*                                /webrtc-dist/
+# WebRTC plugin (webrtcbin) + libnice 0.1.23. Same script the consumer image
+# runs; it says why Alpine's own packages can't provide them.
+COPY webrtc /tmp/webrtc
+RUN sh /tmp/webrtc/build-webrtc.sh /webrtc-dist
 
 FROM alpine:${RUNNER_ALPINE}
 # Strip parity: every lib strip-bundled-libs.sh removes from the WK bundle

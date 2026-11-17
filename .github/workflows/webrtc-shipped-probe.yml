@@ -1,18 +1,21 @@
 name: WebRTC shipped-image probe
 
-# conformance-webkit builds gst-plugins-bad's `webrtc` plugin (webrtcbin, with
-# libnice 0.1.23) from source in its runner (build-runner.sh `webrtc-build`),
-# because Alpine's gst-plugins-bad omits it. playwright/Dockerfile.alpine has no
-# such stage, so the shipped image may lack the plugin the runner proves green:
-# modernizr's datachannel/peerconnection pass in conformance, `new
-# RTCPeerConnection()` may throw for a consumer. This probe asks the shipped
-# images directly. Informational: dispatch-only after its first push.
+# Asks the PUBLISHED images for a working RTCPeerConnection, after each
+# publish of `latest`. Alpine's gst-plugins-bad omits GStreamer's `webrtc`
+# plugin (webrtcbin), which WebKit needs for the constructor. Until 2026-11-17
+# only the conformance runner built it, so conformance-webkit was green while
+# the shipped alpine webkit threw "InvalidAccessError: Bad Configuration
+# Parameters". Both now run build-webrtc.sh; this probe holds them to it.
 
 on:
   push:
     branches: [main]
     paths:
       - '.github/workflows/webrtc-shipped-probe.yml'
+  workflow_run:
+    workflows: [Test and Publish]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -21,6 +24,7 @@ permissions:
 jobs:
   probe:
     name: webrtc-${{ matrix.image }}-${{ matrix.browser }}
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
