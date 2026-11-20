@@ -1,1 +1,13 @@
-/metrics export-ignore
+# This ref is only ever consumed as `uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0`,
+# which makes the runner download the whole repo tarball once a job. Everything the action does
+# not need is kept out of that archive: 1,318,679 B -> 3,200 B, clones and actions/checkout
+# unaffected (they speak git, not the archive).
+#
+# Every ancestor directory needs its own un-ignore line: `*` ignores the `.github` directory
+# itself, and git then never looks inside it, which yields an EMPTY archive. `!pattern` is not
+# negation here either — git warns `Negative patterns are ignored in git attributes`.
+* export-ignore
+/.github -export-ignore
+/.github/actions -export-ignore
+/.github/actions/prepare -export-ignore
+/.github/actions/prepare/** -export-ignore
