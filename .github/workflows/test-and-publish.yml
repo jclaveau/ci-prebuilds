@@ -2388,6 +2388,7 @@ jobs:
       && (
         (github.event_name == 'push' && github.ref == 'refs/heads/main')
         || github.event_name == 'schedule'
+        || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
         || github.event_name == 'issues'
         || github.event_name == 'issue_comment'
       )
@@ -2479,7 +2480,7 @@ jobs:
             # version pin and must not advance `:latest`). On push/main, inputs.* is
             # null, so we gate via event_name first and fall through to inputs only
             # for the workflow_call path.
-            type=raw,value=latest,enable=${{ github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_call' && inputs.publish_latest) }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_call' && inputs.publish_latest) }}
             type=raw,value=${{ steps.pin.outputs.tag }},enable=${{ github.event_name != 'pull_request' }}
             type=sha,prefix={{branch}}-
             type=ref,event=branch
