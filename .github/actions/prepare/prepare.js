@@ -60,10 +60,12 @@ exportVariable('HOST_ADDRESS', process.env.HOST_ADDRESS || '127.0.0.1')
 // Absent on a plain VM job and on every image below the node layer. This action is a
 // universal pre-flight, so "no prebuilt tools to account for" is not a finding.
 if (fs.existsSync(ASSERT_SCRIPT)) {
-  const snapshotPath = path.join(
-    process.env.RUNNER_TEMP || os.tmpdir(),
-    'ci-prebuilds-tools-at-prepare.tsv',
-  )
+  const snapshotDir = process.env.RUNNER_TEMP || os.tmpdir()
+  // RUNNER_TEMP is a promise the runner keeps and act does not: its .actrc value often
+  // names a directory nothing creates, and the write below would fail on a job that is
+  // otherwise fine.
+  fs.mkdirSync(snapshotDir, { recursive: true })
+  const snapshotPath = path.join(snapshotDir, 'ci-prebuilds-tools-at-prepare.tsv')
   const snapshot = spawnSync(ASSERT_SCRIPT, ['--write-snapshot', snapshotPath], { stdio: 'inherit' })
   if (snapshot.status === 0) {
     saveState('tools_snapshot', snapshotPath)
