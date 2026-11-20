@@ -304,6 +304,37 @@ PYEOF
 # Copy in-tree where bootstrap.diff expects them.
 [[ -d "$PW/preferences" ]] && cp -a "$PW/preferences/." browser/app/profile/
 
+# FIX (2026-11-20, issue #369): context.close() closes a context's last tab, and
+# toolkit's closeWindow() then calls SessionStore.maybeDontRestoreTabs(window),
+# which dereferences this._windows[window.__SSi] with no check. A window
+# SessionStore never registered has no entry, so Browser.removeBrowserContext
+# fails with `can't access property "_maybeDontRestoreTabs",
+# this._windows[aWindow.__SSi] is undefined`. Under -silent, Juggler serves
+# Browser.enable before BrowserGlue runs SessionStore.init(), so a window opened
+# in that gap is never registered (microsoft/playwright#43413, closed not
+# planned). Return early for an unregistered window, as onClose() already does:
+# Playwright turns session restore off, so the flag has nothing to act on.
+echo "  FIX: SessionStore.maybeDontRestoreTabs ignores an unregistered window"
+python3 - <<'PYEOF'
+import pathlib
+path = pathlib.Path('browser/components/sessionstore/SessionStore.sys.mjs')
+source = path.read_text()
+old = ("  maybeDontRestoreTabs(aWindow) {\n"
+       "    // Don't restore the tabs if we restore the session at startup\n"
+       "    this._windows[aWindow.__SSi]._maybeDontRestoreTabs = true;\n"
+       "  },\n")
+new = ("  maybeDontRestoreTabs(aWindow) {\n"
+       "    const windowData = this._windows[aWindow.__SSi];\n"
+       "    if (!windowData) {\n"
+       "      return;\n"
+       "    }\n"
+       "    // Don't restore the tabs if we restore the session at startup\n"
+       "    windowData._maybeDontRestoreTabs = true;\n"
+       "  },\n")
+assert source.count(old) == 1, f"maybeDontRestoreTabs anchor not found once in {path}"
+path.write_text(source.replace(old, new))
+PYEOF
+
 # 5a. DIAGNOSTIC: PW_JUGGLER_ORDER_FIRST — move "/juggler" to BEFORE "/remote"
 #     in toolkit/toolkit.mozbuild's WebDriver DIRS list. Tests whether Mozilla
 #     RemoteAgent winning the m-remote category collision is the reason
