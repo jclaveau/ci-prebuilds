@@ -110,9 +110,10 @@ on:
       tags:
         description: Newline-separated repo:tag list pushed to Docker Hub by this run.
         value: ${{ jobs.aggregate-tags.outputs.tags }}
-  # schedule:
-  #   # Run weekly to get security updates
-  #   - cron: '0 0 * * 0'
+  schedule:
+    # Weekly full rebuild: the apt/apk packages (docker compose, buildx, security
+    # fixes) are unpinned and only move when an image is rebuilt.
+    - cron: '0 0 * * 0'
   # Manual full rebuild — refresh consumer `:latest` when a producer moving tag
   # (e.g. chs-<rev>) updates with no code change here (push-path gating skips it).
   workflow_dispatch:
@@ -2386,6 +2387,7 @@ jobs:
       !failure() && !cancelled()
       && (
         (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        || github.event_name == 'schedule'
         || github.event_name == 'issues'
         || github.event_name == 'issue_comment'
       )
@@ -2477,7 +2479,7 @@ jobs:
             # version pin and must not advance `:latest`). On push/main, inputs.* is
             # null, so we gate via event_name first and fall through to inputs only
             # for the workflow_call path.
-            type=raw,value=latest,enable=${{ github.event_name == 'push' || (github.event_name == 'workflow_call' && inputs.publish_latest) }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' || github.event_name == 'schedule' || (github.event_name == 'workflow_call' && inputs.publish_latest) }}
             type=raw,value=${{ steps.pin.outputs.tag }},enable=${{ github.event_name != 'pull_request' }}
             type=sha,prefix={{branch}}-
             type=ref,event=branch
