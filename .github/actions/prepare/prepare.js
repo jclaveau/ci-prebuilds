@@ -13,6 +13,9 @@ const os = require('node:os')
 const { spawnSync } = require('node:child_process')
 
 const ASSERT_SCRIPT = '/usr/local/bin/assert-prebuilt-tools-in-use'
+// The path is a constant in production; the override exists so
+// tests/scripts/test-prepare-socket-gid.sh can point it at a socket whose gid it owns.
+const DOCKER_SOCKET = process.env.CI_PREBUILDS_DOCKER_SOCKET || '/var/run/docker.sock'
 
 function exportVariable(name, value) {
   process.env[name] = value
@@ -39,6 +42,50 @@ function saveState(name, value) {
 // case, where the job runs on the host VM.
 const dockerMode = process.env.DOCKER_MODE || 'vm'
 exportVariable('DOCKER_MODE', dockerMode)
+
+// A container job is handed the HOST's /var/run/docker.sock, which keeps the host's gid,
+// and the images can only bake a group per gid GitHub has shipped so far
+// (DOCKER_HOST_GROUP_IDS in docker/Dockerfile): gid 111 turned up on 2026-11-21 and locked
+// uid 1001 out of every docker call in the job. The image's own ENTRYPOINT cannot align
+// them — the runner replaces it with `tail -f /dev/null` — but this step can, because
+// `docker exec` resolves the user's supplementary groups from /etc/group at every exec, so
+// the group joined here reaches every later step. Needs the narrow `groupadd`/`usermod`
+// sudoers entry dood/Dockerfile installs; without it the job gets a warning naming the gid
+// instead of a wall of "permission denied" from whichever step touches docker first.
+function joinDockerSocketGroup() {
+  let socketGid
+  try {
+    socketGid = fs.statSync(DOCKER_SOCKET).gid
+  } catch {
+    // No socket at all: a plain VM job, or a dind image before start-dockerd.
+    return
+  }
+  if (process.getgid() === socketGid || process.getgroups().includes(socketGid)) {
+    return
+  }
+  // A group may already hold that gid under a name of its own (`docker` itself on an image
+  // built with DOCKER_GROUP_ID equal to it), in which case joining it is the whole job.
+  const resolved = spawnSync('getent', ['group', String(socketGid)], { encoding: 'utf8' })
+  const groupName = resolved.status === 0
+    ? resolved.stdout.trim().split(':')[0]
+    : `docker-host-${socketGid}`
+  const user = os.userInfo().username
+  if (resolved.status !== 0) {
+    const created = spawnSync('sudo', ['-n', 'groupadd', '-o', '-g', String(socketGid), groupName], { encoding: 'utf8' })
+    if (created.status !== 0) {
+      console.log(`::warning::${DOCKER_SOCKET} has gid ${socketGid}, which this image bakes no group for, and \`sudo -n groupadd\` failed (${JSON.stringify((created.stderr || '').trim() || created.status)}): every docker call in this job will read "permission denied"`)
+      return
+    }
+  }
+  const joined = spawnSync('sudo', ['-n', 'usermod', '-aG', groupName, user], { encoding: 'utf8' })
+  if (joined.status !== 0) {
+    console.log(`::warning::${DOCKER_SOCKET} has gid ${socketGid} and \`sudo -n usermod -aG ${groupName} ${user}\` failed (${JSON.stringify((joined.stderr || '').trim() || joined.status)}): every docker call in this job will read "permission denied"`)
+    return
+  }
+  console.log(`::notice::joined ${groupName} (gid ${socketGid}) so this job can reach ${DOCKER_SOCKET}`)
+}
+
+joinDockerSocketGroup()
 
 if (dockerMode === 'dind') {
   // stdio inherited so the daemon's own boot log lands in this step, and a non-zero exit

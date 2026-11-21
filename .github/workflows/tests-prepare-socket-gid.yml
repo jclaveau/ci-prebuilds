@@ -1,0 +1,30 @@
+name: tests-prepare-socket-gid
+
+# The 5 rows of the socket-group join in the prepare action: a gid no group holds, a gid
+# an existing group holds, a gid the job already carries, no socket at all, and a refused
+# `sudo -n`. Fake sudo and getent on a scratch PATH, no docker, seconds — the end-to-end
+# proof (an image, a real daemon behind a socket with gid 65123) is
+# test-prepare-socket-gid in test-and-publish.yml, which needs the images built.
+
+on:
+  pull_request:
+    paths:
+      - '.github/actions/prepare/**'
+      - 'tests/scripts/test-prepare-socket-gid.sh'
+      - '.github/workflows/tests-prepare-socket-gid.yml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/actions/prepare/**'
+      - 'tests/scripts/test-prepare-socket-gid.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: socket-group join unit test
+        run: bash tests/scripts/test-prepare-socket-gid.sh

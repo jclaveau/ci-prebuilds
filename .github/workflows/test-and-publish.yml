@@ -2111,6 +2111,80 @@ jobs:
         run: test "$HOST_ADDRESS" = "host.docker.internal"
 
   # ----------------------------------------------------------------------------
+  # The socket gid a GitHub runner hands a container job is not ours to choose, and the
+  # images can only bake the gids seen so far (111 appeared on 2026-11-21 and took every
+  # docker call in Planner's e2e jobs down). This job hands the container a socket whose
+  # gid NO image bakes (65123, owned by a uid that is not the runner's, so only the group
+  # bits can grant access) and proves the recovery end to end: denied before `prepare`,
+  # granted after it, in a LATER exec — which is what a workflow step is.
+  # socat proxies the real socket because chowning /var/run/docker.sock would lock the
+  # host runner out of its own daemon.
+  # ----------------------------------------------------------------------------
+  test-prepare-socket-gid:
+    runs-on: ubuntu-latest
+    if: fromJSON(needs.github-context.outputs.test_filters).node
+    needs: [github-context, build-node-dood]
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.github-context.outputs.os_matrix) }}
+    env:
+      IMG: ghcr.io/jclaveau/${{ matrix.os }}-dood-node:${{ needs.github-context.outputs.build_tag }}
+      FOREIGN_GID: '65123'
+    steps:
+      - uses: actions/checkout@v7
+      - name: The join logic, unit level
+        run: bash tests/scripts/test-prepare-socket-gid.sh
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pre-pull the container image
+        run: docker pull "$IMG"
+      - name: Proxy the daemon behind a socket with an unbaked gid
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends socat
+          socat UNIX-LISTEN:/tmp/foreign-gid.sock,fork,mode=660 \
+            UNIX-CONNECT:/var/run/docker.sock &
+          for _ in $(seq 1 50); do [ -S /tmp/foreign-gid.sock ] && break; sleep 0.1; done
+          [ -S /tmp/foreign-gid.sock ] || { echo "::error::socat never created the socket"; exit 1; }
+          sudo chown 65124:"$FOREIGN_GID" /tmp/foreign-gid.sock
+          sudo chmod 660 /tmp/foreign-gid.sock
+      # --entrypoint tail is what the GitHub runner itself does to a job container, so the
+      # container under test cannot fix its own groups at boot either.
+      - name: Start the container the way a container job is started
+        run: |
+          docker run -d --name gidtest \
+            -v /tmp/foreign-gid.sock:/var/run/docker.sock \
+            -v "$PWD/.github/actions/prepare:/prepare:ro" \
+            -e GITHUB_ENV=/tmp/github-env -e GITHUB_STATE=/tmp/github-state \
+            --entrypoint tail "$IMG" -f /dev/null
+          docker exec gidtest sh -c 'id'
+          docker exec gidtest sh -c 'stat -c "socket gid %g (%G)" /var/run/docker.sock'
+      - name: Red arm — docker is unreachable before the action runs
+        run: |
+          rc=0
+          docker exec gidtest docker ps >red.log 2>&1 || rc=$?
+          cat red.log
+          [ "$rc" != "0" ] || { echo "::error::gid $FOREIGN_GID was already reachable, so the green arm proves nothing"; exit 1; }
+          grep -q 'permission denied' red.log \
+            || { echo "::error::docker failed for another reason than the socket's group"; exit 1; }
+      - name: The action joins the socket's group
+        run: |
+          docker exec gidtest node /prepare/prepare.js >join.log 2>&1 || { cat join.log; exit 1; }
+          cat join.log
+          grep -q "::notice::joined docker-host-$FOREIGN_GID (gid $FOREIGN_GID)" join.log \
+            || { echo "::error::the action did not report joining gid $FOREIGN_GID"; exit 1; }
+      - name: Green arm — a later step reaches docker
+        run: docker exec gidtest docker ps
+      - name: Stop the container
+        if: always()
+        run: docker rm -f gidtest || true
+
+  # ----------------------------------------------------------------------------
   # act: vm-mode coverage for the `prepare` action — no `container:`,
   # no image. Verifies the action's DOCKER_MODE=vm + HOST_ADDRESS=127.0.0.1
   # fallbacks fire when the consumer runs on a plain host runner (the

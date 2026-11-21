@@ -3,7 +3,7 @@ ARG BASE_IMAGE=jclaveau/ubuntu-gha-tools:latest
 FROM ${BASE_IMAGE}
 
 ARG DOCKER_GROUP_ID=${DOCKER_GROUP_ID}
-ARG DOCKER_HOST_GROUP_IDS="112 113 118"
+ARG DOCKER_HOST_GROUP_IDS="111 112 113 118"
 # Renovate will update this
 ARG DOCKER_VERSION=29.9.2
 
@@ -38,8 +38,10 @@ RUN echo "Create the docker group with GitHub's host GID *before* installing any
     && sudo usermod -aG docker packer \
     \
     && echo "Join a group for every docker gid a GitHub-hosted runner image ships (ubuntu-24.04: 118," \
-    && echo "ubuntu-26.04: 113, or 112 on some builds): the socket keeps the host's gid, and a" \
-    && echo "container job replaces the entrypoint, so no runtime step can re-align it (#353)" \
+    && echo "ubuntu-26.04: 113, 112 on some builds, 111 on the fleet that broke Planner #850 on" \
+    && echo "2026-11-21): the socket keeps the host's gid and the entrypoint is replaced by the" \
+    && echo "runner, so this list is the floor. A gid newer than the image is joined at runtime" \
+    && echo "instead, by the prepare action's step (#353)" \
     && for host_gid in ${DOCKER_HOST_GROUP_IDS}; do \
          [ "$host_gid" = "${DOCKER_GROUP_ID}" ] && continue; \
          sudo groupadd -o -g "$host_gid" "docker-host-$host_gid" \
