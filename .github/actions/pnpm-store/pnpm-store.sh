@@ -40,6 +40,12 @@ case "$store_dir" in
   [!/]*) refusal="it is not an absolute path" ;;
   */) refusal="it ends with a slash" ;;
   */.|*/..|*/./*|*/../*) refusal="it holds a dot segment" ;;
+  "$GITHUB_WORKSPACE"/*) ;;
+  # act binds a host store outside the workspace and serves it back from its own cache
+  # server, so there the absolute path is the point. On a GHA runner it is the ../../../
+  # restore above, which this action exists to close.
+  *) [ -n "${ACT:-}" ] \
+    || refusal="it is outside the workspace actions/cache tars against" ;;
 esac
 if [ -n "${refusal:-}" ]; then
   echo "::error::pnpm_config_store_dir=$store_dir is refused: $refusal"

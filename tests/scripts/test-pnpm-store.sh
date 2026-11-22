@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The 11 rows of .github/actions/pnpm-store/pnpm-store.sh: the default store, an override
-# inside the workspace, an override outside it (what the act runners bind), the 5 refused
-# shapes, the two libc arms, and a job with no GITHUB_ENV to write to.
+# The 12 rows of .github/actions/pnpm-store/pnpm-store.sh: the default store, an override
+# inside the workspace, the host store act binds outside it, the 6 refused shapes,
+# the two libc arms, and a job with no GITHUB_ENV to write to.
 # GITHUB_WORKSPACE and GITHUB_ENV are a scratch dir and a scratch file, and the musl
 # loader is a file the test creates, so no row needs a runner, a container or a real
 # pnpm.
@@ -61,9 +61,12 @@ out=$(run_action)
 [[ "$(env_value pnpm_config_store_dir)" == "$GITHUB_WORKSPACE/apps/.store" ]] \
   || fail "pnpm lost the absolute store: $(env_value pnpm_config_store_dir)"
 
-echo "=== the act runners bind a host store outside the workspace: that one stays absolute ==="
+echo "=== under act, a bound host store outside the workspace stays absolute ==="
 export pnpm_config_store_dir="$WORK/host-store"
-out=$(run_action)
+: > "$GITHUB_ENV"
+rc=0
+out=$(ACT=true bash "$ACTION" 2>&1) || rc=$?
+[[ "$rc" == "0" ]] || fail "act's bound host store was refused: $out"
 [[ "$(env_value STORE_PATH)" == "$WORK/host-store" ]] \
   || fail "STORE_PATH is $(env_value STORE_PATH), not the absolute $WORK/host-store"
 
@@ -71,7 +74,8 @@ for refused_store in \
   "$GITHUB_WORKSPACE:it is the workspace root" \
   ".pnpm-store:it is not an absolute path" \
   "$GITHUB_WORKSPACE/.pnpm-store/:it ends with a slash" \
-  "$GITHUB_WORKSPACE/./.pnpm-store:it holds a dot segment"
+  "$GITHUB_WORKSPACE/./.pnpm-store:it holds a dot segment" \
+  "$WORK/host-store:it is outside the workspace actions/cache tars against"
 do
   store="${refused_store%%:*}"
   reason="${refused_store#*:}"
@@ -106,4 +110,4 @@ echo "$out" | grep -qx "::error::GITHUB_ENV is unset: this action only resolves 
   || fail "the refusal did not name GITHUB_ENV; output was: $out"
 
 echo
-echo "PASS: all 11 rows"
+echo "PASS: all 12 rows"
