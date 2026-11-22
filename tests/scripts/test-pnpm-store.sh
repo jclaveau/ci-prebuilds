@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# The 8 rows of .github/actions/pnpm-store/pnpm-store.sh: the default store, an override
-# inside the workspace, an override outside it (what the act runners bind), the 4 refused
-# shapes, and the musl arm. GITHUB_WORKSPACE and GITHUB_ENV are a scratch dir and a
-# scratch file, and the musl loader is a file the test creates, so no row needs a runner,
-# a container or a real pnpm.
+# The 11 rows of .github/actions/pnpm-store/pnpm-store.sh: the default store, an override
+# inside the workspace, an override outside it (what the act runners bind), the 5 refused
+# shapes, the two libc arms, and a job with no GITHUB_ENV to write to.
+# GITHUB_WORKSPACE and GITHUB_ENV are a scratch dir and a scratch file, and the musl
+# loader is a file the test creates, so no row needs a runner, a container or a real
+# pnpm.
 
 set -euo pipefail
 
@@ -84,5 +85,25 @@ do
   [[ -s "$GITHUB_ENV" ]] && fail "a refused store still exported: $(cat "$GITHUB_ENV")"
 done
 
+echo "=== refused: a store path holding a newline, which would write a second line ==="
+export pnpm_config_store_dir="$GITHUB_WORKSPACE/.pnpm-store
+PATH=/tmp/injected"
+rc=0
+out=$(run_action) || rc=$?
+[[ "$rc" == "1" ]] || fail "a newline in the store path exited $rc instead of failing the step"
+echo "$out" | grep -qx "::error::pnpm_config_store_dir is refused: it holds a newline" \
+  || fail "the refusal did not name the newline; output was: $out"
+grep -q "^PATH=" "$GITHUB_ENV" \
+  && fail "the newline injected a second variable into GITHUB_ENV: $(cat "$GITHUB_ENV")"
+[[ -s "$GITHUB_ENV" ]] && fail "a refused store still exported: $(cat "$GITHUB_ENV")"
+
+echo "=== no GITHUB_ENV: refused, since the whole job of the action is to export ==="
+unset pnpm_config_store_dir
+rc=0
+out=$(GITHUB_ENV= bash "$ACTION" 2>&1) || rc=$?
+[[ "$rc" == "1" ]] || fail "an unset GITHUB_ENV exited $rc instead of failing the step"
+echo "$out" | grep -qx "::error::GITHUB_ENV is unset: this action only resolves inside a job" \
+  || fail "the refusal did not name GITHUB_ENV; output was: $out"
+
 echo
-echo "PASS: all 8 rows"
+echo "PASS: all 11 rows"

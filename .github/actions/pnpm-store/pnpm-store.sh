@@ -8,11 +8,29 @@ if [ -z "${GITHUB_WORKSPACE:-}" ]; then
   exit 1
 fi
 
+# Exporting is the whole job of this action, so a job it cannot export to is refused here
+# rather than left to the cache step, which fails on an empty `path:` three steps later.
+if [ -z "${GITHUB_ENV:-}" ]; then
+  echo "::error::GITHUB_ENV is unset: this action only resolves inside a job"
+  exit 1
+fi
+
 # actions/cache tars every entry relative to $GITHUB_WORKSPACE, so a store outside it
 # restores into ../../../ - which is / in a job container, where uid 1001 cannot mkdir. A
 # relative path is also one same string on the host and in a container, so both land on a
 # single cache version instead of one entry each.
 store_dir="${pnpm_config_store_dir:-$GITHUB_WORKSPACE/.pnpm-store}"
+
+# A value holding a newline writes a second GITHUB_ENV line, so `store_dir=<path>\nPATH=…`
+# would hand every later step of the job that PATH. Refused on its own, and without
+# echoing the value back: that is the one refusal whose message a raw value would split.
+newline='
+'
+case "$store_dir" in
+  *"$newline"*)
+    echo "::error::pnpm_config_store_dir is refused: it holds a newline"
+    exit 1 ;;
+esac
 
 # STORE_PATH is hashed into the cache version, so a trailing slash or a dot segment
 # survives the strip below as a second version under the one key - the very split this
@@ -44,10 +62,6 @@ for musl_loader in ${CI_PREBUILDS_MUSL_LOADER_GLOB:-/lib/ld-musl-*.so.1}; do
 done
 
 export_variable() { # <name> <value>
-  if [ -z "${GITHUB_ENV:-}" ]; then
-    echo "$1=$2 (no GITHUB_ENV: later steps will not see it)"
-    return
-  fi
   echo "$1=$2" >> "$GITHUB_ENV"
   echo "$1=$2" # the step logged nothing before: a cache miss starts being read here
 }
