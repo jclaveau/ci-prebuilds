@@ -250,6 +250,48 @@ its path, version and a size+mtime fingerprint, and lives from the
 `dood`, `dind`) there is no tool worth asserting, and the post step says so instead of
 finding nothing.
 
+## One pnpm store cache per libc, not per path shape
+
+`actions/cache` tars every entry relative to `$GITHUB_WORKSPACE`, and the pnpm store moves
+with the image: a musl container resolves other optional deps and compiles other native
+addons than the glibc VM, so one `Linux-pnpm-store-<lockfile hash>` entry served both
+arms — whichever wrote it first. The `pnpm-store` action resolves all of it in one step:
+
+```yaml
+      - uses: jclaveau/ci-prebuilds/.github/actions/pnpm-store@v0
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}${{ env.LIBC_TAG }}-pnpm-store-${{ hashFiles('./pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}${{ env.LIBC_TAG }}-pnpm-store-
+
+      - run: pnpm install --frozen-lockfile
+```
+
+It exports three variables for the steps that follow:
+
+| variable | value | who reads it |
+|---|---|---|
+| `pnpm_config_store_dir` | absolute, `$GITHUB_WORKSPACE/.pnpm-store` by default | pnpm itself |
+| `STORE_PATH` | the same path relative to the workspace, which is where the store has to live; absolute under act alone, which binds a host store | `actions/cache`'s `path` |
+| `LIBC_TAG` | `-musl` on an alpine image, `-glibc` elsewhere, probed on `/lib/ld-musl-*.so.1` | the cache key |
+
+A store outside the workspace restores into `../../../`, which is `/` in a job container,
+where uid 1001 cannot mkdir. `STORE_PATH` is also hashed into the cache version, so a
+trailing slash or a `.` segment would quietly open a second version under the one key.
+Those shapes, the workspace root, a relative path and a value holding a newline are
+refused by name:
+
+```
+Error: pnpm_config_store_dir=/__w/Planner/Planner/.pnpm-store/ is refused: it ends with a slash
+```
+
+Override the default by setting `pnpm_config_store_dir` in the job env — pnpm's own
+variable, which the action then validates instead of replacing. It has to stay under the
+workspace; the one exception is a run under `act`, which sets `ACT` and serves a bound
+host store back from its own cache server, so there an absolute path outside is kept.
+
 
 ## Roadmap
 

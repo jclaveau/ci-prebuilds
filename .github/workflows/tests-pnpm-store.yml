@@ -1,0 +1,47 @@
+name: tests-pnpm-store
+
+# The 11 rows of the pnpm-store action, then the action itself through `uses:`. The rows
+# run the script with a scratch workspace, a scratch $GITHUB_ENV and a musl loader the
+# test creates: no runner, no container, no pnpm, seconds. The `uses:` job is what proves
+# action.yml - its shell, its $GITHUB_ACTION_PATH and the three variables reaching a later
+# step - which no row can reach, since a row never goes through the runner.
+
+on:
+  pull_request:
+    paths:
+      - '.github/actions/pnpm-store/**'
+      - 'tests/scripts/test-pnpm-store.sh'
+      - '.github/workflows/tests-pnpm-store.yml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/actions/pnpm-store/**'
+      - 'tests/scripts/test-pnpm-store.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: pnpm store directory unit test
+        run: bash tests/scripts/test-pnpm-store.sh
+
+  action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/pnpm-store
+      - name: the three variables reached this step
+        run: |
+          set -euo pipefail
+          expected_store="$GITHUB_WORKSPACE/.pnpm-store"
+          [ "$pnpm_config_store_dir" = "$expected_store" ] \
+            || { echo "::error::pnpm_config_store_dir=$pnpm_config_store_dir, not $expected_store"; exit 1; }
+          [ "$STORE_PATH" = ".pnpm-store" ] \
+            || { echo "::error::STORE_PATH=$STORE_PATH, not the workspace-relative .pnpm-store"; exit 1; }
+          [ "$LIBC_TAG" = "-glibc" ] \
+            || { echo "::error::LIBC_TAG=$LIBC_TAG, not -glibc on a runner VM"; exit 1; }
+          echo "PASS: the action resolved through uses: and exported all three"
