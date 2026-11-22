@@ -1,0 +1,29 @@
+name: tests-pnpm-store
+
+# The 8 rows of the pnpm-store action: the default store, an override inside the
+# workspace, an override outside it (what the act runners bind), the 4 refused shapes and
+# the musl arm. A scratch workspace, a scratch $GITHUB_ENV and a musl loader the test
+# creates: no runner, no container, no pnpm, seconds.
+
+on:
+  pull_request:
+    paths:
+      - '.github/actions/pnpm-store/**'
+      - 'tests/scripts/test-pnpm-store.sh'
+      - '.github/workflows/tests-pnpm-store.yml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/actions/pnpm-store/**'
+      - 'tests/scripts/test-pnpm-store.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: pnpm store directory unit test
+        run: bash tests/scripts/test-pnpm-store.sh
