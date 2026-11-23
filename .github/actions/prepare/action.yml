@@ -1,9 +1,11 @@
 name: Prepare container/vm mode
 description: >-
-  Universal pre-flight for any GHA job using these images (or none): defaults
-  DOCKER_MODE and HOST_ADDRESS for the no-image / vm case, boots the inner Docker
-  daemon when running under a dind image, and reports at the end of the job any tool
-  the image prebuilt that a step replaced with its own download. Image-side env vars
+  Universal pre-flight for any GHA job using these images (or none), run right after
+  actions/checkout: defaults DOCKER_MODE and HOST_ADDRESS for the no-image / vm case,
+  boots the inner Docker daemon when running under a dind image, and reports at the end
+  of the job any tool the image prebuilt that a step replaced with its own download. On
+  request it also resolves the pnpm store cache and checks the image's node and pnpm
+  against the checkout's pins. Image-side env vars
   (DOCKER_MODE=dood/dind, HOST_ADDRESS=host.docker.internal/127.0.0.1) take
   precedence — this action only fills the gap when the consumer runs on the host VM
   with no container.
@@ -18,6 +20,35 @@ inputs:
       image tag must not turn a green workflow red.
     required: false
     default: warning
+  pnpm-store:
+    description: >-
+      `true` resolves the pnpm store actions/cache can keep, exactly as the pnpm-store
+      action does: exports `pnpm_config_store_dir`, `STORE_PATH` and `LIBC_TAG`, and
+      refuses a store path that would split or misplace the cache. Off by default: this
+      action runs in every job, and a job that caches nothing keeps pnpm's own store.
+    required: false
+    default: 'false'
+  node-version-file:
+    description: >-
+      Path of a version file (`.nvmrc`) the image's node must match, at the precision
+      the file gives (major.minor for `24.11.0`, major for `24`); a mismatch fails the
+      step. Read from the checkout, so `prepare` runs after actions/checkout. Under
+      DOCKER_MODE=vm there is no image node, and the check is left to setup-node.
+    required: false
+    default: ''
+  compare-pnpm-pin:
+    description: >-
+      `true` compares the image's pnpm with package.json's `packageManager` pin and sets
+      the `pnpm-matches-pin` output, so pnpm/action-setup runs only when the image does
+      not ship the pinned version. Read from the checkout, like node-version-file.
+    required: false
+    default: 'false'
+
+outputs:
+  pnpm-matches-pin:
+    description: >-
+      `true` when the pnpm on PATH is the version package.json pins, `false` otherwise
+      (no pnpm on PATH included). Set only with `compare-pnpm-pin: true`.
 
 runs:
   # JavaScript, not composite: only a JS action can declare `post:`, and only a post step

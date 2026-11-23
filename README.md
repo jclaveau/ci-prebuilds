@@ -25,8 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     container: jclaveau/ubuntu-dood-playwright-gyp:latest
     steps:
-      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0  # DOCKER_MODE/HOST_ADDRESS defaults, start-dockerd under dind, prebuilt-tool report
       - uses: actions/checkout@v4
+      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0  # DOCKER_MODE/HOST_ADDRESS defaults, start-dockerd under dind, prebuilt-tool report
       - run: pnpm install --frozen-lockfile
       - run: docker compose up -d --wait  # no docker mcr.microsoft.com/playwright
       - run: pnpm exec playwright test    # no `playwright install --with-deps` required
@@ -34,8 +34,8 @@ jobs:
     runs-on: ubuntu-latest
     container: jclaveau/ubuntu-dood-pnpm-gyp:latest
     steps:
-      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0
       - uses: actions/checkout@v4
+      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0
       - run: pnpm install --frozen-lockfile
       - run: docker compose up -d --wait
       - run: pnpm exec vitest
@@ -178,8 +178,8 @@ jobs:
       image: ${{ matrix.image }}
       options: ${{ matrix.options }}
     steps:
-      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0  # DOCKER_MODE/HOST_ADDRESS defaults, start-dockerd under dind, prebuilt-tool report
       - uses: actions/checkout@v4
+      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0  # DOCKER_MODE/HOST_ADDRESS defaults, start-dockerd under dind, prebuilt-tool report
 
       - if: env.DOCKER_MODE == 'vm'
         uses: actions/setup-node@v4
@@ -255,10 +255,13 @@ finding nothing.
 `actions/cache` tars every entry relative to `$GITHUB_WORKSPACE`, and the pnpm store moves
 with the image: a musl container resolves other optional deps and compiles other native
 addons than the glibc VM, so one `Linux-pnpm-store-<lockfile hash>` entry served both
-arms — whichever wrote it first. The `pnpm-store` action resolves all of it in one step:
+arms — whichever wrote it first. `prepare` resolves all of it when asked:
 
 ```yaml
-      - uses: jclaveau/ci-prebuilds/.github/actions/pnpm-store@v0
+      - uses: actions/checkout@v4
+      - uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0
+        with:
+          pnpm-store: true
 
       - uses: actions/cache@v4
         with:
@@ -291,6 +294,37 @@ Override the default by setting `pnpm_config_store_dir` in the job env — pnpm'
 variable, which the action then validates instead of replacing. It has to stay under the
 workspace; the one exception is a run under `act`, which sets `ACT` and serves a bound
 host store back from its own cache server, so there an absolute path outside is kept.
+
+The standalone `pnpm-store` action (`jclaveau/ci-prebuilds/.github/actions/pnpm-store@v0`)
+runs the same script and stays for the workflows that already call it.
+
+## The image's node and pnpm against the checkout's pins
+
+The image bakes node and pnpm, so the version a job runs is the image tag's, not the one the
+app pins. `prepare` checks both, each on request:
+
+```yaml
+      - uses: actions/checkout@v4
+      - id: prepare
+        uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0
+        with:
+          node-version-file: .nvmrc
+          compare-pnpm-pin: true
+
+      # only when the image does not ship the pnpm package.json pins
+      - if: steps.prepare.outputs.pnpm-matches-pin != 'true'
+        uses: pnpm/action-setup@v4
+```
+
+| input | reads | on a mismatch |
+|---|---|---|
+| `node-version-file` | the file named, at its own precision: major.minor for `24.11.0`, major for `24` | fails the step: `node mismatch: .nvmrc=24.11 image=24.22 — bump the image tag` |
+| `compare-pnpm-pin` | `packageManager` in package.json, corepack's `+sha512…` suffix dropped | sets the `pnpm-matches-pin` output to `false`; the step stays green |
+
+Both read the checkout, which is why `prepare` runs right after `actions/checkout`; asked for
+before it, they fail naming the file. A non-numeric `.nvmrc` (`lts/*`) and a package.json with
+no pnpm pin are refused by name. Under `DOCKER_MODE=vm` there is no image node, so the node
+check is left to `actions/setup-node`.
 
 
 ## Roadmap

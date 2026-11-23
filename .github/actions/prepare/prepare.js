@@ -122,3 +122,94 @@ if (fs.existsSync(ASSERT_SCRIPT)) {
     console.log(`::notice::could not snapshot the prebuilt tools (${JSON.stringify(snapshot.status)}); the post step will report against the image manifest alone`)
   }
 }
+
+// The three opt-in checks below read the checkout, which is why the README puts this action
+// right after actions/checkout. Each is off unless asked for: this action runs in every
+// job, and a job with no pnpm or no .nvmrc is not a finding.
+function readBooleanInput(name) {
+  const value = (process.env[`INPUT_${name.toUpperCase()}`] || 'false').trim()
+  if (value !== 'true' && value !== 'false') {
+    console.log(`::error::${name} is true or false, got ${JSON.stringify(value)}`)
+    process.exit(1)
+  }
+  return value === 'true'
+}
+
+function workspaceFile(relativePath) {
+  return path.resolve(process.env.GITHUB_WORKSPACE || process.cwd(), relativePath)
+}
+
+// The version a command prints, or null when it is not on PATH or fails.
+function commandVersion(command) {
+  const ran = spawnSync(command, ['--version'], { encoding: 'utf8' })
+  if (ran.error || ran.status !== 0) {
+    return null
+  }
+  return ran.stdout.trim().replace(/^v/, '')
+}
+
+if (readBooleanInput('pnpm-store')) {
+  // One implementation, shared with the standalone pnpm-store action and its unit test.
+  const storeScript = path.join(__dirname, '..', 'pnpm-store', 'pnpm-store.sh')
+  const resolved = spawnSync('bash', [storeScript], { stdio: 'inherit' })
+  if (resolved.error || resolved.status !== 0) {
+    console.log(`::error::the pnpm store could not be resolved (${JSON.stringify(resolved.error ? resolved.error.message : resolved.status)})`)
+    process.exit(1)
+  }
+}
+
+const nodeVersionFile = (process.env['INPUT_NODE-VERSION-FILE'] || '').trim()
+if (nodeVersionFile && dockerMode === 'vm') {
+  console.log(`DOCKER_MODE=vm: no image node to compare with ${nodeVersionFile}, setup-node reads it`)
+} else if (nodeVersionFile) {
+  let pinned
+  try {
+    pinned = fs.readFileSync(workspaceFile(nodeVersionFile), 'utf8').trim().replace(/^v/, '')
+  } catch (error) {
+    console.log(`::error::node-version-file ${JSON.stringify(nodeVersionFile)} could not be read (${JSON.stringify(error.code || error.message)}): run prepare after actions/checkout`)
+    process.exit(1)
+  }
+  // An alias (lts/*, node) names no version the image could be held to.
+  if (!/^\d+(\.\d+){0,2}$/.test(pinned)) {
+    console.log(`::error::${nodeVersionFile} pins ${JSON.stringify(pinned)}: only a numeric version can be compared with the image node`)
+    process.exit(1)
+  }
+  const imageNode = commandVersion('node')
+  if (imageNode === null) {
+    console.log(`::error::${nodeVersionFile} pins node ${pinned}, and no node runs on PATH`)
+    process.exit(1)
+  }
+  // major.minor at most: a patch bump ships with the next image tag, and is no reason to
+  // fail every job until then.
+  const precision = Math.min(pinned.split('.').length, 2)
+  const expected = pinned.split('.').slice(0, precision).join('.')
+  const actual = imageNode.split('.').slice(0, precision).join('.')
+  if (expected !== actual) {
+    console.log(`::error::node mismatch: ${nodeVersionFile}=${expected} image=${actual} — bump the image tag`)
+    process.exit(1)
+  }
+  console.log(`node ${imageNode} matches ${nodeVersionFile} ${expected}`)
+}
+
+if (readBooleanInput('compare-pnpm-pin')) {
+  let packageManager
+  try {
+    packageManager = JSON.parse(fs.readFileSync(workspaceFile('package.json'), 'utf8')).packageManager
+  } catch (error) {
+    console.log(`::error::package.json could not be read (${JSON.stringify(error.code || error.message)}): run prepare after actions/checkout`)
+    process.exit(1)
+  }
+  // corepack appends the tarball's hash (`pnpm@10.0.0+sha512.…`); the version is before it.
+  const pin = /^pnpm@([^+]+)/.exec(packageManager || '')
+  if (!pin) {
+    console.log(`::error::package.json declares no pnpm packageManager pin (packageManager=${JSON.stringify(packageManager)})`)
+    process.exit(1)
+  }
+  const installed = commandVersion('pnpm')
+  const matches = installed === pin[1]
+  const outputFile = process.env.GITHUB_OUTPUT
+  if (outputFile) {
+    fs.appendFileSync(outputFile, `pnpm-matches-pin=${matches}\n`)
+  }
+  console.log(`packageManager pins pnpm ${pin[1]}, image ships ${installed || 'none'} (pnpm-matches-pin=${matches})`)
+}

@@ -1,0 +1,62 @@
+name: tests-prepare-pins
+
+# The 15 rows of the prepare action's opt-in inputs (node-version-file, compare-pnpm-pin,
+# pnpm-store), then the action itself through `uses:` in a container job. The rows run
+# prepare.js with node and pnpm shims and a scratch workspace: no runner, seconds. The
+# `uses:` job is what proves action.yml - the inputs reaching INPUT_*, the
+# pnpm-matches-pin output reaching a later step - which no row can reach.
+
+on:
+  pull_request:
+    paths:
+      - '.github/actions/prepare/**'
+      - '.github/actions/pnpm-store/**'
+      - 'tests/scripts/test-prepare-pins.sh'
+      - '.github/workflows/tests-prepare-pins.yml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/actions/prepare/**'
+      - '.github/actions/pnpm-store/**'
+      - 'tests/scripts/test-prepare-pins.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: prepare pins unit test
+        run: bash tests/scripts/test-prepare-pins.sh
+
+  action:
+    runs-on: ubuntu-latest
+    # The node layer: DOCKER_MODE=dood baked, a node and no pnpm. The node check passes
+    # against a .nvmrc written from it, and the pnpm comparison has to come out false.
+    container: jclaveau/alpine-dood-node:latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: pin the image's own node, and a pnpm the image does not ship
+        run: |
+          node --version > .nvmrc
+          echo '{ "packageManager": "pnpm@11.2.0" }' > package.json
+      - id: prepare
+        uses: ./.github/actions/prepare
+        with:
+          pnpm-store: true
+          node-version-file: .nvmrc
+          compare-pnpm-pin: true
+      - name: the output and the store variables reached this step
+        env:
+          MATCHES_PIN: ${{ steps.prepare.outputs.pnpm-matches-pin }}
+        run: |
+          set -eu
+          [ "$MATCHES_PIN" = "false" ] \
+            || { echo "::error::pnpm-matches-pin=$MATCHES_PIN, not false on an image without pnpm"; exit 1; }
+          [ "$STORE_PATH" = ".pnpm-store" ] \
+            || { echo "::error::STORE_PATH=$STORE_PATH, not the workspace-relative .pnpm-store"; exit 1; }
+          [ "$LIBC_TAG" = "-musl" ] \
+            || { echo "::error::LIBC_TAG=$LIBC_TAG, not -musl on an alpine image"; exit 1; }
+          echo "PASS: prepare resolved through uses: with all three inputs"
