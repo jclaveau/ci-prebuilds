@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The 15 rows of .github/actions/prepare/pnpm-store.sh: the default store, an override
-# inside the workspace, the host store act binds outside it, the 7 refused shapes,
-# the two libc arms, the cache prefix on each of them, and a job with no GITHUB_ENV to
-# write to.
+# inside the workspace, the host store act binds outside it, the 6 refused store shapes,
+# the two libc arms, the cache prefix on each of them, and the two jobs it refuses to
+# resolve in: one with no GITHUB_ENV to write to, one with no RUNNER_OS to key on.
 # GITHUB_WORKSPACE and GITHUB_ENV are a scratch dir and a scratch file, and the musl
 # loader is a file the test creates, so no row needs a runner, a container or a real
 # pnpm.
