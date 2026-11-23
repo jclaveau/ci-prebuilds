@@ -36,6 +36,7 @@ export GITHUB_ENV="$WORK/github-env"
 export GITHUB_OUTPUT="$WORK/github-output"
 export GITHUB_STATE="$WORK/github-state"
 export CI_PREBUILDS_DOCKER_SOCKET="$WORK/there-is-no-socket-here.sock"
+export RUNNER_OS=Linux
 export DOCKER_MODE=dood
 export HOST_ADDRESS=host.docker.internal
 export FAKE_NODE_VERSION=24.22.1
@@ -120,12 +121,13 @@ rc=0; out=$(FAKE_PNPM_VERSION=11.2.0 run_prepare INPUT_COMPARE-PNPM-PIN=true) ||
 expect_rc 1 "$rc" "$out"
 expect_line "$out" "::error::package.json declares no pnpm packageManager pin (packageManager=undefined)"
 
-echo "=== pnpm-store: true exports the three store variables ==="
+echo "=== pnpm-store: true exports the four store variables ==="
 rc=0; out=$(run_prepare INPUT_PNPM-STORE=true) || rc=$?
 expect_rc 0 "$rc" "$out"
 grep -qxF "pnpm_config_store_dir=$GITHUB_WORKSPACE/.pnpm-store" "$GITHUB_ENV" || fail "GITHUB_ENV was: $(cat "$GITHUB_ENV")"
 grep -qxF "STORE_PATH=.pnpm-store" "$GITHUB_ENV" || fail "GITHUB_ENV was: $(cat "$GITHUB_ENV")"
 grep -qE "^LIBC_TAG=-(musl|glibc)$" "$GITHUB_ENV" || fail "GITHUB_ENV was: $(cat "$GITHUB_ENV")"
+grep -qE "^PNPM_STORE_CACHE_PREFIX=Linux-(musl|glibc)-pnpm-store-$" "$GITHUB_ENV" || fail "GITHUB_ENV was: $(cat "$GITHUB_ENV")"
 
 echo "=== pnpm-store refusing a path: the step fails ==="
 rc=0; out=$(run_prepare INPUT_PNPM-STORE=true pnpm_config_store_dir=relative/store) || rc=$?

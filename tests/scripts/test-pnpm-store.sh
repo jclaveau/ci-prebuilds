@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# The 12 rows of .github/actions/prepare/pnpm-store.sh: the default store, an override
-# inside the workspace, the host store act binds outside it, the 6 refused shapes,
-# the two libc arms, and a job with no GITHUB_ENV to write to.
+# The 15 rows of .github/actions/prepare/pnpm-store.sh: the default store, an override
+# inside the workspace, the host store act binds outside it, the 6 refused store shapes,
+# the two libc arms, the cache prefix on each of them, and the two jobs it refuses to
+# resolve in: one with no GITHUB_ENV to write to, one with no RUNNER_OS to key on.
 # GITHUB_WORKSPACE and GITHUB_ENV are a scratch dir and a scratch file, and the musl
 # loader is a file the test creates, so no row needs a runner, a container or a real
 # pnpm.
@@ -18,6 +19,7 @@ trap 'rm -rf "$WORK"' EXIT
 export GITHUB_WORKSPACE="$WORK/workspace"
 mkdir -p "$GITHUB_WORKSPACE"
 export GITHUB_ENV="$WORK/github-env"
+export RUNNER_OS=Linux
 
 fail() { echo "FAIL: $1" >&2; exit 1; }
 
@@ -109,5 +111,25 @@ out=$(GITHUB_ENV= bash "$ACTION" 2>&1) || rc=$?
 echo "$out" | grep -qx "::error::GITHUB_ENV is unset: this action only resolves inside a job" \
   || fail "the refusal did not name GITHUB_ENV; output was: $out"
 
+echo "=== a glibc box: the cache prefix carries the os and the libc ==="
+export CI_PREBUILDS_MUSL_LOADER_GLOB="$WORK/there-is-no-musl-here-*.so.1"
+out=$(run_action)
+[[ "$(env_value PNPM_STORE_CACHE_PREFIX)" == "Linux-glibc-pnpm-store-" ]] \
+  || fail "the prefix is $(env_value PNPM_STORE_CACHE_PREFIX), not Linux-glibc-pnpm-store-"
+
+echo "=== a musl image: the same prefix, with the other libc ==="
+export CI_PREBUILDS_MUSL_LOADER_GLOB="$WORK/ld-musl-*.so.1"
+: > "$WORK/ld-musl-x86_64.so.1"
+out=$(run_action)
+[[ "$(env_value PNPM_STORE_CACHE_PREFIX)" == "Linux-musl-pnpm-store-" ]] \
+  || fail "the prefix is $(env_value PNPM_STORE_CACHE_PREFIX), not Linux-musl-pnpm-store-"
+
+echo "=== no RUNNER_OS: refused, rather than a key both arms would share ==="
+rc=0
+out=$(RUNNER_OS= bash "$ACTION" 2>&1) || rc=$?
+[[ "$rc" == "1" ]] || fail "an unset RUNNER_OS exited $rc instead of failing the step"
+echo "$out" | grep -qx "::error::RUNNER_OS is unset: this action only resolves inside a job" \
+  || fail "the refusal did not name RUNNER_OS; output was: $out"
+
 echo
-echo "PASS: all 12 rows"
+echo "PASS: all 15 rows"
