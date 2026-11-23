@@ -16,6 +16,13 @@ if [ -z "${GITHUB_ENV:-}" ]; then
   exit 1
 fi
 
+# Half of PNPM_STORE_CACHE_PREFIX below, and a key that lost that half serves one entry to
+# every os and libc, so it is refused rather than exported as `-musl-pnpm-store-`.
+if [ -z "${RUNNER_OS:-}" ]; then
+  echo "::error::RUNNER_OS is unset: this action only resolves inside a job"
+  exit 1
+fi
+
 # actions/cache tars every entry relative to $GITHUB_WORKSPACE, so a store outside it
 # restores into ../../../ - which is / in a job container, where uid 1001 cannot mkdir. A
 # relative path is also one same string on the host and in a container, so both land on a
@@ -76,3 +83,7 @@ export_variable() { # <name> <value>
 export_variable pnpm_config_store_dir "$store_dir"
 export_variable STORE_PATH "$cache_path"
 export_variable LIBC_TAG "-$libc"
+# The whole cache key but the lockfile hash, so the os and the libc are composed here
+# rather than in every calling workflow. hashFiles stays with the caller: it is a GHA
+# expression, and the workflow is what knows which lockfiles it has.
+export_variable PNPM_STORE_CACHE_PREFIX "$RUNNER_OS-$libc-pnpm-store-"

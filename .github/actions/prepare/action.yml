@@ -23,7 +23,8 @@ inputs:
   pnpm-store:
     description: >-
       `true` resolves the pnpm store actions/cache can keep, exactly as the pnpm-store
-      action does: exports `pnpm_config_store_dir`, `STORE_PATH` and `LIBC_TAG`, and
+      action does: exports `pnpm_config_store_dir`, `STORE_PATH`, `LIBC_TAG` and
+      `PNPM_STORE_CACHE_PREFIX`, and
       refuses a store path that would split or misplace the cache. Off by default: this
       action runs in every job, and a job that caches nothing keeps pnpm's own store.
     required: false

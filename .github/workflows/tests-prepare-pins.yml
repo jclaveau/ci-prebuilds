@@ -1,7 +1,7 @@
 name: tests-prepare-pins
 
 # The 15 rows of the prepare action's opt-in inputs (node-version-file, compare-pnpm-pin,
-# pnpm-store) and the 12 rows of the store script they share, then the action itself
+# pnpm-store) and the 15 rows of the store script they share, then the action itself
 # through `uses:` twice. The rows run prepare.js and pnpm-store.sh with node and pnpm
 # shims and a scratch workspace: no runner, seconds. The `uses:` jobs are what prove
 # action.yml - the inputs reaching INPUT_*, the pnpm-matches-pin output and the store
@@ -66,6 +66,8 @@ jobs:
             || { echo "::error::STORE_PATH=$STORE_PATH, not the workspace-relative .pnpm-store"; exit 1; }
           [ "$LIBC_TAG" = "-musl" ] \
             || { echo "::error::LIBC_TAG=$LIBC_TAG, not -musl on an alpine image"; exit 1; }
+          [ "$PNPM_STORE_CACHE_PREFIX" = "Linux-musl-pnpm-store-" ] \
+            || { echo "::error::PNPM_STORE_CACHE_PREFIX=$PNPM_STORE_CACHE_PREFIX, not Linux-musl-pnpm-store-"; exit 1; }
           echo "PASS: prepare resolved through uses: with all three inputs"
 
   action-vm:
@@ -76,7 +78,7 @@ jobs:
       - uses: ./.github/actions/prepare
         with:
           pnpm-store: true
-      - name: the three variables reached this step
+      - name: the four store variables reached this step
         run: |
           set -euo pipefail
           expected_store="$GITHUB_WORKSPACE/.pnpm-store"
@@ -86,4 +88,6 @@ jobs:
             || { echo "::error::STORE_PATH=$STORE_PATH, not the workspace-relative .pnpm-store"; exit 1; }
           [ "$LIBC_TAG" = "-glibc" ] \
             || { echo "::error::LIBC_TAG=$LIBC_TAG, not -glibc on a runner VM"; exit 1; }
-          echo "PASS: prepare exported all three on a VM job"
+          [ "$PNPM_STORE_CACHE_PREFIX" = "Linux-glibc-pnpm-store-" ] \
+            || { echo "::error::PNPM_STORE_CACHE_PREFIX=$PNPM_STORE_CACHE_PREFIX, not Linux-glibc-pnpm-store-"; exit 1; }
+          echo "PASS: prepare exported all four on a VM job"

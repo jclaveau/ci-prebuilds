@@ -266,19 +266,25 @@ arms — whichever wrote it first. `prepare` resolves all of it when asked:
       - uses: actions/cache@v4
         with:
           path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}${{ env.LIBC_TAG }}-pnpm-store-${{ hashFiles('./pnpm-lock.yaml') }}
-          restore-keys: ${{ runner.os }}${{ env.LIBC_TAG }}-pnpm-store-
+          key: ${{ env.PNPM_STORE_CACHE_PREFIX }}${{ hashFiles('./pnpm-lock.yaml') }}
+          restore-keys: ${{ env.PNPM_STORE_CACHE_PREFIX }}
 
       - run: pnpm install --frozen-lockfile
 ```
 
-It exports three variables for the steps that follow:
+It exports four variables for the steps that follow:
 
 | variable | value | who reads it |
 |---|---|---|
 | `pnpm_config_store_dir` | absolute, `$GITHUB_WORKSPACE/.pnpm-store` by default | pnpm itself |
 | `STORE_PATH` | the same path relative to the workspace, which is where the store has to live; absolute under act alone, which binds a host store | `actions/cache`'s `path` |
-| `LIBC_TAG` | `-musl` on an alpine image, `-glibc` elsewhere, probed on `/lib/ld-musl-*.so.1` | the cache key |
+| `LIBC_TAG` | `-musl` on an alpine image, `-glibc` elsewhere, probed on `/lib/ld-musl-*.so.1` | a cache key composed by hand |
+| `PNPM_STORE_CACHE_PREFIX` | the whole key but the lockfile hash: `Linux-musl-pnpm-store-` | `actions/cache`'s `key` and `restore-keys` |
+
+`hashFiles` stays in the workflow: it is a GHA expression, and the workflow is what knows
+which lockfiles it has. The prefix is the half `prepare` knows — the runner os and the
+libc — so no caller composes it, and a job that reaches the action without `RUNNER_OS` is
+refused rather than handed a key both arms would share.
 
 A store outside the workspace restores into `../../../`, which is `/` in a job container,
 where uid 1001 cannot mkdir. `STORE_PATH` is also hashed into the cache version, so a
