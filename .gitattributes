@@ -1,1 +1,12 @@
-/metrics export-ignore
+# `uses: jclaveau/ci-prebuilds/.github/actions/prepare@v0` downloads the repo tarball,
+# which honours export-ignore, so a consumer pulls 1.3MB of images, tests and benches to
+# run a 15KB action. Only the action's own directory is exported.
+# A whitelist is spelled as last-match-wins: every level ignores its own entries, then
+# un-ignores the one that leads to the action. A new top-level directory is excluded by
+# the first line, so nothing here has to change when the repo grows.
+/* export-ignore
+/.github -export-ignore
+/.github/* export-ignore
+/.github/actions -export-ignore
+/.github/actions/* export-ignore
+/.github/actions/prepare -export-ignore
