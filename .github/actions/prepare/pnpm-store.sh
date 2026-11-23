@@ -82,7 +82,6 @@ export_variable() { # <name> <value>
 
 export_variable pnpm_config_store_dir "$store_dir"
 export_variable STORE_PATH "$cache_path"
-export_variable LIBC_TAG "-$libc"
 # The whole cache key but the lockfile hash, so the os and the libc are composed here
 # rather than in every calling workflow. hashFiles stays with the caller: it is a GHA
 # expression, and the workflow is what knows which lockfiles it has.

@@ -272,13 +272,12 @@ arms — whichever wrote it first. `prepare` resolves all of it when asked:
       - run: pnpm install --frozen-lockfile
 ```
 
-It exports four variables for the steps that follow:
+It exports three variables for the steps that follow:
 
 | variable | value | who reads it |
 |---|---|---|
 | `pnpm_config_store_dir` | absolute, `$GITHUB_WORKSPACE/.pnpm-store` by default | pnpm itself |
 | `STORE_PATH` | the same path relative to the workspace, which is where the store has to live; absolute under act alone, which binds a host store | `actions/cache`'s `path` |
-| `LIBC_TAG` | `-musl` on an alpine image, `-glibc` elsewhere, probed on `/lib/ld-musl-*.so.1` | a cache key composed by hand |
 | `PNPM_STORE_CACHE_PREFIX` | the whole key but the lockfile hash: `Linux-musl-pnpm-store-` | `actions/cache`'s `key` and `restore-keys` |
 
 `hashFiles` stays in the workflow: it is a GHA expression, and the workflow is what knows
