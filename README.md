@@ -295,9 +295,6 @@ variable, which the action then validates instead of replacing. It has to stay u
 workspace; the one exception is a run under `act`, which sets `ACT` and serves a bound
 host store back from its own cache server, so there an absolute path outside is kept.
 
-The standalone `pnpm-store` action (`jclaveau/ci-prebuilds/.github/actions/pnpm-store@v0`)
-runs the same script and stays for the workflows that already call it.
-
 ## The image's node and pnpm against the checkout's pins
 
 The image bakes node and pnpm, so the version a job runs is the image tag's, not the one the

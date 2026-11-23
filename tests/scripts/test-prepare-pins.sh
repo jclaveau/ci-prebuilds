@@ -120,7 +120,7 @@ rc=0; out=$(FAKE_PNPM_VERSION=11.2.0 run_prepare INPUT_COMPARE-PNPM-PIN=true) ||
 expect_rc 1 "$rc" "$out"
 expect_line "$out" "::error::package.json declares no pnpm packageManager pin (packageManager=undefined)"
 
-echo "=== pnpm-store: true exports the three variables of the pnpm-store action ==="
+echo "=== pnpm-store: true exports the three store variables ==="
 rc=0; out=$(run_prepare INPUT_PNPM-STORE=true) || rc=$?
 expect_rc 0 "$rc" "$out"
 grep -qxF "pnpm_config_store_dir=$GITHUB_WORKSPACE/.pnpm-store" "$GITHUB_ENV" || fail "GITHUB_ENV was: $(cat "$GITHUB_ENV")"
