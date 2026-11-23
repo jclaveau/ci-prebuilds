@@ -76,7 +76,7 @@ touches an area, read that file before concluding no rule exists. Then read
 - [PNG encoder exposure by browser](project_png_encoder_exposure_by_browser.md) — only FF paid it; wk and chr match official byte-for-byte on the canvas control
 - [Probe font mismatch confounds layout](project_probe_font_mismatch_confounds_layout.md) — the fixture sets no font-family; ours resolves FreeSans, official's collapses
 
-## ci-workflows (26) — GHA mechanics, dispatch, promote gates, reading a run
+## ci-workflows (28) — GHA mechanics, dispatch, promote gates, reading a run
 `.agents/auto-memory/index/ci-workflows.md`
 
 - [WebKit promote gate — RESOLVED](project_wk_promote_gate_holds_the_nightly_bench.md) — the three conformance-webkit blockers (camera/mic #112, CacheStorage #116
