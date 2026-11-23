@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# The whole body of the pnpm-store action. A file of its own, not an inline `run:`, so
-# tests/scripts/test-pnpm-store.sh can run every row of it without a runner.
+# The pnpm-store half of the prepare action (`pnpm-store: true`). A file of its own, not
+# inline in prepare.js, so tests/scripts/test-pnpm-store.sh can run every row of it
+# without a runner.
 set -euo pipefail
 
 if [ -z "${GITHUB_WORKSPACE:-}" ]; then

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The 12 rows of .github/actions/pnpm-store/pnpm-store.sh: the default store, an override
+# The 12 rows of .github/actions/prepare/pnpm-store.sh: the default store, an override
 # inside the workspace, the host store act binds outside it, the 6 refused shapes,
 # the two libc arms, and a job with no GITHUB_ENV to write to.
 # GITHUB_WORKSPACE and GITHUB_ENV are a scratch dir and a scratch file, and the musl
@@ -9,7 +9,7 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-ACTION="$HERE/../../.github/actions/pnpm-store/pnpm-store.sh"
+ACTION="$HERE/../../.github/actions/prepare/pnpm-store.sh"
 [[ -f "$ACTION" ]] || { echo "FAIL: $ACTION not found" >&2; exit 1; }
 
 WORK=$(mktemp -d)

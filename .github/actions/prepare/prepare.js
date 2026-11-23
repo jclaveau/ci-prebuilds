@@ -149,8 +149,9 @@ function commandVersion(command) {
 }
 
 if (readBooleanInput('pnpm-store')) {
-  // One implementation, shared with the standalone pnpm-store action and its unit test.
-  const storeScript = path.join(__dirname, '..', 'pnpm-store', 'pnpm-store.sh')
+  // A file of its own, not inline, so tests/scripts/test-pnpm-store.sh runs every row of
+  // it without a runner.
+  const storeScript = path.join(__dirname, 'pnpm-store.sh')
   const resolved = spawnSync('bash', [storeScript], { stdio: 'inherit' })
   if (resolved.error || resolved.status !== 0) {
     console.log(`::error::the pnpm store could not be resolved (${JSON.stringify(resolved.error ? resolved.error.message : resolved.status)})`)
