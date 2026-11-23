@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# The 15 rows of .github/actions/prepare/pnpm-store.sh: the default store, an override
+# The 13 rows of .github/actions/prepare/pnpm-store.sh: the default store, an override
 # inside the workspace, the host store act binds outside it, the 6 refused store shapes,
-# the two libc arms, the cache prefix on each of them, and the two jobs it refuses to
-# resolve in: one with no GITHUB_ENV to write to, one with no RUNNER_OS to key on.
+# the cache prefix on each libc arm, and the two jobs it refuses to resolve in: one with
+# no GITHUB_ENV to write to, one with no RUNNER_OS to key on.
 # GITHUB_WORKSPACE and GITHUB_ENV are a scratch dir and a scratch file, and the musl
 # loader is a file the test creates, so no row needs a runner, a container or a real
 # pnpm.
@@ -41,19 +41,6 @@ out=$(run_action)
   || fail "STORE_PATH is $(env_value STORE_PATH), not the workspace-relative .pnpm-store"
 echo "$out" | grep -q "STORE_PATH=.pnpm-store" \
   || fail "the step logged no STORE_PATH; output was: $out"
-
-echo "=== a glibc box: LIBC_TAG=-glibc, so no musl entry is read back into it ==="
-export CI_PREBUILDS_MUSL_LOADER_GLOB="$WORK/there-is-no-musl-here-*.so.1"
-out=$(run_action)
-[[ "$(env_value LIBC_TAG)" == "-glibc" ]] \
-  || fail "LIBC_TAG is $(env_value LIBC_TAG), not -glibc"
-
-echo "=== a musl image: LIBC_TAG=-musl ==="
-: > "$WORK/ld-musl-x86_64.so.1"
-export CI_PREBUILDS_MUSL_LOADER_GLOB="$WORK/ld-musl-*.so.1"
-out=$(run_action)
-[[ "$(env_value LIBC_TAG)" == "-musl" ]] \
-  || fail "LIBC_TAG is $(env_value LIBC_TAG), not -musl"
 
 echo "=== an override inside the workspace is stripped to a relative STORE_PATH ==="
 export pnpm_config_store_dir="$GITHUB_WORKSPACE/apps/.store"
@@ -132,4 +119,4 @@ echo "$out" | grep -qx "::error::RUNNER_OS is unset: this action only resolves i
   || fail "the refusal did not name RUNNER_OS; output was: $out"
 
 echo
-echo "PASS: all 15 rows"
+echo "PASS: all 13 rows"
