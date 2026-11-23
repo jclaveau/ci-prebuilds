@@ -33,7 +33,9 @@ jobs:
       - uses: actions/checkout@v7
       - name: prepare pins unit test
         run: bash tests/scripts/test-prepare-pins.sh
+      # Two suites in one job since the fold: a red pins row must not hide the store rows.
       - name: pnpm store directory unit test
+        if: always()
         run: bash tests/scripts/test-pnpm-store.sh
 
   action:
