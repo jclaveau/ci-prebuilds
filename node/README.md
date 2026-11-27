@@ -59,6 +59,32 @@ every later job on that runner would read.
 re-register it — on a `-sudoer` tag, since replacing node needs root and the published tags are
 hardened without `sudo`.
 
+## Alpine: the runner's node for the first JS action
+
+Every JS action of a GHA `container:` job is run by the *runner's* node, not the image's: the
+runner bind-mounts its own externals read-only on `/__e` and execs
+`/__e/node<major>_alpine/bin/node` there. On a fresh VM nothing has read that 126 MiB musl binary
+yet — the runner itself ran its glibc one — so the job's first JS action demand-pages all of it off
+the host disk, before the action's own first line.
+
+The alpine node layer shadows that path with its own node: a symlink baked at
+`$RUNNER_EXTERNALS_NODE_DIR/bin/node`, carried into the job by a `VOLUME` on that directory, which
+docker seeds from the image at `docker create` and keeps mounted under the runner's read-only
+`/__e`. The node behind it is in the page cache that pulled the image, so the read is gone:
+**3.341 → 0.249 s** to the first JS action's start, 10 jobs an arm.
+
+What it means for a consumer job:
+
+- **The actions run on this image's node**, whatever major they declare. GitHub already forces
+  node20 actions onto node24 on its own runners, so this is the same substitution one layer down.
+- **One anonymous volume per job container**, cleaned up with the container by the runner.
+- `$RUNNER_EXTERNALS_NODE_DIR` names the shadowed directory (`/__e/node24_alpine`), so a job can
+  assert the shadow rather than re-derive the major.
+- **It holds only while the runner keeps resolving that major.** A runner that forces another one
+  execs its own node again and the read comes back, silently; `test-node-usage` in
+  `test-and-publish.yml` fails on exactly that, by asserting a real JS action ran on the image's
+  node. The fix is a one-line `RUNNER_EXTERNALS_NODE_DIR` bump in `node/Dockerfile.alpine`.
+
 ## What it adds
 - **Node.js + npm** — on Ubuntu from NodeSource (the major comes from the `NODE_VERSION` build-arg); on
   Alpine nodejs.org's musl build of exactly `NODE_VERSION`, from
@@ -74,6 +100,9 @@ hardened without `sudo`.
   (ubuntu 3234). Every process here inherits it.
 - **That node, registered in the tool cache** — so `actions/setup-node` resolves it instead of
   downloading another one (see [Keeping `actions/setup-node`](#keeping-actionssetup-node)).
+- **Alpine: the runner's externals node shadowed by this one** — so the job's first JS action
+  does not demand-page the host's musl node (see [Alpine: the runner's node for the first JS
+  action](#alpine-the-runners-node-for-the-first-js-action)).
 - **A manifest of what it prebuilt**, and the script that asserts the job still runs it, so a
   step that downloads its own node or pnpm gets named rather than silently paid for twice (see
   [The prebuilt-tool manifest](#the-prebuilt-tool-manifest)).
@@ -86,6 +115,8 @@ hardened without `sudo`.
 - **`node-perf-gate`** (in `test-and-publish.yml`) times `bench/node-perf-kernel.cjs` on the alpine
   node against the ubuntu node, `node:<version>-bookworm-slim` and the alpine node it replaces, on
   one runner. Report-only until its margins are sized.
+- **Alpine images declare a volume on `/__e/node24_alpine`** — one anonymous volume per
+  container, and the directory shows up on a plain `docker run` of the image too.
 - **No node-gyp toolchain here** — inherits the [`gha-tools` compiler omission](../ubuntu-gha-tools/README.md#whats-deliberately-omitted-and-why).
   For `npm`/`pnpm install` runs that compile native modules, use the
   [`-gyp` variant](../pnpm-gyp/README.md) (`{os}-{mode}-pnpm-gyp`).

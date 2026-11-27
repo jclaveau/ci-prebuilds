@@ -329,6 +329,22 @@ no pnpm pin are refused by name. Under `DOCKER_MODE=vm` there is no image node, 
 check is left to `actions/setup-node`.
 
 
+## Alpine jobs: the first JS action runs on the image's node
+
+In a GHA `container:` job, JS actions (`actions/checkout`, `actions/cache`, …) are run by the
+*runner's* node, read from its externals bind-mounted read-only on `/__e`. On Alpine that is a
+126 MiB musl binary nothing on a fresh VM has read yet, so the job's first JS action pages all of
+it off the host disk before its own first line: **3.341 → 0.249 s** to that action's start once
+the alpine node layer shadows the path with its own node (10 jobs an arm,
+[run 43293915953](https://github.com/jclaveau/ci-prebuilds/actions/runs/43293915953)).
+
+Nothing to opt into — the alpine `-node` images and the layers above them carry it. Two
+consequences worth knowing: the actions run on the **image's** node whatever major they declare
+(GitHub already forces node20 actions onto node24 on its own runners), and each job container
+gets **one anonymous volume** on `$RUNNER_EXTERNALS_NODE_DIR`. See
+[node/README.md](node/README.md#alpine-the-runners-node-for-the-first-js-action).
+
+
 ## Roadmap
 
 See [open issues](https://github.com/jclaveau/ci-prebuilds/issues).
