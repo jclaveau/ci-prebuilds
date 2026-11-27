@@ -124,3 +124,22 @@ RUN register-node-in-tool-cache
 COPY --chmod=755 record-image-tool.sh /usr/local/bin/record-image-tool
 COPY --chmod=755 assert-prebuilt-tools-in-use.sh /usr/local/bin/assert-prebuilt-tools-in-use
 RUN sudo record-image-tool node
+
+# The externals directory the runner resolves for a container job's JS actions on a musl OS, so
+# that the first one does not demand-page the host's 126 MiB node (see the script's header). Its
+# major is the runner's forced one, not this image's node version: the actions then run on the node
+# baked here. Only that one major, and a runner that forces another execs its own node again —
+# test-and-publish's test-node-usage asserts a real JS action ran on this one.
+ARG RUNNER_EXTERNALS_NODE_DIR=/__e/node24_alpine
+COPY --chmod=755 link-node-into-runner-externals.sh /usr/local/bin/link-node-into-runner-externals
+RUN sudo link-node-into-runner-externals "${RUNNER_EXTERNALS_NODE_DIR}" \
+    && sudo chown -R runner:runner /__e
+
+# What carries the symlink into the job: docker seeds an image-declared volume from the image's
+# content at `docker create`, and that child mount survives under the runner's own read-only /__e
+# bind, which would otherwise hide it. Costs one anonymous volume per job container, and the
+# directory shows up on a plain `docker run` of this image too.
+VOLUME ${RUNNER_EXTERNALS_NODE_DIR}
+# Exported so a consumer job, and test-node-usage, can assert the shadow without re-deriving
+# the major from the runner's behaviour.
+ENV RUNNER_EXTERNALS_NODE_DIR=${RUNNER_EXTERNALS_NODE_DIR}

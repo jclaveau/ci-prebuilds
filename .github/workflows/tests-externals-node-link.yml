@@ -1,0 +1,30 @@
+name: tests-externals-node-link
+
+# The rows of link-node-into-runner-externals.sh, the script the alpine node layer runs to point
+# `/__e/node<major>_alpine/bin/node` at the image's own node. They run it against a node shim and a
+# temp directory: no image, no runner, seconds. The runtime half — that the VOLUME carries the link
+# into a job and a real JS action execs it — is test-and-publish's test-node-usage, which needs the
+# built image.
+
+on:
+  pull_request:
+    paths:
+      - 'node/link-node-into-runner-externals.sh'
+      - 'tests/scripts/test-link-node-into-runner-externals.sh'
+      - '.github/workflows/tests-externals-node-link.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'node/link-node-into-runner-externals.sh'
+      - 'tests/scripts/test-link-node-into-runner-externals.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: externals node link unit test
+        run: bash tests/scripts/test-link-node-into-runner-externals.sh

@@ -1259,6 +1259,34 @@ jobs:
           marker_mode=$(stat -c %a "$arch_dir.complete")
           [ "$marker_mode" = 664 ] || { echo "$arch_dir.complete is $marker_mode, not 664"; exit 1; }
 
+      # The first JS action of an alpine container job used to demand-page the host runner's own
+      # 126 MiB musl node off the read-only /__e bind: 3.341 -> 0.249 s to that action's start, 10
+      # jobs an arm (run 43293915953). The node layer shadows that path with its own node through
+      # a VOLUME, and that holds only while the runner keeps forcing the major baked in
+      # node/Dockerfile.alpine — hence the end-to-end arm below, not just the baked tree.
+      - name: the externals node dir reaches the job as a volume carrying the image's node
+        if: matrix.os == 'alpine'
+        run: |
+          # busybox `mount` prints a stale /etc/mtab inside a container; /proc/self/mounts is the truth.
+          grep -q " $RUNNER_EXTERNALS_NODE_DIR " /proc/self/mounts \
+            || { echo "$RUNNER_EXTERNALS_NODE_DIR is no mount: the image's VOLUME never reached the job"; exit 1; }
+          [ -L "$RUNNER_EXTERNALS_NODE_DIR/bin/node" ] \
+            || { echo "$RUNNER_EXTERNALS_NODE_DIR/bin/node is not the symlink the image baked"; exit 1; }
+      - id: action_node
+        if: matrix.os == 'alpine'
+        uses: actions/github-script@v9
+        with:
+          script: core.setOutput('version', process.versions.node)
+      - name: a real JS action ran on the image's node, not the runner's own
+        if: matrix.os == 'alpine'
+        env:
+          ACTION_NODE: ${{ steps.action_node.outputs.version }}
+          IMAGE_NODE: ${{ steps.image_node.outputs.version }}
+        run: |
+          [ "$ACTION_NODE" = "$IMAGE_NODE" ] || { echo "the action ran on node $ACTION_NODE," \
+            "not the image's $IMAGE_NODE: $RUNNER_EXTERNALS_NODE_DIR is not the directory this" \
+            "runner resolves, so every first JS action pays the cold read again"; exit 1; }
+
 
   # ----------------------------------------------------------------------------
   # node-perf-gate (#351): the alpine node must be no slower than the ubuntu one
